@@ -166,18 +166,34 @@ impl Default for CalibracaoDeMovimento {
 }
 
 impl CalibracaoDeMovimento {
+    /// O maior desvio por eixo que uma calibração pode corrigir, em mg. Um acelerômetro de
+    /// controle erra por algumas dezenas de mg; um desvio de 1 g é o controle calibrado de lado.
+    const DESVIO_MAXIMO_MG: i32 = 250;
+
     /// A calibração que leva a média `parado` — lida com o controle imóvel de face para cima —
-    /// a `[0, 0, 1]`.
-    pub fn de_repouso(parado: [f32; 3]) -> Self {
+    /// a `[0, 0, 1]`. `None` quando a leitura não é a de um controle de face para cima: calibrar
+    /// assim grava um desvio de 1 g, e todo jogo passa a ver a gravidade dobrada.
+    pub fn de_repouso(parado: [f32; 3]) -> Option<Self> {
         let escala = parado.iter().map(|v| v * v).sum::<f32>().sqrt().max(0.1);
         let zero = [parado[0], parado[1], parado[2] - escala];
-        Self {
+        let calibracao = Self {
             zero_mg: zero.map(|v| (v * 1000.0).round() as i32),
             escala_mg: (escala * 1000.0).round() as i32,
-        }
+        };
+        (parado[2] > 0.0 && calibracao.plausivel()).then_some(calibracao)
+    }
+
+    /// Se a calibração corrige só o que um sensor erra. Uma gravada de lado, de antes desta
+    /// verificação existir, não vale.
+    pub fn plausivel(&self) -> bool {
+        self.zero_mg.iter().all(|d| d.abs() <= Self::DESVIO_MAXIMO_MG)
+            && (500..=2000).contains(&self.escala_mg)
     }
 
     pub fn aplica(&self, bruto: [f32; 3]) -> [f32; 3] {
+        if !self.plausivel() {
+            return bruto;
+        }
         let escala = self.escala_mg.max(100) as f32 / 1000.0;
         std::array::from_fn(|i| (bruto[i] - self.zero_mg[i] as f32 / 1000.0) / escala)
     }
@@ -475,9 +491,20 @@ mod tests {
 
     #[test]
     fn a_calibracao_leva_o_repouso_a_um_g_para_cima() {
-        let calibracao = CalibracaoDeMovimento::de_repouso([0.02, -0.05, 1.14]);
+        let calibracao = CalibracaoDeMovimento::de_repouso([0.02, -0.05, 1.14]).unwrap();
         let [x, y, z] = calibracao.aplica([0.02, -0.05, 1.14]);
         assert!(x.abs() < 0.01 && y.abs() < 0.01 && (z - 1.0).abs() < 0.01, "{x} {y} {z}");
+    }
+
+    /// Calibrado de lado, o desvio seria de 1 g: recusado, e uma gravada assim é ignorada.
+    #[test]
+    fn a_calibracao_de_lado_nao_vale() {
+        assert!(CalibracaoDeMovimento::de_repouso([-1.0, 0.0, 0.1]).is_none());
+        let gravada = CalibracaoDeMovimento {
+            zero_mg: [-1002, 5, -906],
+            escala_mg: 1007,
+        };
+        assert_eq!(gravada.aplica([0.0, 0.0, 1.13]), [0.0, 0.0, 1.13]);
     }
     use crate::input::BUTTON_NAMES;
 

@@ -40,6 +40,7 @@
   "controls.axis.none": "Nenhum",
   "controls.boomerang.calibrate": "Calibrar",
   "controls.boomerang.calibrate_hint": "Para calibrar, deixe o Wii Remote parado numa superfície plana, com os botões para cima, e clique em Calibrar. Os jogos ainda fazem a calibração deles por cima desta.",
+  "controls.boomerang.calibrate_refused": "Calibração recusada: o Wii Remote não estava parado com os botões para cima.",
   "controls.boomerang.calibrate_reset": "Sem calibração",
   "controls.boomerang.calibrating": "Calibrando… não mexa no controle.",
   "controls.boomerang.no_wiimote": "Nenhum Wii Remote: o Boomerang fica parado, só com os botões mapeados",

@@ -366,7 +366,7 @@ fn main() -> ExitCode {
                              [--sem-rede] [--servidor=MAQUINA[:PORTA]] [--ponte]
                              [--portas=controle|teclado|nenhum,...] [--teclas=ms:nome,...]"
             );
-            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N] [--msaa=N] [--aniso=N] [--perfil[=MS]] [--boomerang] [--movimento=ms:x:y:z,...]  (a sessão da janela, sem janela)");
+            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N] [--msaa=N] [--aniso=N] [--perfil[=MS]] [--boomerang] [--movimento=ms:x:y:z,...] [--wiimote]  (a sessão da janela, sem janela)");
             eprintln!("     zeebx bench <arquivo.mod|zip> [--seconds=N] [--keys=ms:tecla,...] [--dump=QUADRO.bmp] [--teclas=ms:nome,...] [--instalados=0xCLSID[:id],...] [--dump-surfaces=DIR]  (Dynarmic, sem janela)");
             ExitCode::FAILURE
         }
@@ -1159,6 +1159,11 @@ fn sessao_sem_janela(
         .as_deref()
         .map(library::scan)
         .unwrap_or_default();
+    // `--wiimote` usa o Wii Remote conectado no lugar do roteiro.
+    let wiimote = std::env::args()
+        .any(|a| a == "--wiimote")
+        .then(input::wiimote::Wiimotes::inicia);
+    let boomerang = boomerang.or(wiimote.as_ref().map(|_| Vec::new()));
     let portas = match boomerang {
         Some(_) => [Some(bindings::Aparelho::Boomerang), None],
         None => PORTAS_PADRAO,
@@ -1204,7 +1209,14 @@ fn sessao_sem_janela(
             pad = input::Pad::default();
         }
         session.set_port_pad(0, pad);
-        if let Some(roteiro) = &boomerang {
+        if let Some(wiimotes) = &wiimote {
+            // O mesmo giro para o referencial do Boomerang que a janela aplica.
+            let [x, y, z] = wiimotes
+                .estado(0)
+                .filter(|e| e.com_acelerometro)
+                .map_or([0.0, 0.0, 1.0], |e| e.aceleracao);
+            session.set_port_motion(0, [y, x, z]);
+        } else if let Some(roteiro) = &boomerang {
             // O último movimento cujo instante já passou; antes do primeiro, parado de face para
             // cima.
             let agora = roteiro

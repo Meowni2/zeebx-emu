@@ -51,9 +51,6 @@ const SCREEN: [usize; 2] = [640, 480];
 /// A imagem de quem não tem imagem nenhuma.
 const PLACEHOLDER: &[u8] = include_bytes!("../../assets/zeebx.png");
 
-/// Quanto tempo o controle precisa ficar parado para o aviso dar a calibração por feita.
-const PARADO_PARA_CALIBRAR: Duration = Duration::from_millis(1500);
-
 /// O estado do aviso de calibração na janela do jogo.
 struct AvisoDeCalibracao {
     aberto_em: std::time::Instant,
@@ -101,10 +98,6 @@ impl AvisoDeCalibracao {
             _ => {}
         }
         parado
-    }
-
-    fn parado_ha(&self, agora: std::time::Instant) -> Duration {
-        self.parado_desde.map_or(Duration::ZERO, |desde| agora - desde)
     }
 
     fn conclui(&mut self, agora: std::time::Instant) {
@@ -219,6 +212,8 @@ pub struct App {
     boomerang_textura: Option<egui::TextureHandle>,
     /// A calibração do movimento em andamento: a porta e as leituras juntadas até agora.
     calibrando: Option<(usize, Vec<[f32; 3]>)>,
+    /// A última calibração foi recusada por não estar de face para cima.
+    calibracao_recusada: bool,
     /// O aviso de calibração aberto na janela do jogo, e as calibrações da sessão já vistas.
     aviso_calibracao: Option<AvisoDeCalibracao>,
     calibracoes_vistas: (u32, u32),
@@ -322,6 +317,7 @@ impl App {
             wiimotes: crate::input::wiimote::Wiimotes::inicia(),
             boomerang_textura: None,
             calibrando: None,
+            calibracao_recusada: false,
             aviso_calibracao: None,
             calibracoes_vistas: (0, 0),
             teclas_entregues: HashSet::new(),
@@ -824,10 +820,15 @@ impl App {
                 let n = amostras.len() as f32;
                 let media: [f32; 3] =
                     std::array::from_fn(|i| amostras.iter().map(|a| a[i]).sum::<f32>() / n);
-                self.settings.controls.player_mut(porta).calibracao_movimento =
-                    crate::input::bindings::CalibracaoDeMovimento::de_repouso(media);
+                match crate::input::bindings::CalibracaoDeMovimento::de_repouso(media) {
+                    Some(calibracao) => {
+                        self.settings.controls.player_mut(porta).calibracao_movimento = calibracao;
+                        self.calibracao_recusada = false;
+                        self.save();
+                    }
+                    None => self.calibracao_recusada = true,
+                }
                 self.calibrando = None;
-                self.save();
             }
         }
         let textura = self.textura_do_boomerang(ui.ctx());
@@ -835,7 +836,7 @@ impl App {
         // face. Deitado, ela sai desse plano e o ângulo vira ruído, então a imagem só gira quando
         // a gravidade está de fato ali.
         let no_plano = (x * x + y * y).sqrt();
-        let volante = (-x).atan2(y);
+        let volante = x.atan2(y);
         let giro = volante * ((no_plano - 0.3) / 0.4).clamp(0.0, 1.0);
         let calibrando = self.calibrando.is_some();
         let mut calibrar = false;
@@ -874,6 +875,12 @@ impl App {
                 });
                 restaurar = ui.button(self.catalog.get("controls.boomerang.calibrate_reset")).clicked();
             });
+            if self.calibracao_recusada && !calibrando {
+                ui.colored_label(
+                    ui.visuals().warn_fg_color,
+                    self.catalog.get("controls.boomerang.calibrate_refused"),
+                );
+            }
             ui.weak(match calibrando {
                 true => self.tr("controls.boomerang.calibrating"),
                 false => self.tr("controls.boomerang.calibrate_hint"),
@@ -916,9 +923,8 @@ impl App {
     ///
     /// Abre quando a sessão diz que o jogo começou uma calibração
     /// ([`Session::calibracao`]) e mostra o Boomerang inclinando com o Wii Remote e se ele está
-    /// parado. Fecha quando o jogo diz que terminou, ou quando o controle fica parado o bastante
-    /// para qualquer calibração ter pegado: aí o modelo anima até ficar reto e o aviso some
-    /// sozinho logo depois.
+    /// parado. Fecha quando o jogo diz que terminou: aí o modelo anima até ficar reto e o aviso
+    /// some sozinho logo depois.
     fn aviso_de_calibracao(&mut self, ctx: &egui::Context, calibracao: (u32, u32)) {
         use crate::input::bindings::Aparelho;
         let agora = std::time::Instant::now();
@@ -948,17 +954,16 @@ impl App {
         if novas.1 {
             aviso.conclui(agora);
         }
+        // Parado é só informação: quem diz que calibrou é o jogo. Concluir por estar parado dizia
+        // "calibrado" enquanto o Crash Nitro Kart ainda recusava as leituras.
         let parado = aviso.amostra(movimento, agora);
-        if parado && aviso.parado_ha(agora) >= PARADO_PARA_CALIBRAR {
-            aviso.conclui(agora);
-        }
         if aviso.expirou(agora) {
             self.aviso_calibracao = None;
             return;
         }
         let [x, y, _] = movimento;
         let no_plano = (x * x + y * y).sqrt();
-        let volante = (-x).atan2(y) * ((no_plano - 0.3) / 0.4).clamp(0.0, 1.0);
+        let volante = x.atan2(y) * ((no_plano - 0.3) / 0.4).clamp(0.0, 1.0);
         // Concluída, a inclinação vai a zero em uma animação curta: o modelo "assenta".
         let giro = volante * (1.0 - aviso.progresso_da_conclusao(agora));
         let concluido = aviso.concluido_em.is_some();
@@ -2012,8 +2017,10 @@ impl App {
     /// segurar o Boomerang deitado, com as duas mãos e a face para o jogador, e virar como um
     /// volante: a direção é o ângulo da gravidade entre X e Y. Com os eixos passando direto, o Wii
     /// Remote seguro do mesmo jeito punha a gravidade no eixo errado, e o kart virava a esmo. A
-    /// face é a mesma nos dois, então o Z fica, e os outros dois giram 90° no plano dela: o X do
-    /// Boomerang aponta para longe do direcional, e o Y do Wii Remote aponta para o direcional.
+    /// face é a mesma nos dois, então o Z fica, e o X e o Y trocam de lugar.
+    ///
+    /// O sentido do X foi acertado na mão, no Crash Nitro Kart: com o X do Boomerang oposto ao Y
+    /// do Wii Remote, virar o volante para a direita levava o kart para a esquerda.
     fn movimento_da_porta(&self, porta: usize) -> [f32; 3] {
         let Some(bruto) = self.movimento_bruto_da_porta(porta) else {
             return [0.0, 0.0, 1.0];
@@ -2023,7 +2030,7 @@ impl App {
             .controls
             .player(porta)
             .map_or(bruto, |jogador| jogador.calibracao_movimento.aplica(bruto));
-        [-y, x, z]
+        [y, x, z]
     }
 
     /// A aceleração que o Wii Remote da porta mede, sem calibração.

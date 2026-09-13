@@ -40,6 +40,7 @@
   "controls.axis.none": "None",
   "controls.boomerang.calibrate": "Calibrate",
   "controls.boomerang.calibrate_hint": "To calibrate, leave the Wii Remote still on a flat surface, buttons up, and click Calibrate. Games still run their own calibration on top of this one.",
+  "controls.boomerang.calibrate_refused": "Calibration refused: the Wii Remote was not lying still with the buttons up.",
   "controls.boomerang.calibrate_reset": "No calibration",
   "controls.boomerang.calibrating": "Calibrating… don't move the controller.",
   "controls.boomerang.no_wiimote": "No Wii Remote: the Boomerang stays still, with only the mapped buttons",
