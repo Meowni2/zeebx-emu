@@ -131,6 +131,57 @@ pub fn scan(root: &Path) -> Vec<Game> {
     games
 }
 
+/// O caminho que abre a Z-Wheel a partir do que a pessoa apontou: o `.zip`, o `.mod` ou uma
+/// pasta que a contenha. `None` quando ali não há Z-Wheel — quem diz é o ClassID do `.mif`.
+pub fn z_wheel_em(caminho: &Path) -> Option<PathBuf> {
+    let z_wheel = Some(crate::session::Z_WHEEL);
+    if caminho.is_dir() {
+        let mut achados = Vec::new();
+        collect(caminho, 0, &mut achados);
+        return achados
+            .into_iter()
+            .filter_map(describe)
+            .find(|jogo| jogo.clsid == z_wheel)
+            .map(|jogo| jogo.path);
+    }
+    describe(caminho.to_path_buf())
+        .filter(|jogo| jogo.clsid == z_wheel)
+        .map(|jogo| jogo.path)
+}
+
+/// Procura a Z-Wheel sem perguntar: primeiro entre os jogos da pasta de ROMs, depois ao lado
+/// dela, em `Downloads` e na pasta pessoal, em tudo que tenha "wheel" ou "tectoy" no nome.
+/// Olhar só esses nomes evita varrer o disco.
+pub fn detecta_z_wheel(roms: Option<&Path>, jogos: &[Game]) -> Option<PathBuf> {
+    if let Some(jogo) = jogos.iter().find(|jogo| jogo.clsid == Some(crate::session::Z_WHEEL)) {
+        return Some(jogo.path.clone());
+    }
+    let casa = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from);
+    let pastas = [
+        roms.map(Path::to_path_buf),
+        roms.and_then(Path::parent).map(Path::to_path_buf),
+        casa.as_ref().map(|casa| casa.join("Downloads")),
+        casa,
+    ];
+    pastas.into_iter().flatten().find_map(|pasta| {
+        let mut candidatos: Vec<PathBuf> = std::fs::read_dir(&pasta)
+            .ok()?
+            .flatten()
+            .map(|entrada| entrada.path())
+            .filter(|caminho| {
+                caminho.file_name().and_then(|n| n.to_str()).is_some_and(|nome| {
+                    let nome = nome.to_lowercase();
+                    nome.contains("wheel") || nome.contains("tectoy")
+                })
+            })
+            .collect();
+        candidatos.sort();
+        candidatos.iter().find_map(|caminho| z_wheel_em(caminho))
+    })
+}
+
 /// Transforma um arquivo encontrado em jogo. `None` para o que não é jogo — um `.zip` sem
 /// módulo dentro é só um zip.
 fn describe(path: PathBuf) -> Option<Game> {
@@ -162,7 +213,7 @@ fn describe(path: PathBuf) -> Option<Game> {
 ///
 /// É a saída para quem quer uma capa de verdade: os `.mif` só guardam ícones de menu, que não
 /// passam de 65×42, e nenhuma ROM traz arte maior que isso.
-fn cover(path: &Path) -> Option<Image> {
+pub fn cover(path: &Path) -> Option<Image> {
     COVER_EXTENSIONS
         .iter()
         .map(|extension| path.with_extension(extension))

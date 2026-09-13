@@ -161,6 +161,8 @@ pub struct Settings {
     pub language: Option<String>,
     /// Onde procurar os jogos.
     pub roms_dir: Option<PathBuf>,
+    /// O pacote da Z-Wheel: abre pela barra de cima e empresta as capas à biblioteca.
+    pub z_wheel_path: Option<PathBuf>,
     pub graphics: Graphics,
     pub debug: DebugView,
     pub audio: Audio,
@@ -276,6 +278,7 @@ mod tests {
         let settings = Settings {
             language: Some("pt-BR".into()),
             roms_dir: Some(PathBuf::from("/jogos/zeebo")),
+            z_wheel_path: Some(PathBuf::from("/jogos/Z-Wheel.zip")),
             graphics: Graphics {
                 scaling: Scaling::Fit,
                 ..Graphics::default()
