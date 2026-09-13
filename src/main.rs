@@ -242,6 +242,35 @@ fn main() -> ExitCode {
             let superficies = args.iter().find_map(|a| a.strip_prefix("--dump-surfaces="));
             report(bench_dynarmic(&args[1], seconds, dump, &keys, &teclas, instalados, superficies))
         }
+        // Mostra o Wii Remote ao vivo: botões e aceleração, para conferir a leitura sem janela.
+        Some("wiimote") => {
+            let segundos: u64 = args
+                .iter()
+                .find_map(|a| a.strip_prefix("--seconds="))
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10);
+            let wiimotes = input::wiimote::Wiimotes::inicia();
+            let fim = std::time::Instant::now() + std::time::Duration::from_secs(segundos);
+            while std::time::Instant::now() < fim {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                match wiimotes.estado(0) {
+                    Some(e) => {
+                        let apertados: Vec<&str> = input::wiimote::BOTOES
+                            .iter()
+                            .map(|(nome, _)| *nome)
+                            .filter(|nome| e.apertado(nome))
+                            .collect();
+                        let [x, y, z] = e.aceleracao;
+                        println!(
+                            "x {x:+.2} y {y:+.2} z {z:+.2} g  acelerômetro: {}  botões: {apertados:?}",
+                            if e.com_acelerometro { "sim" } else { "ainda não" }
+                        );
+                    }
+                    None => println!("nenhum Wii Remote"),
+                }
+            }
+            ExitCode::SUCCESS
+        }
         Some("sessao") if args.len() >= 2 => {
             let seconds = args
                 .iter()
@@ -297,7 +326,30 @@ fn main() -> ExitCode {
                 "--perfil" => Some(0),
                 outro => outro.strip_prefix("--perfil=").and_then(|n| n.parse::<u32>().ok()),
             });
-            report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial, z_wheel, escala, melhorias, perfil))
+            // `--boomerang` põe um Boomerang na porta um; `--movimento=ms:x:y:z,...` diz a
+            // aceleração dele a partir de cada instante, em g.
+            let movimento: Vec<(u32, [f32; 3])> = args
+                .iter()
+                .find_map(|a| a.strip_prefix("--movimento="))
+                .map(|lista| {
+                    lista
+                        .split(',')
+                        .filter_map(|item| {
+                            let partes: Vec<&str> = item.split(':').collect();
+                            let [quando, x, y, z] = partes.as_slice() else {
+                                return None;
+                            };
+                            Some((
+                                quando.parse().ok()?,
+                                [x.parse().ok()?, y.parse().ok()?, z.parse().ok()?],
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let boomerang = (args.iter().any(|a| a == "--boomerang") || !movimento.is_empty())
+                .then_some(movimento);
+            report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial, z_wheel, escala, melhorias, perfil, boomerang))
         }
         // Sem argumento nenhum, o que se quer é o emulador, não a ajuda.
         None => launch(),
@@ -314,7 +366,7 @@ fn main() -> ExitCode {
                              [--sem-rede] [--servidor=MAQUINA[:PORTA]] [--ponte]
                              [--portas=controle|teclado|nenhum,...] [--teclas=ms:nome,...]"
             );
-            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N] [--msaa=N] [--aniso=N] [--perfil[=MS]]  (a sessão da janela, sem janela)");
+            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N] [--msaa=N] [--aniso=N] [--perfil[=MS]] [--boomerang] [--movimento=ms:x:y:z,...]  (a sessão da janela, sem janela)");
             eprintln!("     zeebx bench <arquivo.mod|zip> [--seconds=N] [--keys=ms:tecla,...] [--dump=QUADRO.bmp] [--teclas=ms:nome,...] [--instalados=0xCLSID[:id],...] [--dump-surfaces=DIR]  (Dynarmic, sem janela)");
             ExitCode::FAILURE
         }
@@ -485,8 +537,10 @@ fn aparelhos(lista: &str) -> Option<[Option<bindings::Aparelho>; input::PORTAS]>
     for (n, nome) in lista.split(',').enumerate() {
         let porta = portas.get_mut(n)?;
         *porta = match nome.trim() {
-            "controle" | "pad" => Some(bindings::Aparelho::Controle),
+            "controle" | "pad" | "dragon" => Some(bindings::Aparelho::Controle),
+            "zpad" | "z-pad" => Some(bindings::Aparelho::ZPad),
             "teclado" | "keyboard" => Some(bindings::Aparelho::Teclado),
+            "boomerang" => Some(bindings::Aparelho::Boomerang),
             "nenhum" | "none" | "" => None,
             _ => return None,
         };
@@ -1096,6 +1150,7 @@ fn sessao_sem_janela(
     escala: usize,
     melhorias: (usize, usize),
     perfil: Option<u32>,
+    boomerang: Option<Vec<(u32, [f32; 3])>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let serial = serial.map(std::path::Path::new);
     let settings = ui::settings::Settings::load();
@@ -1104,9 +1159,13 @@ fn sessao_sem_janela(
         .as_deref()
         .map(library::scan)
         .unwrap_or_default();
+    let portas = match boomerang {
+        Some(_) => [Some(bindings::Aparelho::Boomerang), None],
+        None => PORTAS_PADRAO,
+    };
     let mut session = session::Session::start_with(
         std::path::Path::new(path),
-        PORTAS_PADRAO,
+        portas,
         serial,
         placa,
         None,
@@ -1145,6 +1204,16 @@ fn sessao_sem_janela(
             pad = input::Pad::default();
         }
         session.set_port_pad(0, pad);
+        if let Some(roteiro) = &boomerang {
+            // O último movimento cujo instante já passou; antes do primeiro, parado de face para
+            // cima.
+            let agora = roteiro
+                .iter()
+                .rev()
+                .find(|(quando, _)| session.clock_ms() >= *quando)
+                .map_or([0.0, 0.0, 1.0], |(_, g)| *g);
+            session.set_port_motion(0, agora);
+        }
         for (avk, apertada) in ui::App::teclas_do_controle(&antes, &pad) {
             session.set_key(avk, apertada);
         }

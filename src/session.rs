@@ -557,6 +557,11 @@ impl Session {
         self.machine.set_port_pad(porta, pad);
     }
 
+    /// A aceleração de uma porta com Boomerang. Ver [`crate::machine::Machine::set_port_motion`].
+    pub fn set_port_motion(&mut self, porta: usize, aceleracao: [f32; 3]) {
+        self.machine.set_port_motion(porta, aceleracao);
+    }
+
     /// Uma tecla do teclado, apertada ou solta.
     ///
     /// O console tem teclado além dos dois controles, e o BREW o entrega como evento ao

@@ -88,6 +88,7 @@ impl<C: CpuBackend> Machine<C> {
         self.parte_animacao()?;
         self.skip_wheel_instructions()?;
         self.flush_keys()?;
+        self.relatorio_do_boomerang();
         let pending = std::mem::take(&mut self.pending_signals);
         let mut outcomes = Vec::new();
         for callback in pending {

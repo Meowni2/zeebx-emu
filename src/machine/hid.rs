@@ -45,8 +45,18 @@ impl<C: CpuBackend> Machine<C> {
                 // Z-Wheel passa capacidade dois nas duas chamadas, que é o número de USB do
                 // console.
                 let quais = match wanted {
+                    // Um receptor atende os dois Boomerangs, então ele entra uma vez só, na
+                    // primeira porta que tem um.
                     UID_JOYSTICK_DEVICE => {
-                        self.portas_com(crate::input::bindings::Aparelho::Controle)
+                        let mut portas =
+                            self.portas_com(crate::input::bindings::Aparelho::Controle);
+                        portas.extend(self.portas_com(crate::input::bindings::Aparelho::ZPad));
+                        portas.extend(
+                            self.portas_com(crate::input::bindings::Aparelho::Boomerang)
+                                .first(),
+                        );
+                        portas.sort_unstable();
+                        portas
                     }
                     UID_KEYBOARD_DEVICE => {
                         self.portas_com(crate::input::bindings::Aparelho::Teclado)
@@ -94,12 +104,17 @@ impl<C: CpuBackend> Machine<C> {
                     Some(crate::input::bindings::Aparelho::Teclado) => HID_TYPE_KEYBOARD,
                     _ => HID_TYPE_GAMEPAD,
                 };
+                let (vendedor, produto) = match self.portas[porta] {
+                    Some(crate::input::bindings::Aparelho::Boomerang) => {
+                        (BOOMERANG_VENDOR_ID, BOOMERANG_PRODUCT_ID)
+                    }
+                    Some(crate::input::bindings::Aparelho::ZPad) => (ZPAD_VENDOR_ID, ZPAD_PRODUCT_ID),
+                    _ => (GAMEPAD_VENDOR_ID, GAMEPAD_PRODUCT_ID),
+                };
                 if out != 0 {
                     self.cpu.write_u32(out, tipo)?;
-                    self.cpu
-                        .write_mem(out + 4, &GAMEPAD_PRODUCT_ID.to_le_bytes())?;
-                    self.cpu
-                        .write_mem(out + 6, &GAMEPAD_VENDOR_ID.to_le_bytes())?;
+                    self.cpu.write_mem(out + 4, &produto.to_le_bytes())?;
+                    self.cpu.write_mem(out + 6, &vendedor.to_le_bytes())?;
                     self.cpu.write_u32(out + 8, 0)?;
                 }
                 SUCCESS
@@ -138,6 +153,10 @@ impl<C: CpuBackend> Machine<C> {
                 SUCCESS
             }
             // A posição corrente de cada eixo.
+            "GetPositionState" if self.e_boomerang(self.porta_do(this)) => {
+                self.pacote_do_boomerang(a1)?;
+                SUCCESS
+            }
             "GetPositionState" => {
                 let pad = self.pads[self.porta_do(this)];
                 let axes = [0, 1, 2, 3].map(|i| pad.eixo_do_console(i));
@@ -148,7 +167,15 @@ impl<C: CpuBackend> Machine<C> {
             // ocupa aquele campo. É assim que o `AEEHIDThumbsticks.c` do SDK descobre onde
             // está cada direção — e enquanto respondíamos zeros, ele não achava nenhuma.
             "GetAxesInfo" => {
-                self.write_axes_info(a1, &input::AXIS_UIDS.map(|uid| uid as i32))?;
+                // O receptor do Boomerang troca Z e RZ em relação ao controle, como diz a entrada
+                // dele no `hid_devices.cfg`. O Crash Nitro Kart lê o acelerômetro pelos analógicos
+                // e acha a gravidade pelo UID: com a tabela do controle, ela caía no campo errado e
+                // a calibração nunca aceitava a leitura.
+                let uids = match self.e_boomerang(self.porta_do(this)) {
+                    true => [0x0106_c4d0, 0x0106_c4d1, 0x0106_c4cf, 0x0106_c4ce],
+                    false => input::AXIS_UIDS,
+                };
+                self.write_axes_info(a1, &uids.map(|uid| uid as i32))?;
                 SUCCESS
             }
             // Os limites valem para **todos** os eixos da struct, não só os quatro que o
@@ -333,6 +360,106 @@ impl<C: CpuBackend> Machine<C> {
         if moved {
             self.raise_input_signal("RegisterForPositionChange");
         }
+    }
+
+    /// A aceleração de uma porta com Boomerang, em g no referencial dele: `x` ao longo do
+    /// controle, `y` para a frente e `z` saindo da face dos botões. Parado com a face para cima,
+    /// `[0, 0, 1]`.
+    pub fn set_port_motion(&mut self, porta: usize, aceleracao: [f32; 3]) {
+        if let Some(movimento) = self.movimento.get_mut(porta) {
+            *movimento = aceleracao;
+        }
+    }
+
+    /// O receptor do Boomerang manda relatório sem parar, e cada um acorda quem registrou
+    /// `RegisterForPositionChange`, mesmo com a aceleração igual. O Crash Nitro Kart só lê a
+    /// posição dentro desse aviso: sem ele, a calibração recebia uma leitura e esperava as outras
+    /// para sempre. O ritmo é o do tempo virtual, e não o de quem entrega o movimento.
+    pub(super) fn relatorio_do_boomerang(&mut self) {
+        let agora = self.now_us();
+        if agora.saturating_sub(self.ultimo_relatorio_boomerang_us) < BOOMERANG_PERIODO_US {
+            return;
+        }
+        self.ultimo_relatorio_boomerang_us = agora;
+        if (0..input::PORTAS).any(|porta| self.e_boomerang(porta)) {
+            self.raise_input_signal("RegisterForPositionChange");
+        }
+    }
+
+    pub(super) fn e_boomerang(&self, porta: usize) -> bool {
+        self.portas.get(porta).copied().flatten() == Some(crate::input::bindings::Aparelho::Boomerang)
+    }
+
+    /// Escreve no `AEEHIDPositionInfo` um pacote do receptor do Boomerang.
+    ///
+    /// O Boomerang não usa a estrutura como eixos: ela é o relatório bruto do receptor, e o
+    /// jogo o desmonta. Lido no Zeebo Sports Queimada (`0x4231c`, `0x42458`, `0x40b0c`,
+    /// `0x413d0`, `0x412f4`), com os campos contados a partir do primeiro inteiro depois do
+    /// `bRelativeAxes`:
+    ///
+    /// - **Campos 1, 2 e 3: o acelerômetro**, um byte por eixo centrado em `0x80`. O jogo gira X
+    ///   e Y em 20° (`0,94` e `0,342`) antes de usar — o sensor fica torto dentro do braço — e
+    ///   calibra zero e escala com o controle parado de face para cima e depois para baixo.
+    /// - **Campo 4: os botões**, em lógica invertida (bit em zero é apertado): bit 0 o botão 1,
+    ///   1 o botão 2, 2 o HOME, 3 esquerda, 4 baixo, 5 direita e 6 cima.
+    /// - **Campo 5: o jogador e o tipo.** O bit 0 diz de qual dos dois Boomerangs é o pacote; o
+    ///   resto é o tipo. Tipo 0 é "desconectado"; de 1 a 4 conecta, e o campo 6 leva um dado do
+    ///   aparelho que muda com o tipo.
+    /// - **Campo 8: o contador**, de 8 bits. O jogo espera que ele ande de um em um; um pulo
+    ///   marca pacote perdido, e na partida ele espera o contador mudar para dar o receptor como
+    ///   vivo. Parado, o jogo fica preso nesse laço.
+    ///
+    /// Cada leitura é um pacote novo, e os dois jogadores se alternam nele.
+    pub(super) fn pacote_do_boomerang(&mut self, addr: u32) -> Result<(), CpuError> {
+        if addr == 0 {
+            return Ok(());
+        }
+        // 1 g em unidades do sensor. A calibração do Crash Nitro Kart só aceita a gravidade entre
+        // 162 e 220, o que centra 1 g perto de 63; o Queimada normaliza pela leitura parada.
+        const ESCALA: f32 = 60.0;
+        const COS: f32 = 0.94;
+        const SEN: f32 = 0.342;
+        let sequencia = self.boomerang_sequencia;
+        self.boomerang_sequencia = sequencia.wrapping_add(1);
+        let jogador = usize::from(sequencia & 1);
+        let porta = self
+            .portas_com(crate::input::bindings::Aparelho::Boomerang)
+            .get(jogador)
+            .copied();
+        let mut campos = [0u32; input::POSITION_INFO_WORDS];
+        let [x, y, z] = porta.map_or([0.0, 0.0, 1.0], |p| self.movimento[p]);
+        // O inverso do giro que o jogo aplica: assim ele chega à aceleração que entregamos.
+        let bruto = [COS * x - SEN * y, SEN * x + COS * y, z];
+        for (campo, valor) in campos[1..4].iter_mut().zip(bruto) {
+            *campo = (0x80 as f32 + valor * ESCALA).round().clamp(0.0, 255.0) as u32;
+        }
+        let mut soltos = 0x7fu32;
+        if let Some(porta) = porta {
+            let pad = self.pads[porta];
+            const BITS: [(&str, u32); 7] = [
+                ("b1", 0),
+                ("b2", 1),
+                ("back", 2),
+                ("left", 3),
+                ("down", 4),
+                ("right", 5),
+                ("up", 6),
+            ];
+            for (nome, bit) in BITS {
+                if Pad::button_by_name(nome).is_some_and(|i| pad.is_down(i)) {
+                    soltos &= !(1 << bit);
+                }
+            }
+        }
+        campos[4] = soltos;
+        let tipo = match porta {
+            Some(_) => 1,
+            None => 0,
+        };
+        campos[5] = (tipo << 1) | u32::from(sequencia & 1);
+        campos[8] = u32::from(sequencia);
+        let bytes: Vec<u8> = campos.iter().flat_map(|w| w.to_le_bytes()).collect();
+        self.cpu.write_mem(addr, &bytes)
     }
 
     /// A porta de um `IHIDDevice`, ou a primeira quando o objeto não foi registrado.

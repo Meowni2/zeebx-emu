@@ -51,6 +51,12 @@ const SCREEN: [usize; 2] = [640, 480];
 /// A imagem de quem não tem imagem nenhuma.
 const PLACEHOLDER: &[u8] = include_bytes!("../../assets/zeebx.png");
 
+/// Quantas leituras paradas a calibração do movimento junta: meio segundo a 100 por segundo.
+const AMOSTRAS_DA_CALIBRACAO: usize = 50;
+
+/// O Boomerang, para a prévia dos controles.
+const BOOMERANG: &[u8] = include_bytes!("../../assets/boomerang.png");
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
     General,
@@ -133,6 +139,12 @@ pub struct App {
     /// A escolha e a animação da biblioteca.
     vitrine: vitrine::Vitrine,
     teclado_apertado: HashSet<egui::Key>,
+    /// Os Wii Remotes, que alimentam as portas com Boomerang.
+    wiimotes: crate::input::wiimote::Wiimotes,
+    /// A imagem do Boomerang na prévia dos controles.
+    boomerang_textura: Option<egui::TextureHandle>,
+    /// A calibração do movimento em andamento: a porta e as leituras juntadas até agora.
+    calibrando: Option<(usize, Vec<[f32; 3]>)>,
     teclas_entregues: HashSet<u32>,
     /// O que dizer sobre a última tentativa de exportar o log.
     log_status: Option<String>,
@@ -230,6 +242,9 @@ impl App {
             acervo: None,
             vitrine: Default::default(),
             teclado_apertado: HashSet::new(),
+            wiimotes: crate::input::wiimote::Wiimotes::inicia(),
+            boomerang_textura: None,
+            calibrando: None,
             teclas_entregues: HashSet::new(),
             log_status: None,
             log_dismissed: false,
@@ -672,7 +687,9 @@ impl App {
                 ui.separator();
                 ui.label(self.catalog.get("controls.kind"));
                 for (aparelho, chave) in [
-                    (Aparelho::Controle, "controls.kind.pad"),
+                    (Aparelho::ZPad, "controls.kind.zpad"),
+                    (Aparelho::Controle, "controls.kind.dragon"),
+                    (Aparelho::Boomerang, "controls.kind.boomerang"),
                     (Aparelho::Teclado, "controls.kind.keyboard"),
                 ] {
                     if ui
@@ -686,11 +703,123 @@ impl App {
                 }
             });
         });
-        if self.settings.controls.player_mut(porta).aparelho == Aparelho::Teclado {
-            ui.weak(self.catalog.get("controls.kind.hint"));
+        match self.settings.controls.player_mut(porta).aparelho {
+            Aparelho::Teclado => {
+                ui.weak(self.catalog.get("controls.kind.hint"));
+            }
+            Aparelho::Boomerang => {
+                ui.weak(self.catalog.get("controls.kind.boomerang.hint"));
+            }
+            Aparelho::Controle | Aparelho::ZPad => {
+                ui.weak(self.catalog.get("controls.kind.pad.hint"));
+            }
         }
         ui.add_space(8.0);
         changed
+    }
+
+    /// A prévia do Boomerang: a imagem inclina com o Wii Remote, e embaixo ficam o que está
+    /// apertado, a aceleração e a calibração.
+    ///
+    /// O desenho é o controle visto de cima, e a gravidade não mede giro nesse plano. Então a
+    /// prévia o trata como visto de lado: levantar a ponta (inclinar para a frente) gira a
+    /// imagem, e girar o controle em torno do próprio comprimento a achata, como um cartão
+    /// virando. As duas saem da gravidade e só valem com o controle quase parado — é o mesmo que
+    /// os jogos fazem.
+    fn boomerang_view(&mut self, ui: &mut egui::Ui) {
+        self.gamepads.poll();
+        ui.ctx().request_repaint();
+        let porta = self.porta_editada;
+        let pad = self.pad_of(ui.ctx(), porta);
+        let wiimote = self.wiimote_da_porta(porta);
+        let [x, y, z] = self.movimento_da_porta(porta);
+        // A calibração em andamento junta leituras paradas e fecha na média.
+        let bruto_agora = self.movimento_bruto_da_porta(porta);
+        if let Some((de, amostras)) = &mut self.calibrando
+            && *de == porta
+            && let Some(bruto) = bruto_agora
+        {
+            amostras.push(bruto);
+            if amostras.len() >= AMOSTRAS_DA_CALIBRACAO {
+                let n = amostras.len() as f32;
+                let media: [f32; 3] =
+                    std::array::from_fn(|i| amostras.iter().map(|a| a[i]).sum::<f32>() / n);
+                self.settings.controls.player_mut(porta).calibracao_movimento =
+                    crate::input::bindings::CalibracaoDeMovimento::de_repouso(media);
+                self.calibrando = None;
+                self.save();
+            }
+        }
+        let textura = self
+            .boomerang_textura
+            .get_or_insert_with(|| {
+                let imagem = crate::video::icon::decode(BOOMERANG)
+                    .map(|imagem| imagem.downscaled(480))
+                    .unwrap_or(crate::video::icon::Image {
+                        width: 1,
+                        height: 1,
+                        rgba: vec![0; 4],
+                    });
+                ui.ctx().load_texture(
+                    "boomerang",
+                    egui::ColorImage::from_rgba_unmultiplied(
+                        [imagem.width, imagem.height],
+                        &imagem.rgba,
+                    ),
+                    egui::TextureOptions::LINEAR,
+                )
+            })
+            .clone();
+        let arfagem = y.atan2((x * x + z * z).sqrt());
+        let rolagem = x.atan2(z);
+        let calibrando = self.calibrando.is_some();
+        let mut calibrar = false;
+        let mut restaurar = false;
+        ui.vertical_centered(|ui| {
+            let largura = ui.available_width().min(360.0);
+            let fonte = textura.size_vec2();
+            let altura = largura * fonte.y / fonte.x;
+            let (area, _) =
+                ui.allocate_exact_size(egui::vec2(largura, altura * 1.6), egui::Sense::hover());
+            let tamanho = egui::vec2(largura, altura * rolagem.cos().abs().max(0.12));
+            egui::Image::new(&textura)
+                .rotate(-arfagem, egui::Vec2::splat(0.5))
+                .paint_at(ui, egui::Rect::from_center_size(area.center(), tamanho));
+
+            let nomes: Vec<&str> = ["up", "down", "left", "right", "b1", "b2", "back"]
+                .into_iter()
+                .filter(|nome| Pad::button_by_name(nome).is_some_and(|i| pad.is_down(i)))
+                .collect();
+            let estado = match wiimote {
+                Some(w) if w.com_acelerometro => self.tr("controls.boomerang.wiimote"),
+                Some(_) => self.tr("controls.boomerang.wiimote_no_accel"),
+                None => self.tr("controls.boomerang.no_wiimote"),
+            };
+            ui.label(estado);
+            ui.monospace(format!(
+                "x {x:+.2}  y {y:+.2}  z {z:+.2} g   {}  {}",
+                format!("↕ {:+.0}°  ⟲ {:+.0}°", arfagem.to_degrees(), rolagem.to_degrees()),
+                nomes.join(" ")
+            ));
+            ui.horizontal(|ui| {
+                ui.add_enabled_ui(wiimote.is_some_and(|w| w.com_acelerometro) && !calibrando, |ui| {
+                    calibrar = ui.button(self.catalog.get("controls.boomerang.calibrate")).clicked();
+                });
+                restaurar = ui.button(self.catalog.get("controls.boomerang.calibrate_reset")).clicked();
+            });
+            ui.weak(match calibrando {
+                true => self.tr("controls.boomerang.calibrating"),
+                false => self.tr("controls.boomerang.calibrate_hint"),
+            });
+        });
+        if calibrar {
+            self.calibrando = Some((porta, Vec::new()));
+        }
+        if restaurar {
+            self.calibrando = None;
+            self.settings.controls.player_mut(porta).calibracao_movimento = Default::default();
+            self.save();
+        }
     }
 
     /// O desenho do controle. Devolve o botão clicado.
@@ -737,7 +866,14 @@ impl App {
             return changed;
         }
 
-        if let Some(button) = self.controller_view(ui) {
+        let e_boomerang = self
+            .settings
+            .controls
+            .player(self.porta_editada)
+            .is_some_and(|jogador| jogador.aparelho == crate::input::bindings::Aparelho::Boomerang);
+        if e_boomerang {
+            self.boomerang_view(ui);
+        } else if let Some(button) = self.controller_view(ui) {
             // Clicar na peça é o mesmo que clicar em "Atribuir" na linha dela.
             self.capturing = match self.capturing.as_deref() == Some(button.as_str()) {
                 true => None,
@@ -778,6 +914,12 @@ impl App {
                             chosen = Some(Some(device.clone()));
                         }
                     }
+                    for indice in 0..self.wiimotes.quantos() {
+                        let nome = crate::input::wiimote::Wiimotes::nome(indice);
+                        if ui.selectable_label(false, &nome).clicked() {
+                            chosen = Some(Some(nome));
+                        }
+                    }
                 });
             if let Some(device) = chosen {
                 // Escolher um controle traz o mapeamento típico dele junto; ficar sem controle
@@ -789,6 +931,14 @@ impl App {
                 let atual = self.settings.controls.player_mut(self.porta_editada);
                 let (ligada, aparelho) = (atual.ligada, atual.aparelho);
                 *atual = match device {
+                    // O Wii Remote não passa pelo gilrs: os botões dele se somam aos das teclas
+                    // na própria porta, então o mapeamento de teclado fica.
+                    Some(name) if crate::input::wiimote::Wiimotes::indice_do_nome(&name).is_some() => {
+                        crate::input::bindings::Player {
+                            device: Some(name),
+                            ..Default::default()
+                        }
+                    }
                     Some(name) => crate::input::bindings::Player::with_gamepad(name),
                     None => crate::input::bindings::Player::default(),
                 };
@@ -1612,10 +1762,77 @@ impl App {
                 .collect()
         });
         let gamepads = &self.gamepads;
-        player.pad(
+        let mut pad = player.pad(
             |source| pressed.contains(source) || gamepads.is_active(device.as_deref(), source),
             |axis| gamepads.value(device.as_deref(), axis),
-        )
+        );
+        // O Wii Remote da porta soma os botões dele aos mapeados: o direcional no direcional,
+        // 1 e A no botão 1, 2 e B no botão 2 e o HOME no HOME.
+        if let Some(wiimote) = self.wiimote_da_porta(porta) {
+            const DO_WIIMOTE: [(&str, &str); 9] = [
+                ("up", "up"),
+                ("down", "down"),
+                ("left", "left"),
+                ("right", "right"),
+                ("1", "b1"),
+                ("a", "b1"),
+                ("2", "b2"),
+                ("b", "b2"),
+                ("home", "back"),
+            ];
+            for (dele, nosso) in DO_WIIMOTE {
+                if wiimote.apertado(dele)
+                    && let Some(indice) = Pad::button_by_name(nosso)
+                {
+                    pad.press(indice, true);
+                }
+            }
+        }
+        pad
+    }
+
+    /// O Wii Remote que alimenta uma porta com Boomerang: o escolhido na lista de controles, ou,
+    /// sem escolha, o primeiro controle para o primeiro Boomerang e o segundo para o segundo.
+    fn wiimote_da_porta(&self, porta: usize) -> Option<crate::input::wiimote::EstadoWiimote> {
+        use crate::input::bindings::Aparelho;
+        use crate::input::wiimote::Wiimotes;
+        let jogador = self.settings.controls.player(porta)?;
+        if let Some(indice) = jogador.device.as_deref().and_then(Wiimotes::indice_do_nome) {
+            return self.wiimotes.estado(indice);
+        }
+        if jogador.aparelho != Aparelho::Boomerang {
+            return None;
+        }
+        let boomerangs: Vec<usize> = self
+            .settings
+            .controls
+            .ligadas()
+            .filter(|(_, jogador)| jogador.aparelho == Aparelho::Boomerang)
+            .map(|(indice, _)| indice)
+            .collect();
+        let ordem = boomerangs.iter().position(|&p| p == porta)?;
+        self.wiimotes.estado(ordem)
+    }
+
+    /// A aceleração que o Boomerang de uma porta sente. Sem Wii Remote, parado de face para cima.
+    ///
+    /// Os dois controles se seguram do mesmo jeito — apontando para a tela, com os botões para
+    /// cima —, então os eixos passam direto.
+    fn movimento_da_porta(&self, porta: usize) -> [f32; 3] {
+        let Some(bruto) = self.movimento_bruto_da_porta(porta) else {
+            return [0.0, 0.0, 1.0];
+        };
+        self.settings
+            .controls
+            .player(porta)
+            .map_or(bruto, |jogador| jogador.calibracao_movimento.aplica(bruto))
+    }
+
+    /// A aceleração que o Wii Remote da porta mede, sem calibração.
+    fn movimento_bruto_da_porta(&self, porta: usize) -> Option<[f32; 3]> {
+        self.wiimote_da_porta(porta)
+            .filter(|wiimote| wiimote.com_acelerometro)
+            .map(|wiimote| wiimote.aceleracao)
     }
 
     /// Combina as fontes antes de emitir transições: uma seta física pode estar
@@ -1755,12 +1972,17 @@ impl App {
             ));
         }
         let limit = self.settings.graphics.speed_limit;
+        let movimentos: [[f32; 3]; crate::input::PORTAS] =
+            std::array::from_fn(|porta| self.movimento_da_porta(porta));
         let Some(session) = &mut self.session else {
             return true;
         };
         if let Some(pads) = pads {
             for (porta, pad) in pads {
                 session.set_port_pad(porta, pad);
+            }
+            for porta in 0..crate::input::PORTAS {
+                session.set_port_motion(porta, movimentos[porta]);
             }
             for (avk, apertada) in teclas {
                 session.set_key(avk, apertada);

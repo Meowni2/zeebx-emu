@@ -99,10 +99,20 @@ impl Source {
 /// joystick do console é a combinação que todo jogo entende, e continua sendo o padrão.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Aparelho {
-    /// O controle do Zeebo. É o que todos os jogos usam.
+    /// O Dragon, o controle que anuncia `1EAA:0135` ("New Zeebo Game Controller" no
+    /// `hid_devices.cfg`). É o que o descritor USB capturado de um console mostra, e o que o
+    /// emulador sempre apresentou; o nome serializado continua `Controle` por isso.
     Controle,
+    /// O Z-Pad, que anuncia `1A5C:3033` ("Zeebo Game Controller"). Os botões e os eixos são os
+    /// mesmos do Dragon — o que muda é a pegada —, então para o jogo a diferença é só o par
+    /// VID/PID, que os jogos da Boomerang Sports usam para escolher o tratamento.
+    ZPad,
     /// Um teclado USB. O console enumera; jogo que o use, ainda não vimos.
     Teclado,
+    /// O Boomerang, o controle de movimento: direcional, botões 1 e 2, HOME e acelerômetro. Os
+    /// jogos da Boomerang Sports o reconhecem e passam a jogar pelo movimento; os outros o veem
+    /// como um controle com poucos botões. Ver [`crate::machine`], `pacote_do_boomerang`.
+    Boomerang,
 }
 
 impl Default for Aparelho {
@@ -130,6 +140,47 @@ pub struct Player {
     /// Vazio deixa os eixos por conta do direcional digital, que é o que o teclado permite.
     #[serde(default)]
     pub axes: BTreeMap<String, AxisSource>,
+    /// A calibração do sensor de movimento que alimenta esta porta, para o Boomerang.
+    #[serde(default)]
+    pub calibracao_movimento: CalibracaoDeMovimento,
+}
+
+/// A correção de um acelerômetro do host: o que ele mede parado, de face para cima, vira
+/// exatamente `[0, 0, 1]` g. Em milésimos, para o mapeamento continuar comparável por igualdade.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CalibracaoDeMovimento {
+    /// O desvio de cada eixo, em mg.
+    pub zero_mg: [i32; 3],
+    /// Quanto o sensor mede para 1 g, em mg.
+    pub escala_mg: i32,
+}
+
+impl Default for CalibracaoDeMovimento {
+    fn default() -> Self {
+        Self {
+            zero_mg: [0; 3],
+            escala_mg: 1000,
+        }
+    }
+}
+
+impl CalibracaoDeMovimento {
+    /// A calibração que leva a média `parado` — lida com o controle imóvel de face para cima —
+    /// a `[0, 0, 1]`.
+    pub fn de_repouso(parado: [f32; 3]) -> Self {
+        let escala = parado.iter().map(|v| v * v).sum::<f32>().sqrt().max(0.1);
+        let zero = [parado[0], parado[1], parado[2] - escala];
+        Self {
+            zero_mg: zero.map(|v| (v * 1000.0).round() as i32),
+            escala_mg: (escala * 1000.0).round() as i32,
+        }
+    }
+
+    pub fn aplica(&self, bruto: [f32; 3]) -> [f32; 3] {
+        let escala = self.escala_mg.max(100) as f32 / 1000.0;
+        std::array::from_fn(|i| (bruto[i] - self.zero_mg[i] as f32 / 1000.0) / escala)
+    }
 }
 
 impl Default for Player {
@@ -178,6 +229,7 @@ impl Default for Player {
             buttons,
             // O teclado não tem analógico: os eixos ficam com o direcional digital.
             axes: BTreeMap::new(),
+            calibracao_movimento: CalibracaoDeMovimento::default(),
         }
     }
 }
@@ -420,6 +472,13 @@ pub const CONFIGURABLE: [&str; 13] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_calibracao_leva_o_repouso_a_um_g_para_cima() {
+        let calibracao = CalibracaoDeMovimento::de_repouso([0.02, -0.05, 1.14]);
+        let [x, y, z] = calibracao.aplica([0.02, -0.05, 1.14]);
+        assert!(x.abs() < 0.01 && y.abs() < 0.01 && (z - 1.0).abs() < 0.01, "{x} {y} {z}");
+    }
     use crate::input::BUTTON_NAMES;
 
     /// O índice do `up` no controle do console, para os testes não repetirem a busca.

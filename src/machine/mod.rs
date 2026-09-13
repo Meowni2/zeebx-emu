@@ -340,6 +340,16 @@ fn to_rgbval(color: Rgb) -> u32 {
 /// Game Pad".
 const GAMEPAD_VENDOR_ID: u16 = 0x1eaa;
 const GAMEPAD_PRODUCT_ID: u16 = 0x0135;
+/// O Z-Pad: a entrada "Zeebo Game Controller" do `hid_devices.cfg`.
+const ZPAD_VENDOR_ID: u16 = 0x1a5c;
+const ZPAD_PRODUCT_ID: u16 = 0x3033;
+/// O receptor do Boomerang: a entrada "Zeebo Accelerometer Controller" do `hid_devices.cfg`.
+/// Os jogos da Boomerang Sports só tratam o aparelho como Boomerang com este par.
+/// De quanto em quanto o receptor do Boomerang manda um relatório: 100 por segundo, alternando os
+/// dois jogadores.
+const BOOMERANG_PERIODO_US: u64 = 10_000;
+const BOOMERANG_VENDOR_ID: u16 = 0x15a2;
+const BOOMERANG_PRODUCT_ID: u16 = 0x0003;
 /// Identificador de uma porta na enumeração: `1` e `2`, na ordem das portas.
 ///
 /// O `CreateDevice` recebe este número de volta, e é por ele que sabemos de qual porta o
@@ -1886,6 +1896,12 @@ pub struct Machine<C: CpuBackend> {
     portas: [Option<crate::input::bindings::Aparelho>; input::PORTAS],
     /// A porta de cada `IHIDDevice` que o jogo criou, pelo endereço do objeto.
     portas_de_aparelho: HashMap<u32, usize>,
+    /// A aceleração de cada porta, em g, no referencial do Boomerang. Só as portas com Boomerang
+    /// a usam.
+    movimento: [[f32; 3]; input::PORTAS],
+    /// O contador de pacotes do receptor do Boomerang. Ver [`Machine::pacote_do_boomerang`].
+    boomerang_sequencia: u8,
+    ultimo_relatorio_boomerang_us: u64,
     /// Teclas apertadas e ainda não entregues, como `(código AVK, apertada)`.
     teclas: std::collections::VecDeque<(u32, bool)>,
     /// Os últimos toques entregues, para o relatório.
@@ -2421,6 +2437,9 @@ impl<C: CpuBackend> Machine<C> {
             pending_signals: Vec::new(),
             pads: [Pad::default(); input::PORTAS],
             pad_events: std::array::from_fn(|_| std::collections::VecDeque::new()),
+            movimento: [[0.0, 0.0, 1.0]; input::PORTAS],
+            boomerang_sequencia: 0,
+            ultimo_relatorio_boomerang_us: 0,
             // Uma porta com controle é o que sempre houve; a interface muda isto ao aplicar os
             // ajustes, e o modo sem janela nunca mexe.
             portas: std::array::from_fn(|n| {
