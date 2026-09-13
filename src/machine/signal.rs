@@ -92,6 +92,9 @@ impl<C: CpuBackend> Machine<C> {
         // Os buffers de som entregues nesta volta são lidos agora, depois de o tratador do jogo
         // ter terminado de escrevê-los.
         self.resolve_midias_pendentes()?;
+        // Os avisos do `IMedia` desta volta: ver [`Machine::notify_media`].
+        self.poll_media()?;
+        self.entrega_avisos_de_midia(budget)?;
         let pending = std::mem::take(&mut self.pending_signals);
         let mut outcomes = Vec::new();
         for callback in pending {

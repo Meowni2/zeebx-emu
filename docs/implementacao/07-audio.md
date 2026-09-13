@@ -80,6 +80,27 @@ O `RegisterNotify` é atendido: o jogo recebe `MM_STATUS_START` quando o som com
 `MM_STATUS_DONE` quando ele acaba, no `AEEMediaCmdNotify` de 28 bytes de `AEEIMedia.h`. Sem esse
 aviso, um jogo que só toca o próximo som quando o anterior termina emudece depois do primeiro.
 
+**O `START` e o fim natural saem na volta do laço, e não na saída do `Play`**
+(`Machine::entrega_avisos_de_midia`, no `deliver_signals`). Os Zeebo Extreme dependem disso. O
+gerenciador de som deles (`SoundMgr`/`SoundPlayer` da biblioteca TTD) marca o som como "pedido"
+(2) **depois** do `Play`, e o `START` o passa a "tocando" (1). Com o aviso na saída da chamada, o
+`START` chegava antes da marca e o som ficava em 2 para sempre. O `Stop` deles só age em 1, então
+a música do menu nunca parava. A música da pista ficava na fila esperando o canal (`+0x3634` do
+tocador), e com música na fila o tocador recusa todo efeito: o Bóia Cross corria só com a trilha,
+sem uma chamada de som sequer. O bloco do aviso é escrito na hora de cada entrega, porque um
+`START` e um `DONE` do mesmo objeto na mesma volta dividem o bloco.
+
+**O `DONE` do `Stop` é a exceção: sai na hora** (`Machine::avisa_na_saida`, com bloco próprio). O
+Zeebo F.C. Super League para o som e segue contando que o aviso já passou; adiado, ele chegava
+depois de a estrutura do som ter sido reaproveitada, e a abertura parava na tela de aviso.
+
+**Um som entregue por memória é relido a cada `Play`.** O `IMedia` do aparelho não copia o buffer.
+O Super League tem um objeto só para os efeitos da partida, com um buffer de 500 KB: escreve o
+chute ou o passo e manda tocar de novo, sem outro `SetMediaParm`. Guardado da primeira leitura,
+todo efeito saía com o som de seleção do menu, o primeiro a passar por ali. A releitura segue a
+regra de cima — na volta do laço — e o cache pelo conteúdo evita decodificar de novo o que não
+mudou.
+
 O `Stop` de um som que tocava também avisa, **com `MM_STATUS_DONE`**. Era o que deixava as corridas do Crash Nitro Kart mudas. Ele conta os
 sons ativos e só toca a música da pista quando a conta zera; o tratador de aviso dele (`0x11a80`)
 desconta no `DONE` (2) e no status 9 e **ignora o `ABORT` (3)**. Na entrada da corrida ele para as

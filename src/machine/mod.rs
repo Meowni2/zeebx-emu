@@ -1426,6 +1426,9 @@ struct MediaState {
     /// Um buffer entregue e ainda não lido: `(endereço, tamanho)`. Ver
     /// [`Machine::resolve_midia`].
     pendente: (u32, u32),
+    /// O buffer da última entrega por memória, `(endereço, tamanho)`. Todo `Play` o relê: ver
+    /// [`Machine::media_play`].
+    buffer: (u32, u32),
     /// O jogo mandou tocar antes de o buffer ser lido.
     tocar_ao_ler: bool,
     /// De 0 a [`MAX_VOLUME`].
@@ -1438,6 +1441,9 @@ struct MediaState {
     /// O bloco na memória do guest onde o `AEEMediaCmdNotify` é montado. Um por objeto, criado
     /// na primeira notificação e reaproveitado: o callback só o lê enquanto roda.
     notify_block: u32,
+    /// O bloco do aviso que sai na saída do `Stop`. Separado do de cima porque os avisos da
+    /// volta do laço ainda podem estar na fila quando o `Stop` escreve o dele.
+    bloco_do_stop: u32,
     /// Quando o som acaba, no relógio virtual. Zero é "não está tocando", e `u64::MAX` é o
     /// `repeat` infinito.
     ends_us: u64,
@@ -1449,6 +1455,7 @@ impl Default for MediaState {
             state: MM_STATE_READY,
             carga: 0,
             pendente: (0, 0),
+            buffer: (0, 0),
             tocar_ao_ler: false,
             volume: MAX_VOLUME,
             repeat: 1,
@@ -1458,6 +1465,7 @@ impl Default for MediaState {
                 context: 0,
             },
             notify_block: 0,
+            bloco_do_stop: 0,
             ends_us: 0,
         }
     }
@@ -2120,6 +2128,9 @@ pub struct Machine<C: CpuBackend> {
     /// Fila única porque todos têm a mesma forma — um endereço de função e até quatro
     /// argumentos — e porque nenhum deles pode rodar no meio do despacho de uma chamada.
     pending_calls: Vec<GuestCall>,
+    /// Os avisos do `IMedia` ainda não entregues — objeto, comando e status. Saem na volta do
+    /// laço, não na saída da chamada: ver [`Machine::notify_media`].
+    avisos_de_midia: Vec<(u32, u32, u32)>,
     /// Recursos que **algum** arquivo forneceu. Ver [`Machine::missing_files`].
     recursos_lidos: BTreeSet<u16>,
     /// Se a árvore de widgets já foi despejada na serial.
@@ -2580,6 +2591,7 @@ impl<C: CpuBackend> Machine<C> {
             streams: HashMap::new(),
             sounds: HashMap::new(),
             pending_calls: Vec::new(),
+            avisos_de_midia: Vec::new(),
             recursos_lidos: BTreeSet::new(),
             despejou: false,
             proximo_serial: 0,
