@@ -53,6 +53,17 @@ Qualquer caminho que escape da raiz é recusado — `..` além do limite, caminh
 raiz do Windows. **Um `.mod` de origem desconhecida não deveria conseguir ler o resto da
 máquina.** O limite superior é a raiz de módulos, porque o Quake legitimamente sobe até lá.
 
+### A barra vazia ancora no módulo
+
+Depois de uma barra vazia — `/` no começo ou `//` no meio —, o `..` não sai da pasta do módulo. Os
+Zeebo Extreme gravam o recorde das pistas em `./udata/trackinfo.txt`, mas o releem pelo
+empacotador deles (`ttd_packer.cpp`), que monta `"%s/%s"` com as raízes `./` e vazia:
+`.//../udata/trackinfo.txt` e `/../udata/trackinfo.txt`. Subindo até a raiz de módulos, a
+releitura nunca achava o que o jogo tinha acabado de gravar. O `InfoManager` ficava com a
+quantidade de pistas e sem o vetor delas, e a largada do Bóia Cross lia o ponteiro nulo
+(`0x6cce0`). Sem a barra vazia nada muda: o NFS e o Quake 2 continuam alcançando `../nfsresources` e
+`../quake2res`.
+
 `resolve` recusa o próprio diretório do módulo; `resolve_dir` o aceita. A diferença é exatamente
 essa: listar `fs:/~/` é legítimo, abri-lo como arquivo não.
 

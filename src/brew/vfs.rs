@@ -156,9 +156,17 @@ impl Vfs {
             false => self.root.clone(),
         };
         let base = resolved.clone();
+        // Uma barra vazia — `/` no começo ou `//` no meio — ancora o caminho na pasta do
+        // módulo, e dali o `..` não sobe. Os Zeebo Extreme gravam o recorde das pistas em
+        // `./udata/trackinfo.txt` e o releem pelo empacotador, que monta `"%s/%s"` com a raiz
+        // `./`: `.//../udata/trackinfo.txt`. Subindo, a releitura caía em `mod/udata`, a lista
+        // de pistas ficava sem vetor e a largada do Bóia Cross lia o ponteiro nulo.
+        let mut ancorado = false;
         for part in path.split('/') {
             match part {
-                "" | "." => continue,
+                "" => ancorado = !do_aparelho,
+                "." => continue,
+                ".." if ancorado && resolved == self.root => continue,
                 // Subir é permitido até a raiz de módulos e nem um passo além.
                 ".." => {
                     // Do aparelho não se sobe: ele já é a raiz. Da pasta do módulo sobe-se até
@@ -315,6 +323,25 @@ mod tests {
         assert_eq!(vfs.resolve("../../etc/passwd"), None);
         assert_eq!(vfs.resolve("fs:/~/../../etc/passwd"), None);
         assert_eq!(vfs.resolve("C:/Windows/system32"), None);
+    }
+
+    #[test]
+    fn depois_de_uma_barra_vazia_o_ponto_ponto_nao_sai_do_modulo() {
+        let vfs = Vfs::new("/jogos/mod/278285");
+        // O que o Bóia Cross grava e o caminho por onde ele relê.
+        assert_eq!(
+            vfs.resolve("./udata/trackinfo.txt"),
+            vfs.resolve(".//../udata/trackinfo.txt")
+        );
+        assert_eq!(
+            vfs.resolve("/../udata/trackinfo.txt"),
+            Some(PathBuf::from("/jogos/mod/278285/udata/trackinfo.txt"))
+        );
+        // Sem a barra vazia, continua subindo até a raiz de módulos, como o NFS precisa.
+        assert_eq!(
+            vfs.resolve("../nfsresources/x.bar"),
+            Some(PathBuf::from("/jogos/mod/nfsresources/x.bar"))
+        );
     }
 
     #[test]
