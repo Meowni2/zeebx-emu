@@ -222,6 +222,10 @@ pub struct App {
     log_status: Option<String>,
     /// A janela de log foi fechada nesta execução. Zera ao abrir outro jogo.
     log_dismissed: bool,
+    /// O aviso de abertura ainda está na tela.
+    aviso_de_abertura: bool,
+    /// A caixa "não mostrar de novo" do aviso de abertura.
+    aviso_nao_mostrar: bool,
     /// Quando o relatório foi gravado em disco pela última vez.
     ///
     /// Ele é gravado sozinho, a cada poucos segundos, num lugar fixo. O botão de exportar abre
@@ -291,6 +295,8 @@ impl App {
         if let Err(err) = library::sync_catalog(&games) {
             eprintln!("catálogo de jogos: {err}");
         }
+        let aviso_de_abertura =
+            settings.aviso_dispensado_na_versao.as_deref() != Some(env!("CARGO_PKG_VERSION"));
         let mut app = Self {
             catalog,
             settings,
@@ -323,6 +329,8 @@ impl App {
             teclas_entregues: HashSet::new(),
             log_status: None,
             log_dismissed: false,
+            aviso_de_abertura,
+            aviso_nao_mostrar: false,
             log_gravado: None,
             gamepads: gamepads::Gamepads::default(),
             porta_editada: 0,
@@ -1671,6 +1679,44 @@ impl App {
     /// está no sistema de arquivos do aparelho — que é de todos. Apagar o `zeeboiddata` tira os
     /// bonecos do Zeeboids **e** o que o Zeebo F.C. lê deles; a dica embaixo do título diz isso,
     /// porque a lista sozinha não diria.
+    /// O aviso de abertura: o emulador ainda em desenvolvimento, e o controle a configurar antes
+    /// de jogar. A caixa marcada guarda a versão, e a próxima versão mostra o aviso de novo.
+    fn aviso_de_abertura(&mut self, ctx: &egui::Context) {
+        let mut fechar = false;
+        let mut configurar = false;
+        let resposta = egui::Modal::new(egui::Id::new("aviso-de-abertura")).show(ctx, |ui| {
+            ui.set_max_width(420.0);
+            ui.heading(self.catalog.get("welcome.title"));
+            ui.add_space(8.0);
+            ui.label(self.catalog.get("welcome.development"));
+            ui.add_space(6.0);
+            ui.label(self.catalog.get("welcome.controls"));
+            ui.add_space(12.0);
+            ui.checkbox(&mut self.aviso_nao_mostrar, self.catalog.get("welcome.dont_show"));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button(self.catalog.get("welcome.controls.open")).clicked() {
+                    configurar = true;
+                }
+                if ui.button(self.catalog.get("welcome.dismiss")).clicked() {
+                    fechar = true;
+                }
+            });
+        });
+        if !(fechar || configurar || resposta.should_close()) {
+            return;
+        }
+        self.aviso_de_abertura = false;
+        if self.aviso_nao_mostrar {
+            self.settings.aviso_dispensado_na_versao = Some(env!("CARGO_PKG_VERSION").to_owned());
+            self.save();
+        }
+        if configurar {
+            self.tab = Tab::Controls;
+            self.settings_open = true;
+        }
+    }
+
     fn saves_window(&mut self, ctx: &egui::Context) {
         let id = egui::ViewportId::from_hash_of("saves");
         let builder = egui::ViewportBuilder::default()
@@ -2492,6 +2538,9 @@ impl eframe::App for App {
         }
         if self.saves_open {
             self.saves_window(ctx);
+        }
+        if self.aviso_de_abertura {
+            self.aviso_de_abertura(ctx);
         }
         if self.session.is_some() {
             self.grava_relatorio();

@@ -182,5 +182,11 @@
   "settings.z_wheel_eol": "Z-Wheel de fim de vida",
   "settings.z_wheel_eol.hint": "Como a ROM vem de fábrica: a roda inferior tem só \"Jogar\" e \"Ajuda\". Desligado, volta a de antes: \"Jogar\", zeebo, \"Comprar\" e \"Configurar\". Vale na próxima vez que a Z-Wheel abrir.",
   "settings.z_wheel_transitions": "Transições da Z-Wheel em toda troca de tela",
-  "settings.z_wheel_transitions.hint": "A ROM desliza cada tela só na primeira vez, e o dump já traz as principais como vistas. Ligado, a tela desliza sempre. Vale na próxima vez que a Z-Wheel abrir."
+  "settings.z_wheel_transitions.hint": "A ROM desliza cada tela só na primeira vez, e o dump já traz as principais como vistas. Ligado, a tela desliza sempre. Vale na próxima vez que a Z-Wheel abrir.",
+  "welcome.title": "Bem-vindo ao Zeebx",
+  "welcome.development": "O emulador ainda está em desenvolvimento. Alguns jogos e funcionalidades podem apresentar problemas, como travamentos, falhas gráficas ou de som.",
+  "welcome.controls": "Antes de iniciar um jogo, configure o seu controle em Configurações → Controles.",
+  "welcome.controls.open": "Configurar controle",
+  "welcome.dismiss": "Entendi",
+  "welcome.dont_show": "Não mostrar de novo até a próxima versão"
 }

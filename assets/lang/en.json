@@ -182,5 +182,11 @@
   "settings.z_wheel_eol": "End-of-life Z-Wheel",
   "settings.z_wheel_eol.hint": "As the ROM ships: the bottom wheel has only \"Play\" and \"Help\". Off, it goes back to the earlier one: \"Play\", zeebo, \"Buy\" and \"Setup\". Takes effect the next time the Z-Wheel opens.",
   "settings.z_wheel_transitions": "Z-Wheel transitions on every screen change",
-  "settings.z_wheel_transitions.hint": "The ROM slides each screen only the first time, and the dump already marks the main ones as seen. On, screens always slide. Takes effect the next time the Z-Wheel opens."
+  "settings.z_wheel_transitions.hint": "The ROM slides each screen only the first time, and the dump already marks the main ones as seen. On, screens always slide. Takes effect the next time the Z-Wheel opens.",
+  "welcome.title": "Welcome to Zeebx",
+  "welcome.development": "The emulator is still in development. Some games and features may have issues, such as crashes or graphics and sound glitches.",
+  "welcome.controls": "Before starting a game, set up your controller in Settings → Controls.",
+  "welcome.controls.open": "Set up controller",
+  "welcome.dismiss": "Got it",
+  "welcome.dont_show": "Don't show again until the next version"
 }
