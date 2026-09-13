@@ -2,7 +2,7 @@
 
 ## A tela
 
-640×480, RGB565 — a saída de vídeo do Zeebo. `display.rs` tem o `Framebuffer` (pixels em `u16`) e
+640×480, RGB565 — a saída de vídeo do Zeebo. `video/display.rs` tem o `Framebuffer` (pixels em `u16`) e
 as operações: `set_pixel_native`, `fill_rect`, `draw_frame`, `draw_line` (Bresenham, só inteiros,
 como o hardware da época) e `blit`.
 
@@ -48,6 +48,32 @@ região de superfícies não recicla e um jogo que decodifique centenas de image
 
 A lição é a mesma de outras vezes: **o que um jogo lê de uma struct nossa vale tanto quanto o
 que devolvemos de uma chamada.** Aqui nenhuma chamada falhou, e o relatório saiu limpo.
+
+**O buffer reaproveitado ainda tem os pixels do morto.** Reescrever só o cabeçalho deixa no
+buffer a imagem do objeto anterior, e o bitmap novo só tem os pixels certos do nosso lado. No
+Unicorn isso não aparecia: a vigia de escrita dizia "o jogo não mexeu aqui", a importação não
+acontecia e a nossa cópia prevalecia. O Dynarmic não tem vigia e responde sempre "sujo" — o que
+só é seguro se o buffer nunca estiver atrás do host. Aqui estava, e a importação trazia a imagem
+anterior por cima da folha de glifos: no motor da janela, as letras do Tekken 2 voltaram a sair
+como blocos, agora escuros.
+
+Por isso um objeto novo num endereço que já tem buffer entra em `dib_herdados`: enquanto estiver
+lá, a importação é pulada e a primeira exposição publica os pixels do host, mesmo cabendo. A
+regra é de ciclo de vida — **o buffer pertence ao objeto**, e bytes de um objeto que morreu não são
+do jogo para serem trazidos de volta.
+
+### Só o retângulo que mudou volta para o jogo
+
+Publicar a superfície inteira depois de cada desenho era o maior custo do emulador em jogos de
+sprite: o Pac-Mania desenha 160 mil sprites em cinco segundos virtuais, e cada `IIMAGE_Draw`
+reescrevia os 600 KB da superfície — 15 dos 16 segundos de API. O `Framebuffer` agora guarda a
+caixa suja desde a última publicação e um número de série; enquanto a série for a mesma que o
+jogo já recebeu, só a caixa é escrita (146 ms no mesmo trecho). A importação zera a caixa, porque
+depois dela os dois lados são iguais.
+
+Um diff das chamadas de API entre os dois motores foi o que separou isto de um erro de CPU: 2,2
+milhões de chamadas iguais (342 linhas diferentes, todas de atraso de timer). Se o jogo pede a
+mesma coisa e o quadro sai diferente, quem difere é o nosso lado.
 
 Isso obriga a manter dois lados em dia:
 
@@ -102,6 +128,28 @@ do resultado.** Aplicá-lo por pixel, no fim, é pagar por tudo que se vai jogar
 A lista é de **exclusão**, e isso é deliberado: esquecer ali um método que desenha daria pixel
 errado, que é difícil de perceber; deixar de fora um que não desenha só custa a cópia, que
 aparece na medição. **Na dúvida, copia.**
+
+### O bitmap compatível já é `IDIB`, e o Zenonia apresenta por `ITransform`
+
+O Zenonia ficava com a tela preta desenhando o tempo todo, e eram dois erros encadeados.
+
+**O canvas nascia sem tamanho.** O jogo cria um canvas 320x240 com `CreateCompatibleBitmap` e lê
+`cx`, `cy` e `pBmp` direto da struct, sem `QueryInterface` — no BREW o bitmap compatível já é
+`IDIB`. O nosso só publicava esses campos quando alguém pedia a interface, então o canvas era
+0x0 para o jogo. Sem `pBmp`, o motor dele caía no caminho lento, pixel a pixel por `SetPixels`
+(197 mil chamadas em trinta segundos). Agora o `CreateCompatibleBitmap` já expõe a DIB.
+
+**O quadro ia para a tela por uma interface que não existia.** Para apresentar, o jogo pede ao
+bitmap da tela o IID `0x01001029` e chama o slot 4 do objeto com `(x, y, pSrc, xSrc, ySrc, dx,
+dy, pMatrix, nComposite)` — o `ITransform::TransformBltComplex`. Esse IID estava tratado como "o
+terceiro IID do `IDIB`", por ser vizinho do `AEEIID_DIB_20`, e era respondido com o próprio
+bitmap: o slot 4 caía no `NativeToRGB`.
+
+A matriz é `{A, B, C, D}` em 8.8 aplicada em volta do centro do retângulo de origem, com `(x, y)`
+no canto que ele teria sem transformação. O Zenonia passa `x = 160`, `y = 120`, canvas 320x240 e
+escala 1,9: o resultado, 608x456, fica centrado na tela 640x480. A amostragem é pelo pixel mais
+próximo, percorrendo o destino para não deixar buracos. O `TransformBltSimple` ainda não existe
+e aparece no relatório se algum jogo o pedir.
 
 ## O recorte
 
@@ -170,10 +218,19 @@ destino corrente do display, que o `SetDestination` pode ter trocado.
 
 ## Texto
 
-Não desenhamos texto. `IDISPLAY_DrawText` guarda a string (aparece no relatório), e
-`GetFontMetrics` e `MeasureTextEx` devolvem números coerentes entre si — altura de fonte de tela
-pequena, avanço fixo por caractere.
+`IDISPLAY_DrawText` escreve com uma fonte TrueType, escolhida nesta ordem:
 
-É medida aproximada de propósito: **serve para o jogo posicionar o que ele mesmo desenha**, e um
-número plausível o deixa seguir. Sem nenhum, o Pac-Mania nem monta a tela. Uma fonte de verdade
-continua na lista do que falta.
+1. **A do jogo**, quando o pacote traz um `.ttf` — a Z-Wheel traz a `tectoy.ttf`.
+2. **A do aparelho**, em `fs:/shared/fonts/tectoy.ttf`, que é onde o firmware a procura.
+
+A segunda não vem com o emulador, porque é da TecToy; ela vem no pacote da Z-Wheel, que é o
+sistema do console. Quando o aparelho ainda não a tem e a Z-Wheel já foi aberta alguma vez, ela
+é copiada do cache para lá (`archive::fonte_do_sistema`). Sem fonte nenhuma, o texto continua
+indo só para o relatório.
+
+A maioria dos jogos não traz fonte porque no console não precisava. O Kingdom Hearts pede
+`0x8000`, o `AEE_FONT_NORMAL` do BREW, e sem a fonte do aparelho desenhava as cinco caixas do
+menu e nenhuma das palavras — "New Game", "Load Game" e as outras só apareciam no relatório.
+
+`GetFontMetrics` e `MeasureTextEx` devolvem números coerentes entre si. Sem nenhum, o Pac-Mania
+nem monta a tela.

@@ -356,7 +356,7 @@ impl Relatorio {
         };
         Self {
             arquivo: arquivo.to_path_buf(),
-            titulo: crate::library::title_for(arquivo),
+            titulo: crate::ui::library::title_for(arquivo),
             categoria,
             motivo: Some(erro.to_string()),
             desempenho: None,
@@ -400,7 +400,7 @@ fn estado_da_falha(session: &Session) -> Option<String> {
 /// tempo virtual cumprido o mais rápido que a máquina der.
 pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     let comeco = Instant::now();
-    let mut session = match Session::start_with(arquivo, crate::PORTAS_PADRAO, None) {
+    let mut session = match Session::start_with(arquivo, crate::PORTAS_PADRAO, None, false, None) {
         Ok(session) => session,
         Err(erro) => return Relatorio::recusado(arquivo, &erro),
     };
@@ -486,7 +486,7 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
         // sessão nomeia o jogo pela pasta do cache, cujo nome carrega o tamanho e a data do
         // arquivo. Isso muda de máquina para máquina, e a linha de base — que é gravada com
         // esse nome e traz o título dentro — não pode depender de metadado do host.
-        titulo: crate::library::title_for(arquivo),
+        titulo: crate::ui::library::title_for(arquivo),
         categoria,
         motivo: session.stopped_reason(),
         desempenho: Some(medida),
@@ -504,7 +504,7 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
 /// caminho até o applet existir: carga do `.mod`, `AEEMod_Load`, `.mif` e `CreateInstance`.
 pub fn abre(arquivo: &Path) -> Result<Duration, String> {
     let comeco = Instant::now();
-    match Session::start_with(arquivo, crate::PORTAS_PADRAO, None) {
+    match Session::start_with(arquivo, crate::PORTAS_PADRAO, None, false, None) {
         Ok(_) => Ok(comeco.elapsed()),
         Err(erro) => Err(erro.to_string()),
     }
@@ -612,7 +612,7 @@ mod tests {
     #[test]
     fn a_rom_indicada_abre() {
         com_cada_rom("a_rom_indicada_abre", |rom| {
-            let titulo = crate::library::title_for(rom);
+            let titulo = crate::ui::library::title_for(rom);
             match abre(rom) {
                 Ok(quanto) => Ok(format!("{titulo}: abriu em {:.1} s", quanto.as_secs_f32())),
                 Err(erro) => Err(format!("{titulo}: não abriu — {erro}")),

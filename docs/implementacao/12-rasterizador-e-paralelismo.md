@@ -128,12 +128,53 @@ Onde o tempo ia, antes (medido desligando cada etapa):
 | geometria (transformar e recortar) | 13,5 s | 14% |
 | emulação do ARM + despacho de API | 48,3 s | 49% |
 
+Duas correções depois desta medida:
+
+- **A geometria caiu de 14% para ~4%.** O `read_attribute` pedia um `read_u32` por componente,
+  e cada pedido atravessa a FFI do unicorn: 57 ns para trazer quatro bytes, contra 0,3 ns
+  quando vêm de um `read_mem` de um quilobyte. Dos 3,6 s que as draw calls custavam em 15
+  segundos virtuais, 3,2 s eram travessia e 400 ms eram desenho. Hoje é um bloco por array por
+  draw call.
+- **A tabela acima foi tirada com o `--profile`, que custa 24%** — e o preço cai quase todo na
+  fatia do ARM, porque o perfil de blocos faz uma inserção de tabela por bloco de tradução. A
+  proporção entre as três fatias serve; o relógio absoluto, não. Meça tempo sem ele.
+
+## Descobrir que nada mudou custava mais que desenhar
+
+O jogo pode escrever direto na superfície que o EGL expõe — é assim que a Z-Wheel compõe o 2D
+sobre o palco 3D. Para não perder essas escritas, o `sync_egl_color_from_guest` lia a superfície
+inteira de volta do guest e a comparava byte a byte com a nossa cópia. Ele é chamado em **todo**
+`Draw*`, `Clear` e `ReadPixels`.
+
+Medido na Z-Wheel, treze segundos virtuais: **93.750 chamadas**, cada uma lendo 400 KB e
+comparando 400 KB — perto de 37 GB de tráfego só para descobrir que quase nunca havia mudança.
+Eram 3.324 ms de leitura e 2.732 ms de comparação, e o custo aparecia onde ninguém procuraria: no
+`glDrawElements`, com 2.883 ms.
+
+O conserto é um **watchpoint de escrita** (`CpuBackend::watch_dirty`/`take_dirty`): o hook do
+unicorn liga um `bool` quando o guest escreve na faixa, e o `sync` sai em O(1) enquanto ele estiver
+limpo. Depois: leitura 105 ms, comparação 39 ms, `glDrawElements` **275 ms** — dez vezes menos —, e
+o total de API caiu de 16.345 ms para algo entre 12.550 e 13.500 ms.
+
+Duas coisas que essa medida ensinou, e que valem além deste caso:
+
+- **A escrita do host não passa pelos hooks do unicorn.** As implementações de API escrevem direto
+  na memória do guest, e é por elas que o 2D chega à superfície. A primeira versão do sinalizador
+  ignorava isso: o custo sumiu e as capas da roda pararam de aparecer, com a diferença confinada à
+  faixa do cilindro. Quem arma um watchpoint precisa marcá-lo também no `write_mem` do próprio
+  emulador — o watchpoint de depuração já fazia isso, e foi de lá que veio a pista.
+- **Uma execução só não mede nada aqui.** Três execuções do mesmo binário deram 13.903, 14.221 e
+  15.845 ms de API: 14% de faixa. Só delta grande conta — e é por isso que a queda do
+  `glDrawElements` serve como prova, enquanto o caminho rápido da importação (que é algoritmicamente
+  melhor e pixel a pixel idêntico) fica sem número: o efeito dele não sai do ruído.
+
 ## O teto que sobra
 
 Vale ter claro para não esperar do rasterizador o que ele não pode dar: **mesmo de graça**, o
 Quake ficaria em ~52%. Os 48 s de emulação mais despacho para 25 s virtuais já são o dobro do
-relógio. São 3,4 bilhões de instruções de guest por 25 segundos virtuais e o núcleo faz cerca de
-110 milhões por segundo.
+relógio. São 3,4 bilhões de instruções de guest por 25 segundos virtuais, e o núcleo entrega 218 milhões por segundo num laço
+apertado que não toca memória — mas cerca de 86 milhões no jogo de verdade, onde há tráfego de
+memória pela softmmu e uma ida e volta do `emu_start` por chamada de API.
 
 Os dois próximos gargalos, em ordem:
 
@@ -143,14 +184,29 @@ Os dois próximos gargalos, em ordem:
    que sobra de maior **do mecanismo**. Antes dele vem o que cada método faz por dentro: o
    perfil de API do `--profile` mede isso, e nas três vezes em que um jogo pareceu preso no
    despacho a causa estava lá, não no trampolim.
-2. **O núcleo em si.** A 110 MIPS, um jogo que use um quarto da capacidade do ARM11 do console
-   já consome 80% do nosso relógio só para executar instrução.
+2. **O núcleo em si.** Aos ~86 MIPS efetivos, um jogo que use um quarto da capacidade do ARM11
+   do console já consome boa parte do nosso relógio só para executar instrução. É aqui que um
+   backend sobre `dynarmic` entraria — o `CpuBackend` existe para isso.
 
 ## Números de calibração
 
 Faixas, medido no Alpine Racer numa máquina de 24 núcleos: 4 → 10,89 s, 6 → 8,64 s, 12 → 5,59 s,
-16 → 5,74 s. Fica uma faixa por núcleo com piso de 40 linhas por faixa (`MIN_BAND_ROWS`): mais
-fina que isso, quase todo triângulo cruza fronteira e o preparo por faixa come o ganho.
+16 → 5,74 s. Fica uma faixa por núcleo, com um piso de linhas por faixa (`MIN_BAND_ROWS`).
+
+**O piso era 40 linhas, e essa foi a parte errada da calibração.** Ele não é afinação: é o teto
+real de paralelismo quando a superfície é baixa. O palco da Z-Wheel tem 640x330, e `330 / 40` dá
+oito faixas — numa máquina de 24 núcleos, dois terços dela ficavam paradas durante todo o
+preenchimento. O número saiu de medir só cenas de 480 linhas, onde `480 / 40 = 12` já era perto
+do que a máquina daria, e o defeito ficou invisível justamente por isso.
+
+Baixando para 8 linhas, tempo de `flush` na Z-Wheel em treze segundos virtuais: **2474 ms com 40,
+1938 com 16, 1868 com 8**. E na pista do Crash, em trinta segundos virtuais, o total de API foi de
+**4637 para 3842 e 3622 ms** nos mesmos cortes. O receio de que faixas finas custassem caro em 480
+linhas não se confirmou, e o motivo é aritmético: ali `480 / 16` e `480 / 8` esbarram no número de
+núcleos antes de esbarrar nesta constante, então os dois cortes descrevem a mesma divisão.
+
+Dividir mais fino não muda um pixel — as nove superfícies despejadas da Z-Wheel saem byte a byte
+iguais —, porque cada faixa continua sendo região exclusiva e percorre a fila na ordem original.
 
 O limiar de custo (`PARALLEL_COST`, 64 mil fragmentos) foi calibrado quando a divisão era por
 draw call, e ali era indiferente entre 16 mil e 256 mil. Com o quadro acumulado ele quase nunca

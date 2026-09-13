@@ -10,6 +10,11 @@ description = "Emulador do Zeebo, o console da TecToy"
 [dependencies]
 eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 # Saída de áudio do host. A decodificação é nossa: os jogos entregam PCM.
+# Contexto de OpenGL fora de tela para o rasterizador na placa. Já vinha na árvore pelo
+# eframe, então promovê-lo a dependência direta não acrescenta build nenhuma — e é o que
+# permite a GPU funcionar também no `run` sem janela, onde toda a medição é feita.
+glutin = "0.32.3"
+raw-window-handle = "0.6"
 cpal = "0.15"
 # Controles de verdade, nos três sistemas.
 gilrs = "0.11"
@@ -22,6 +27,10 @@ rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "a
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 unicorn-engine = "2.1.5"
+# JIT ARM alternativo ao TCG do Unicorn. Fica opt-in enquanto os dois backends são
+# comparados jogo a jogo; o KH precisa dele porque a extensão 3D roda o próprio
+# rasterizador ARM por milhões de pixels.
+dynarmic = "0.1.3"
 # Só leitura de zip: `deflate` cobre o que os empacotadores usam.
 zip = { version = "2", default-features = false, features = ["deflate"] }
 resvg = { version = "0.48.1", default-features = false }
@@ -42,3 +51,25 @@ zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }
 # som que toca e sai errado. O symphonia é Rust puro (sem build C) e MPL-2.0, que se combina com
 # o GPLv2 daqui. Só o MP3 entra: o resto dos codecs fica fora.
 symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
+
+# O `cargo run` sem `--release` rodava o Quake 6,9x mais devagar — 21,7 s contra 3,2 s para o
+# mesmo trabalho (668 M instruções, 378 voltas). Não é surpresa: o rasterizador e o despacho de
+# API são laços apertados em Rust, e `opt-level = 0` não inlina nada.
+#
+# Medido nesta árvore, mesmo trabalho, com as dependências em 3:
+#
+#   opt-level   rodar     rebuild incremental
+#           0   21690 ms   3020 ms
+#           1    3427 ms   2572 ms
+#           2    3391 ms   2668 ms
+#     release    3164 ms          —
+#
+# O rebuild incremental não piora — em `opt-level = 0` o LLVM gera mais código, e isso compensa
+# o que a otimização custa. Então o perfil de desenvolvimento fica em 2: 7% mais lento que o
+# release, com as asserções de depuração e os símbolos que o `dev` existe para ter.
+[profile.dev]
+opt-level = 2
+
+# As dependências não mudam entre uma compilação e outra, então otimizá-las é custo único.
+[profile.dev.package."*"]
+opt-level = 3

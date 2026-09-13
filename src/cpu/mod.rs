@@ -7,7 +7,9 @@
 // Removido assim que o núcleo estiver ligado ao loop principal.
 #![allow(dead_code)]
 
-use crate::mem::GuestMemory;
+pub mod mem;
+
+use crate::cpu::mem::GuestMemory;
 
 /// Registradores que o despacho de API precisa ler e escrever.
 ///
@@ -66,6 +68,42 @@ pub trait CpuBackend {
     /// É o relógio do emulador: o tempo que o jogo enxerga vem daqui, e não do host, para que
     /// duas execuções iguais deem o mesmo resultado.
     fn instructions(&self) -> u64;
+
+    /// Arma um sinalizador de sujeira numa faixa: o hook o liga quando o guest escreve nela.
+    ///
+    /// Sem isto, descobrir se o jogo mexeu numa superfície exige **ler a faixa inteira e
+    /// comparar byte a byte**. Medido na Z-Wheel: o `sync` do color buffer do pbuffer era
+    /// chamado 93 mil vezes em treze segundos, e a leitura mais a comparação somavam seis
+    /// segundos — mais de um terço de todo o tempo de API.
+    ///
+    /// O `id` identifica a faixa, e existe porque há **várias** ao mesmo tempo: o color buffer
+    /// do pbuffer e uma por superfície do jogo. Armar de novo com o mesmo `id` troca a faixa de
+    /// lugar, que é o que acontece quando um bitmap é reexposto com outro tamanho.
+    ///
+    /// O padrão responde "sempre sujo", que é exatamente o comportamento anterior: um backend
+    /// que não saiba armar o hook continua correto, só não fica mais rápido.
+    fn watch_dirty(&mut self, _id: u32, _base: u32, _len: u32) -> Result<(), CpuError> {
+        Ok(())
+    }
+
+    /// Desarma a faixa de `id`. Sem isto, a superfície de um bitmap já liberado continuaria
+    /// custando um hook em toda escrita do guest naquele endereço.
+    fn unwatch_dirty(&mut self, _id: u32) {}
+
+    /// Lê **e limpa** o sinalizador de `id`. `true` quando o guest pode ter escrito desde a
+    /// última vez, e também quando não há faixa armada com esse `id` — na dúvida, sujo.
+    fn take_dirty(&mut self, _id: u32) -> bool {
+        true
+    }
+
+    /// Liga o sinalizador das faixas vigiadas que cruzam `addr..addr+len`.
+    ///
+    /// A vigia só enxerga escrita **do guest**, e isso é o que se quer para as escritas do
+    /// próprio emulador. Mas um `MEMMOVE` que o jogo pede ao helper é escrita do jogo feita pelas
+    /// nossas mãos: a Z-Wheel compõe o palco 3D assim, copiando o pbuffer para os pixels do
+    /// bitmap de destino, e sem este aviso a superfície nunca importava a cópia — o palco ficava
+    /// cinza.
+    fn marca_sujo(&mut self, _addr: u32, _len: u32) {}
 
     fn read_mem(&self, addr: u32, buf: &mut [u8]) -> Result<(), CpuError>;
 
@@ -165,6 +203,7 @@ impl std::fmt::Display for CpuError {
 
 impl std::error::Error for CpuError {}
 
+pub mod dynarmic;
 pub mod unicorn;
 
 #[cfg(test)]

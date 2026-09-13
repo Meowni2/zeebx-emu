@@ -1,57 +1,32 @@
 //! Zeebx — emulador de Zeebo / Qualcomm BREW.
 
-mod aee;
-mod aee_helpers;
-mod aee_slots;
-mod archive;
-mod atc;
 mod audio;
-mod bindings;
-mod cformat;
+mod brew;
 mod cpu;
-mod crypto;
-mod display;
-mod fmath;
-mod font;
-mod gamepads;
-mod gif;
-mod gles;
-mod heap;
-mod i18n;
-mod icon;
 mod input;
-mod library;
 mod loader;
 mod machine;
-mod mem;
-mod midi;
-mod miffile;
-mod modfile;
-mod mp3;
-mod objects;
-mod padview;
-mod paltex;
 mod ponte;
-mod rasterizer;
 mod rede;
-mod resfile;
-mod saves;
 mod session;
-mod settings;
-mod sql;
 mod ui;
+mod video;
+
 /// Varredura de ROMs por teste — ver [`varredura`]. Só existe em compilação de teste.
 #[cfg(test)]
 mod varredura;
-mod vfs;
-mod wav;
-mod window;
 
 use std::process::ExitCode;
 
-use cpu::{CpuBackend, unicorn::UnicornCpu};
-use machine::{AppletResult, Machine, Outcome};
-use modfile::{ModImage, Variant};
+use crate::brew::aee;
+use crate::cpu::{CpuBackend, dynarmic::DynarmicCpu, unicorn::UnicornCpu};
+use crate::input::bindings;
+use crate::loader::archive;
+use crate::loader::modfile::{ModImage, Variant};
+use crate::machine::{AppletResult, Machine, Outcome};
+use crate::ui::library;
+use crate::ui::window;
+use crate::video::icon;
 
 /// Teto de instruções por fatia entre duas chamadas de API — evita que um laço infinito no
 /// guest trave o emulador. Precisa ser generoso: a inicialização do Bejeweled Twist passa
@@ -212,6 +187,11 @@ fn main() -> ExitCode {
                         .find_map(|a| a.strip_prefix("--teclas="))
                         .map(teclado)
                         .unwrap_or_default(),
+                    instalados: args
+                        .iter()
+                        .find_map(|a| a.strip_prefix("--instalados="))
+                        .map(instalados)
+                        .unwrap_or_default(),
                     portas: match args.iter().find_map(|a| a.strip_prefix("--portas=")) {
                         Some(lista) => match aparelhos(lista) {
                             Some(portas) => portas,
@@ -228,6 +208,68 @@ fn main() -> ExitCode {
                 },
             ))
         }
+        // O JIT entra primeiro como bancada, não como backend implícito da interface. Assim a
+        // mesma ROM pode ser comparada com o Unicorn sem esconder uma regressão de compatibilidade.
+        Some("bench") if args.len() >= 2 => {
+            let seconds = args
+                .iter()
+                .find_map(|a| a.strip_prefix("--seconds="))
+                .and_then(|n| n.parse::<u32>().ok())
+                .unwrap_or(DEFAULT_SECONDS);
+            let dump = args.iter().find_map(|a| a.strip_prefix("--dump="));
+            let keys = match args
+                .iter()
+                .find_map(|a| a.strip_prefix("--keys="))
+                .map(input::Script::parse)
+                .transpose()
+            {
+                Ok(keys) => keys.unwrap_or_default(),
+                Err(err) => {
+                    eprintln!("erro: {err}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let teclas = args
+                .iter()
+                .find_map(|a| a.strip_prefix("--teclas="))
+                .map(teclado)
+                .unwrap_or_default();
+            let instalados = args
+                .iter()
+                .find_map(|a| a.strip_prefix("--instalados="))
+                .map(instalados)
+                .unwrap_or_default();
+            let superficies = args.iter().find_map(|a| a.strip_prefix("--dump-surfaces="));
+            report(bench_dynarmic(&args[1], seconds, dump, &keys, &teclas, instalados, superficies))
+        }
+        Some("sessao") if args.len() >= 2 => {
+            let seconds = args
+                .iter()
+                .find_map(|a| a.strip_prefix("--seconds="))
+                .and_then(|n| n.parse::<u32>().ok())
+                .unwrap_or(DEFAULT_SECONDS);
+            let dump = args.iter().find_map(|a| a.strip_prefix("--dump="));
+            let keys = match args
+                .iter()
+                .find_map(|a| a.strip_prefix("--keys="))
+                .map(input::Script::parse)
+                .transpose()
+            {
+                Ok(keys) => keys.unwrap_or_default(),
+                Err(err) => {
+                    eprintln!("erro: {err}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let fotos: Vec<u32> = args
+                .iter()
+                .find_map(|a| a.strip_prefix("--fotos="))
+                .map(|lista| lista.split(',').filter_map(|t| t.trim().parse().ok()).collect())
+                .unwrap_or_default();
+            let placa = args.iter().any(|a| a == "--placa");
+            let serial = args.iter().find_map(|a| a.strip_prefix("--serial="));
+            report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial))
+        }
         // Sem argumento nenhum, o que se quer é o emulador, não a ajuda.
         None => launch(),
         _ => {
@@ -243,6 +285,8 @@ fn main() -> ExitCode {
                              [--sem-rede] [--servidor=MAQUINA[:PORTA]] [--ponte]
                              [--portas=controle|teclado|nenhum,...] [--teclas=ms:nome,...]"
             );
+            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO]  (a sessão da janela, sem janela)");
+            eprintln!("     zeebx bench <arquivo.mod|zip> [--seconds=N] [--keys=ms:tecla,...] [--dump=QUADRO.bmp] [--teclas=ms:nome,...] [--instalados=0xCLSID[:id],...] [--dump-surfaces=DIR]  (Dynarmic, sem janela)");
             ExitCode::FAILURE
         }
     }
@@ -348,6 +392,11 @@ struct Options {
     portas: [Option<bindings::Aparelho>; input::PORTAS],
     /// Teclas a entregar, com `--teclas=ms:nome[,...]`.
     teclas: Vec<(u32, u32)>,
+    /// Classes que o shell trata como instaladas, com `--instalados=0xCLSID[:id][,...]` — o id é
+    /// a pasta do módulo, que o `EnumNextApplet` entrega. Na janela
+    /// quem diz é a biblioteca; sem ela, é isto que deixa testar o lançamento de um jogo pela
+    /// Z-Wheel.
+    instalados: Vec<(u32, String)>,
 }
 
 /// Lê `1000:select,2000:down` e devolve `(instante em ms, código AVK)`.
@@ -355,6 +404,22 @@ struct Options {
 /// Os nomes são os de [`input::avk::por_nome`]: `up`, `down`, `left`, `right`, `select`, `clr`,
 /// `star`, `pound` e os dígitos. O que não for reconhecido é descartado com aviso, porque um
 /// roteiro com uma tecla errada ainda vale pelas outras.
+/// Lê `0xCLSID[:id][,...]`. Sem id, o id do módulo é a própria classe em hexadecimal.
+fn instalados(lista: &str) -> Vec<(u32, String)> {
+    lista
+        .split(',')
+        .filter_map(|item| {
+            let (classe, id) = item.split_once(':').unwrap_or((item, ""));
+            let classe = u32::from_str_radix(classe.trim().trim_start_matches("0x"), 16).ok()?;
+            let id = match id.is_empty() {
+                true => format!("{classe:x}"),
+                false => id.to_string(),
+            };
+            Some((classe, id))
+        })
+        .collect()
+}
+
 fn teclado(lista: &str) -> Vec<(u32, u32)> {
     lista
         .split(',')
@@ -420,6 +485,7 @@ fn run(path: &str, options: Options) -> Result<(), Box<dyn std::error::Error>> {
         bridge,
         portas,
         teclas,
+        instalados,
     } = options;
     // Um jogo em `.zip` é extraído para o cache e rodado de lá, como na interface.
     let extracted;
@@ -435,7 +501,19 @@ fn run(path: &str, options: Options) -> Result<(), Box<dyn std::error::Error>> {
         _ => path,
     };
     let image = ModImage::parse(std::fs::read(path)?)?;
-    let module = loader::load(&image)?;
+    let extensoes = crate::session::extensoes_de(std::path::Path::new(path));
+    for extensao in &extensoes {
+        println!(
+            "extensão:  fornece {}",
+            extensao
+                .classes
+                .iter()
+                .map(|c| format!("{c:#010x}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+    }
+    let module = loader::load_with(&image, &extensoes)?;
 
     println!("carregado: {path}");
     println!("entry:     {:#010x}", module.entry);
@@ -471,6 +549,7 @@ fn run(path: &str, options: Options) -> Result<(), Box<dyn std::error::Error>> {
         machine.probe_answer(*classe, *slot, *valor);
     }
     machine.set_portas(portas);
+    machine.set_installed_applets(instalados);
     machine.set_network(network);
     if network_to.is_some() {
         machine.set_network_to(network_to);
@@ -525,7 +604,12 @@ fn run(path: &str, options: Options) -> Result<(), Box<dyn std::error::Error>> {
                             let started =
                                 machine.start_applet(applet, clsid, INSTRUCTION_BUDGET)?;
                             describe_outcome_com_estado(&started, &machine);
-                            if matches!(started, Outcome::Returned { .. }) {
+                            // O código de retorno do `HandleEvent` pertence ao applet, não ao
+                            // despachante: Kingdom Hearts devolve 1 no EVT_APP_START e segue
+                            // armando o laço normalmente. A Session já aceita qualquer retorno;
+                            // a linha de comando precisa fazer o mesmo, senão ela nunca chega
+                            // ao trecho que permite perfilar a intro.
+                            if matches!(started, Outcome::Returned { .. } | Outcome::Budget) {
                                 rodou_quadros = true;
                                 run_frames(
                                     &mut machine,
@@ -627,6 +711,20 @@ fn run(path: &str, options: Options) -> Result<(), Box<dyn std::error::Error>> {
                 false => "solta ",
             };
             println!("  {ms:>7} ms  porta {}  {acao} {nome}", porta + 1);
+        }
+    }
+    if let Some(classe) = machine.take_launch_request() {
+        println!("lançar:    o shell pediu para abrir {classe:#010x}");
+    }
+    let midia = machine.media_log();
+    if !midia.is_empty() {
+        println!("som:       {} linha(s) do que o jogo fez com a mídia", midia.len());
+        for (ms, objeto, chamada, vezes) in &midia {
+            let repete = match vezes {
+                1 => String::new(),
+                n => format!("  ({n}x)"),
+            };
+            println!("  {ms:>7} ms  {objeto:#010x}  {chamada}{repete}");
         }
     }
     let urls = machine.web_requests();
@@ -821,6 +919,254 @@ fn run(path: &str, options: Options) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Mede uma ROM inteira no Dynarmic, sem janela e sem trocar o backend normal do emulador.
+///
+/// Esta não é uma segunda implementação do comando `run`: é uma bancada estreita para a
+/// pergunta que motivou o JIT — quantos milissegundos virtuais o ARM recompilado consegue
+/// entregar por segundo de parede? Quando os números e os quadros concordarem com o Unicorn,
+/// o backend poderá subir para a sessão e a interface.
+fn bench_dynarmic(
+    path: &str,
+    seconds: u32,
+    dump: Option<&str>,
+    keys: &input::Script,
+    teclas: &[(u32, u32)],
+    instalados: Vec<(u32, String)>,
+    superficies: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let extracted;
+    let path = match std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+    {
+        Some("zip") => {
+            extracted = archive::extract(std::path::Path::new(path))?;
+            extracted.as_path()
+        }
+        _ => std::path::Path::new(path),
+    };
+    let image = ModImage::parse(std::fs::read(path)?)?;
+    let extensoes = crate::session::extensoes_de(path);
+    let module = loader::load_with(&image, &extensoes)?;
+    let root = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+    let mut machine = Machine::new(DynarmicCpu::new()?, module, root);
+    machine.set_installed_applets(instalados);
+    let boot = machine.run(INSTRUCTION_BUDGET)?;
+    if !matches!(boot, Outcome::Returned { code: 0 }) {
+        return Err(format!("carga parou em {boot:?}").into());
+    }
+    let clsid = library::applet_clsid(path).ok_or("nenhum .mif encontrou o applet")?;
+    let applet = match machine.create_applet(clsid, INSTRUCTION_BUDGET)? {
+        AppletResult::Called { code: 0, applet } if applet != 0 => applet,
+        other => return Err(format!("CreateInstance parou em {other:?}").into()),
+    };
+    let start = machine.start_applet(applet, clsid, INSTRUCTION_BUDGET)?;
+    if !matches!(start, Outcome::Returned { .. } | Outcome::Budget) {
+        return Err(format!("EVT_APP_START parou em {start:?}").into());
+    }
+
+    let wall = std::time::Instant::now();
+    let base_clock = machine.clock_ms();
+    let base_instructions = machine.instructions();
+    let until = base_clock.saturating_add(seconds.saturating_mul(1000));
+    let mut turns = 0u64;
+    let mut pad = input::Pad::default();
+    // Cada tecla vira aperto e soltura quando o relógio passa do instante. Com `--dump`, o quadro
+    // de meio segundo depois de cada uma também é gravado, numerado: é o que mostra a navegação
+    // passo a passo, e não só onde ela terminou.
+    let mut pendentes: std::collections::VecDeque<(u32, u32)> = {
+        let mut ordenadas = teclas.to_vec();
+        ordenadas.sort_by_key(|&(quando, _)| quando);
+        ordenadas.into()
+    };
+    let mut fotos: std::collections::VecDeque<u32> = std::collections::VecDeque::new();
+    let mut numero_da_foto = 0;
+    while machine.clock_ms() < until && !machine.is_idle() {
+        while pendentes.front().is_some_and(|&(quando, _)| machine.clock_ms() >= quando) {
+            let (quando, avk) = pendentes.pop_front().unwrap_or_default();
+            machine.set_key(avk, true);
+            machine.set_key(avk, false);
+            fotos.push_back(quando.saturating_add(500));
+        }
+        if let Some(path) = dump {
+            while fotos.front().is_some_and(|&quando| machine.clock_ms() >= quando) {
+                fotos.pop_front();
+                numero_da_foto += 1;
+                let nome = match path.strip_suffix(".bmp") {
+                    Some(base) => format!("{base}.{numero_da_foto}.bmp"),
+                    None => format!("{path}.{numero_da_foto}"),
+                };
+                std::fs::write(nome, machine.screen().to_bmp())?;
+            }
+        }
+        keys.apply(machine.clock_ms(), &mut pad);
+        machine.set_pad(pad);
+        let outcomes = machine.advance(INSTRUCTION_BUDGET)?;
+        machine.deliver_signals(INSTRUCTION_BUDGET)?;
+        machine.deliver_callbacks(INSTRUCTION_BUDGET)?;
+        turns += 1;
+        if let Some(bad) = outcomes.iter().find(|outcome| {
+            !matches!(outcome, Outcome::Returned { .. } | Outcome::Budget)
+        }) {
+            return Err(format!("laço parou em {bad:?}").into());
+        }
+    }
+    let elapsed = wall.elapsed();
+    let virtual_ms = machine.clock_ms().saturating_sub(base_clock);
+    let instructions = machine.instructions().saturating_sub(base_instructions);
+    let ratio = virtual_ms as f64 / elapsed.as_secs_f64().max(f64::MIN_POSITIVE) / 10.0;
+    println!("backend:   Dynarmic ARMv6K");
+    println!("tempo:     {virtual_ms} ms virtuais em {:.3} s reais ({ratio:.1}% da velocidade)", elapsed.as_secs_f64());
+    println!("cpu:       {} milhões de instruções ({:.1} MIPS)", instructions / 1_000_000, instructions as f64 / elapsed.as_secs_f64().max(f64::MIN_POSITIVE) / 1_000_000.0);
+    println!("laço:      {turns} voltas, {} timer(s), {} quadro(s) GL", machine.armed_timers(), machine.gl_swaps());
+    let media: Vec<_> = machine
+        .call_log()
+        .into_iter()
+        .filter(|(name, _)| name.starts_with("IMedia::"))
+        .collect();
+    if !media.is_empty() {
+        println!("mídia:");
+        for (name, count) in media {
+            println!("  {count:>4}x {name}");
+        }
+    }
+    if let Some(path) = dump {
+        std::fs::write(path, machine.screen().to_bmp())?;
+        println!("quadro:    {path}");
+    }
+    if let Some(dir) = superficies {
+        despeja_superficies(&machine, dir)?;
+    }
+    if let Some(classe) = machine.take_launch_request() {
+        println!("lançar:    o shell pediu para abrir {classe:#010x}");
+    }
+    Ok(())
+}
+
+/// Roda um jogo pelo mesmo caminho da janela, sem abri-la.
+///
+/// A bancada monta a máquina por conta própria, e o que ela mostra pode não ser o que a janela
+/// mostra: a janela instala todos os jogos da biblioteca, passa o controle pela sessão e traduz o
+/// direcional em teclas. Aqui entram as mesmas peças — `Session`, a biblioteca das configurações
+/// e [`ui::App::teclas_do_controle`] —, e o roteiro é de **botões do controle**, como quem joga.
+/// Com `--dump`, sai um quadro meio segundo depois de cada aperto; o relatório vai inteiro para a
+/// saída no fim.
+fn sessao_sem_janela(
+    path: &str,
+    seconds: u32,
+    dump: Option<&str>,
+    keys: &input::Script,
+    instantes: &[u32],
+    placa: bool,
+    serial: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let serial = serial.map(std::path::Path::new);
+    let settings = ui::settings::Settings::load();
+    let games = settings
+        .roms_dir
+        .as_deref()
+        .map(library::scan)
+        .unwrap_or_default();
+    let mut session = session::Session::start_with(
+        std::path::Path::new(path),
+        PORTAS_PADRAO,
+        serial,
+        placa,
+        None,
+    )
+    .map_err(|err| format!("{err:?}"))?;
+    session.set_installed_applets(
+        games
+            .iter()
+            .filter_map(|game| Some((game.clsid?, library::id_do_modulo(&game.path)?))),
+    );
+    let mut fim = seconds.saturating_mul(1000);
+    let mut reaberta = false;
+    let mut pad = input::Pad::default();
+    let mut fotos: std::collections::VecDeque<u32> = instantes.iter().copied().collect();
+    let mut numero = 0;
+    while session.clock_ms() < fim {
+        let antes = pad;
+        if !reaberta {
+            keys.apply(session.clock_ms(), &mut pad);
+        } else {
+            pad = input::Pad::default();
+        }
+        session.set_port_pad(0, pad);
+        for (avk, apertada) in ui::App::teclas_do_controle(&antes, &pad) {
+            session.set_key(avk, apertada);
+        }
+        if (0..input::BUTTONS).any(|b| pad.is_down(b) && !antes.is_down(b)) {
+            fotos.push_back(session.clock_ms().saturating_add(500));
+            fotos.make_contiguous().sort_unstable();
+        }
+        let parou = matches!(
+            session.step(std::time::Duration::from_millis(16), false),
+            session::Step::Stopped
+        );
+        if let Some(path) = dump {
+            while fotos.front().is_some_and(|&t| session.clock_ms() >= t) {
+                fotos.pop_front();
+                numero += 1;
+                let nome = match path.strip_suffix(".bmp") {
+                    Some(base) => format!("{base}.{numero}.bmp"),
+                    None => format!("{path}.{numero}"),
+                };
+                if let Some(gl) = session.quadro_gl() {
+                    std::fs::write(nome.replace(".bmp", ".gl.bmp"), gl.to_bmp())?;
+                }
+                std::fs::write(nome, session.screen().to_bmp())?;
+            }
+        }
+        if let Some(classe) = session.take_launch_request() {
+            let jogo = games.iter().find(|game| game.clsid == Some(classe));
+            println!(
+                "lançar:    {classe:#010x} aos {} ms → {}",
+                session.clock_ms(),
+                jogo.map_or("nenhum jogo da biblioteca com essa classe".to_string(), |g| g
+                    .path
+                    .display()
+                    .to_string())
+            );
+            break;
+        }
+        if parou && session.classe() == session::Z_WHEEL && session.saiu_sozinho() {
+            // O mesmo que a janela faz: ver `session::Z_WHEEL`.
+            println!("reabrir:   a Z-Wheel saiu aos {} ms; reabrindo", session.clock_ms());
+            let deslocamento = session.clock_ms();
+            session = session::Session::start_with(
+                std::path::Path::new(path),
+                PORTAS_PADRAO,
+                None,
+                placa,
+                None,
+            )
+            .map_err(|err| format!("{err:?}"))?;
+            session.set_installed_applets(
+                games
+                    .iter()
+                    .filter_map(|game| Some((game.clsid?, library::id_do_modulo(&game.path)?))),
+            );
+            let _ = deslocamento;
+            reaberta = true;
+            fim = 4000;
+            continue;
+        }
+        if parou {
+            println!("parou:     {:?}", session.stopped_reason());
+            break;
+        }
+    }
+    if let Some(path) = dump {
+        std::fs::write(path, session.screen().to_bmp())?;
+    }
+    println!("tempo:     {} ms virtuais", session.clock_ms());
+    for linha in session.log() {
+        println!("{linha}");
+    }
+    Ok(())
+}
+
 /// Grava o heap e a imagem do módulo como estão na memória.
 ///
 /// A imagem do módulo vale a pena junto do heap: em runtime ela já passou pelas relocações que o
@@ -854,8 +1200,8 @@ fn despeja_memoria(
 /// "O jogo desenha e a tela fica preta" tem duas causas possíveis, e só o conteúdo das
 /// superfícies as separa: ou ele desenhou em algo que não vai para a tela, ou não desenhou. Ver
 /// o conteúdo delas resolveu o texto do Tekken 2 em minutos depois de horas de suposição.
-fn despeja_superficies(
-    machine: &machine::Machine<UnicornCpu>,
+fn despeja_superficies<C: cpu::CpuBackend>(
+    machine: &machine::Machine<C>,
     dir: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(dir)?;

@@ -38,3 +38,5 @@ vendor/
 # Relatórios que o emulador escreve ao lado do executável, um por execução.
 *.log
 *.bmp
+.nodeterm/project.json
+ref z-wheel2.png

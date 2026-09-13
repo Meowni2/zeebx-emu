@@ -32,45 +32,77 @@ dispensa qualquer código ARM de cola — o detalhe está em [03-despacho-de-api
 
 ## Os módulos
 
+A árvore segue os subsistemas: uma pasta por assunto, e dentro dela um arquivo por peça.
+
 ### Núcleo de execução
 
 | Arquivo | Papel |
 |---|---|
 | `cpu/mod.rs` | `CpuBackend`, a fronteira com o núcleo ARM: registradores, memória, `run` |
 | `cpu/unicorn.rs` | A implementação sobre o unicorn-engine, configurada como ARM1176 |
-| `mem.rs` | O mapa de memória do guest, em regiões nomeadas |
-| `loader.rs` | Monta o ambiente do módulo e chama `AEEMod_Load` |
-| `modfile.rs` | Parser do `.mod` |
-| `machine.rs` | O laço: roda, atende a chamada, continua. É onde vive quase toda a API do BREW |
+| `cpu/mem.rs` | O mapa de memória do guest, em regiões nomeadas |
+| `loader/mod.rs` | Monta o ambiente do módulo e chama `AEEMod_Load` |
+| `loader/modfile.rs` | Parser do `.mod` |
+| `machine/mod.rs` | O laço: roda, atende a chamada, continua. Guarda o estado da `Machine` e o despacho |
+
+A implementação das APIs fica em um submódulo por assunto, cada um com um bloco
+`impl<C: CpuBackend> Machine<C>` próprio. O submódulo enxerga os campos privados da `Machine`
+por ser descendente de `machine`; o que ele expõe de volta é `pub(super)`, visível no módulo e
+nos irmãos e em nada além disso.
+
+| Arquivo | Papel |
+|---|---|
+| `machine/shell.rs` | `IShell`: recursos, informação do aparelho, arranque do applet |
+| `machine/display.rs` | `IDisplay` e `IGraphics`: o desenho 2D e o texto |
+| `machine/bitmap.rs` | `IBitmap` e o `IDIB`: superfícies, blit e a sincronia com a memória do jogo |
+| `machine/image.rs` | `IImage` e `IImageDecoder` |
+| `machine/widget.rs` | `IWidget`, `IControl`, `IForm` e a pintura da árvore |
+| `machine/egl.rs`, `machine/gl.rs` | EGL e OpenGL ES 1.1, e a ponte para o rasterizador |
+| `machine/media.rs`, `machine/sound.rs` | `IMedia` e `ISound` |
+| `machine/file.rs`, `machine/zip.rs` | `IFileMgr`/`IFile` e o `IUnzipAStream` |
+| `machine/net.rs` | `IWeb` e `ISource` |
+| `machine/hid.rs` | `IHID`, as portas e as teclas |
+| `machine/sql.rs` | `AEECLSID_SQLMGR`, atendido pelo SQLite |
+| `machine/cifra.rs` | `ICipher` e `IHash` |
+| `machine/thread.rs` | `IThread`, `IQueue` e o heap do BREW |
+| `machine/signal.rs` | `ISignal` e a entrega dos callbacks |
+| `machine/time.rs` | O relógio, o vsync e o salto do ocioso |
+| `machine/helper.rs` | A stdlib do BREW no lado da `Machine`: `printf`, `qsort`, conversão |
+| `machine/diversos.rs` | As interfaces de uma chamada só: configuração, SIM, energia, licença |
+| `machine/probe.rs` | A sondagem de classe desconhecida |
+| `machine/diagnostico.rs` | Rastreio, despejo de falha e os contadores que a interface mostra |
 
 ### API do BREW
 
 | Arquivo | Papel |
 |---|---|
-| `aee.rs` | O trampolim: converte endereço ↔ (interface, slot) |
-| `aee_slots.rs` | O nome de cada método, na ordem em que ocupa a vtable |
-| `aee_helpers.rs` | A tabela da stdlib do BREW (`memcpy`, `malloc`, `sprintf`…) |
-| `objects.rs` | Os objetos que entregamos ao jogo, com contagem de referências |
-| `heap.rs` | O heap que o `malloc` do jogo consome |
+| `brew/aee.rs` | O trampolim: converte endereço ↔ (interface, slot) |
+| `brew/aee_slots.rs` | O nome de cada método, na ordem em que ocupa a vtable |
+| `brew/aee_helpers.rs` | A tabela da stdlib do BREW (`memcpy`, `malloc`, `sprintf`…) |
+| `brew/cformat.rs`, `brew/fmath.rs` | O `printf` e o ponto flutuante que a tabela aponta |
+| `brew/objects.rs` | Os objetos que entregamos ao jogo, com contagem de referências |
+| `brew/heap.rs` | O heap que o `malloc` do jogo consome |
+| `brew/vfs.rs`, `brew/sql.rs`, `brew/crypto.rs` | Os serviços do AEE: arquivos, SQLite e cifra |
 
 ### Saídas
 
 | Arquivo | Papel |
 |---|---|
-| `display.rs` | O framebuffer e as operações 2D |
-| `rasterizer.rs` | O OpenGL ES 1.1 em software |
-| `gles.rs`, `atc.rs`, `paltex.rs` | Estado do GL e os formatos de textura comprimida |
-| `audio.rs`, `wav.rs` | Mistura e decodificação de som |
-| `input.rs`, `bindings.rs`, `gamepads.rs` | Entrada |
+| `video/display.rs` | O framebuffer e as operações 2D |
+| `video/rasterizer.rs` | O OpenGL ES 1.1 em software |
+| `video/gles.rs`, `video/atc.rs`, `video/paltex.rs` | Estado do GL e os formatos de textura comprimida |
+| `video/font.rs`, `video/icon.rs`, `video/gif.rs` | O texto e as imagens que vêm dentro dos jogos |
+| `audio/mod.rs`, `audio/wav.rs`, `audio/mp3.rs`, `audio/midi.rs` | Mistura e decodificação de som |
+| `input/` | Entrada: o controle do console, os gamepads do host e o mapa de botões |
 
 ### Fora do emulador
 
 | Arquivo | Papel |
 |---|---|
 | `session.rs` | Um jogo em execução, do arquivo aos quadros — o que a interface usa |
-| `ui.rs`, `i18n.rs`, `settings.rs`, `library.rs`, `padview.rs` | A interface |
+| `ui/` | A interface: tela, biblioteca, preferências, saves e tradução |
 | `main.rs` | A linha de comando, e o `launch()` que abre a interface quando não há argumentos |
-| `vfs.rs`, `archive.rs`, `miffile.rs`, `resfile.rs`, `icon.rs` | Arquivos e recursos |
+| `loader/archive.rs`, `loader/miffile.rs`, `loader/resfile.rs` | O `.zip`, o `.mif` e o `.bar` |
 
 ## O laço
 

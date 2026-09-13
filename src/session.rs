@@ -8,11 +8,14 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use crate::cpu::unicorn::UnicornCpu;
-use crate::display::Framebuffer;
+use crate::cpu::dynarmic::DynarmicCpu;
 use crate::input::Pad;
+use crate::loader;
+use crate::loader::archive;
+use crate::loader::modfile::ModImage;
 use crate::machine::{AppletResult, Machine, Outcome};
-use crate::{archive, library, loader, modfile::ModImage};
+use crate::ui::library;
+use crate::video::display::Framebuffer;
 
 /// Teto de instruções por fatia entre duas chamadas de API — evita que um laço infinito no
 /// guest trave o emulador.
@@ -71,7 +74,10 @@ pub enum Step {
 }
 
 pub struct Session {
-    machine: Machine<UnicornCpu>,
+    /// O mesmo agendador BREW usado pela bancada e pela linha de comando, com o núcleo que
+    /// recompila os blocos ARM do módulo. O Kingdom Hearts desenha a intro no seu próprio
+    /// rasterizador ARM; deixá-lo no Unicorn aqui anulava o ganho medido no `bench`.
+    machine: Machine<DynarmicCpu>,
     /// O applet criado e ainda **não** iniciado, com o ClassID dele.
     ///
     /// O `EVT_APP_START` é despachado na primeira volta do laço, não aqui. Rodá-lo dentro do
@@ -83,6 +89,8 @@ pub struct Session {
     /// A saída de som. Enquanto ela existe, o som toca; largá-la fecha o fluxo.
     audio: Option<crate::audio::Output>,
     title: String,
+    /// O ClassID do applet desta sessão.
+    classe: u32,
     /// Instante e leitura do relógio virtual quando a execução começou, que é o par com que se
     /// mede se o jogo está adiantado.
     started: Instant,
@@ -135,10 +143,12 @@ impl Session {
     /// configuração dissesse o contrário.
     pub fn start_with(
         path: &Path,
-        portas: [Option<crate::bindings::Aparelho>; crate::input::PORTAS],
+        portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
         serial: Option<&Path>,
+        placa: bool,
+        contexto: Option<std::sync::Arc<eframe::glow::Context>>,
     ) -> Result<Self, StartError> {
-        Self::start_inner(path, Some(portas), serial)
+        Self::start_inner(path, Some(portas), serial, placa, contexto)
     }
 
     /// A serial entra **antes de o módulo ser criado**, e não depois de a sessão existir.
@@ -149,8 +159,10 @@ impl Session {
     /// nenhuma, porque não se sabe que há buraco.
     fn start_inner(
         path: &Path,
-        portas: Option<[Option<crate::bindings::Aparelho>; crate::input::PORTAS]>,
+        portas: Option<[Option<crate::input::bindings::Aparelho>; crate::input::PORTAS]>,
         serial: Option<&Path>,
+        placa: bool,
+        contexto: Option<std::sync::Arc<eframe::glow::Context>>,
     ) -> Result<Self, StartError> {
         let extracted;
         let path = match path.extension().and_then(|e| e.to_str()) {
@@ -162,13 +174,23 @@ impl Session {
         };
         let bytes = std::fs::read(path).map_err(StartError::Unreadable)?;
         let image = ModImage::parse(bytes).map_err(|e| StartError::NotAModule(e.to_string()))?;
-        let module = loader::load(&image).map_err(|e| StartError::NotLoadable(e.to_string()))?;
+        let extensoes = extensoes_de(path);
+        let module = loader::load_with(&image, &extensoes)
+            .map_err(|e| StartError::NotLoadable(e.to_string()))?;
 
         // A raiz do sistema de arquivos do jogo é o diretório onde o `.mod` está: é lá que o
         // console guarda os arquivos do título.
         let root = path.parent().map(Path::to_path_buf).unwrap_or_default();
-        let cpu = UnicornCpu::new().map_err(|e| StartError::NotLoadable(e.to_string()))?;
+        let cpu = DynarmicCpu::new().map_err(|e| StartError::NotLoadable(e.to_string()))?;
         let mut machine = Machine::new(cpu, module, root);
+        // Antes de qualquer desenho: ver [`Machine::usa_placa`].
+        machine.usa_placa(placa, contexto);
+        // A tela com que o console abre a Z-Wheel. Ver [`SPLASH_DA_Z_WHEEL`].
+        if library::applet_clsid(path) == Some(Z_WHEEL) {
+            if let Some(imagem) = path.parent().and_then(|dir| std::fs::read(dir.join(SPLASH_DA_Z_WHEEL)).ok()) {
+                machine.pinta_tela_rgb565(&imagem);
+            }
+        }
         if let Some(caminho) = serial {
             if let Some(dir) = caminho.parent() {
                 let _ = std::fs::create_dir_all(dir);
@@ -210,6 +232,7 @@ impl Session {
             partida: Some((applet, clsid)),
             audio: None,
             title: library::title_for(path),
+            classe: clsid,
             started: Instant::now(),
             clock_base,
             stopped: None,
@@ -421,7 +444,18 @@ impl Session {
                 format!("  {ms:>7} ms  porta {}  {acao} {nome}", porta + 1)
             }));
         }
-        let classes = self.machine.unknown_classes();
+        let midia = self.machine.media_log();
+        if !midia.is_empty() {
+            linhas.push("— o que o jogo fez com o som —".to_string());
+            linhas.extend(midia.iter().map(|(ms, objeto, chamada, vezes)| {
+                let repete = match vezes {
+                    1 => String::new(),
+                    n => format!("  ({n}x)"),
+                };
+                format!("  {ms:>7} ms  {objeto:#010x}  {chamada}{repete}")
+            }));
+        }
+                let classes = self.machine.unknown_classes();
         if !classes.is_empty() {
             linhas.push("— classes que o jogo pediu e não temos —".to_string());
             linhas.extend(classes.iter().map(|id| format!("  {id:#010x}")));
@@ -504,7 +538,7 @@ impl Session {
     /// aplicativo, não pelo `IHID` — ver [`crate::input::EVT_KEY`]. A Z-Wheel depende disso: o
     /// formulário de abertura só sai do lugar com `AVK_0` ou `AVK_CLR`, que botão de controle
     /// nenhum produz.
-    pub fn set_installed_applets(&mut self, classes: impl IntoIterator<Item = u32>) {
+    pub fn set_installed_applets(&mut self, classes: impl IntoIterator<Item = (u32, String)>) {
         self.machine.set_installed_applets(classes);
     }
 
@@ -519,7 +553,7 @@ impl Session {
     /// Diz que aparelho o console vê em cada porta.
     pub fn set_portas(
         &mut self,
-        portas: [Option<crate::bindings::Aparelho>; crate::input::PORTAS],
+        portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
     ) {
         self.machine.set_portas(portas);
     }
@@ -538,7 +572,7 @@ impl Session {
             Outcome::Returned { .. } => "o jogo terminou".to_string(),
             Outcome::Unimplemented { addr, caller, .. } => format!(
                 "o jogo chamou {}, que ainda não existe aqui (de {caller:#010x})",
-                crate::aee::describe(*addr)
+                crate::brew::aee::describe(*addr)
             ),
             Outcome::Fault { addr, pc, .. } => {
                 format!("acesso inválido a {addr:#010x}, em {pc:#010x}")
@@ -554,7 +588,51 @@ impl Session {
     pub fn title(&self) -> &str {
         &self.title
     }
+
+    /// O último quadro do rasterizador GL, quando há um. Serve para separar o que o 3D desenhou
+    /// do que chegou à tela composto.
+    pub fn quadro_gl(&self) -> Option<Framebuffer> {
+        self.machine.gl_frame()
+    }
+
+    /// O ClassID do applet que roda nesta sessão.
+    pub fn classe(&self) -> u32 {
+        self.classe
+    }
+
+    /// Começa com a tela que o applet anterior deixou, antes do primeiro desenho deste.
+    ///
+    /// O framebuffer do aparelho não é apagado na troca de applet. Ao abrir um jogo, a Z-Wheel
+    /// deixa na tela o "Aguarde enquanto o aplicativo é carregado" (ver [`SPLASH_DA_Z_WHEEL`]), e
+    /// é ele que se vê até o jogo desenhar o primeiro quadro.
+    pub fn herda_tela(&mut self, rgb565: &[u8]) {
+        self.machine.pinta_tela_rgb565(rgb565);
+    }
+
+    /// Se o applet saiu por conta própria, e não por falha.
+    pub fn saiu_sozinho(&self) -> bool {
+        matches!(self.stopped, Some(Outcome::Returned { .. }))
+    }
 }
+
+/// O ClassID da Z-Wheel, a tela inicial do console.
+///
+/// **Escolher um jogo nela é fechá-la.** O caminho está no módulo: ao confirmar, ela grava o
+/// marcador `ttgmrun.tmp` e o `StringLastAppRan`, desmonta as telas e, no timer de `0x81c38`,
+/// sai. O console a reabre por ser a tela inicial, e na partida ela vê o marcador (`0x81904`),
+/// apaga-o e abre o jogo gravado dois segundos depois. Quem roda a Z-Wheel precisa reabri-la
+/// quando ela sai sozinha — sem isso o jogo escolhido nunca abria.
+pub const Z_WHEEL: u32 = 0x0107_0798;
+
+/// A imagem RGB565 de 640×480 que o console mostra ao abrir a Z-Wheel, no diretório dela.
+///
+/// No boot é o "Bem-Vindo ao Zeebo". **Para abrir um jogo, a Z-Wheel troca o arquivo antes de
+/// sair**: se existe `gamestartrgb.sav`, ela renomeia este para `zeebosplash.rgb565.sav` e o
+/// `gamestartrgb.sav` para este nome (`0x81db0`), e na reabertura desfaz a troca logo no
+/// primeiro milissegundo (`0x822bc`). Quem lê o arquivo entre as duas é o console, ao
+/// reabri-la — e o que aparece é "Aguarde enquanto o aplicativo é carregado", que fica na tela
+/// nos dois segundos até o jogo abrir, porque a Z-Wheel reaberta não desenha nada nesse tempo.
+pub const SPLASH_DA_Z_WHEEL: &str = "zeebosplash.rgb565.raw";
 
 /// A execução por dentro, para a varredura de ROMs — ver [`crate::varredura`].
 ///
@@ -563,7 +641,7 @@ impl Session {
 /// usa isto, e por isso não faz parte da interface da sessão.
 #[cfg(test)]
 impl Session {
-    pub(crate) fn machine(&self) -> &Machine<UnicornCpu> {
+    pub(crate) fn machine(&self) -> &Machine<DynarmicCpu> {
         &self.machine
     }
 
@@ -587,6 +665,8 @@ mod tests {
             &std::env::temp_dir().join("zeebx-nao-existe.mod"),
             None,
             None,
+            false,
+            None,
         );
         assert!(matches!(err, Err(StartError::Unreadable(_))));
     }
@@ -598,10 +678,26 @@ mod tests {
         // legível, porque é ele que a interface mostra.
         let path = std::env::temp_dir().join("zeebx-teste-lixo.mod");
         std::fs::write(&path, b"isto nao e um modulo").unwrap();
-        let Err(err) = Session::start_inner(&path, None, None) else {
+        let Err(err) = Session::start_inner(&path, None, None, false, None) else {
             panic!("um arquivo de lixo não podia virar uma sessão");
         };
         assert!(!err.to_string().is_empty());
         let _ = std::fs::remove_file(&path);
     }
+}
+
+/// Lê os módulos de extensão que acompanham um `.mod` e os deixa prontos para o carregador.
+///
+/// Um `.mod` que não abra é ignorado em silêncio: a extensão é um extra do pacote, e recusar o
+/// jogo inteiro porque um módulo secundário está corrompido seria trocar um jogo que roda em
+/// parte por um que não roda.
+pub fn extensoes_de(mod_path: &std::path::Path) -> Vec<loader::ExtensionImage> {
+    crate::ui::library::extensoes(mod_path)
+        .into_iter()
+        .filter_map(|(caminho, classes)| {
+            let bytes = std::fs::read(caminho).ok()?;
+            let image = ModImage::parse(bytes).ok()?;
+            Some(loader::ExtensionImage { image, classes })
+        })
+        .collect()
 }

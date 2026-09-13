@@ -9,7 +9,7 @@
 use unicorn_engine::{Arch, ArmCpuModel, HookType, Mode, Prot, RegisterARM, Unicorn, uc_error};
 
 use super::{CpuBackend, CpuError, Reg, StopReason};
-use crate::mem::GuestMemory;
+use crate::cpu::mem::GuestMemory;
 
 /// Base da faixa reservada às vtables do BREW. Nunca é mapeada.
 pub const API_BASE: u32 = 0xf000_0000;
@@ -50,12 +50,29 @@ pub struct Write {
     pub lr: u32,
 }
 
+/// Uma faixa de memória vigiada e o sinalizador que diz se ela foi escrita.
+///
+/// O hook do unicorn só vê o que o ARM emulado escreve. As implementações de API escrevem
+/// direto na memória do guest, e é por elas que o 2D chega ao color buffer do pbuffer: por isso
+/// `base` e `end` ficam guardados aqui, para que [`UnicornCpu::write_mem`] também ligue o
+/// sinalizador. Ignorá-las fazia a roda da Z-Wheel parar de receber as capas.
+struct Vigia {
+    /// Quem pediu a vigia: o bitmap, ou a constante do color buffer do pbuffer.
+    id: u32,
+    base: u32,
+    end: u32,
+    sujo: std::rc::Rc<std::cell::Cell<bool>>,
+    hook: unicorn_engine::UcHookId,
+}
+
 pub struct UnicornCpu {
     uc: Unicorn<'static, HookState>,
     /// Escritas capturadas pelo watchpoint, quando há um armado.
     writes: std::rc::Rc<std::cell::RefCell<Vec<Write>>>,
     /// Faixa vigiada, para reconhecer também as escritas feitas pelo host.
     watched: Option<(u32, u32)>,
+    /// As faixas armadas por [`CpuBackend::watch_dirty`], uma por superfície vigiada.
+    vigias: Vec<Vigia>,
     /// Instruções executadas dentro da faixa rastreada, com o `r0` de cada uma.
     steps: std::rc::Rc<std::cell::RefCell<Vec<(u32, u32, u32)>>>,
     /// Instruções executadas desde o início. Contadas por bloco de tradução, que é ordens de
@@ -77,6 +94,9 @@ pub struct UnicornCpu {
     /// Se o teto de tempo real já venceu. Quem chama precisa saber para não recomeçar.
     expired: std::rc::Rc<std::cell::Cell<bool>>,
 }
+
+/// `CPSR` de modo usuário do ARM: modo `0b10000`, sem máscara de interrupção.
+const MODO_USUARIO: u32 = 0x10;
 
 impl UnicornCpu {
     pub fn new() -> Result<Self, CpuError> {
@@ -191,6 +211,7 @@ impl UnicornCpu {
             uc,
             writes: Default::default(),
             watched: None,
+            vigias: Vec::new(),
             steps: Default::default(),
             instructions,
             deadline,
@@ -372,6 +393,17 @@ impl CpuBackend for UnicornCpu {
                 self.uc.mem_write(base, &region.bytes).map_err(uc_err)?;
             }
         }
+        // **Modo usuário.** Um applet BREW não é privilegiado, e há código que conta com isso:
+        // o motor 3D da Superscape que o Kingdom Hearts traz como extensão confere o modo e,
+        // se for privilegiado, caminha na tabela de páginas da MMU —
+        // `mrc p15, #0, r1, c2, c0, #0` para pegar o TTBR0 e `ldr r5, [r7, r6, lsl #2]` para
+        // ler a entrada. Aqui não há MMU, o TTBR0 vale zero e ele morria lendo `0x400`.
+        //
+        // O `tst r4, #0xf; beq` logo acima daquele trecho é o próprio módulo dizendo qual é o
+        // modo esperado: com os bits de modo zerados — usuário — ele pula o caminho todo.
+        self.uc
+            .reg_write(RegisterARM::CPSR, MODO_USUARIO as u64)
+            .map_err(uc_err)?;
         Ok(())
     }
 
@@ -385,6 +417,56 @@ impl CpuBackend for UnicornCpu {
 
     fn instructions(&self) -> u64 {
         self.instructions.get()
+    }
+
+    fn watch_dirty(&mut self, id: u32, base: u32, len: u32) -> Result<(), CpuError> {
+        self.unwatch_dirty(id);
+        // Começa sujo: desta faixa ainda não vimos nada.
+        let sujo = std::rc::Rc::new(std::cell::Cell::new(true));
+        let ligar = sujo.clone();
+        let hook = self
+            .uc
+            .add_mem_hook(
+                HookType::MEM_WRITE,
+                base as u64,
+                (base + len) as u64,
+                move |_uc, _type, _address, _size, _value| {
+                    ligar.set(true);
+                    true
+                },
+            )
+            .map_err(uc_err)?;
+        self.vigias.push(Vigia {
+            id,
+            base,
+            end: base.saturating_add(len),
+            sujo,
+            hook,
+        });
+        Ok(())
+    }
+
+    fn unwatch_dirty(&mut self, id: u32) {
+        if let Some(pos) = self.vigias.iter().position(|vigia| vigia.id == id) {
+            let vigia = self.vigias.remove(pos);
+            let _ = self.uc.remove_hook(vigia.hook);
+        }
+    }
+
+    fn marca_sujo(&mut self, addr: u32, len: u32) {
+        let fim = addr.saturating_add(len);
+        for vigia in &self.vigias {
+            if addr < vigia.end && fim > vigia.base {
+                vigia.sujo.set(true);
+            }
+        }
+    }
+
+    fn take_dirty(&mut self, id: u32) -> bool {
+        match self.vigias.iter().find(|vigia| vigia.id == id) {
+            Some(vigia) => vigia.sujo.replace(false),
+            None => true,
+        }
     }
 
     fn read_mem(&self, addr: u32, buf: &mut [u8]) -> Result<(), CpuError> {
@@ -416,6 +498,14 @@ impl CpuBackend for UnicornCpu {
                     pc: 0,
                     lr: 0,
                 });
+            }
+        }
+        // A escrita do host não passa pelo hook, e é justamente por aqui que o 2D desenhado
+        // pelas nossas APIs entra na superfície vigiada. Sem isto o sinalizador ficava limpo
+        // com a memória já mudada, e a importação deixava de acontecer.
+        for vigia in &self.vigias {
+            if addr < vigia.end && addr.saturating_add(data.len() as u32) > vigia.base {
+                vigia.sujo.set(true);
             }
         }
         self.uc.mem_write(addr as u64, data).map_err(uc_err)
@@ -611,6 +701,37 @@ mod speed {
                 instructions / elapsed.as_secs_f64() / 1e6
             );
         }
+    }
+
+    #[test]
+    #[ignore]
+    fn leitura_de_memoria_do_guest() {
+        // Cada `read_u32` atravessa a FFI e faz o unicorn procurar a região antes de copiar
+        // quatro bytes. O `read_attribute` do GL fazia uma dessas por componente — este teste
+        // mede a diferença entre pedir componente a componente e pedir o bloco de uma vez.
+        let cpu = cpu_with(&[]);
+        let rounds = 200_000u32;
+
+        let start = std::time::Instant::now();
+        let mut soma = 0u64;
+        for i in 0..rounds {
+            soma += cpu.read_u32(0x2000_0000 + (i % 256) * 4).unwrap() as u64;
+        }
+        let avulso = start.elapsed();
+
+        let mut bloco = [0u8; 1024];
+        let start = std::time::Instant::now();
+        for _ in 0..rounds / 256 {
+            cpu.read_mem(0x2000_0000, &mut bloco).unwrap();
+        }
+        let emlote = start.elapsed();
+
+        println!(
+            "read_u32 avulso: {:.0} ns cada | mesmos 4 bytes vindos de um read_mem de 1 KiB: \
+             {:.1} ns cada (soma={soma})",
+            avulso.as_secs_f64() * 1e9 / rounds as f64,
+            emlote.as_secs_f64() * 1e9 / rounds as f64,
+        );
     }
 
     #[test]
