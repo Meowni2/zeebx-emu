@@ -50,6 +50,15 @@ placa monta já é contada do topo e não passa por ela.
 `perto + (longe − perto) × (z/w × 0,5 + 0,5)`. O Crash alterna faixas para pôr o brilho do kart
 por cima do resto, e antes a chamada era ignorada em silêncio.
 
+## Só a unidade zero desenha — nos dois rasterizadores
+
+O pipeline lê uma textura por fragmento, então só a unidade 0 tem efeito. O Resident Evil 4 monta
+o mundo com duas unidades e termina cada bloco na unidade 1, desligando a textura e trocando a
+ligada. O rasterizador de software já ignorava isso fora da unidade 0; o da placa repassava ao
+estado de software, mas aplicava na textura base — e a vila saía branca com a placa ligada. Ligar
+e desligar textura, a textura ligada, o modo, os parâmetros e o recorte agora só valem na unidade
+0 também em `video/gpu.rs` (`GlState::base_active_unit`).
+
 ## A matriz de textura
 
 `GL_TEXTURE` **precisa** ser aplicada às coordenadas `uv`. Os jogos mandam UV em ponto fixo

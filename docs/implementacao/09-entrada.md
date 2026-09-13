@@ -173,17 +173,20 @@ O Zeebo tem **duas portas USB**, e o console as enumera: o `GetConnectedDevices`
 passa capacidade 2. Antes disso o emulador tinha um controle e pronto — `input::PORTAS` agora
 vale 2, e cada porta é configurada separadamente.
 
-Cada porta pode ter um de três aparelhos:
+Cada porta pode ter um destes aparelhos:
 
-| Escolha | UID do aparelho | O que o jogo vê |
-|---|---|---|
-| `controle` | `0x0106c3fd` | Um controle do Zeebo, com os 18 botões e os 4 eixos |
-| `teclado` | `0x0106c3fc` | Um teclado USB |
-| `nenhum` | — | A porta não é enumerada |
+| Escolha | UID do aparelho | VID:PID | O que o jogo vê |
+|---|---|---|---|
+| `dragon` (`controle`) | `0x0106c3fd` | `1EAA:0135` | O Dragon, com os 18 botões e os 4 eixos |
+| `zpad` | `0x0106c3fd` | `1A5C:3033` | O Z-Pad: os mesmos botões e eixos, outro identificador |
+| `boomerang` | `0x0106c3fd` | `15A2:0003` | O Boomerang, com o relatório de movimento — ver o [20](20-boomerang-e-wii-remote.md) |
+| `teclado` | `0x0106c3fc` | — | Um teclado USB |
+| `nenhum` | — | — | A porta não é enumerada |
 
-Os dois UIDs são do `hid_devices.cfg` do console, como o resto da tabela.
+Os UIDs e os pares são do `hid_devices.cfg` do console, como o resto da tabela. Z-Pad e Dragon só
+diferem pelo par VID/PID, que os jogos da Boomerang Sports usam para escolher o tratamento.
 
-Na linha de comando: `--portas=controle,teclado`. Na interface, cada porta tem sua aba de
+Na linha de comando: `--portas=dragon,teclado`. Na interface, cada porta tem sua aba de
 mapeamento. Só a primeira porta nasce ligada — um arquivo de configuração escrito antes das
 portas existirem continua valendo com o controle na porta 1, que é o que ele descrevia.
 
@@ -223,6 +226,8 @@ e isso não cabe num teste nem numa execução automática.
 
 - `--keys=ms:botão[:duração]` move o **controle**. `--keys=3000:b1,6000:start`.
 - `--teclas=ms:nome` entrega **teclas** AVK. `--teclas=1000:select,2000:down`.
+- `--boomerang` e `--movimento=ms:x:y:z` (no `sessao`) movem um **Boomerang**; `--wiimote` usa o
+  Wii Remote conectado. Ver o [20](20-boomerang-e-wii-remote.md).
 
 O instante é o do relógio virtual do jogo, não o número de voltas do laço: uma volta não dura
 sempre o mesmo tanto. Um botão fica apertado se **algum** passo o quer apertado agora — aplicar

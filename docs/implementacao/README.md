@@ -30,6 +30,7 @@ função não está aqui.
 | [17-testes.md](17-testes.md) | Como conferir o que dizemos que funciona, e a varredura de ROMs por teste |
 | [18-a-roda-da-z-wheel.md](18-a-roda-da-z-wheel.md) | Da tela preta ao desenho na Z-Wheel: os degraus do lado do guest, para qualquer emulador |
 | [19-jit-arm-e-renderizadores.md](19-jit-arm-e-renderizadores.md) | Dynarmic, o gargalo dos renderizadores ARM e como validar sem alterar o tempo BREW |
+| [20-boomerang-e-wii-remote.md](20-boomerang-e-wii-remote.md) | O controle de movimento: o relatório do receptor lido no código dos jogos, e o Wii Remote no lugar dele |
 
 ## Como medir
 

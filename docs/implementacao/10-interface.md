@@ -27,6 +27,40 @@ O cartão **amplia sem interpolar** quando a imagem é menor que o quadro: um í
 aparece ampliado quatro vezes, e interpolar viraria um borrão — o bloco quadrado é o que o console
 mostrava. Uma imagem grande já entra reduzida, e aí a interpolação é que evita o serrilhado.
 
+### A Z-Wheel empresta as capas
+
+As ROMs não trazem capa, mas o pacote da Z-Wheel traz as de 59 jogos, em
+`mod/274755/assets/games/<game_id>/` (`boxartlg.jpg`, `boxart.bmp`, `rating.jpg` e a descrição em
+três idiomas). `ui/acervo.rs` as lê direto do `.zip` ou da pasta, sem extrair:
+
+- o banco `tt_game_info` (SQLite, copiado para o cache para abrir) liga `game_id` ao `class_id` do
+  applet — o mesmo ClassID que a biblioteca usa como chave — e à pasta da capa; `TITLETEXT` dá o
+  nome oficial por idioma (o `lang_id` é o código de letras do BREW em little-endian, `"pt  "`);
+- o banco `asset_cache` liga as cenas do palco (`assets/stage_slides/<dslid>/`, tipo 5 na tabela
+  `ASSETS`) a um `owner`, o `game_id`; a cena traz o logo do rolo de cima como textura
+  `slidebanner.qxt` (QXEngine: cabeçalho de 40 bytes, formato `0x0c` = ATITC só de cor). São 12
+  jogos com logo.
+
+A capa ao lado do jogo continua valendo mais que a da Z-Wheel, e a da Z-Wheel mais que o ícone do
+`.mif`. A descrição perde o aviso da loja que fechou em 2011, que abre quase todas entre `**`.
+
+A Z-Wheel se configura na aba Geral (arquivo, pasta ou "Detectar", que confere o ClassID do `.mif`
+em pastas com "wheel" ou "tectoy" no nome), sai da lista e abre pelo botão **▶ Z-Wheel** da barra
+de cima; um jogo aberto pela biblioteca que sai sozinho fecha a janela dele.
+
+### Grade e slider
+
+`ui/vitrine.rs`. Em grade, cartões em pé na proporção das caixas; em slider, um jogo por vez no
+jeito da Z-Wheel: o rolo de logos girando como cilindro, o nome, as caixas deslizando (a posição
+corre atrás da escolha com uma mola amortecida, e a lista dá a volta) e a classificação com a
+descrição embaixo.
+
+Os dois modos andam pelo controle: direcional, manche e setas escolhem, com repetição ao segurar;
+botão 1, Start, Enter ou espaço abrem; HOME abre a Z-Wheel. Teclado, direcional e manche viram um
+estado só antes de detectar o aperto, para uma seta mapeada também no controle não andar dois. A
+biblioteca não escuta com jogo ou configurações abertos, e como o controle não gera evento no egui
+a janela se redesenha sozinha para lê-lo.
+
 ## Configurações
 
 Quatro abas: geral, controles, gráficos e áudio. Tudo é gravado em JSON no diretório de
@@ -35,6 +69,15 @@ e cada uma cabe numa linha.
 
 Cada campo é `#[serde(default)]`: **um arquivo faltando, truncado ou de uma versão mais nova
 precisa deixar o programa abrir, não impedi-lo.** No pior caso, volta o padrão.
+
+Toda aba rola: a gráfica cresceu além da altura da janela. A janela principal e a do jogo abrem
+em janela, maximizadas ou em tela cheia (padrão maximizada), e `F11` ou `Alt+Enter` alterna a tela
+cheia a qualquer momento. A ampliação padrão é caber na janela: numa janela maximizada o pixel
+inteiro deixava uma moldura larga à toa.
+
+Na aba de controles, uma porta com Boomerang troca o desenho do controle pela prévia do Boomerang
+girando com o Wii Remote, o botão de calibrar e a opção do aviso de calibração no jogo — ver o
+[20](20-boomerang-e-wii-remote.md).
 
 ## Idiomas
 
@@ -107,6 +150,8 @@ zeebx run jogo.mod --seconds=6 --trace  # roda sem janela e resume as chamadas
 | `--keys=ROTEIRO` | entrada sem janela |
 | `--window` | a janela antiga, de `minifb` |
 | `--watch=ENDEREÇO` | quem escreveu e quem leu uma faixa de memória |
+| `zeebx sessao <zip> --boomerang --movimento=ms:x:y:z` | a sessão da janela com um Boomerang roteirizado |
+| `zeebx wiimote` | o Wii Remote ao vivo |
 
 O `--watch` é a ferramenta para "quem deveria ter preenchido este campo?": quando o jogo quebra
 num ponteiro nulo, ele diz se alguém chegou a escrever ali — e de qual instrução partiu a escrita.
