@@ -3,6 +3,7 @@ name = "zeebx"
 version = "0.1.0"
 edition = "2024"
 # GPLv2 porque o unicorn-engine é GPLv2 e vai compilado dentro do binário. Ver LICENSE.
+authors = ["ZeebxTeam"]
 license = "GPL-2.0-only"
 repository = "https://github.com/ZeebxTeam/zeebx-emu"
 description = "Emulador do Zeebo, o console da TecToy"
@@ -52,6 +53,42 @@ zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }
 # o GPLv2 daqui. Só o MP3 entra: o resto dos codecs fica fora.
 symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
 discord-rich-presence = "1.1"
+ureq = "3"
+
+# O ícone dentro do `.exe` do Windows: é o que o Explorer e a barra de tarefas mostram.
+[build-dependencies]
+winresource = "0.1"
+
+# Os instaladores, gerados pelo `cargo packager --release`: `.deb` e AppImage no Linux, NSIS no
+# Windows, `.dmg` no macOS. O workflow `.github/workflows/release.yml` roda isto nos três sistemas
+# quando uma tag de versão é enviada.
+[package.metadata.packager]
+product-name = "Zeebx"
+identifier = "io.github.zeebxteam.zeebx"
+publisher = "ZeebxTeam"
+homepage = "https://github.com/ZeebxTeam/zeebx-emu"
+category = "Game"
+description = "Emulador do Zeebo, o console da TecToy"
+out-dir = "target/pacotes"
+before-packaging-command = "cargo build --release --locked"
+icons = ["assets/icones/zeebx-512.png", "assets/icones/zeebx.ico", "assets/icones/zeebx.icns"]
+
+[[package.metadata.packager.binaries]]
+path = "zeebx"
+main = true
+
+[package.metadata.packager.deb]
+# O `libasound2t64` é o nome do ALSA a partir do Ubuntu 24.04 e do Debian 13.
+depends = ["libasound2 | libasound2t64", "libudev1", "libgl1", "libxkbcommon0", "libatomic1"]
+section = "games"
+
+[package.metadata.packager.nsis]
+installer-icon = "assets/icones/zeebx.ico"
+installer-mode = "currentUser"
+languages = ["PortugueseBR", "English"]
+
+[package.metadata.packager.macos]
+minimum-system-version = "11.0"
 
 # O `cargo run` sem `--release` rodava o Quake 6,9x mais devagar — 21,7 s contra 3,2 s para o
 # mesmo trabalho (668 M instruções, 378 voltas). Não é surpresa: o rasterizador e o despacho de

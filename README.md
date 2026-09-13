@@ -41,6 +41,26 @@ Rust 1.88 ou mais novo.
 cargo build --release
 ```
 
+### Instaladores e releases
+
+Os instaladores saem do [cargo-packager](https://github.com/crabnebula-dev/cargo-packager), com a
+configuração em `[package.metadata.packager]` no `Cargo.toml`:
+
+```bash
+cargo install cargo-packager --locked
+cargo packager --release --formats deb,appimage   # Linux
+cargo packager --release --formats nsis           # Windows
+cargo packager --release --formats dmg            # macOS
+```
+
+Os arquivos ficam em `target/pacotes/`. No Arch, o AppImage precisa de `NO_STRIP=1`: o `strip` do
+linuxdeploy não reconhece as bibliotecas do sistema.
+
+Uma tag de versão (`v0.1.0` ou `0.1.0`) enviada ao GitHub dispara o
+[`release.yml`](.github/workflows/release.yml), que gera os quatro pacotes — Linux, Windows, macOS
+Apple Silicon e macOS Intel — e monta a release como rascunho, com o título igual à tag. O
+emulador procura versões novas nessas releases ao abrir.
+
 ## Usando
 
 Sem argumentos, abre a interface. Pela linha de comando:

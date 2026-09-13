@@ -6,5 +6,15 @@ fn main() {
     if cfg!(target_os = "linux") {
         println!("cargo:rustc-link-lib=atomic");
     }
+    // O ícone e a versão entram no `.exe`. O `CARGO_CFG_TARGET_OS` é o do alvo, e não o da
+    // máquina que compila: o `cfg!` aqui responderia pelo sistema em que o build.rs roda.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        let mut recurso = winresource::WindowsResource::new();
+        recurso.set_icon("assets/icones/zeebx.ico");
+        if let Err(erro) = recurso.compile() {
+            println!("cargo:warning=sem ícone no .exe: {erro}");
+        }
+    }
+    println!("cargo:rerun-if-changed=assets/icones/zeebx.ico");
     println!("cargo:rerun-if-changed=build.rs");
 }

@@ -259,8 +259,23 @@ pub struct Settings {
     pub controls: crate::input::bindings::Controls,
     pub z_wheel: ZWheel,
     pub discord: Discord,
+    pub atualizacoes: Atualizacoes,
     /// A versão em que o aviso de abertura foi dispensado de vez. Outra versão mostra de novo.
     pub aviso_dispensado_na_versao: Option<String>,
+}
+
+/// A procura por versões novas. Ver [`crate::ui::atualizacao`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Atualizacoes {
+    /// Perguntar ao GitHub na abertura.
+    pub ao_abrir: bool,
+}
+
+impl Default for Atualizacoes {
+    fn default() -> Self {
+        Self { ao_abrir: true }
+    }
 }
 
 /// O Rich Presence do Discord. Ver [`crate::ui::discord`].
@@ -443,6 +458,7 @@ mod tests {
                 ativo: false,
                 capas_url: "https://exemplo/{chave}.png".into(),
             },
+            atualizacoes: Atualizacoes { ao_abrir: false },
             aviso_dispensado_na_versao: Some("0.1.0".into()),
         };
         settings.save_to(&path).unwrap();

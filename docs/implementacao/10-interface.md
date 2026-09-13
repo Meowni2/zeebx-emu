@@ -146,6 +146,14 @@ Na partida, um modal diz que o emulador está em desenvolvimento e pede para con
 controle antes de jogar. "Não mostrar de novo" grava a versão em `aviso_dispensado_na_versao`; uma
 versão nova mostra o aviso outra vez.
 
+## Atualizações
+
+`ui/atualizacao.rs`. Na abertura (opção nas configurações, ligada por padrão), uma thread pergunta
+ao GitHub pela `releases/latest` de `ZeebxTeam/zeebx-emu`. A tag vale com ou sem `v`; rascunhos e
+pré-lançamentos ficam de fora. Havendo versão maior que a do binário, um modal oferece abrir a
+página da release — depois do aviso de abertura, para os dois não se empilharem. "Procurar agora"
+repete a pergunta pelas configurações. Um 404 é "em dia": é o que vem enquanto não há release.
+
 ## Rich Presence do Discord
 
 `ui/discord.rs`. O Discord fala por um soquete local que pode sumir a qualquer hora, então a

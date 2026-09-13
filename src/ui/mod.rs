@@ -6,6 +6,7 @@
 //! que é o que mantém a janela viva enquanto o jogo corre.
 
 pub mod acervo;
+pub mod atualizacao;
 pub mod discord;
 mod vitrine;
 pub mod gpu;
@@ -229,6 +230,11 @@ pub struct App {
     inicio_da_presenca: (Option<u32>, i64),
     /// O resultado da última exportação de imagens para o Discord.
     discord_recado: Option<String>,
+    /// A procura por versão nova em andamento, e o que ela respondeu.
+    procura_de_atualizacao: Option<std::sync::mpsc::Receiver<atualizacao::Resposta>>,
+    atualizacao: Option<atualizacao::Resposta>,
+    /// O aviso de versão nova está na tela.
+    aviso_de_atualizacao: bool,
     /// O aviso de abertura ainda está na tela.
     aviso_de_abertura: bool,
     /// A caixa "não mostrar de novo" do aviso de abertura.
@@ -337,6 +343,9 @@ impl App {
             log_status: None,
             log_dismissed: false,
             aviso_de_abertura,
+            procura_de_atualizacao: None,
+            atualizacao: None,
+            aviso_de_atualizacao: false,
             presenca: discord::Presenca::default(),
             inicio_da_presenca: (None, agora_ms()),
             discord_recado: None,
@@ -359,6 +368,9 @@ impl App {
             gpu_falhou: Default::default(),
         };
         app.atualiza_z_wheel();
+        if app.settings.atualizacoes.ao_abrir {
+            app.procura_de_atualizacao = Some(atualizacao::procura());
+        }
         app
     }
 
@@ -406,6 +418,104 @@ impl App {
 
     /// O nome com que um jogo aparece: o oficial da Z-Wheel no idioma da interface, quando ela
     /// conhece o jogo, e o da pasta ou do pacote no resto.
+    /// Recolhe a resposta da procura por versão nova e mostra o aviso quando há uma.
+    ///
+    /// O aviso espera o de abertura sair da frente: dois modais empilhados na partida escondem
+    /// um atrás do outro.
+    fn acompanha_atualizacao(&mut self, ctx: &egui::Context) {
+        if let Some(canal) = &self.procura_de_atualizacao {
+            match canal.try_recv() {
+                Ok(resposta) => {
+                    self.aviso_de_atualizacao = matches!(resposta, atualizacao::Resposta::Nova(_));
+                    self.atualizacao = Some(resposta);
+                    self.procura_de_atualizacao = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(250));
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.procura_de_atualizacao = None;
+                }
+            }
+        }
+        if !self.aviso_de_atualizacao || self.aviso_de_abertura {
+            return;
+        }
+        let Some(atualizacao::Resposta::Nova(lancamento)) = self.atualizacao.clone() else {
+            self.aviso_de_atualizacao = false;
+            return;
+        };
+        let mut fechar = false;
+        let resposta = egui::Modal::new(egui::Id::new("aviso-de-atualizacao")).show(ctx, |ui| {
+            ui.set_max_width(420.0);
+            ui.heading(self.catalog.get("update.title"));
+            ui.add_space(8.0);
+            ui.label(self.catalog.format(
+                "update.available",
+                &[("new", &lancamento.versao), ("current", atualizacao::VERSAO_ATUAL)],
+            ));
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button(self.catalog.get("update.download")).clicked() {
+                    ctx.open_url(egui::OpenUrl::new_tab(&lancamento.pagina));
+                    fechar = true;
+                }
+                if ui.button(self.catalog.get("update.later")).clicked() {
+                    fechar = true;
+                }
+            });
+        });
+        if fechar || resposta.should_close() {
+            self.aviso_de_atualizacao = false;
+        }
+    }
+
+    fn secao_de_atualizacoes(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
+        ui.label(self.tr("settings.updates"));
+        ui.weak(self.catalog.format(
+            "settings.updates.version",
+            &[("version", atualizacao::VERSAO_ATUAL)],
+        ));
+        changed |= ui
+            .checkbox(
+                &mut self.settings.atualizacoes.ao_abrir,
+                self.catalog.get("settings.updates.on_start"),
+            )
+            .changed();
+        ui.horizontal(|ui| {
+            let procurando = self.procura_de_atualizacao.is_some();
+            if ui
+                .add_enabled(!procurando, egui::Button::new(self.catalog.get("settings.updates.check")))
+                .clicked()
+            {
+                self.atualizacao = None;
+                self.procura_de_atualizacao = Some(atualizacao::procura());
+            }
+            let estado = match (&self.atualizacao, procurando) {
+                (_, true) => self.catalog.get("settings.updates.checking").to_string(),
+                (Some(atualizacao::Resposta::Nova(lancamento)), _) => self.catalog.format(
+                    "settings.updates.new",
+                    &[("version", &lancamento.versao)],
+                ),
+                (Some(atualizacao::Resposta::EmDia), _) => {
+                    self.catalog.get("settings.updates.up_to_date").to_string()
+                }
+                (Some(atualizacao::Resposta::Falhou(motivo)), _) => self
+                    .catalog
+                    .format("settings.updates.failed", &[("reason", motivo)]),
+                (None, false) => String::new(),
+            };
+            ui.label(estado);
+            if let Some(atualizacao::Resposta::Nova(lancamento)) = &self.atualizacao {
+                if ui.button(self.catalog.get("update.download")).clicked() {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(&lancamento.pagina));
+                }
+            }
+        });
+        changed
+    }
+
     /// Diz ao Discord o que está acontecendo. Barato de chamar a cada quadro: a presença só
     /// manda alguma coisa quando o texto ou a imagem mudam.
     fn atualiza_presenca(&mut self) {
@@ -865,6 +975,9 @@ impl App {
 
         ui.add_space(16.0);
         changed |= self.secao_do_discord(ui);
+
+        ui.add_space(16.0);
+        changed |= self.secao_de_atualizacoes(ui);
 
         ui.add_space(16.0);
         ui.weak(self.catalog.format(
@@ -2681,6 +2794,7 @@ impl eframe::App for App {
         if self.aviso_de_abertura {
             self.aviso_de_abertura(ctx);
         }
+        self.acompanha_atualizacao(ctx);
         self.atualiza_presenca();
         if self.session.is_some() {
             self.grava_relatorio();

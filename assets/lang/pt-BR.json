@@ -200,5 +200,17 @@
   "settings.discord.covers.hint": "O Discord só mostra imagens cadastradas no aplicativo ou publicadas na internet. Exporte as imagens e envie a pasta em Rich Presence → Art Assets (os nomes dos arquivos já são as chaves), ou publique as capas e informe o endereço com {chave} ou {clsid} no lugar do jogo. Vazio usa as imagens do aplicativo.",
   "settings.discord.export": "Exportar ícone e capas…",
   "settings.discord.exported": "{count} imagens gravadas em {path}.",
-  "settings.discord.export_failed": "Não deu para exportar: {reason}"
+  "settings.discord.export_failed": "Não deu para exportar: {reason}",
+  "update.title": "Nova versão disponível",
+  "update.available": "O Zeebx {new} já está disponível. Você está com a {current}.",
+  "update.download": "Baixar",
+  "update.later": "Depois",
+  "settings.updates": "Atualizações",
+  "settings.updates.version": "Versão instalada: {version}",
+  "settings.updates.on_start": "Procurar atualizações ao abrir",
+  "settings.updates.check": "Procurar agora",
+  "settings.updates.checking": "Procurando…",
+  "settings.updates.new": "Versão {version} disponível.",
+  "settings.updates.up_to_date": "Você está com a versão mais recente.",
+  "settings.updates.failed": "Não deu para procurar: {reason}"
 }

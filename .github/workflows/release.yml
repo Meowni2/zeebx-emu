@@ -1,0 +1,102 @@
+# Gera os instaladores nos três sistemas e monta a release.
+#
+# Dispara com uma tag de versão — `v0.1.0` ou `0.1.0` — ou à mão, pela aba Actions. A release sai
+# como **rascunho**, com o título igual à tag: dá para conferir os arquivos antes de publicar, e o
+# verificador de atualizações do emulador ignora rascunhos até lá.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+      - "[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  pacotes:
+    name: ${{ matrix.nome }}
+    runs-on: ${{ matrix.sistema }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nome: linux-x86_64
+            sistema: ubuntu-22.04
+            formatos: deb,appimage
+          - nome: windows-x86_64
+            sistema: windows-latest
+            formatos: nsis
+          - nome: macos-arm64
+            sistema: macos-latest
+            formatos: dmg
+          - nome: macos-x86_64
+            sistema: macos-15-intel
+            formatos: dmg
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.nome }}
+
+      - name: Dependências do Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config libasound2-dev libudev-dev \
+            libxkbcommon-dev libwayland-dev libgl1-mesa-dev libx11-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libfuse2
+
+      - name: Dependências do macOS
+        if: runner.os == 'macOS'
+        run: brew install cmake || true
+
+      - name: cargo-packager
+        run: cargo install cargo-packager --locked
+
+      # Os testes ainda não foram rodados em Windows e macOS: um tropeço neles aparece no log
+      # sem impedir os instaladores.
+      - name: Testes
+        continue-on-error: true
+        run: cargo test --release --locked
+
+      - name: Instaladores
+        env:
+          # O AppImage é montado sem FUSE no runner.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: cargo packager --release --formats ${{ matrix.formatos }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeebx-${{ matrix.nome }}
+          path: |
+            target/pacotes/*.deb
+            target/pacotes/*.AppImage
+            target/pacotes/*-setup.exe
+            target/pacotes/*.dmg
+          if-no-files-found: error
+
+  release:
+    needs: pacotes
+    # Sai com o que deu certo: um sistema que falhou não segura os outros.
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: pacotes
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          files: pacotes/*
