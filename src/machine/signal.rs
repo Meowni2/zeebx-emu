@@ -89,6 +89,9 @@ impl<C: CpuBackend> Machine<C> {
         self.skip_wheel_instructions()?;
         self.flush_keys()?;
         self.relatorio_do_boomerang();
+        // Os buffers de som entregues nesta volta são lidos agora, depois de o tratador do jogo
+        // ter terminado de escrevê-los.
+        self.resolve_midias_pendentes()?;
         let pending = std::mem::take(&mut self.pending_signals);
         let mut outcomes = Vec::new();
         for callback in pending {

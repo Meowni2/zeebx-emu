@@ -527,6 +527,14 @@ impl Session {
         linhas
     }
 
+    /// Mistura o som num `Mixer` sem placa, para gravar: quem chama pede os quadros com
+    /// `render` no ritmo do relógio virtual.
+    pub fn grava_audio(&mut self, taxa: u32) -> crate::audio::Mixer {
+        let mixer = crate::audio::Mixer::silent(taxa);
+        self.machine.set_audio(Some(mixer.clone()));
+        mixer
+    }
+
     /// Liga ou desliga o som, com o volume em `0..=100`.
     ///
     /// Um host sem placa de áudio não pode impedir o jogo de rodar: o motivo é devolvido para

@@ -432,11 +432,29 @@ const BV_UNLIMITED: u32 = 0xffff_ffff;
 const AEECLSID_MEDIA: u32 = 0x0100_5500;
 const AEECLSID_MEDIAMIDI: u32 = 0x0100_5501;
 const AEECLSID_MEDIAMP3: u32 = 0x0100_5502;
-/// `AEECLSID_MEDIAMPEG4` = `AEECLSID_MULTIMEDIA + 5`. O Need for Speed a cria ao pular a cena de
-/// abertura e, sem conferir o retorno, chama o `SetMediaParm` do ponteiro — recusá-la era saltar
-/// para o endereço zero. O conteúdo passa pelos mesmos decodificadores; o que nenhum deles lê
-/// termina na hora, como qualquer som que não sabemos tocar.
-const AEECLSID_MEDIAMPEG4: u32 = 0x0100_5505;
+/// `AEECLSID_MEDIAMIDIOUTMSG` = `AEECLSID_MULTIMEDIA + 5`, pela lista do SDK. O Need for Speed a
+/// cria ao pular a cena de abertura e, sem conferir o retorno, chama o `SetMediaParm` do ponteiro
+/// — recusá-la era saltar para o endereço zero. Por muito tempo esteve com o nome de MPEG4, que é
+/// o `+ 7`.
+const AEECLSID_MEDIAMIDIOUTMSG: u32 = 0x0100_5505;
+/// As outras classes da família, do `AEECLSID_MULTIMEDIA` do SDK: QCP (`+3`), PMD (`+4`),
+/// MIDIOUTQCP (`+6`), MPEG4 (`+7`), MMF (`+8`), PHR (`+9`), AAC (`+b`), IMELODY (`+c`), AMR
+/// (`+e`), XMF (`+0x12`) e DLS (`+0x13`). Todas viram o mesmo objeto de mídia: o conteúdo passa
+/// pelos decodificadores que temos, e o que nenhum lê termina na hora, como qualquer som que não
+/// sabemos tocar. Recusar a classe derrubava quem cria sem conferir.
+const AEECLSID_MEDIA_FAMILIA: [u32; 11] = [
+    0x0100_5503,
+    0x0100_5504,
+    0x0100_5506,
+    0x0100_5507,
+    0x0100_5508,
+    0x0100_5509,
+    0x0100_550b,
+    0x0100_550c,
+    0x0100_550e,
+    0x0100_5512,
+    0x0100_5513,
+];
 const AEECLSID_MEDIAADPCM: u32 = 0x0100_550a;
 /// `AEECLSID_MEDIAUTIL` = `AEECLSID_MULTIMEDIA + 13` — a fábrica dos objetos de mídia.
 const AEECLSID_MEDIAUTIL: u32 = 0x0100_550d;
@@ -458,8 +476,12 @@ const MM_PARM_PLAY_REPEAT: u32 = 11;
 /// o Double Dragon manda 0 e 100, o Quake manda 70 e 80, e nada em nenhuma ROM passa de 100.
 const MAX_VOLUME: u32 = 100;
 
-/// `MMD_BUFFER`, o `clsData` de um `AEEMediaData` que aponta para memória. Também veio da
-/// observação: é o que os três jogos que tocam som passam.
+/// `MMD_FILE_NAME` e `MMD_BUFFER`, o `clsData` de um `AEEMediaData`: nome de arquivo ou memória.
+/// O de memória veio da observação — é o que os três primeiros jogos que tocaram som passam; o
+/// de arquivo é o que o Galaxy on Fire usa para as músicas.
+const MMD_FILE_NAME: u32 = 0;
+/// O maior som que lemos de uma vez. Um tamanho absurdo é ponteiro errado, não música.
+const MAX_MEDIA_BUFFER: u32 = 64 * 1024 * 1024;
 const MMD_BUFFER: u32 = 1;
 
 /// Comandos e status de `IMedia`, de `inc/AEEIMedia.h` do SDK do BREW 4.0.2.
@@ -1374,13 +1396,38 @@ struct UnzipState {
     expanded: bool,
 }
 
+/// Como um `AEEMediaData` chegou.
+pub(super) enum Entrega {
+    /// Já lido e guardado, pela chave.
+    Pronta(u64),
+    /// Um buffer de memória, para ler na volta seguinte do laço.
+    Buffer(u32, u32),
+    Nada,
+}
+
+/// Um som entregue a um `IMedia`, já lido.
+///
+/// A chave é o **conteúdo**: o cache antigo, por endereço e tamanho, tocava o som anterior quando
+/// um novo caía no mesmo lugar. Quando os bytes são lidos está em [`Machine::resolve_midia`].
+#[derive(Debug, Clone, Default)]
+struct CargaDeMidia {
+    som: Option<std::sync::Arc<crate::audio::wav::Sound>>,
+    /// A duração de um som que não decodificamos mas sabemos cronometrar (hoje, MP3).
+    silencio_us: Option<u64>,
+}
+
 /// O que se sabe de um objeto `IMedia`.
 #[derive(Debug, Clone, Copy)]
 struct MediaState {
     state: u32,
-    /// O `AEEMediaData` já lido: onde estão os bytes e quantos são.
-    buffer: u32,
-    size: u32,
+    /// O som entregue pelo `AEEMediaData`, pela chave em [`Machine::cargas_de_midia`]. Zero é
+    /// "nada entregue".
+    carga: u64,
+    /// Um buffer entregue e ainda não lido: `(endereço, tamanho)`. Ver
+    /// [`Machine::resolve_midia`].
+    pendente: (u32, u32),
+    /// O jogo mandou tocar antes de o buffer ser lido.
+    tocar_ao_ler: bool,
     /// De 0 a [`MAX_VOLUME`].
     volume: u32,
     /// Quantas vezes tocar. Zero é para sempre, que é o que o `MM_PARM_PLAY_REPEAT` define.
@@ -1400,8 +1447,9 @@ impl Default for MediaState {
     fn default() -> Self {
         Self {
             state: MM_STATE_READY,
-            buffer: 0,
-            size: 0,
+            carga: 0,
+            pendente: (0, 0),
+            tocar_ao_ler: false,
             volume: MAX_VOLUME,
             repeat: 1,
             muted: false,
@@ -2122,8 +2170,9 @@ pub struct Machine<C: CpuBackend> {
     egl_context: u32,
     /// Estado de reprodução de cada `IMedia` vivo.
     media: HashMap<u32, MediaState>,
-    /// Sons já lidos, para não reinterpretar um RIFF de megabytes a cada `Play`.
-    waves: HashMap<(u32, u32), std::sync::Arc<crate::audio::wav::Sound>>,
+    /// Os sons entregues aos `IMedia`, já lidos, pela chave do conteúdo. Ver
+    /// [`CargaDeMidia`].
+    cargas_de_midia: HashMap<u64, CargaDeMidia>,
     /// Para onde o som vai, quando há para onde.
     audio: Option<crate::audio::Mixer>,
     /// O último quadro que o jogo apresentou, já no tamanho da tela.
@@ -2552,7 +2601,7 @@ impl<C: CpuBackend> Machine<C> {
             egl_surface: 0,
             egl_context: 0,
             media: HashMap::new(),
-            waves: HashMap::new(),
+            cargas_de_midia: HashMap::new(),
             audio: None,
             gl_last_frame: Vec::new(),
             gl: rasterizador(SCREEN_WIDTH as usize, SCREEN_HEIGHT as usize),

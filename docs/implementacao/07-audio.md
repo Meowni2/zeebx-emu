@@ -35,15 +35,76 @@ IMediaUtil::CreateMedia(AEEMediaData { clsData, pData, dwSize })
         │
 IMedia::SetMediaParm(MM_PARM_MEDIA_DATA | VOLUME | MUTE | PLAY_REPEAT)
         │
-IMedia::Play  ──►  decodifica o WAVE ou o MP3  ──►  voz no misturador
+        ├──► na volta seguinte do laço, lê os bytes e decodifica o WAVE, o MP3 ou o MIDI
+        │
+IMedia::Play  ──►  voz no misturador
 ```
 
 Os identificadores (`MM_PARM_MEDIA_DATA = 1`, `MM_PARM_VOLUME = 4`, `MM_PARM_MUTE = 5`,
-`MM_PARM_PLAY_REPEAT = 11`, `AEE_MAX_VOLUME = 100`, `MMD_BUFFER = 1`) vêm de `AEEIMedia.h`.
+`MM_PARM_PLAY_REPEAT = 11`, `AEE_MAX_VOLUME = 100`, `MMD_FILE_NAME = 0`, `MMD_BUFFER = 1`) vêm de
+`AEEIMedia.h`.
+
+**O buffer é lido na volta seguinte do laço de eventos** (`Machine::resolve_midia`, chamado no
+`deliver_signals`), e o cache (`CargaDeMidia`) é pela chave do **conteúdo**. Os dois extremos
+quebram jogos diferentes:
+
+- **Lido no `Play`**, com cache por `(endereço, tamanho)` — como foi por muito tempo —, um jogo que
+  carrega vários sons pelo mesmo buffer de rascunho já o reaproveitou quando toca, e um som novo no
+  mesmo endereço e com o mesmo tamanho tocava o antigo.
+- **Lido na entrega** — a primeira correção, vinda da comparação com o zeebulator3 —, o Zeebo F.C.
+  Super League entregava o som de navegação do menu com só o cabeçalho WAV escrito: ele entrega,
+  manda tocar e copia as amostras em seguida, no mesmo tratador. Saía um chiado com o conteúdo antigo
+  do buffer, onde havia até o cabeçalho de uma textura ATC.
+
+A volta do laço fica entre os dois: o tratador do jogo já terminou de escrever e ainda não
+reaproveitou o buffer. No aparelho o `Play` também só lê depois, numa tarefa separada. Um `Play`
+sobre um som ainda não lido marca o objeto como tocando, avisa o início e começa a voz quando o
+buffer é lido; o `GetTotalTime` força a leitura na hora, porque quem pergunta precisa da duração.
+
+Três formas de entrega:
+
+- `MMD_BUFFER`: memória. Um buffer que começa com a assinatura do gzip (`1f 8b`) é descomprimido
+  antes — o `sound.ggz` do Double Dragon guarda assim.
+- `MMD_FILE_NAME`: o nome de um arquivo do pacote, lido pelo sistema de arquivos virtual. O
+  Galaxy on Fire entrega as sete músicas dele assim (`GalaxyOnFire1_Theme.mp3` e as outras), e
+  antes elas eram recusadas em silêncio. Um arquivo que não existe responde `EFAILED` e entra no
+  relatório.
+- `MMD_ISOURCE` continua sem suporte.
+
+As classes da família `AEECLSID_MULTIMEDIA` do SDK criam todas o mesmo objeto: QCP, PMD,
+MIDIOUTMSG, MIDIOUTQCP, MPEG4, MMF, PHR, AAC, IMELODY, AMR, XMF e DLS, além de MEDIA, MIDI, MP3,
+ADPCM e PCM. O conteúdo passa pelos decodificadores que temos, e o que nenhum lê termina na hora.
+QCELP e EVRC não são decodificados aqui nem no zeebulator3.
 
 O `RegisterNotify` é atendido: o jogo recebe `MM_STATUS_START` quando o som começa e
 `MM_STATUS_DONE` quando ele acaba, no `AEEMediaCmdNotify` de 28 bytes de `AEEIMedia.h`. Sem esse
 aviso, um jogo que só toca o próximo som quando o anterior termina emudece depois do primeiro.
+
+O `Stop` de um som que tocava também avisa, **com `MM_STATUS_DONE`**. Era o que deixava as corridas do Crash Nitro Kart mudas. Ele conta os
+sons ativos e só toca a música da pista quando a conta zera; o tratador de aviso dele (`0x11a80`)
+desconta no `DONE` (2) e no status 9 e **ignora o `ABORT` (3)**. Na entrada da corrida ele para as
+músicas do menu com `Stop`: sem aviso nenhum, e depois com o `ABORT` que o zeebulator3 usa, elas
+nunca saíam da conta, e a corrida inteira — contagem, motor e a trilha de 642 KB — ficava sem um
+único `Play`. Com `DONE`, a contagem toca aos 31 s, a trilha entra em repetição e o motor troca de
+som com a rotação.
+
+**O WAVE acaba onde o `RIFF` diz.** O Zeebo F.C. Super League monta sons num buffer de rascunho de
+500 KB e grava no bloco `data` o tamanho do buffer inteiro, mas no `RIFF` o tamanho do som (14 KB).
+Seguir o `data` tocava onze segundos — o efeito e depois lixo de memória, alto, por cima da música.
+Quando o `data` passa mais de 4 KB do fim que o `RIFF` declara, vale o `RIFF`; uma diferença de
+poucos bytes é arquivo editado com o `RIFF` desatualizado, e não corta nada. Enquanto os sons eram
+lidos no `Play`, esse buffer já tinha outro conteúdo e o defeito não aparecia.
+
+Para conferir sem ouvir, o `zeebx sessao <zip> --dump-audio=A.wav` grava a mistura da sessão da
+janela, no ritmo do relógio virtual.
+
+Um `Play` sobre um som que ainda toca **não** avisa. Avisar fazia um ciclo nos jogos que tocam de
+novo dentro do tratador: o novo `Play` caía sobre o som que acabara de começar, gerava outro aviso,
+e o som reiniciava a cada quadro — o Zeebo F.C. Super League saía estourado e picotado.
+
+O `GetMediaParm` devolve o volume e o mudo guardados (antes, zero: um jogo que lê o volume e grava
+de volta se emudecia), e um `IMedia` liberado para a voz dele no misturador — uma música em
+repetição seguia tocando depois de o objeto sumir.
 
 `IMedia::GetState` devolve o objeto a "pronto" quando o som acabou — é o que o jogo consulta para
 saber que pode tocar o próximo. **Quem diz que acabou é o relógio virtual, não o misturador**: o
@@ -121,7 +182,7 @@ A verificação, medida:
   saída bate com a do decodificador de referência em sete casas decimais.
 - O **Tekken 2** saiu de silêncio para **71,6% de amostras não nulas** em oito segundos, com pico
   de 0,698. A hipótese "o Tekken fica mudo" saiu do relatório dele.
-- Decodificar é feito **uma vez por trilha**, não por `Play`: o resultado entra no cache de sons
+- Decodificar é feito **uma vez por conteúdo**, na entrega: o resultado entra no cache de sons
   do `machine/media.rs`. Uma trilha de trinta e seis segundos a 22 kHz mono são seis megabytes de `f32`,
   e nenhum dos nossos jogos troca de música com frequência que justifique fluxo.
 

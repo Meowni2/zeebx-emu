@@ -1189,6 +1189,12 @@ fn sessao_sem_janela(
     let mut fim = seconds.saturating_mul(1000);
     let mut reaberta = false;
     let mut pad = input::Pad::default();
+    // `--dump-audio=A.wav` também aqui: a sessão é a da janela, e é nela que o som acontece.
+    let gravacao = std::env::args()
+        .find_map(|a| a.strip_prefix("--dump-audio=").map(str::to_string))
+        .map(|caminho| (caminho, session.grava_audio(RECORD_RATE)));
+    let mut gravado: Vec<f32> = Vec::new();
+    let mut gravado_ms = 0u64;
     let mut fotos: std::collections::VecDeque<u32> = instantes.iter().copied().collect();
     let mut numero = 0;
     while session.clock_ms() < fim {
@@ -1241,6 +1247,14 @@ fn sessao_sem_janela(
             session.step(std::time::Duration::from_millis(16), false),
             session::Step::Stopped
         );
+        if let Some((_, mixer)) = &gravacao {
+            let agora = u64::from(session.clock_ms());
+            let quadros = (agora.saturating_sub(gravado_ms) * u64::from(RECORD_RATE)) / 1000;
+            if quadros > 0 {
+                gravado.extend(mixer.render(quadros as usize));
+                gravado_ms = agora;
+            }
+        }
         if let Some(path) = dump {
             while fotos.front().is_some_and(|&t| session.clock_ms() >= t) {
                 fotos.pop_front();
@@ -1328,6 +1342,11 @@ fn sessao_sem_janela(
         std::fs::write(path, session.screen().to_bmp())?;
     }
     println!("tempo:     {} ms virtuais", session.clock_ms());
+    if let (Some((caminho, _)), false) = (&gravacao, gravado.is_empty()) {
+        std::fs::write(caminho, audio::to_wav(&gravado, RECORD_RATE))?;
+        let pico = gravado.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        println!("áudio:     {caminho} (pico {pico:.3})");
+    }
     if let Some((desde, inicio, instrucoes_antes)) = perfil_ligado_em {
         let real = inicio.elapsed();
         let virtual_ms = session.clock_ms().saturating_sub(desde);

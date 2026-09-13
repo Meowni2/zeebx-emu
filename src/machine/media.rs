@@ -52,10 +52,16 @@ impl<C: CpuBackend> Machine<C> {
                         if classe == MMD_BUFFER && dados != 0 {
                             self.cpu.read_mem(dados, &mut cabeca).ok();
                         }
-                        format!(
-                            " dados{{classe {classe:#x}, {tamanho} bytes, {:?}}}",
-                            String::from_utf8_lossy(&cabeca)
-                        )
+                        match classe {
+                            MMD_FILE_NAME if dados != 0 => format!(
+                                " arquivo{{{:?}}}",
+                                self.cpu.read_cstring(dados, MAX_STRING)
+                            ),
+                            _ => format!(
+                                " dados{{classe {classe:#x}, {tamanho} bytes, {:?}}}",
+                                String::from_utf8_lossy(&cabeca)
+                            ),
+                        }
                     }
                     _ => String::new(),
                 };
@@ -98,6 +104,10 @@ impl<C: CpuBackend> Machine<C> {
                 let remaining = self.objects.release(this);
                 if remaining == 0 {
                     self.media.remove(&this);
+                    // Uma música em repetição seguia tocando depois de o objeto sumir.
+                    if let Some(mixer) = &self.audio {
+                        mixer.stop(this);
+                    }
                 }
                 remaining
             }
@@ -116,7 +126,11 @@ impl<C: CpuBackend> Machine<C> {
                     return Ok(Some(ENOMEMORY));
                 }
                 let mut state = MediaState::default();
-                self.read_media_data(self.arg(1), &mut state)?;
+                match self.read_media_data(self.arg(1))? {
+                    Entrega::Pronta(carga) => state.carga = carga,
+                    Entrega::Buffer(onde, tamanho) => state.pendente = (onde, tamanho),
+                    Entrega::Nada => {}
+                }
                 self.media.insert(media, state);
                 if out != 0 {
                     self.cpu.write_u32(out, media)?;
@@ -131,8 +145,13 @@ impl<C: CpuBackend> Machine<C> {
                     .get(&this)
                     .copied()
                     .unwrap_or(MediaState::default());
+                let mut resultado = SUCCESS;
                 match parm {
-                    MM_PARM_MEDIA_DATA => self.read_media_data(p1, &mut state)?,
+                    MM_PARM_MEDIA_DATA => match self.read_media_data(p1)? {
+                        Entrega::Pronta(carga) => (state.carga, state.pendente) = (carga, (0, 0)),
+                        Entrega::Buffer(onde, tamanho) => state.pendente = (onde, tamanho),
+                        Entrega::Nada => resultado = EFAILED,
+                    },
                     MM_PARM_VOLUME => state.volume = p1.min(MAX_VOLUME),
                     MM_PARM_MUTE => state.muted = p1 != 0,
                     MM_PARM_PLAY_REPEAT => state.repeat = p1,
@@ -144,7 +163,7 @@ impl<C: CpuBackend> Machine<C> {
                 if let (Some(mixer), MM_PARM_VOLUME | MM_PARM_MUTE) = (&self.audio, parm) {
                     mixer.set_volume(this, state.gain());
                 }
-                SUCCESS
+                resultado
             }
             // void RegisterNotify(IMedia *, PFNMEDIANOTIFY pfn, void *pUser)
             (Interface::Media, "RegisterNotify") => {
@@ -174,12 +193,24 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 SUCCESS
             }
+            // O `Stop` avisa o callback de que a reprodução terminou, **com `MM_STATUS_DONE`**. O
+            // Crash Nitro Kart conta os sons ativos e só toca a música da pista quando a conta
+            // zera; o tratador dele (`0x11a80`) desconta no `DONE` e no status 9 e ignora o
+            // `ABORT`. Sem aviso — e depois com `ABORT` —, as músicas do menu paradas na entrada
+            // da corrida nunca saíam da conta, e a corrida inteira ficava muda. O Double Dragon
+            // trata os dois status do mesmo jeito.
             (Interface::Media, "Stop") => {
+                let tocando = self.esta_tocando(this);
                 if let Some(state) = self.media.get_mut(&this) {
                     state.state = MM_STATE_READY;
+                    state.ends_us = 0;
+                    state.tocar_ao_ler = false;
                 }
                 if let Some(mixer) = &self.audio {
                     mixer.stop(this);
+                }
+                if tocando {
+                    self.notify_media(this, MM_CMD_PLAY, MM_STATUS_DONE)?;
                 }
                 SUCCESS
             }
@@ -207,15 +238,27 @@ impl<C: CpuBackend> Machine<C> {
             // O som que toca em silêncio responde a duração dele como qualquer outro. Zero aqui
             // é um divisor esperando acontecer: quem monta uma barra de progresso divide pelo
             // total, e um total zero derruba o jogo por uma resposta nossa.
-            (Interface::Media, "GetTotalTime") => match self.media_sound(this)? {
+            (Interface::Media, "GetTotalTime") => match {
+                // A duração precisa do som: quem pergunta não pode esperar a próxima volta.
+                self.resolve_midia(this)?;
+                self.media_sound(this)?
+            } {
                 Some(sound) => (sound.frames() as u64 * 1000 / u64::from(sound.rate.max(1))) as u32,
                 None => (self.media_silent_length(this)?.unwrap_or(0) / 1000) as u32,
             },
+            // O volume e o mudo voltam o que foi guardado: um jogo que lê o volume e grava de
+            // volta se emudecia com o zero de antes. O resto continua zerado.
             (Interface::Media, "GetMediaParm") => {
-                for index in [2, 3] {
+                let state = self.media.get(&this).copied().unwrap_or_default();
+                let valor = match self.arg(1) {
+                    MM_PARM_VOLUME => state.volume,
+                    MM_PARM_MUTE => u32::from(state.muted),
+                    _ => 0,
+                };
+                for (index, v) in [(2, valor), (3, 0)] {
                     let out = self.arg(index);
                     if out != 0 {
-                        self.cpu.write_u32(out, 0)?;
+                        self.cpu.write_u32(out, v)?;
                     }
                 }
                 SUCCESS
@@ -228,57 +271,124 @@ impl<C: CpuBackend> Machine<C> {
         Ok(Some(result))
     }
 
-    /// Lê um `AEEMediaData` do guest para o estado do objeto.
+    /// Lê um `AEEMediaData` do guest e devolve a chave do som em [`Machine::cargas_de_midia`].
     ///
-    /// A struct é `{ AEECLSID clsData; void *pData; uint32 dwSize; }`. Só a variante de memória
-    /// interessa: os três jogos que tocam som passam `MMD_BUFFER` com um RIFF já carregado.
-    pub(super) fn read_media_data(
-        &mut self,
-        pointer: u32,
-        state: &mut MediaState,
-    ) -> Result<(), CpuError> {
+    /// A struct é `{ AEECLSID clsData; void *pData; uint32 dwSize; }`. `MMD_BUFFER` aponta para
+    /// os bytes; `MMD_FILE_NAME` aponta para o nome de um arquivo do pacote. Os bytes são lidos e
+    /// decodificados **agora** — ver [`CargaDeMidia`]. `None` quando não há som a guardar: um
+    /// arquivo que não existe ou uma forma de entrega que não conhecemos.
+    pub(super) fn read_media_data(&mut self, pointer: u32) -> Result<Entrega, CpuError> {
         if pointer == 0 {
-            return Ok(());
+            return Ok(Entrega::Nada);
         }
         let class = self.cpu.read_u32(pointer)?;
         let data = self.cpu.read_u32(pointer + 4)?;
         let size = self.cpu.read_u32(pointer + 8)?;
-        if class != MMD_BUFFER {
-            self.bad_pointers.insert(format!(
-                "uma mídia foi entregue como {class:#010x}, e só sabemos ler buffer de memória"
-            ));
+        let bytes = match class {
+            MMD_BUFFER if data != 0 && size != 0 && size <= MAX_MEDIA_BUFFER => {
+                return Ok(Entrega::Buffer(data, size));
+            }
+            MMD_BUFFER => return Ok(Entrega::Nada),
+            MMD_FILE_NAME if data != 0 => {
+                let nome = self.cpu.read_cstring(data, MAX_STRING);
+                match self.vfs.resolve(&nome).and_then(|p| std::fs::read(p).ok()) {
+                    Some(bytes) => bytes,
+                    None => {
+                        self.bad_pointers
+                            .insert(format!("som pedido por nome, e o arquivo não existe: {nome}"));
+                        return Ok(Entrega::Nada);
+                    }
+                }
+            }
+            _ => {
+                self.bad_pointers.insert(format!(
+                    "uma mídia foi entregue como {class:#010x}, e só sabemos ler memória e arquivo"
+                ));
+                return Ok(Entrega::Nada);
+            }
+        };
+        Ok(Entrega::Pronta(self.guarda_som(bytes)))
+    }
+
+    /// Lê agora o buffer que um objeto recebeu e ainda não foi lido.
+    ///
+    /// **O buffer é lido na volta seguinte do laço, e não na entrega nem no `Play`.** Os dois
+    /// extremos quebram jogos diferentes. Lido no `Play`, um jogo que carrega vários sons pelo
+    /// mesmo buffer de rascunho já o reaproveitou quando toca, e sai o som errado. Lido na entrega,
+    /// o Zeebo F.C. Super League entrega o som de navegação do menu com só o cabeçalho escrito —
+    /// ele manda tocar e copia as amostras em seguida, no mesmo tratador —, e saía um chiado com
+    /// o conteúdo antigo do buffer (havia até o cabeçalho de uma textura ATC lá dentro). No
+    /// aparelho o `Play` também só lê o buffer depois, numa tarefa separada.
+    pub(super) fn resolve_midia(&mut self, this: u32) -> Result<(), CpuError> {
+        let Some(state) = self.media.get(&this).copied() else {
+            return Ok(());
+        };
+        let (onde, tamanho) = state.pendente;
+        if tamanho == 0 {
             return Ok(());
         }
-        (state.buffer, state.size) = (data, size);
+        let bytes = self.read_bytes(onde, tamanho)?;
+        let carga = self.guarda_som(bytes);
+        let tocar = match self.media.get_mut(&this) {
+            Some(state) => {
+                state.carga = carga;
+                state.pendente = (0, 0);
+                std::mem::take(&mut state.tocar_ao_ler)
+            }
+            None => false,
+        };
+        if tocar {
+            // O aviso de início já saiu no `Play`.
+            self.inicia_reproducao(this, false)?;
+        }
         Ok(())
     }
 
-    /// O som de um objeto `IMedia`, lido do buffer do guest e guardado.
-    ///
-    /// Um RIFF pode ter megabytes — o do Quake tem 1,4 —, e reinterpretá-lo a cada `Play`
-    /// seria trabalho repetido a cada tiro disparado.
-    pub(super) fn media_sound(
-        &mut self,
-        this: u32,
-    ) -> Result<Option<std::sync::Arc<crate::audio::wav::Sound>>, CpuError> {
-        let Some(state) = self.media.get(&this).copied() else {
-            return Ok(None);
+    /// Lê os buffers que ficaram para esta volta do laço. Ver [`Machine::resolve_midia`].
+    pub(super) fn resolve_midias_pendentes(&mut self) -> Result<(), CpuError> {
+        let pendentes: Vec<u32> = self
+            .media
+            .iter()
+            .filter(|(_, state)| state.pendente.1 != 0)
+            .map(|(this, _)| *this)
+            .collect();
+        for this in pendentes {
+            self.resolve_midia(this)?;
+        }
+        Ok(())
+    }
+
+    /// Decodifica e guarda um som pelos bytes, e devolve a chave dele.
+    fn guarda_som(&mut self, bytes: Vec<u8>) -> u64 {
+        // O `sound.ggz` do Double Dragon guarda os sons comprimidos: com o envelope de gzip, o
+        // formato de verdade está dentro dele.
+        let bytes = match bytes.starts_with(&[0x1f, 0x8b]) {
+            true => inflate(&bytes).unwrap_or(bytes),
+            false => bytes,
         };
-        if state.buffer == 0 || state.size == 0 {
-            return Ok(None);
+        let chave = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            bytes.hash(&mut hasher);
+            // Zero é "nada entregue" no estado do objeto.
+            hasher.finish().max(1)
+        };
+        if !self.cargas_de_midia.contains_key(&chave) {
+            let carga = self.decodifica_som(&bytes);
+            self.cargas_de_midia.insert(chave, carga);
         }
-        let key = (state.buffer, state.size);
-        if let Some(sound) = self.waves.get(&key) {
-            return Ok(Some(sound.clone()));
-        }
-        let bytes = self.read_bytes(state.buffer, state.size)?;
+        chave
+    }
+
+    /// Decodifica um som pelo que ele é, e não pelo nome.
+    fn decodifica_som(&mut self, bytes: &[u8]) -> CargaDeMidia {
         // RIFF/WAVE primeiro porque é o que quase todo som é, e é o mais barato de reconhecer.
         // MP3 depois: é o formato da **música**, e enquanto ele não existia aqui, efeito tocava
         // e trilha não tocava em jogo nenhum.
-        let som = match crate::audio::wav::parse(&bytes) {
+        let som = match crate::audio::wav::parse(bytes) {
             Ok(sound) => Some(sound),
-            Err(err) => match crate::audio::mp3::decode(&bytes).or_else(|| {
-                crate::audio::midi::decode(&bytes).inspect(|_| {
+            Err(err) => match crate::audio::mp3::decode(bytes).or_else(|| {
+                crate::audio::midi::decode(bytes).inspect(|_| {
                     self.assumptions.insert(concat!(
                         "a música MIDI é sintetizada aqui, com timbre aproximado — ",
                         "o banco de instrumentos do console está no firmware que ainda não lemos"
@@ -291,17 +401,29 @@ impl<C: CpuBackend> Machine<C> {
                     // depois — e "não é um RIFF/WAVE" não diz. O que diz é a assinatura do
                     // próprio bloco: é assim que se soube que a trilha do Tekken 2 é MP3 sem
                     // abrir o jogo, e que a dos ports de arcade é MIDI.
-                    let formato = detect_mime(&bytes, "").unwrap_or("formato desconhecido");
+                    let formato = detect_mime(bytes, "").unwrap_or("formato desconhecido");
                     self.bad_pointers
                         .insert(format!("som recusado ({formato}): {err}"));
                     None
                 }
             },
         };
-        let Some(sound) = som else { return Ok(None) };
-        let sound = std::sync::Arc::new(sound);
-        self.waves.insert(key, sound.clone());
-        Ok(Some(sound))
+        let silencio_us = match som {
+            Some(_) => None,
+            None => crate::audio::mp3::probe(bytes).map(|mp3| mp3.duration_us()),
+        };
+        CargaDeMidia {
+            som: som.map(std::sync::Arc::new),
+            silencio_us,
+        }
+    }
+
+    /// O som de um objeto `IMedia`, já lido na entrega.
+    pub(super) fn media_sound(
+        &mut self,
+        this: u32,
+    ) -> Result<Option<std::sync::Arc<crate::audio::wav::Sound>>, CpuError> {
+        Ok(self.carga_do(this).and_then(|carga| carga.som.clone()))
     }
 
     /// Quanto dura um som que não sabemos decodificar, quando dá para descobrir sem decodificar.
@@ -309,18 +431,44 @@ impl<C: CpuBackend> Machine<C> {
     /// Hoje só o MP3 cai aqui, pelo cabeçalho do primeiro quadro e pela etiqueta do codificador
     /// — ver [`crate::audio::mp3`].
     pub(super) fn media_silent_length(&mut self, this: u32) -> Result<Option<u64>, CpuError> {
-        let Some(state) = self.media.get(&this).copied() else {
-            return Ok(None);
-        };
-        if state.buffer == 0 || state.size == 0 {
-            return Ok(None);
-        }
-        let bytes = self.read_bytes(state.buffer, state.size)?;
-        Ok(crate::audio::mp3::probe(&bytes).map(|mp3| mp3.duration_us()))
+        Ok(self.carga_do(this).and_then(|carga| carga.silencio_us))
+    }
+
+    fn carga_do(&self, this: u32) -> Option<&CargaDeMidia> {
+        let carga = self.media.get(&this)?.carga;
+        self.cargas_de_midia.get(&carga)
+    }
+
+    /// Se o objeto tem um som tocando agora.
+    fn esta_tocando(&self, this: u32) -> bool {
+        self.media
+            .get(&this)
+            .is_some_and(|state| state.state == MM_STATE_PLAY && self.now_us() < state.ends_us)
     }
 
     /// `int Play(IMedia *)`.
     pub(super) fn media_play(&mut self, this: u32) -> Result<u32, CpuError> {
+        // Um som ainda não lido começa quando for lido, na volta seguinte do laço. Para o jogo ele
+        // já está tocando.
+        if let Some(state) = self.media.get_mut(&this)
+            && state.pendente.1 != 0
+        {
+            state.tocar_ao_ler = true;
+            state.state = MM_STATE_PLAY;
+            state.ends_us = u64::MAX;
+            self.notify_media(this, MM_CMD_PLAY, MM_STATUS_START)?;
+            return Ok(SUCCESS);
+        }
+        self.inicia_reproducao(this, true)
+    }
+
+    /// Começa a tocar o som já lido de um objeto.
+    fn inicia_reproducao(&mut self, this: u32, avisa: bool) -> Result<u32, CpuError> {
+        // **Um `Play` sobre um som que ainda toca não avisa.** Avisar `DONE` aqui fazia um ciclo
+        // nos jogos que tocam de novo dentro do tratador do aviso: o novo `Play` caía sobre o som
+        // que acabara de começar, gerava outro aviso, e o som reiniciava a cada quadro — o áudio
+        // do Zeebo F.C. Super League saía estourado e picotado. O aviso de fim fica só no `Stop`
+        // e no fim natural.
         let Some(sound) = self.media_sound(this)? else {
             // Um som que não sabemos ler mas sabemos **cronometrar** toca em silêncio pelo
             // tempo certo. Sem isso o Tekken 2 ficava preso: a música dele é MP3, o `Play`
@@ -337,7 +485,9 @@ impl<C: CpuBackend> Machine<C> {
                     0 => u64::MAX,
                     times => now + length_us * u64::from(times),
                 };
-                self.notify_media(this, MM_CMD_PLAY, MM_STATUS_START)?;
+                if avisa {
+                    self.notify_media(this, MM_CMD_PLAY, MM_STATUS_START)?;
+                }
                 return Ok(SUCCESS);
             }
             // Sem som legível não há o que tocar, mas recusar faria o jogo tratar como erro
@@ -363,7 +513,9 @@ impl<C: CpuBackend> Machine<C> {
         if let Some(mixer) = &self.audio {
             mixer.play(this, sound, gain, repeat);
         }
-        self.notify_media(this, MM_CMD_PLAY, MM_STATUS_START)?;
+        if avisa {
+            self.notify_media(this, MM_CMD_PLAY, MM_STATUS_START)?;
+        }
         Ok(SUCCESS)
     }
 

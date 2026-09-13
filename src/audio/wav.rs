@@ -153,10 +153,22 @@ impl std::fmt::Display for WavError {
 }
 
 /// Lê um RIFF/WAVE de PCM.
+/// Quanto o bloco `data` pode passar do fim que o `RIFF` declara antes de valer o `RIFF`.
+const FOLGA_DO_RIFF: usize = 4096;
+
 pub fn parse(data: &[u8]) -> Result<Sound, WavError> {
     if data.len() < 12 || &data[0..4] != b"RIFF" || &data[8..12] != b"WAVE" {
         return Err(WavError::NotWave);
     }
+    // **O arquivo acaba onde o RIFF diz, e não onde o buffer acaba.** O Zeebo F.C. Super League
+    // monta cada som num buffer de rascunho de 500 KB e escreve no bloco `data` o tamanho do
+    // buffer inteiro, mas o `RIFF` com o tamanho de verdade (14 KB). Seguir o `data` tocava onze
+    // segundos: o efeito e depois lixo de memória, alto, por cima da música. Um `RIFF` que não cabe
+    // num cabeçalho — zero, ou maior que o buffer, como o de quem grava em fluxo — não limita nada.
+    //
+    // Só vale quando o `data` passa **muito** do fim declarado: um arquivo editado com um bloco a
+    // mais e o `RIFF` desatualizado erra por poucos bytes, e cortá-lo perderia o fim do som.
+    let fim_do_riff = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize + 8;
     // `(formato, canais, taxa, alinhamento de bloco, bits)`.
     let mut format: Option<(u16, u16, u32, u16, u16)> = None;
     let mut payload: Option<&[u8]> = None;
@@ -180,7 +192,13 @@ pub fn parse(data: &[u8]) -> Result<Sound, WavError> {
                 ]);
                 format = Some((read16(0), read16(2), rate, read16(12), read16(14)));
             }
-            b"data" => payload = Some(&data[body..end]),
+            b"data" => {
+                let end = match fim_do_riff >= 44 && end > fim_do_riff + FOLGA_DO_RIFF {
+                    true => fim_do_riff.max(body),
+                    false => end,
+                };
+                payload = Some(&data[body..end]);
+            }
             _ => {}
         }
         at = body + len as usize + (len as usize & 1);
@@ -258,6 +276,20 @@ mod tests {
         let total = (out.len() - 8) as u32;
         out[4..8].copy_from_slice(&total.to_le_bytes());
         out
+    }
+
+    /// O som ocupa o começo de um buffer maior, o `data` diz o tamanho do buffer e o `RIFF` diz o
+    /// do som: vale o `RIFF`, e o lixo depois dele não toca.
+    #[test]
+    fn o_riff_limita_um_data_maior_que_o_som() {
+        let som = build(FORMAT_PCM, 1, 22050, 16, &[0x10, 0x00, 0x20, 0x00]);
+        let mut buffer = som.clone();
+        let data_em = buffer.len() - 4 - 4;
+        buffer[data_em..data_em + 4].copy_from_slice(&1000u32.to_le_bytes());
+        buffer.extend(std::iter::repeat(0x7f).take(9996));
+        let data_em = som.len() - 4 - 4;
+        buffer[data_em..data_em + 4].copy_from_slice(&10_000u32.to_le_bytes());
+        assert_eq!(parse(&buffer).unwrap().frames(), 2);
     }
 
     #[test]

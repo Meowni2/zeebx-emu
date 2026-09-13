@@ -396,12 +396,11 @@ impl App {
             let fundo = egui::Color32::from_gray(236).gamma_multiply(opacidade);
             painter.rect_filled(painel, 6.0, fundo);
             match self.textura_do_logo(&ctx, *jogo) {
+                // A textura do logo é quadrada (64×64), mas no palco da Z-Wheel ela é esticada
+                // sobre um painel retangular: o logo foi desenhado já comprimido na largura para
+                // isso. Desenhá-la quadrada deixava o logo estreito no meio do painel.
                 Some(logo) => {
-                    let lado = painel.height() - 6.0;
-                    let dentro = egui::Rect::from_center_size(
-                        painel.center(),
-                        egui::vec2(lado * frente.max(0.2), lado),
-                    );
+                    let dentro = painel.shrink(3.0);
                     painter.image(
                         logo.id(),
                         dentro,
