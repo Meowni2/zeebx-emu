@@ -1027,6 +1027,8 @@ const AEECLSID_GRAPHICS: u32 = 0x0100_2001;
 
 /// `EVT_APP_START`, de `inc/AEEEvent.h`. Vale zero — o primeiro evento que um applet recebe.
 const EVT_APP_START: u32 = 0;
+/// `EVT_APP_STOP`, de `inc/AEEEvent.h`: o aviso de que o applet vai ser fechado.
+const EVT_APP_STOP: u32 = 1;
 
 /// Tela do Zeebo: VGA 640×480, saída composta.
 const SCREEN_WIDTH: u16 = 640;
@@ -1105,6 +1107,9 @@ struct OpenFile {
     file: std::fs::File,
     /// Caminho como o jogo pediu, para devolver em `GetInfo`.
     guest_path: String,
+    /// Onde o arquivo aberto mora no host. Nem sempre é o que o `guest_path` resolve: a
+    /// `tectoy.cfg` sem fim de vida é uma cópia no perfil do aparelho.
+    caminho: std::path::PathBuf,
 }
 
 /// Um callback do guest: a função e o contexto que ela recebe.
@@ -1145,6 +1150,11 @@ struct DecodedImage {
     pixels: Vec<u16>,
     /// Se o pixel deve ser desenhado. O PNG traz canal alfa e os jogos contam com ele.
     opaque: Vec<bool>,
+    /// O alfa de cada pixel, **só quando a imagem tem meio-tom**; vazio quando todo pixel é
+    /// opaco ou transparente, que é o caso comum. Quem desenha a imagem na tela mistura com o
+    /// que está embaixo. A moldura de seleção da Z-Wheel (`214×47`, no `tectoyli.brf`) é um
+    /// traço opaco em volta de um miolo azul com alfa 51: sem a mistura, sobrava só o traço.
+    alfa: Vec<u8>,
     /// Largura de cada quadro, quando o jogo divide a imagem em tiras (`IPARM_CXFRAME`).
     frame_width: u16,
 }
@@ -1181,6 +1191,7 @@ fn tira_de_quadros(gif: &crate::video::gif::Gif) -> DecodedImage {
         height: altura as u32,
         pixels,
         opaque,
+        alfa: Vec::new(),
         // Um GIF de um quadro só não é sequência: dizer que é faria o `GetInfo` anunciar uma
         // largura de quadro que o jogo não pediu.
         frame_width: match quadros > 1 {
@@ -1246,7 +1257,9 @@ fn decodifica_imagem(bytes: &[u8]) -> Option<DecodedImage> {
             let total = imagem.width * imagem.height;
             let mut pixels = Vec::with_capacity(total);
             let mut opaque = Vec::with_capacity(total);
+            let mut alfa = Vec::with_capacity(total);
             for pixel in imagem.rgba.chunks_exact(4).take(total) {
+                alfa.push(pixel[3]);
                 pixels.push(
                     Rgb {
                         r: pixel[0],
@@ -1262,6 +1275,7 @@ fn decodifica_imagem(bytes: &[u8]) -> Option<DecodedImage> {
                 height: imagem.height as u32,
                 pixels,
                 opaque,
+                alfa: so_com_meio_tom(alfa),
                 frame_width: 0,
             })
         }
@@ -1289,6 +1303,7 @@ fn decode_png(bytes: &[u8]) -> Option<DecodedImage> {
     let count = (info.width * info.height) as usize;
     let mut pixels = Vec::with_capacity(count);
     let mut opaque = Vec::with_capacity(count);
+    let mut alfa = Vec::with_capacity(count);
     for chunk in data.chunks_exact(channels) {
         let (r, g, b) = if channels >= 3 {
             (chunk[0], chunk[1], chunk[2])
@@ -1297,7 +1312,11 @@ fn decode_png(bytes: &[u8]) -> Option<DecodedImage> {
         };
         pixels.push(Rgb { r, g, b }.to_rgb565());
         // Meio-tom não existe numa superfície sem canal alfa: ou o pixel entra, ou não entra.
-        opaque.push(!has_alpha || chunk[channels - 1] >= 128);
+        // Numa superfície sem canal alfa, o meio-tom vira opaco ou transparente; é o `alfa`
+        // que o preserva para quem desenha a imagem por cima de outra coisa.
+        let a = if has_alpha { chunk[channels - 1] } else { u8::MAX };
+        opaque.push(a >= 128);
+        alfa.push(a);
     }
 
     Some(DecodedImage {
@@ -1305,8 +1324,29 @@ fn decode_png(bytes: &[u8]) -> Option<DecodedImage> {
         height: info.height,
         pixels,
         opaque,
+        alfa: so_com_meio_tom(alfa),
         frame_width: 0,
     })
+}
+
+/// O alfa de uma imagem, ou nada quando ele não tem meio-tom — aí o `opaque` já diz tudo, e o
+/// desenho segue pelo caminho sem mistura.
+fn so_com_meio_tom(alfa: Vec<u8>) -> Vec<u8> {
+    match alfa.iter().any(|&a| a != 0 && a != u8::MAX) {
+        true => alfa,
+        false => Vec::new(),
+    }
+}
+
+/// Mistura `cor` sobre `fundo`, os dois em RGB565, com `alfa` de 0 a 255.
+fn mistura_rgb565(fundo: u16, cor: u16, alfa: u8) -> u16 {
+    let a = u32::from(alfa);
+    let canal = |deslocamento: u32, mascara: u32| {
+        let f = (u32::from(fundo) >> deslocamento) & mascara;
+        let c = (u32::from(cor) >> deslocamento) & mascara;
+        ((c * a + f * (255 - a) + 127) / 255) << deslocamento
+    };
+    (canal(11, 0x1f) | canal(5, 0x3f) | canal(0, 0x1f)) as u16
 }
 
 /// Estado de um `IUnzipAStream`: de onde vêm os bytes comprimidos e o que já saiu deles.
@@ -1911,6 +1951,16 @@ pub struct Machine<C: CpuBackend> {
     ext_modules: Vec<Option<u32>>,
     pending_launch: Option<u32>,
     wheel_boot_skipped: bool,
+    /// Como a Z-Wheel lê a `tectoy.cfg`. Ver [`Machine::configura_z_wheel`].
+    z_wheel: crate::ui::settings::ZWheel,
+    /// O applet pediu para fechar com `ISHELL_CloseApplet`. Ver [`Machine::pediu_para_fechar`].
+    applet_fechado: bool,
+    /// `(raiz, formulário)` à espera do aviso de ativo. Ver [`Machine::entrega_ativacao`].
+    ativacao_pendente: Option<(u32, u32)>,
+    /// As telas apresentadas por `IDISPLAY_Update` dentro de uma mesma volta do laço. Ver
+    /// [`Machine::toma_quadro_do_update`].
+    quadros_do_update: std::collections::VecDeque<Framebuffer>,
+    updates_na_volta: usize,
     /// Profundidade atual de reentrada no guest.
     nesting: u32,
     /// Superfícies do jogo à espera de serem consultadas sobre onde ficam seus pixels.
@@ -1948,6 +1998,14 @@ pub struct Machine<C: CpuBackend> {
     vetores: HashMap<u32, (Vec<u32>, u32)>,
     /// Os bytes de cada `ISource` vivo.
     sources: HashMap<u32, Vec<u8>>,
+    /// A página entregue a cada widget de HTML, crua como veio do `ISource`. Ver o
+    /// `AdicionarFilho` do [`Machine::widget_call`].
+    paginas_html: HashMap<u32, Vec<u8>>,
+    /// Quantas linhas cada widget de HTML rolou, e até quantas pode rolar (medido ao pintar).
+    rolagem_html: HashMap<u32, usize>,
+    rolagem_maxima_html: HashMap<u32, usize>,
+    /// Setas cujo aperto rolou um painel de HTML: a soltura delas também não vai ao jogo.
+    teclas_da_rolagem: std::collections::HashSet<u32>,
     /// O estado de cada `IPeek` vivo.
     peeks: HashMap<u32, Peek>,
     /// Os itens de cada `IConfig` vivo, por objeto: número do item -> bytes.
@@ -2220,6 +2278,89 @@ impl<C: CpuBackend> Machine<C> {
         };
     }
 
+    /// Começa a contar os `IDISPLAY_Update` de uma volta do laço.
+    pub fn comeca_volta(&mut self) {
+        self.updates_na_volta = 0;
+    }
+
+    /// Fecha a volta. Com um `Update` só, a tela final já basta e nada fica guardado.
+    pub fn fecha_volta(&mut self) {
+        if self.updates_na_volta <= 1 {
+            self.quadros_do_update.clear();
+        }
+    }
+
+    /// Se há telas intermediárias de uma volta anterior à espera de serem mostradas.
+    pub fn tem_quadros_do_update(&self) -> bool {
+        !self.quadros_do_update.is_empty()
+    }
+
+    /// A próxima tela intermediária, na ordem em que foi apresentada.
+    ///
+    /// **Uma animação que roda inteira dentro de um callback só aparece assim.** A transição
+    /// da Z-Wheel (`0x74258`) desliza a tela num laço síncrono: copia um trecho, chama
+    /// `IDISPLAY_Update`, anda cinco pixels, e repete umas duzentas vezes antes de devolver. No
+    /// console cada `Update` vai para a tela; aqui a janela só via o fim do callback, e a
+    /// transição virava um corte seco.
+    pub fn toma_quadro_do_update(&mut self) -> Option<Framebuffer> {
+        self.quadros_do_update.pop_front()
+    }
+
+    /// Guarda a tela no `IDISPLAY_Update`, quando o destino é a tela.
+    pub(super) fn guarda_quadro_do_update(&mut self) -> Result<(), CpuError> {
+        /// Teto de telas guardadas: cada uma são 600 KB. Passando dele, fica uma a cada duas.
+        const TETO: usize = 96;
+        let alvo = self.target()?;
+        if alvo != self.device_bitmap {
+            return Ok(());
+        }
+        self.updates_na_volta += 1;
+        if self.quadros_do_update.len() >= TETO {
+            let mut indice = 0;
+            self.quadros_do_update.retain(|_| {
+                indice += 1;
+                indice % 2 == 0
+            });
+        }
+        let tela = self.screen();
+        let mut copia = Framebuffer::new(tela.width(), tela.height());
+        copia.load_rgb565_bytes(&tela.to_rgb565_bytes());
+        self.quadros_do_update.push_back(copia);
+        Ok(())
+    }
+
+    /// Se o applet pediu para fechar com `ISHELL_CloseApplet`.
+    pub fn pediu_para_fechar(&self) -> bool {
+        self.applet_fechado
+    }
+
+    /// Entrega o `EVT_APP_STOP` ao applet, que é a última coisa que ele recebe antes de sair.
+    ///
+    /// É nele que muitos jogos gravam o progresso. O que ele responde não muda nada: fechar foi
+    /// pedido pelo próprio applet.
+    pub fn encerra_applet(&mut self) -> Result<(), CpuError> {
+        self.send_applet_event(self.applet_class, EVT_APP_STOP, 0, 0)?;
+        Ok(())
+    }
+
+    /// Escolhe como a Z-Wheel lê a `tectoy.cfg`, **antes de o applet ser criado**.
+    ///
+    /// Fora do padrão de fábrica, ela recebe uma cópia da cfg no perfil do aparelho com valores
+    /// trocados; o pacote não é tocado.
+    ///
+    /// - **Fim de vida.** A de fábrica traz `EOL=1` e `zeebomenu_hide=1`. A leitura em `0x7fe80`
+    ///   liga com eles os bits `0x2000` e `0x4000` de `app+0x3614`, e a montagem da roda inferior
+    ///   em `0x4f620` fica com "Jogar" e "Ajuda". Com os dois em zero ela volta a ser a de antes:
+    ///   "Jogar", o logo zeebo, "Comprar" e "Configurar".
+    /// - **Transições.** A `0x798c4` decide se a troca de tela desliza: com o tipo da tela no
+    ///   `SlideOnceToForm`, só se ele ainda não estiver no `HasSlidToForm` das preferências, que
+    ///   ela marca na primeira vez; fora dele, sempre, a não ser que esteja no `NoSlideToForm`.
+    ///   A cfg traz `SlideOnceToForm=31` e o dump já vem com `HasSlidToForm=14` — Jogar,
+    ///   Configurar e zeebo vistos —, então nada deslizava. Com `SlideOnceToForm=0`, tudo desliza.
+    pub fn configura_z_wheel(&mut self, opcoes: crate::ui::settings::ZWheel) {
+        self.z_wheel = opcoes;
+    }
+
     pub fn new(cpu: C, module: LoadedModule, root: impl Into<std::path::PathBuf>) -> Self {
         let raiz: std::path::PathBuf = root.into();
         let heap = Heap::new(loader::HEAP_BASE, loader::HEAP_SIZE);
@@ -2306,6 +2447,14 @@ impl<C: CpuBackend> Machine<C> {
             ext_modules: vec![None; extensoes],
             pending_launch: None,
             wheel_boot_skipped: false,
+            z_wheel: crate::ui::settings::ZWheel {
+                fim_de_vida: true,
+                transicoes_sempre: false,
+            },
+            applet_fechado: false,
+            ativacao_pendente: None,
+            quadros_do_update: Default::default(),
+            updates_na_volta: 0,
             nesting: 0,
             pending_probes: Vec::new(),
             pending_blits: Vec::new(),
@@ -2322,6 +2471,10 @@ impl<C: CpuBackend> Machine<C> {
             parametros_de_colecao: HashMap::new(),
             vetores: HashMap::new(),
             sources: HashMap::new(),
+            paginas_html: HashMap::new(),
+            rolagem_html: HashMap::new(),
+            rolagem_maxima_html: HashMap::new(),
+            teclas_da_rolagem: Default::default(),
             peeks: HashMap::new(),
             widgets: HashMap::new(),
             config_items: HashMap::new(),
@@ -2711,6 +2864,14 @@ impl<C: CpuBackend> Machine<C> {
                 None => return Ok(None),
             },
             (Interface::Shell, 2) => self.shell_create_instance()?,
+            // `int ISHELL_CloseApplet(IShell *, boolean bReturnToIdle)`. É como um jogo sai pelo
+            // próprio menu. O BREW não fecha dentro da chamada: agenda, e o applet recebe o
+            // `EVT_APP_STOP` depois de voltar. Aqui o pedido fica anotado, e a sessão encerra na
+            // volta do laço (ver [`Machine::encerra_applet`]).
+            (Interface::Shell, slot) if Interface::Shell.method(slot) == Some("CloseApplet") => {
+                self.applet_fechado = true;
+                SUCCESS
+            }
             (Interface::Shell, 4) => self.shell_get_device_info()?,
             (Interface::Shell, slot)
                 if matches!(

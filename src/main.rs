@@ -268,7 +268,19 @@ fn main() -> ExitCode {
                 .unwrap_or_default();
             let placa = args.iter().any(|a| a == "--placa");
             let serial = args.iter().find_map(|a| a.strip_prefix("--serial="));
-            report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial))
+            // Sem nada, valem as preferências da Z-Wheel gravadas; `--fabrica` usa a cfg do pacote
+            // como veio, e os outros dois trocam uma opção só.
+            let mut z_wheel = match args.iter().any(|a| a == "--fabrica") {
+                true => ui::settings::ZWheel { fim_de_vida: true, transicoes_sempre: false },
+                false => ui::settings::Settings::load().z_wheel,
+            };
+            if args.iter().any(|a| a == "--sem-fim-de-vida") {
+                z_wheel.fim_de_vida = false;
+            }
+            if args.iter().any(|a| a == "--sem-transicoes") {
+                z_wheel.transicoes_sempre = false;
+            }
+            report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial, z_wheel))
         }
         // Sem argumento nenhum, o que se quer é o emulador, não a ajuda.
         None => launch(),
@@ -285,7 +297,7 @@ fn main() -> ExitCode {
                              [--sem-rede] [--servidor=MAQUINA[:PORTA]] [--ponte]
                              [--portas=controle|teclado|nenhum,...] [--teclas=ms:nome,...]"
             );
-            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO]  (a sessão da janela, sem janela)");
+            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes]  (a sessão da janela, sem janela)");
             eprintln!("     zeebx bench <arquivo.mod|zip> [--seconds=N] [--keys=ms:tecla,...] [--dump=QUADRO.bmp] [--teclas=ms:nome,...] [--instalados=0xCLSID[:id],...] [--dump-surfaces=DIR]  (Dynarmic, sem janela)");
             ExitCode::FAILURE
         }
@@ -1059,6 +1071,7 @@ fn sessao_sem_janela(
     instantes: &[u32],
     placa: bool,
     serial: Option<&str>,
+    z_wheel: ui::settings::ZWheel,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let serial = serial.map(std::path::Path::new);
     let settings = ui::settings::Settings::load();
@@ -1073,6 +1086,7 @@ fn sessao_sem_janela(
         serial,
         placa,
         None,
+        z_wheel,
     )
     .map_err(|err| format!("{err:?}"))?;
     session.set_installed_applets(
@@ -1095,6 +1109,10 @@ fn sessao_sem_janela(
         session.set_port_pad(0, pad);
         for (avk, apertada) in ui::App::teclas_do_controle(&antes, &pad) {
             session.set_key(avk, apertada);
+        }
+        // As telas intermediárias passam como na janela, sem avançar o relógio; não viram foto.
+        if session.mostra_quadro_intermediario() {
+            continue;
         }
         if (0..input::BUTTONS).any(|b| pad.is_down(b) && !antes.is_down(b)) {
             fotos.push_back(session.clock_ms().saturating_add(500));
@@ -1137,9 +1155,10 @@ fn sessao_sem_janela(
             session = session::Session::start_with(
                 std::path::Path::new(path),
                 PORTAS_PADRAO,
-                None,
+                serial,
                 placa,
                 None,
+                z_wheel,
             )
             .map_err(|err| format!("{err:?}"))?;
             session.set_installed_applets(

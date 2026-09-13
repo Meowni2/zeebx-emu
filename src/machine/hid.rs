@@ -385,6 +385,18 @@ impl<C: CpuBackend> Machine<C> {
                 false => input::EVT_KEY + 1,
             };
             let mut tratado = false;
+            // Com o painel de HTML em foco, as setas verticais são dele enquanto houver texto
+            // para rolar. Ver [`Machine::rola_html_em_foco`].
+            if matches!(avk, input::avk::UP | input::avk::DOWN) {
+                let para_baixo = avk == input::avk::DOWN;
+                if down && self.rola_html_em_foco(para_baixo) {
+                    self.teclas_da_rolagem.insert(avk);
+                    continue;
+                }
+                if !down && self.teclas_da_rolagem.remove(&avk) {
+                    continue;
+                }
+            }
             // **O mais novo primeiro.** Os formulários se empilham e nenhum é destruído aqui,
             // então a lista tem o tratador da abertura ao lado do da tela atual. O da abertura
             // devolve 1 para qualquer aperto — ele trata a tecla 0 e a CLR —, e vindo antes

@@ -62,7 +62,9 @@ impl<C: CpuBackend> Machine<C> {
                 let guest_path = self.cpu.read_cstring(a1, MAX_STRING);
                 // A Z-Wheel pergunta pelo metadado do preload antes de decidir se o abre.
                 // Ele é estado do aparelho, não um arquivo distribuído dentro do pacote.
-                let path = if guest_path.eq_ignore_ascii_case("preloaded.cfg") {
+                let path = if let Some(cfg) = self.cfg_da_z_wheel(&guest_path) {
+                    Some(cfg)
+                } else if guest_path.eq_ignore_ascii_case("preloaded.cfg") {
                     let path = self.vfs.profile_file("z-wheel", "preloaded.cfg");
                     if !path.exists() {
                         if let Some(parent) = path.parent() {
@@ -292,10 +294,32 @@ impl<C: CpuBackend> Machine<C> {
         Ok(Some(result))
     }
 
+    /// A cópia ajustada da `tectoy.cfg`, quando é ela que a Z-Wheel deve ler.
+    ///
+    /// `None` para qualquer outro arquivo, outro applet, ou com as opções de fábrica — aí vale
+    /// o arquivo do pacote. Ver [`Machine::configura_z_wheel`].
+    fn cfg_da_z_wheel(&self, guest_path: &str) -> Option<std::path::PathBuf> {
+        let de_fabrica = self.z_wheel.fim_de_vida && !self.z_wheel.transicoes_sempre;
+        if de_fabrica || self.applet_class != crate::session::Z_WHEEL {
+            return None;
+        }
+        let nome = guest_path.rsplit(['/', '\\']).next().unwrap_or(guest_path);
+        if !nome.eq_ignore_ascii_case("tectoy.cfg") {
+            return None;
+        }
+        let original = std::fs::read_to_string(self.vfs.resolve(guest_path)?).ok()?;
+        let copia = self.vfs.profile_file("z-wheel", "tectoy.cfg");
+        std::fs::create_dir_all(copia.parent()?).ok()?;
+        std::fs::write(&copia, ajusta_cfg(&original, self.z_wheel)).ok()?;
+        Some(copia)
+    }
+
     /// Abre um arquivo do jogo, devolvendo o `IFile*` ou zero se não deu.
     pub(super) fn open_file(&mut self, guest_path: &str, mode: u32) -> Result<u32, CpuError> {
         let preloaded = guest_path.eq_ignore_ascii_case("preloaded.cfg");
-        let path = if preloaded {
+        let path = if let Some(cfg) = self.cfg_da_z_wheel(guest_path) {
+            Some(cfg)
+        } else if preloaded {
             let path = self.vfs.profile_file("z-wheel", "preloaded.cfg");
             if !path.exists() {
                 if let Some(parent) = path.parent() {
@@ -344,6 +368,7 @@ impl<C: CpuBackend> Machine<C> {
             OpenFile {
                 file,
                 guest_path: guest_path.to_string(),
+                caminho: path,
             },
         );
         self.file_error = SUCCESS;
@@ -403,5 +428,51 @@ impl<C: CpuBackend> Machine<C> {
         name.truncate(MAX_FILE_NAME - 1);
         name.resize(MAX_FILE_NAME, 0);
         self.cpu.write_mem(addr + 12, &name)
+    }
+}
+
+/// A `tectoy.cfg` com as trocas de [`Machine::configura_z_wheel`], o resto como veio.
+fn ajusta_cfg(original: &str, opcoes: crate::ui::settings::ZWheel) -> String {
+    original
+        .split_inclusive('\n')
+        .map(|linha| {
+            let chave = linha.split('=').next().unwrap_or("").trim();
+            let fim = &linha[linha.trim_end_matches(['\r', '\n']).len()..];
+            let zera = match chave {
+                "EOL" | "zeebomenu_hide" => !opcoes.fim_de_vida,
+                "SlideOnceToForm" => opcoes.transicoes_sempre,
+                _ => false,
+            };
+            match zera && linha.contains('=') {
+                true => format!("{chave}=0{fim}"),
+                false => linha.to_string(),
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod testes_da_cfg {
+    use super::ajusta_cfg;
+    use crate::ui::settings::ZWheel;
+
+    const ORIGINAL: &str = "; EOL\r\nEOL=1\r\n#zeebomenu_hide - x\r\nzeebomenu_hide=1\r\nEOLX=1\r\nSlideOnceToForm=31\n";
+
+    #[test]
+    fn sem_fim_de_vida_so_as_duas_chaves_mudam() {
+        let opcoes = ZWheel { fim_de_vida: false, transicoes_sempre: false };
+        assert_eq!(
+            ajusta_cfg(ORIGINAL, opcoes),
+            "; EOL\r\nEOL=0\r\n#zeebomenu_hide - x\r\nzeebomenu_hide=0\r\nEOLX=1\r\nSlideOnceToForm=31\n"
+        );
+    }
+
+    #[test]
+    fn transicoes_sempre_zeram_o_slide_uma_vez() {
+        let opcoes = ZWheel { fim_de_vida: true, transicoes_sempre: true };
+        assert_eq!(
+            ajusta_cfg(ORIGINAL, opcoes),
+            "; EOL\r\nEOL=1\r\n#zeebomenu_hide - x\r\nzeebomenu_hide=1\r\nEOLX=1\r\nSlideOnceToForm=0\n"
+        );
     }
 }

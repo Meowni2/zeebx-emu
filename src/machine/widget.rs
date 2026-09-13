@@ -129,6 +129,49 @@ impl<C: CpuBackend> Machine<C> {
         Ok(())
     }
 
+    /// Marca o formulário que ficou no topo da raiz para ser avisado de que está ativo.
+    ///
+    /// O aviso é o `SETPROPERTY(0x5064, 1)` — o `FID_ACTIVE` —, o mesmo par da partida da
+    /// abertura. O tratador do menu (`0x4e0e8`) lê o `0x5064`: com zero, que ele recebe ao ser
+    /// coberto, para o palco e a roda (`0x4e3d0`); com um, devolve o foco à roda, religa o palco
+    /// e o som. A Z-Wheel tira a ajuda com `RemoveForm(raiz, formulário)`, e sem o aviso na volta o
+    /// palco ficava parado e o carrossel de cima não reagia mais às setas.
+    ///
+    /// **O aviso sai na volta seguinte do laço, não aqui.** Ao lançar um jogo a Z-Wheel tira o
+    /// formulário de cima (`0x78a94`) e, na mesma chamada, desmonta o resto e sai. Avisar o menu
+    /// no meio disso o reativava por um instante, e a lista de jogos abria uma caixa de mensagem
+    /// vazia em vez de lançar. Ver [`Machine::entrega_ativacao`].
+    fn ativa_o_topo(&mut self, raiz: u32) -> Result<(), CpuError> {
+        self.ativacao_pendente = self
+            .widgets
+            .get(&raiz)
+            .and_then(|widget| widget.anexados.last().copied())
+            .map(|formulario| (raiz, formulario));
+        Ok(())
+    }
+
+    /// Entrega o aviso de [`Machine::ativa_o_topo`], se o formulário ainda estiver no topo.
+    pub(super) fn entrega_ativacao(&mut self) -> Result<(), CpuError> {
+        const GRAVA: u32 = 0x801;
+        const FORM_ATIVO: u32 = 0x5064;
+        let Some((raiz, formulario)) = self.ativacao_pendente.take() else {
+            return Ok(());
+        };
+        let ainda_no_topo = self
+            .widgets
+            .get(&raiz)
+            .is_some_and(|widget| widget.anexados.last() == Some(&formulario));
+        let tratador = self
+            .widgets
+            .get(&formulario)
+            .map(|widget| widget.tratador)
+            .filter(|(funcao, _)| *funcao != 0);
+        if let (true, Some((funcao, contexto))) = (ainda_no_topo, tratador) {
+            self.call_guest(funcao, [contexto, GRAVA, FORM_ATIVO, 1], QSORT_BUDGET)?;
+        }
+        Ok(())
+    }
+
     /// O formulário a que um widget pertence, subindo pelos pais, quando há um.
     fn formulario_de(&self, widget: u32) -> Option<u32> {
         /// A árvore vem do jogo; um ciclo não pode prender o desenho.
@@ -645,7 +688,7 @@ impl<C: CpuBackend> Machine<C> {
     /// largura dele. O arquivo mora no aparelho emulado, fora da ROM, e pode ser editado à vontade.
     fn pinta_html(&mut self) -> Result<(), CpuError> {
         let dentro = self.arvore_do_formulario();
-        let alvos: Vec<(i32, i32, u32, u32)> = self
+        let alvos: Vec<(u32, i32, i32, u32, u32)> = self
             .widgets
             .iter()
             .filter(|(dono, widget)| {
@@ -653,14 +696,18 @@ impl<C: CpuBackend> Machine<C> {
             })
             .map(|(&dono, widget)| {
                 let (x, y) = self.posicao_na_tela(dono);
-                (x, y, widget.tamanho.0, widget.tamanho.1)
+                (dono, x, y, widget.tamanho.0, widget.tamanho.1)
             })
             .collect();
         if alvos.is_empty() {
             return Ok(());
         }
-        let paragrafos = texto_do_html(&le_placeholder_html());
-        for (x, y, largura, altura) in alvos {
+        for (dono, x, y, largura, altura) in alvos {
+            // A página que a Z-Wheel entregou, quando entregou; sem ela, o placeholder.
+            let paragrafos = match self.paginas_html.get(&dono) {
+                Some(pagina) => texto_do_html(&decodifica_pagina(pagina)),
+                None => texto_do_html(&le_placeholder_html()),
+            };
             let largura = match largura {
                 0 => 600,
                 l => l.saturating_sub(2 * MARGEM_DO_HTML as u32).max(1),
@@ -677,8 +724,18 @@ impl<C: CpuBackend> Machine<C> {
                 0 => i32::MAX,
                 a => y + a as i32 - passo,
             };
+            // Quantas linhas cabem, e daí até onde a rolagem pode ir.
+            let cabem = match altura {
+                0 => linhas.len(),
+                a => ((a as i32 - MARGEM_DO_HTML - passo) / passo + 1).max(1) as usize,
+            };
+            let maximo = linhas.len().saturating_sub(cabem);
+            let rolagem = self.rolagem_html.entry(dono).or_insert(0);
+            *rolagem = (*rolagem).min(maximo);
+            self.rolagem_maxima_html.insert(dono, maximo);
+            let pular = *rolagem;
             let mut linha_y = y + MARGEM_DO_HTML;
-            for linha in linhas {
+            for linha in linhas.into_iter().skip(pular) {
                 if linha_y > limite {
                     break;
                 }
@@ -687,6 +744,65 @@ impl<C: CpuBackend> Machine<C> {
             }
         }
         Ok(())
+    }
+
+    /// Rola o widget de HTML em foco na tela atual, se houver um e se ainda houver para onde.
+    ///
+    /// No console quem rola é o próprio widget de HTML do firmware, com as setas, enquanto
+    /// tem foco: a Z-Wheel só desenha as setas do painel. Devolve se rolou — no limite, a tecla
+    /// segue para os tratadores, e é assim que subir do topo do texto volta às abas.
+    pub(super) fn rola_html_em_foco(&mut self, para_baixo: bool) -> bool {
+        let dentro = self.arvore_do_formulario();
+        let Some(alvo) = self
+            .widgets
+            .iter()
+            .filter(|(endereco, no)| {
+                no.classe == WIDGET_HTML && no.visivel && dentro.contains(*endereco)
+            })
+            .map(|(&endereco, _)| endereco)
+            .find(|&endereco| self.no_caminho_do_foco(endereco))
+        else {
+            return false;
+        };
+        let maximo = self.rolagem_maxima_html.get(&alvo).copied().unwrap_or(0);
+        let rolagem = self.rolagem_html.entry(alvo).or_insert(0);
+        match para_baixo {
+            true if *rolagem < maximo => *rolagem += 1,
+            false if *rolagem > 0 => *rolagem -= 1,
+            _ => return false,
+        }
+        true
+    }
+
+    /// Se algum container acima do widget definiu foco e todos os que definiram apontam para o
+    /// caminho até ele. O contrário do [`Machine::fora_do_foco`], mas exigindo foco de verdade:
+    /// sem container nenhum com foco, o widget não está em foco.
+    fn no_caminho_do_foco(&self, widget: u32) -> bool {
+        const MOVE_FOCO: u32 = 0x711;
+        const TETO: usize = 64;
+        // O foco gravado nem sempre é um filho direto: a tela de ajuda grava no container dela o
+        // próprio widget de HTML, que é neto. Vale qualquer nó do caminho já percorrido.
+        let mut caminho = vec![widget];
+        let mut filho = widget;
+        let mut focado = false;
+        for _ in 0..TETO {
+            let Some(pai) = self.widgets.get(&filho).map(|w| w.pai) else {
+                break;
+            };
+            if pai == 0 || pai == filho {
+                break;
+            }
+            if let Some(container) = self.widgets.get(&pai) {
+                match container.propriedades.get(&MOVE_FOCO).copied() {
+                    Some(foco) if caminho.contains(&foco) => focado = true,
+                    Some(foco) if self.widgets.contains_key(&foco) => return false,
+                    _ => {}
+                }
+            }
+            caminho.push(pai);
+            filho = pai;
+        }
+        focado
     }
 
     /// O filho de um widget guardado sob `id`, criado na primeira vez que alguém o pede.
@@ -808,6 +924,18 @@ impl<C: CpuBackend> Machine<C> {
             return Ok(None);
         }
         let this = self.cpu.read_reg(Reg::R0);
+        // **A página de cada aba chega ao widget de HTML por aqui.** A `0x3220c` abre o arquivo,
+        // faz dele um `ISource` e o entrega pelo slot 5 (`0x322e0`) do objeto da propriedade
+        // `0x161`, que para nós é o próprio widget. O conteúdo ainda não foi lido por ninguém, e
+        // é ele que o [`Machine::pinta_html`] mostra no lugar do placeholder.
+        if name == "AdicionarFilho"
+            && self.widgets.get(&this).is_some_and(|w| w.classe == WIDGET_HTML)
+        {
+            if let Some(pagina) = self.sources.get(&self.cpu.read_reg(Reg::R1)) {
+                self.paginas_html.insert(this, pagina.clone());
+                self.rolagem_html.insert(this, 0);
+            }
+        }
         let result = match name {
             "AddRef" => self.objects.add_ref(this),
             "Release" => self.solta_widget(this)?,
@@ -967,10 +1095,15 @@ impl<C: CpuBackend> Machine<C> {
                 if let Some(formulario) = topo {
                     self.solta_widget(formulario)?;
                 }
+                self.ativa_o_topo(this)?;
                 SUCCESS
             }
             "DefinirVisivel" if self.e_filho_anexado(this, self.cpu.read_reg(Reg::R1)) => {
                 let filho = self.cpu.read_reg(Reg::R1);
+                let era_o_topo = self
+                    .widgets
+                    .get(&this)
+                    .is_some_and(|widget| widget.anexados.last() == Some(&filho));
                 if let Some(widget) = self.widgets.get_mut(&this) {
                     widget.anexados.retain(|&w| w != filho);
                 }
@@ -980,6 +1113,12 @@ impl<C: CpuBackend> Machine<C> {
                     }
                 }
                 self.solta_widget(filho)?;
+                // Só quando saiu o formulário do topo, como o `RootForm` do BREW: antes de lançar
+                // um jogo a Z-Wheel tira da raiz os formulários de baixo, e reativar o menu a cada
+                // um deles fazia a lista de jogos abrir uma caixa de mensagem vazia em vez de lançar.
+                if era_o_topo && self.widgets.get(&this).map_or(0, |w| w.classe) == WIDGET_RAIZ {
+                    self.ativa_o_topo(this)?;
+                }
                 SUCCESS
             }
             "DefinirTamanho"
@@ -1623,6 +1762,9 @@ impl<C: CpuBackend> Machine<C> {
             let Some(widget) = self.widgets.remove(&morto) else {
                 continue;
             };
+            self.paginas_html.remove(&morto);
+            self.rolagem_html.remove(&morto);
+            self.rolagem_maxima_html.remove(&morto);
             for (liberador, contexto) in [
                 (widget.liberadores.0, widget.tratador.1),
                 (widget.liberadores.1, widget.desenho.1),
@@ -1726,7 +1868,10 @@ fn le_placeholder_html() -> String {
 /// resto das tags some, espaços se juntam e as entidades mais comuns são traduzidas. É o
 /// suficiente para um texto de ajuda escrito à mão.
 pub fn texto_do_html(html: &str) -> Vec<String> {
-    const BLOCOS: [&str; 12] = ["p", "/p", "br", "br/", "div", "/div", "li", "h1", "/h1", "h2", "/h2", "/li"];
+    const BLOCOS: [&str; 14] = [
+        "p", "/p", "br", "br/", "div", "/div", "li", "h1", "/h1", "h2", "/h2", "/li", "center",
+        "/center",
+    ];
     let mut paragrafos = Vec::new();
     let mut atual = String::new();
     let mut resto = html;
@@ -1754,14 +1899,64 @@ pub fn texto_do_html(html: &str) -> Vec<String> {
     fecha(&mut atual, &mut paragrafos);
     paragrafos
         .into_iter()
-        .map(|p| {
-            p.replace("&nbsp;", " ")
-                .replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replace("&quot;", "\"")
-                .replace("&amp;", "&")
-        })
+        .map(|p| decodifica_entidades(&p))
         .collect()
+}
+
+/// O texto de uma página como veio do arquivo: UTF-8 quando é, e Latin-1 quando não é, que é
+/// como as páginas antigas do console foram gravadas.
+fn decodifica_pagina(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(texto) => texto.to_string(),
+        Err(_) => bytes.iter().map(|&b| char::from(b)).collect(),
+    }
+}
+
+/// Troca as entidades de HTML pelo caractere. As páginas da Z-Wheel escrevem os acentos assim
+/// (`n&atilde;o`, `est&aacute;`); as nomeadas que faltam aqui ficam como vieram.
+fn decodifica_entidades(texto: &str) -> String {
+    const NOMEADAS: &[(&str, char)] = &[
+        ("nbsp", ' '), ("lt", '<'), ("gt", '>'), ("quot", '"'), ("amp", '&'), ("apos", '\''),
+        ("aacute", 'á'), ("agrave", 'à'), ("acirc", 'â'), ("atilde", 'ã'), ("auml", 'ä'),
+        ("eacute", 'é'), ("egrave", 'è'), ("ecirc", 'ê'), ("iacute", 'í'), ("icirc", 'î'),
+        ("oacute", 'ó'), ("ocirc", 'ô'), ("otilde", 'õ'), ("ouml", 'ö'), ("uacute", 'ú'),
+        ("uuml", 'ü'), ("ccedil", 'ç'), ("ntilde", 'ñ'), ("Aacute", 'Á'), ("Agrave", 'À'),
+        ("Acirc", 'Â'), ("Atilde", 'Ã'), ("Eacute", 'É'), ("Ecirc", 'Ê'), ("Iacute", 'Í'),
+        ("Oacute", 'Ó'), ("Ocirc", 'Ô'), ("Otilde", 'Õ'), ("Uacute", 'Ú'), ("Ccedil", 'Ç'),
+        ("Ntilde", 'Ñ'), ("ordm", 'º'), ("ordf", 'ª'), ("copy", '©'), ("reg", '®'),
+        ("deg", '°'), ("iexcl", '¡'), ("iquest", '¿'), ("trade", '™'), ("hellip", '…'),
+        ("ndash", '–'), ("mdash", '—'), ("laquo", '«'), ("raquo", '»'), ("bull", '•'),
+    ];
+    let mut saida = String::with_capacity(texto.len());
+    let mut resto = texto;
+    while let Some(inicio) = resto.find('&') {
+        saida.push_str(&resto[..inicio]);
+        let depois = &resto[inicio + 1..];
+        let fim = depois.find(';').filter(|&n| n <= 8);
+        let caractere = fim.and_then(|n| {
+            let nome = &depois[..n];
+            match nome.strip_prefix('#') {
+                Some(numero) => match numero.strip_prefix(['x', 'X']) {
+                    Some(hexa) => u32::from_str_radix(hexa, 16).ok(),
+                    None => numero.parse().ok(),
+                }
+                .and_then(char::from_u32),
+                None => NOMEADAS.iter().find(|(n, _)| *n == nome).map(|(_, c)| *c),
+            }
+        });
+        match (fim, caractere) {
+            (Some(n), Some(c)) => {
+                saida.push(c);
+                resto = &depois[n + 1..];
+            }
+            _ => {
+                saida.push('&');
+                resto = depois;
+            }
+        }
+    }
+    saida.push_str(resto);
+    saida
 }
 
 /// Quebra um parágrafo em linhas que caibam em `largura`, pela medida da fonte.
@@ -1797,6 +1992,12 @@ mod testes_do_html {
             texto_do_html(html),
             ["Ajuda", "Um texto com espaços & tags.", "linha", "outra"]
         );
+    }
+
+    #[test]
+    fn acentos_em_entidade_viram_letras() {
+        let html = "<center>Iniciando</center>\n<p>n&atilde;o est&aacute; &#233; &amp;c &foo; a&b</p>";
+        assert_eq!(texto_do_html(html), ["Iniciando", "não está é &c &foo; a&b"]);
     }
 
     #[test]

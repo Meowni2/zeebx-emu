@@ -108,6 +108,24 @@ impl<C: CpuBackend> Machine<C> {
                 {
                     self.pending_probes.push(target);
                 }
+                // **O display segura o destino.** A transição da Z-Wheel (`0x74e20`) cria um
+                // bitmap fora da tela, aponta o display para ele e solta a referência dela logo
+                // em seguida. Sem a nossa, o endereço voltava para a lista de livres, o bitmap
+                // seguinte nascia no lugar, e a tela nova era desenhada num objeto que já não
+                // era o destino — a transição ficava parada no menu antigo para sempre.
+                let anterior = self.display_target;
+                if target != anterior {
+                    if target != 0 && self.bitmaps.contains_key(&target) {
+                        self.objects.add_ref(target);
+                    }
+                    if anterior != 0
+                        && anterior != self.device_bitmap
+                        && self.bitmaps.contains_key(&anterior)
+                        && self.objects.release(anterior) == 0
+                    {
+                        self.solta_dib(anterior);
+                    }
+                }
                 self.display_target = target;
                 SUCCESS
             }
@@ -335,7 +353,11 @@ impl<C: CpuBackend> Machine<C> {
                 self.cpu.write_u32(out, clone)?;
                 SUCCESS
             }
-            "Update" | "SetFont" | "SetAnnunciators" | "Backlight" => SUCCESS,
+            "Update" | "UpdateEx" => {
+                self.guarda_quadro_do_update()?;
+                SUCCESS
+            }
+            "SetFont" | "SetAnnunciators" | "Backlight" => SUCCESS,
             _ => return Ok(None),
         };
         Ok(Some(result))

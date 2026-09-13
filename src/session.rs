@@ -91,6 +91,8 @@ pub struct Session {
     title: String,
     /// O ClassID do applet desta sessão.
     classe: u32,
+    /// A tela intermediária à mostra, quando há uma. Ver [`Session::mostra_quadro_intermediario`].
+    intermediario: Option<Framebuffer>,
     /// Instante e leitura do relógio virtual quando a execução começou, que é o par com que se
     /// mede se o jogo está adiantado.
     started: Instant,
@@ -147,8 +149,9 @@ impl Session {
         serial: Option<&Path>,
         placa: bool,
         contexto: Option<std::sync::Arc<eframe::glow::Context>>,
+        z_wheel: crate::ui::settings::ZWheel,
     ) -> Result<Self, StartError> {
-        Self::start_inner(path, Some(portas), serial, placa, contexto)
+        Self::start_inner(path, Some(portas), serial, placa, contexto, z_wheel)
     }
 
     /// A serial entra **antes de o módulo ser criado**, e não depois de a sessão existir.
@@ -163,6 +166,7 @@ impl Session {
         serial: Option<&Path>,
         placa: bool,
         contexto: Option<std::sync::Arc<eframe::glow::Context>>,
+        z_wheel: crate::ui::settings::ZWheel,
     ) -> Result<Self, StartError> {
         let extracted;
         let path = match path.extension().and_then(|e| e.to_str()) {
@@ -185,6 +189,7 @@ impl Session {
         let mut machine = Machine::new(cpu, module, root);
         // Antes de qualquer desenho: ver [`Machine::usa_placa`].
         machine.usa_placa(placa, contexto);
+        machine.configura_z_wheel(z_wheel);
         // A tela com que o console abre a Z-Wheel. Ver [`SPLASH_DA_Z_WHEEL`].
         if library::applet_clsid(path) == Some(Z_WHEEL) {
             if let Some(imagem) = path.parent().and_then(|dir| std::fs::read(dir.join(SPLASH_DA_Z_WHEEL)).ok()) {
@@ -233,6 +238,7 @@ impl Session {
             audio: None,
             title: library::title_for(path),
             classe: clsid,
+            intermediario: None,
             started: Instant::now(),
             clock_base,
             stopped: None,
@@ -293,6 +299,18 @@ impl Session {
 
     /// Uma volta do laço de eventos. `Some` quando há desfecho, `None` para continuar.
     fn advance_once(&mut self) -> Option<Step> {
+        // Telas intermediárias da volta anterior ainda não mostradas: a janela as mostra antes
+        // de o jogo andar. Ver [`Session::mostra_quadro_intermediario`].
+        if self.machine.tem_quadros_do_update() {
+            return Some(Step::Presented);
+        }
+        self.machine.comeca_volta();
+        let passo = self.advance_once_inner();
+        self.machine.fecha_volta();
+        passo
+    }
+
+    fn advance_once_inner(&mut self) -> Option<Step> {
         // A partida do jogo é a primeira coisa desta volta, e não do `start`: assim ela
         // acontece com a janela já na tela e o som já ligado.
         if let Some(step) = self.parte() {
@@ -322,6 +340,13 @@ impl Session {
             .find(|outcome| !matches!(outcome, Outcome::Returned { .. } | Outcome::Budget))
         {
             self.stopped = Some(bad.clone());
+            return Some(Step::Stopped);
+        }
+        // O applet pediu para fechar: recebe o `EVT_APP_STOP` e a sessão termina como uma saída
+        // normal, que é o que a janela lê para voltar à Z-Wheel.
+        if self.machine.pediu_para_fechar() {
+            let _ = self.machine.encerra_applet();
+            self.stopped = Some(Outcome::Returned { code: 0 });
             return Some(Step::Stopped);
         }
         // Sem timer armado nem trabalho pendente, nada mais vai acontecer.
@@ -560,7 +585,19 @@ impl Session {
 
     /// A tela, como está agora.
     pub fn screen(&self) -> &Framebuffer {
-        self.machine.screen()
+        self.intermediario
+            .as_ref()
+            .unwrap_or_else(|| self.machine.screen())
+    }
+
+    /// Põe à mostra a próxima tela intermediária, se houver, e diz se pôs.
+    ///
+    /// Enquanto houver, quem mostra a sessão deve exibir uma por quadro sem avançar o jogo:
+    /// é o que faz uma animação síncrona, como a transição da Z-Wheel, aparecer. Ver
+    /// [`crate::machine::Machine::toma_quadro_do_update`].
+    pub fn mostra_quadro_intermediario(&mut self) -> bool {
+        self.intermediario = self.machine.toma_quadro_do_update();
+        self.intermediario.is_some()
     }
 
     /// O motivo da parada, se o jogo parou, em texto que sirva para quem está olhando a tela.
@@ -667,6 +704,7 @@ mod tests {
             None,
             false,
             None,
+            Default::default(),
         );
         assert!(matches!(err, Err(StartError::Unreadable(_))));
     }
@@ -678,7 +716,7 @@ mod tests {
         // legível, porque é ele que a interface mostra.
         let path = std::env::temp_dir().join("zeebx-teste-lixo.mod");
         std::fs::write(&path, b"isto nao e um modulo").unwrap();
-        let Err(err) = Session::start_inner(&path, None, None, false, None) else {
+        let Err(err) = Session::start_inner(&path, None, None, false, None, Default::default()) else {
             panic!("um arquivo de lixo não podia virar uma sessão");
         };
         assert!(!err.to_string().is_empty());

@@ -217,6 +217,7 @@ impl<C: CpuBackend> Machine<C> {
             height: image.height as u32,
             pixels,
             opaque: vec![true; count],
+            alfa: Vec::new(),
             frame_width: 0,
         })
     }

@@ -152,6 +152,27 @@ pub struct Settings {
     pub debug: DebugView,
     pub audio: Audio,
     pub controls: crate::input::bindings::Controls,
+    pub z_wheel: ZWheel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ZWheel {
+    /// A roda inferior de fim de vida ("Jogar" e "Ajuda"), que é a de fábrica desta ROM. Sem
+    /// ela, a de antes: "Jogar", zeebo, "Comprar" e "Configurar".
+    pub fim_de_vida: bool,
+    /// A transição deslizante em toda troca de tela. A ROM desliza cada tela uma vez só
+    /// (`SlideOnceToForm=31`), e o dump já traz as principais marcadas como vistas.
+    pub transicoes_sempre: bool,
+}
+
+impl Default for ZWheel {
+    fn default() -> Self {
+        Self {
+            fim_de_vida: true,
+            transicoes_sempre: true,
+        }
+    }
 }
 
 impl Settings {
@@ -255,6 +276,10 @@ mod tests {
                 ..Audio::default()
             },
             controls: crate::input::bindings::Controls::default(),
+            z_wheel: ZWheel {
+                fim_de_vida: false,
+                ..ZWheel::default()
+            },
         };
         settings.save_to(&path).unwrap();
 

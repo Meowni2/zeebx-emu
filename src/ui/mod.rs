@@ -125,6 +125,9 @@ pub struct App {
     /// Só o aperto vira tecla do console: manter apertado não repete, que é como um toque se
     /// comporta em menu.
     pad_anterior: [Pad; crate::input::PORTAS],
+    /// Se o jogo em execução foi aberto pela Z-Wheel. Quando ele sai sozinho, a Z-Wheel volta,
+    /// como no console; aberto pela biblioteca, sair encerra.
+    aberto_pela_z_wheel: bool,
     teclado_apertado: HashSet<egui::Key>,
     teclas_entregues: HashSet<u32>,
     /// O que dizer sobre a última tentativa de exportar o log.
@@ -217,6 +220,7 @@ impl App {
             paused: false,
             last_step: std::time::Instant::now(),
             pad_anterior: Default::default(),
+            aberto_pela_z_wheel: false,
             teclado_apertado: HashSet::new(),
             teclas_entregues: HashSet::new(),
             log_status: None,
@@ -313,6 +317,7 @@ impl App {
             serial.as_deref(),
             self.settings.graphics.gpu_rasterizer,
             self.gl.clone(),
+            self.settings.z_wheel,
         ) {
             Ok(mut session) => {
                 if let Some(tela) = tela_anterior.filter(|_| session.classe() != crate::session::Z_WHEEL) {
@@ -438,6 +443,7 @@ impl App {
             });
         });
         if let Some(path) = chosen {
+            self.aberto_pela_z_wheel = false;
             self.play(path);
         }
     }
@@ -528,6 +534,22 @@ impl App {
                 changed = true;
             }
         }
+
+        ui.add_space(16.0);
+        changed |= ui
+            .checkbox(
+                &mut self.settings.z_wheel.fim_de_vida,
+                self.catalog.get("settings.z_wheel_eol"),
+            )
+            .changed();
+        ui.weak(self.tr("settings.z_wheel_eol.hint"));
+        changed |= ui
+            .checkbox(
+                &mut self.settings.z_wheel.transicoes_sempre,
+                self.catalog.get("settings.z_wheel_transitions"),
+            )
+            .changed();
+        ui.weak(self.tr("settings.z_wheel_transitions.hint"));
 
         ui.add_space(16.0);
         ui.weak(self.catalog.format(
@@ -1576,26 +1598,17 @@ impl App {
             for (avk, apertada) in teclas {
                 session.set_key(avk, apertada);
             }
-            // O orçamento é o tempo real que passou desde o quadro anterior.
+            // O orçamento é o tempo real que passou desde o quadro anterior. Com telas
+            // intermediárias à espera, uma vai à tela e o jogo não anda neste quadro.
             let now = std::time::Instant::now();
             let slice = (now - self.last_step).min(MAX_SLICE);
             self.last_step = now;
-            let _ = session.step(slice, limit);
-        }
-        // A Z-Wheel sai sozinha para abrir o jogo escolhido: reabri-la é o papel do console.
-        // Ver [`crate::session::Z_WHEEL`].
-        if session.classe() == crate::session::Z_WHEEL && session.saiu_sozinho() {
-            let z_wheel = self
-                .games
-                .iter()
-                .find(|game| game.clsid == Some(crate::session::Z_WHEEL))
-                .map(|game| game.path.clone());
-            if let Some(path) = z_wheel {
-                self.play(path);
-                self.last_step = std::time::Instant::now();
-                return false;
+            if !session.mostra_quadro_intermediario() {
+                let _ = session.step(slice, limit);
             }
         }
+        // **O pedido de lançar vem antes da saída.** A Z-Wheel reaberta pede o jogo e sai na mesma
+        // volta; olhando a saída primeiro, a janela a reabria de novo e o jogo nunca abria.
         if let Some(cls) = session.take_launch_request() {
             let path = self
                 .games
@@ -1603,6 +1616,24 @@ impl App {
                 .find(|game| game.clsid == Some(cls))
                 .map(|game| game.path.clone());
             if let Some(path) = path {
+                self.play(path);
+                self.aberto_pela_z_wheel = true;
+                self.last_step = std::time::Instant::now();
+                return false;
+            }
+        }
+        // A Z-Wheel sai sozinha para abrir o jogo escolhido: reabri-la é o papel do console.
+        // Ver [`crate::session::Z_WHEEL`]. O mesmo quando o jogo que ela abriu fecha — pelo
+        // `ISHELL_CloseApplet` do menu dele, por exemplo: o console volta para a tela inicial.
+        let volta_para_a_z_wheel =
+            session.classe() == crate::session::Z_WHEEL || self.aberto_pela_z_wheel;
+        if volta_para_a_z_wheel && session.saiu_sozinho() {
+            let z_wheel = self
+                .games
+                .iter()
+                .find(|game| game.clsid == Some(crate::session::Z_WHEEL))
+                .map(|game| game.path.clone());
+            if let Some(path) = z_wheel {
                 self.play(path);
                 self.last_step = std::time::Instant::now();
                 return false;

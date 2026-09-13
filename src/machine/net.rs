@@ -140,21 +140,19 @@ impl<C: CpuBackend> Machine<C> {
             // `int SourceFromFile(ISourceUtil *po, IFile *pf, ISource **ppo)`.
             //
             // Lemos o arquivo inteiro pelo caminho, e não pelo descritor aberto, para não mexer
-            // na posição do `IFile` do jogo — ele continua sendo dele.
+            // na posição do `IFile` do jogo — ele continua sendo dele. É o caminho do que foi
+            // aberto, e não o nome do jogo resolvido de novo: os dois divergem na `tectoy.cfg`
+            // sem fim de vida, e reler pelo nome lia a de fábrica.
             "SourceFromFile" => {
                 let (arquivo, saida) = (self.cpu.read_reg(Reg::R1), self.cpu.read_reg(Reg::R2));
                 let Some(caminho) = self
                     .open_files
                     .get(&arquivo)
-                    .map(|aberto| aberto.guest_path.clone())
+                    .map(|aberto| aberto.caminho.clone())
                 else {
                     return Ok(Some(EBADPARM));
                 };
-                let Some(bytes) = self
-                    .vfs
-                    .resolve(&caminho)
-                    .and_then(|real| std::fs::read(real).ok())
-                else {
+                let Ok(bytes) = std::fs::read(caminho) else {
                     return Ok(Some(EFAILED));
                 };
                 let fonte = self.new_object(Interface::Source)?;

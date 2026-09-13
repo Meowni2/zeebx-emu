@@ -578,6 +578,53 @@ O que ainda falta nessa tela:
   (`Session::herda_tela`) — antes, os dois intervalos eram tela preta. No boot o arquivo é o
   "Bem-Vindo ao Zeebo", e a abertura da Z-Wheel desenha a própria versão por cima.
 
+### 7.3 Roda inferior, abas, volta ao menu e transições
+
+- **Os itens da roda inferior são imagens 214×34 dos recursos**, montadas em `0x4f620`: Jogar
+  (`0x138f`), o logo zeebo (`0x138e`, no `tectoyli.brf`, se `0x4000` apagado), Comprar (`0x138d`,
+  se `0x2000` apagado), Navegar (`0x13ef`, bit `1`, do `enable_browser`), Desligar (`0x13f0`, bit
+  `0x40`) e, por último, Ajuda (`0x13f1`) com `0x2000` ou Configurar (`0x13a2`) sem. A leitura da
+  cfg em `0x7fe80` confirma: `EOL` liga o `0x2000`, `zeebomenu_hide` liga o `0x4000`. A opção "Z-Wheel
+  de fim de vida" (aba Geral) entrega à Z-Wheel uma cópia da `tectoy.cfg` no perfil do aparelho com os
+  dois em zero.
+- **O `SourceFromFile` relia o arquivo pelo nome.** A cfg é lida linha a linha por um `ISource`
+  feito do `IFile`, e o `ISource` era criado resolvendo de novo o nome do guest — que apontava para a
+  cfg do pacote, não para a cópia aberta. O `OpenFile` agora guarda o caminho real.
+- **Moldura de seleção translúcida.** A imagem de seleção (`214×47`) tem o miolo azul com alfa 51. O
+  PNG era reduzido a opaco/transparente pelo corte em 128; o alfa com meio-tom agora é guardado e
+  misturado no desenho da imagem.
+- **Voltar da ajuda travava o carrossel de cima.** O tratador do menu (`0x4e0e8`) lê o
+  `SETPROPERTY(0x5064)`, o `FID_ACTIVE`: com zero para palco e roda (`0x4e3d0`), com um devolve foco,
+  palco e som. A ajuda sai com `RemoveForm(raiz, formulário)` explícito, e o formulário que voltava ao
+  topo nunca recebia o `1`. Os dois caminhos do `RemoveForm` agora avisam o novo topo, **na volta
+  seguinte do laço** e só se ele ainda estiver no topo: ao lançar um jogo, a `0x78a94` tira o
+  formulário de cima e a Z-Wheel desmonta o resto na mesma chamada. Avisado na hora, o menu se
+  reativava no meio da desmontagem, a lista de jogos abria uma caixa de mensagem vazia e o jogo não
+  lançava. Na janela, o pedido de lançar é conferido antes da saída da Z-Wheel, pela mesma razão: a
+  reaberta pede o jogo e sai na mesma volta.
+- **As abas mostram a página de cada uma.** Na troca de aba, a `0x3220c` abre o arquivo, faz dele um
+  `ISource` e o entrega pelo slot 5 (`0x322e0`) do objeto da propriedade `0x161`. O conteúdo é guardado
+  por widget e desenhado no lugar do placeholder, com entidades de acento decodificadas; sem página,
+  vale o placeholder. As setas rolam o painel quando ele tem foco, como o widget de HTML do firmware
+  faria — o container da ajuda grava o próprio widget de HTML (neto dele) como foco.
+- **Transições.** A `0x798c4(app, tipo, 1)` decide se a troca desliza: tipo no `SlideOnceToForm` só
+  desliza se ainda não estiver no `HasSlidToForm` das preferências, que ela marca na primeira vez. A
+  cfg traz `31` e o `tt_prefs.db` do dump já vem com `14` (Jogar, Configurar, zeebo), então nada
+  deslizava. A opção "Transições da Z-Wheel em toda troca de tela" (ligada por padrão) põe
+  `SlideOnceToForm=0` na cópia da cfg. A animação em si:
+  1. `0x74e20` fotografa a tela, cria um bitmap fora da tela, faz `SetDestination` para ele, solta a
+     própria referência e empilha o formulário; arma 400 ms para `0x74434`.
+  2. `0x74468` pega o destino (a tela nova), monta 640×1440 (antiga, fundo da `transitions.png` com o
+     título, nova), volta o destino para a tela.
+  3. `0x74258` desliza de 5 em 5 pixels **num laço só**, com `IDISPLAY_Update` a cada passo; no fim
+     manda `0x7001` e reativa a raiz.
+  Faltavam duas coisas: o `SetDestination` não segurava referência (o bitmap morria e o destino virava
+  outro objeto — a transição parava no menu antigo para sempre), e as telas de cada `Update` dentro de
+  um callback nunca chegavam à janela. A máquina agora guarda as telas de uma volta com mais de um
+  `Update` e a sessão as mostra, uma por quadro, antes de o jogo seguir.
+- **`ISHELL_CloseApplet`** anota o pedido; a sessão entrega o `EVT_APP_STOP` e termina como saída
+  normal. Um jogo aberto pela Z-Wheel que sai assim devolve a janela à Z-Wheel.
+
 ## 8. O que ainda não funciona
 
 Honestidade sobre o estado: a roda sobe, desenha, compõe na tela e gira — mas boa parte do caminho

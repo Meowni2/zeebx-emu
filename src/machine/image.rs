@@ -513,10 +513,21 @@ impl<C: CpuBackend> Machine<C> {
         for row in first_row..last_row {
             for column in first_column..last_column {
                 let source = (row as u32 * info.width + column as u32 + offset) as usize;
-                if let Some(&pixel) = info.pixels.get(source) {
-                    if info.opaque.get(source).copied().unwrap_or(true) {
-                        surface.set_pixel_native(x + column, y + row, pixel);
+                let Some(&pixel) = info.pixels.get(source) else {
+                    continue;
+                };
+                match info.alfa.get(source).copied() {
+                    Some(0) => {}
+                    Some(u8::MAX) => surface.set_pixel_native(x + column, y + row, pixel),
+                    Some(alfa) => {
+                        let fundo = surface.get_pixel(x + column, y + row);
+                        let cor = mistura_rgb565(fundo, pixel, alfa);
+                        surface.set_pixel_native(x + column, y + row, cor);
                     }
+                    None if info.opaque.get(source).copied().unwrap_or(true) => {
+                        surface.set_pixel_native(x + column, y + row, pixel)
+                    }
+                    None => {}
                 }
             }
         }

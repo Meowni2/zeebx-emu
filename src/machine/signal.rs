@@ -84,6 +84,7 @@ impl<C: CpuBackend> Machine<C> {
             self.pinta_widgets()?;
             self.desenha_widgets()?;
         }
+        self.entrega_ativacao()?;
         self.parte_animacao()?;
         self.skip_wheel_instructions()?;
         self.flush_keys()?;
