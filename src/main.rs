@@ -285,7 +285,14 @@ fn main() -> ExitCode {
                 .find_map(|a| a.strip_prefix("--escala="))
                 .and_then(|n| n.parse::<usize>().ok())
                 .unwrap_or(1);
-            report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial, z_wheel, escala))
+            let numero = |prefixo: &str| {
+                args.iter()
+                    .find_map(|a| a.strip_prefix(prefixo))
+                    .and_then(|n| n.parse::<usize>().ok())
+                    .unwrap_or(1)
+            };
+            let melhorias = (numero("--msaa="), numero("--aniso="));
+            report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial, z_wheel, escala, melhorias))
         }
         // Sem argumento nenhum, o que se quer é o emulador, não a ajuda.
         None => launch(),
@@ -302,7 +309,7 @@ fn main() -> ExitCode {
                              [--sem-rede] [--servidor=MAQUINA[:PORTA]] [--ponte]
                              [--portas=controle|teclado|nenhum,...] [--teclas=ms:nome,...]"
             );
-            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N]  (a sessão da janela, sem janela)");
+            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N] [--msaa=N] [--aniso=N]  (a sessão da janela, sem janela)");
             eprintln!("     zeebx bench <arquivo.mod|zip> [--seconds=N] [--keys=ms:tecla,...] [--dump=QUADRO.bmp] [--teclas=ms:nome,...] [--instalados=0xCLSID[:id],...] [--dump-surfaces=DIR]  (Dynarmic, sem janela)");
             ExitCode::FAILURE
         }
@@ -1078,6 +1085,7 @@ fn sessao_sem_janela(
     serial: Option<&str>,
     z_wheel: ui::settings::ZWheel,
     escala: usize,
+    melhorias: (usize, usize),
 ) -> Result<(), Box<dyn std::error::Error>> {
     let serial = serial.map(std::path::Path::new);
     let settings = ui::settings::Settings::load();
@@ -1096,6 +1104,7 @@ fn sessao_sem_janela(
     )
     .map_err(|err| format!("{err:?}"))?;
     session.define_resolucao_interna(escala);
+    session.define_melhorias(melhorias.0, melhorias.1);
     session.set_installed_applets(
         games
             .iter()
@@ -1140,6 +1149,11 @@ fn sessao_sem_janela(
                 if let Some(gl) = session.quadro_gl() {
                     std::fs::write(nome.replace(".bmp", ".gl.bmp"), gl.to_bmp())?;
                 }
+                println!(
+                    "foto {numero}:    {} ms virtuais, {} quadros de GL até aqui",
+                    session.clock_ms(),
+                    session.quadros_apresentados()
+                );
                 let na_janela = session.quadro_na_placa().is_some();
                 if let Some(grande) = session.quadro_grande() {
                     std::fs::write(nome.replace(".bmp", ".grande.bmp"), grande.to_bmp())?;
@@ -1183,7 +1197,8 @@ fn sessao_sem_janela(
             )
             .map_err(|err| format!("{err:?}"))?;
             session.define_resolucao_interna(escala);
-            session.set_installed_applets(
+            session.define_melhorias(melhorias.0, melhorias.1);
+                    session.set_installed_applets(
                 games
                     .iter()
                     .filter_map(|game| Some((game.clsid?, library::id_do_modulo(&game.path)?))),

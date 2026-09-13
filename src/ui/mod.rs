@@ -321,6 +321,10 @@ impl App {
         ) {
             Ok(mut session) => {
                 session.define_resolucao_interna(self.settings.graphics.resolucao_interna as usize);
+                session.define_melhorias(
+                    self.settings.graphics.antialias as usize,
+                    self.settings.graphics.anisotropico as usize,
+                );
                 if let Some(tela) = tela_anterior.filter(|_| session.classe() != crate::session::Z_WHEEL) {
                     session.herda_tela(&tela);
                 }
@@ -1047,6 +1051,8 @@ impl App {
 
         ui.add_space(12.0);
         let mut resolucao_mudou = false;
+        let mut melhoria_mudou = false;
+        let desligado = self.catalog.get("common.off").to_string();
         ui.add_enabled_ui(graphics.gpu_rasterizer, |ui| {
             ui.label(self.catalog.get("graphics.internal_resolution"));
             let atual = graphics.resolucao_interna.clamp(1, 6);
@@ -1064,7 +1070,39 @@ impl App {
                     }
                 });
             ui.weak(self.catalog.get("graphics.internal_resolution.hint"));
+
+            ui.add_space(8.0);
+            ui.label(self.catalog.get("graphics.antialias"));
+            egui::ComboBox::from_id_salt("antialias")
+                .selected_text(rotulo_de_nivel(graphics.antialias, "MSAA", &desligado))
+                .show_ui(ui, |ui| {
+                    for n in [1u8, 2, 4, 8] {
+                        melhoria_mudou |= ui
+                            .selectable_value(&mut graphics.antialias, n, rotulo_de_nivel(n, "MSAA", &desligado))
+                            .changed();
+                    }
+                });
+            ui.weak(self.catalog.get("graphics.antialias.hint"));
+
+            ui.add_space(8.0);
+            ui.label(self.catalog.get("graphics.anisotropic"));
+            egui::ComboBox::from_id_salt("anisotropico")
+                .selected_text(rotulo_de_nivel(graphics.anisotropico, "AF", &desligado))
+                .show_ui(ui, |ui| {
+                    for n in [1u8, 2, 4, 8, 16] {
+                        melhoria_mudou |= ui
+                            .selectable_value(&mut graphics.anisotropico, n, rotulo_de_nivel(n, "AF", &desligado))
+                            .changed();
+                    }
+                });
+            ui.weak(self.catalog.get("graphics.anisotropic.hint"));
         });
+        if melhoria_mudou {
+            let (amostras, nivel) = (graphics.antialias as usize, graphics.anisotropico as usize);
+            if let Some(session) = self.session.as_mut() {
+                session.define_melhorias(amostras, nivel);
+            }
+        }
         // Vale na hora para o jogo aberto: o destino é refeito no próximo quadro.
         if resolucao_mudou {
             let fator = graphics.resolucao_interna as usize;
@@ -1072,7 +1110,7 @@ impl App {
                 session.define_resolucao_interna(fator);
             }
         }
-        changed | resolucao_mudou
+        changed | resolucao_mudou | melhoria_mudou
     }
 
     fn audio_tab(&mut self, ui: &mut egui::Ui) -> bool {
@@ -2091,6 +2129,14 @@ fn draw_controller(
 }
 
 /// Envia o quadro do console para a textura, criando-a na primeira vez.
+/// O nome de um nível de melhoria: `desligado` no 1, e `4x MSAA` nos outros.
+fn rotulo_de_nivel(nivel: u8, sigla: &str, desligado: &str) -> String {
+    match nivel {
+        0 | 1 => desligado.to_string(),
+        n => format!("{n}x {sigla}"),
+    }
+}
+
 /// O nome de um fator de resolução interna, com o tamanho que ele dá e o vídeo mais próximo.
 fn rotulo_da_resolucao(fator: u8) -> String {
     let (largura, altura) = (640 * u32::from(fator), 480 * u32::from(fator));

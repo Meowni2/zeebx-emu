@@ -146,3 +146,31 @@ Com o rasterizador da placa ligado, a aba gráfica oferece **resolução interna
 
 O rasterizador de software ignora a opção: o custo cresceria com o quadrado do fator. Jogos 2D não
 ganham nada, porque a imagem já sai pronta em 640×480.
+
+## Antialias (MSAA) e filtro anisotrópico
+
+Também só no rasterizador da placa, na aba gráfica, desligados por padrão.
+
+- **MSAA 2x/4x/8x** (`graphics.antialias`). Com amostras, o `destino()` monta um segundo framebuffer
+  de desenho com cor e profundidade multiamostradas; a textura `cor` passa a ser só o resultado.
+  `resolve()` copia as amostras para ela antes de qualquer leitura (`liga_para_leitura`, o quadro
+  grande) — e a janela, que pinta a `cor`, a recebe resolvida porque o `present_gl` lê o quadro a
+  cada `eglSwapBuffers`. O número de amostras é limitado pelo `GL_MAX_SAMPLES`. Combina com a
+  resolução interna. Transparência recortada por teste de alfa não é suavizada.
+- **Anisotrópico 2x–16x** (`graphics.anisotropico`), pelo `GL_TEXTURE_MAX_ANISOTROPY` da extensão
+  `EXT/ARB_texture_filter_anisotropic`, aplicado em `parametros()` e reaplicado a todas as texturas
+  quando muda. Sem a extensão, fica desligado.
+- Sem janela: `zeebx sessao <zip> --placa --msaa=4 --aniso=16`.
+
+Medido: no Crash Nitro Kart, MSAA 4x suaviza visivelmente o contorno dos modelos. No Need for Speed
+em 640×480 o anisotrópico quase não muda a imagem (diferença média de 0,2 nível): as texturas dele
+vêm sem mipmaps, e sem cadeia o filtro tem pouco a fazer.
+
+## Por que não há "overclock" da CPU emulada
+
+O relógio virtual anda com as instruções executadas (528 por microssegundo, o ARM11 do console), e
+o desenho em GL não custa tempo virtual. Medido no Need for Speed, na corrida: ~60 quadros por
+segundo virtual a 100% e a 200% de CPU — o jogo já bate no teto do retraço de 60 Hz, porque o que o
+deixava lento no aparelho era a GPU, que aqui não é emulada. Uma opção de CPU mais rápida foi
+experimentada e retirada por não mudar nada. O que limita a fluidez no emulador é o host conseguir
+manter a velocidade real (50 s virtuais em ~44 s reais no `sessao`, sem janela).

@@ -468,6 +468,14 @@ pub trait Rasterizador {
     /// sabe fazer isto; no software o custo cresceria com o quadrado do fator, e ele ignora.
     fn define_escala(&mut self, _escala: usize) {}
 
+    /// Antialias por amostragem múltipla (MSAA), em amostras por pixel; 1 desliga. Suaviza as
+    /// bordas dos polígonos; transparência recortada por teste de alfa não é afetada.
+    fn define_antialias(&mut self, _amostras: usize) {}
+
+    /// Filtro anisotrópico nas texturas do jogo; 1 desliga. Deixa nítido o que é visto de lado —
+    /// pista, chão, paredes. Sem a extensão na placa, fica desligado.
+    fn define_anisotropico(&mut self, _nivel: usize) {}
+
     /// O quadro na resolução interna, lido da placa em RGBA com a linha 0 no topo. Para conferir
     /// o upscale sem janela; a janela usa o [`Rasterizador::quadro_na_placa`].
     fn le_quadro_grande(&mut self) -> Option<(usize, usize, Vec<u8>)> {

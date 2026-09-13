@@ -20,6 +20,11 @@ use super::rasterizer::{GlState, Matrix, QuadroNaPlaca, Rasterizador, Vertex};
 use eframe::glow::{self, HasContext};
 use std::collections::HashMap;
 
+/// `GL_TEXTURE_MAX_ANISOTROPY` e o máximo que a placa aceita, da extensão
+/// `EXT_texture_filter_anisotropic` (núcleo no OpenGL 4.6).
+const TEXTURE_MAX_ANISOTROPY: u32 = 0x84fe;
+const MAX_TEXTURE_MAX_ANISOTROPY: u32 = 0x84ff;
+
 /// Quantos `f32` cada vértice ocupa no buffer: posição, cor e coordenada de textura.
 const FLOATS_POR_VERTICE: usize = 4 + 4 + 2;
 
@@ -132,6 +137,10 @@ pub struct GpuState {
     escala: usize,
     /// O quadro reduzido ao tamanho do console, de onde saem as leituras quando `escala > 1`.
     reduzido: Option<(glow::Framebuffer, glow::Texture, (usize, usize))>,
+    /// Amostras por pixel do antialias (MSAA); 1 é desligado. Ver [`Rasterizador::define_antialias`].
+    amostras: usize,
+    /// O filtro anisotrópico aplicado às texturas do jogo; 1 é desligado.
+    anisotropia: f32,
 }
 
 struct Destino {
@@ -141,6 +150,17 @@ struct Destino {
     /// Em pixels do console; o anexo tem `medida * escala`.
     medida: (usize, usize),
     escala: usize,
+    amostras: usize,
+    /// Com antialias, o desenho vai para este framebuffer de várias amostras — cor e a
+    /// profundidade acima —, e é resolvido na `cor` antes de qualquer leitura.
+    multi: Option<(glow::Framebuffer, glow::Renderbuffer)>,
+}
+
+impl Destino {
+    /// O framebuffer em que se desenha.
+    fn desenho(&self) -> glow::Framebuffer {
+        self.multi.map_or(self.fbo, |(fbo, _)| fbo)
+    }
 }
 
 impl GpuState {
@@ -198,28 +218,26 @@ impl GpuState {
             sujo: true,
             escala: 1,
             reduzido: None,
+            amostras: 1,
+            anisotropia: 1.0,
         })
     }
 
     /// Garante que o destino existe no tamanho do quadro e o deixa ligado.
     fn destino(&mut self) {
         let medida = self.estado.frame_size();
-        let escala = self.escala;
-        if self
-            .quadro
-            .as_ref()
-            .is_some_and(|d| d.medida == medida && d.escala == escala)
-        {
-            let fbo = self.quadro.as_ref().map(|d| d.fbo);
+        let (escala, amostras) = (self.escala, self.amostras);
+        if self.quadro.as_ref().is_some_and(|d| {
+            d.medida == medida && d.escala == escala && d.amostras == amostras
+        }) {
+            let fbo = self.quadro.as_ref().map(Destino::desenho);
             unsafe { self.gl.bind_framebuffer(glow::FRAMEBUFFER, fbo) };
             return;
         }
         let gl = &self.gl;
         unsafe {
             if let Some(antigo) = self.quadro.take() {
-                gl.delete_framebuffer(antigo.fbo);
-                gl.delete_texture(antigo.cor);
-                gl.delete_renderbuffer(antigo.profundidade);
+                solta_destino(gl, antigo);
             }
             let (largura, altura) = ((medida.0 * escala) as i32, (medida.1 * escala) as i32);
             let cor = gl.create_texture().expect("textura de cor");
@@ -245,15 +263,25 @@ impl GpuState {
                 glow::TEXTURE_MAG_FILTER,
                 glow::NEAREST as i32,
             );
-            // Profundidade e stencil no mesmo anexo: é a combinação que o OpenGL garante.
+            // Profundidade e stencil no mesmo anexo: é a combinação que o OpenGL garante. Com
+            // antialias ele tem as mesmas amostras da cor, e fica no framebuffer de desenho.
             let profundidade = gl.create_renderbuffer().expect("buffer de profundidade");
             gl.bind_renderbuffer(glow::RENDERBUFFER, Some(profundidade));
-            gl.renderbuffer_storage(
-                glow::RENDERBUFFER,
-                glow::DEPTH24_STENCIL8,
-                largura,
-                altura,
-            );
+            match amostras > 1 {
+                true => gl.renderbuffer_storage_multisample(
+                    glow::RENDERBUFFER,
+                    amostras as i32,
+                    glow::DEPTH24_STENCIL8,
+                    largura,
+                    altura,
+                ),
+                false => gl.renderbuffer_storage(
+                    glow::RENDERBUFFER,
+                    glow::DEPTH24_STENCIL8,
+                    largura,
+                    altura,
+                ),
+            }
             let fbo = gl.create_framebuffer().expect("framebuffer");
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
             gl.framebuffer_texture_2d(
@@ -263,15 +291,47 @@ impl GpuState {
                 Some(cor),
                 0,
             );
-            gl.framebuffer_renderbuffer(
-                glow::FRAMEBUFFER,
-                glow::DEPTH_STENCIL_ATTACHMENT,
-                glow::RENDERBUFFER,
-                Some(profundidade),
-            );
+            let multi = match amostras > 1 {
+                false => {
+                    gl.framebuffer_renderbuffer(
+                        glow::FRAMEBUFFER,
+                        glow::DEPTH_STENCIL_ATTACHMENT,
+                        glow::RENDERBUFFER,
+                        Some(profundidade),
+                    );
+                    None
+                }
+                true => {
+                    let cor_multi = gl.create_renderbuffer().expect("cor com amostras");
+                    gl.bind_renderbuffer(glow::RENDERBUFFER, Some(cor_multi));
+                    gl.renderbuffer_storage_multisample(
+                        glow::RENDERBUFFER,
+                        amostras as i32,
+                        glow::RGBA8,
+                        largura,
+                        altura,
+                    );
+                    let fbo_multi = gl.create_framebuffer().expect("framebuffer com amostras");
+                    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo_multi));
+                    gl.framebuffer_renderbuffer(
+                        glow::FRAMEBUFFER,
+                        glow::COLOR_ATTACHMENT0,
+                        glow::RENDERBUFFER,
+                        Some(cor_multi),
+                    );
+                    gl.framebuffer_renderbuffer(
+                        glow::FRAMEBUFFER,
+                        glow::DEPTH_STENCIL_ATTACHMENT,
+                        glow::RENDERBUFFER,
+                        Some(profundidade),
+                    );
+                    Some((fbo_multi, cor_multi))
+                }
+            };
             // Um framebuffer novo tem conteúdo indefinido, enquanto os vetores do rasterizador
             // de software nascem em preto opaco, profundidade 1 e stencil 0. Igualar aqui evita
-            // que o primeiro quadro dependa do que a placa deixou na memória.
+            // que o primeiro quadro dependa do que a placa deixou na memória. O de desenho fica
+            // ligado no fim, que é o que quem chama espera.
             gl.viewport(0, 0, largura, altura);
             gl.disable(glow::SCISSOR_TEST);
             gl.color_mask(true, true, true, true);
@@ -280,16 +340,45 @@ impl GpuState {
             gl.clear_color(0.0, 0.0, 0.0, 1.0);
             gl.clear_depth_f32(1.0);
             gl.clear_stencil(0);
-            gl.clear(
-                glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT,
-            );
-            self.quadro = Some(Destino {
+            for alvo in [Some(fbo), multi.map(|(f, _)| f)].into_iter().flatten() {
+                gl.bind_framebuffer(glow::FRAMEBUFFER, Some(alvo));
+                gl.clear(
+                    glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT,
+                );
+            }
+            let destino = Destino {
                 fbo,
                 cor,
                 profundidade,
                 medida,
                 escala,
-            });
+                amostras,
+                multi,
+            };
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(destino.desenho()));
+            self.quadro = Some(destino);
+        }
+    }
+
+    /// Resolve o antialias: as amostras do framebuffer de desenho viram a `cor`.
+    fn resolve(&self) {
+        let Some(destino) = self.quadro.as_ref() else {
+            return;
+        };
+        let Some((multi, _)) = destino.multi else {
+            return;
+        };
+        let (w, h) = (
+            (destino.medida.0 * destino.escala) as i32,
+            (destino.medida.1 * destino.escala) as i32,
+        );
+        let gl = &self.gl;
+        unsafe {
+            gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(multi));
+            gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(destino.fbo));
+            gl.disable(glow::SCISSOR_TEST);
+            gl.blit_framebuffer(0, 0, w, h, 0, 0, w, h, glow::COLOR_BUFFER_BIT, glow::NEAREST);
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(destino.fbo));
         }
     }
 
@@ -412,7 +501,10 @@ impl GpuState {
     /// em bytes para jogar quase tudo fora.
     fn liga_para_leitura(&mut self) {
         self.destino();
+        self.resolve();
         if self.escala <= 1 {
+            let fbo = self.quadro.as_ref().map(|d| d.fbo);
+            unsafe { self.gl.bind_framebuffer(glow::FRAMEBUFFER, fbo) };
             return;
         }
         let medida = self.estado.frame_size();
@@ -544,6 +636,11 @@ impl GpuState {
             ] {
                 gl.tex_parameter_i32(glow::TEXTURE_2D, eixo, modo as i32);
             }
+            // Só é pedido quando está ligado, e só chega aqui ligado se a placa tem a extensão —
+            // ver [`Rasterizador::define_anisotropico`].
+            if self.anisotropia > 1.0 {
+                gl.tex_parameter_f32(glow::TEXTURE_2D, TEXTURE_MAX_ANISOTROPY, self.anisotropia);
+            }
         }
     }
 }
@@ -560,10 +657,25 @@ impl Drop for GpuState {
                 gl.delete_texture(t.objeto);
             }
             if let Some(d) = self.quadro.take() {
-                gl.delete_framebuffer(d.fbo);
-                gl.delete_texture(d.cor);
-                gl.delete_renderbuffer(d.profundidade);
+                solta_destino(gl, d);
             }
+            if let Some((fbo, cor, _)) = self.reduzido.take() {
+                gl.delete_framebuffer(fbo);
+                gl.delete_texture(cor);
+            }
+        }
+    }
+}
+
+/// Devolve à placa o que um destino criou.
+unsafe fn solta_destino(gl: &glow::Context, d: Destino) {
+    unsafe {
+        gl.delete_framebuffer(d.fbo);
+        gl.delete_texture(d.cor);
+        gl.delete_renderbuffer(d.profundidade);
+        if let Some((fbo, cor)) = d.multi {
+            gl.delete_framebuffer(fbo);
+            gl.delete_renderbuffer(cor);
         }
     }
 }
@@ -1323,6 +1435,7 @@ impl Rasterizador for GpuState {
             return None;
         }
         self.destino();
+        self.resolve();
         let (sw, sh) = self.estado.surface();
         let (w, h) = (sw * self.escala, sh * self.escala);
         let mut bytes = vec![0u8; w * h * 4];
@@ -1339,6 +1452,44 @@ impl Rasterizador for GpuState {
         }
         self.devolve_o_contexto();
         Some((w, h, bytes))
+    }
+
+    fn define_antialias(&mut self, amostras: usize) {
+        let maximo = unsafe { self.gl.get_parameter_i32(glow::MAX_SAMPLES) }.max(1) as usize;
+        // Potências de dois são o que as placas oferecem; 1 é desligado.
+        let pedido = match amostras {
+            0 | 1 => 1,
+            n => n.next_power_of_two().min(maximo.max(1)),
+        };
+        if pedido != self.amostras {
+            self.amostras = pedido;
+            self.sujo = true;
+        }
+    }
+
+    fn define_anisotropico(&mut self, nivel: usize) {
+        let tem = self.gl.supported_extensions().iter().any(|e| {
+            e == "GL_EXT_texture_filter_anisotropic" || e == "GL_ARB_texture_filter_anisotropic"
+        });
+        let maximo = match tem {
+            true => unsafe { self.gl.get_parameter_f32(MAX_TEXTURE_MAX_ANISOTROPY) }.max(1.0),
+            false => 1.0,
+        };
+        let nivel = (nivel.max(1) as f32).min(maximo);
+        if nivel == self.anisotropia {
+            return;
+        }
+        // Voltar a 1 também precisa ser escrito nas texturas: o parâmetro fica nelas.
+        let reescrever_para_um = nivel <= 1.0 && self.anisotropia > 1.0;
+        self.anisotropia = nivel;
+        let gl = self.gl.clone();
+        for t in self.texturas.values() {
+            self.parametros(t);
+            if reescrever_para_um {
+                unsafe { gl.tex_parameter_f32(glow::TEXTURE_2D, TEXTURE_MAX_ANISOTROPY, 1.0) };
+            }
+        }
+        unsafe { gl.bind_texture(glow::TEXTURE_2D, None) };
     }
 
     fn quadro_na_placa(&self) -> Option<QuadroNaPlaca> {
@@ -1493,6 +1644,47 @@ mod tests {
         let quadro = grande.quadro_na_placa().expect("textura grande para a janela");
         assert_eq!(quadro.recorte, [1.0, 1.0]);
         assert!(nativa.quadro_na_placa().is_none(), "na escala 1 a janela usa a tela de sempre");
+    }
+
+    /// Com antialias a borda do triângulo mistura as duas cores, e o miolo fica como estava.
+    ///
+    /// O desenho vai para um framebuffer de várias amostras e é resolvido antes da leitura. Na
+    /// diagonal, algum pixel tem de sair com vermelho e azul ao mesmo tempo — é a prova de que as
+    /// amostras chegaram à leitura; sem resolver, a leitura sairia preta ou falharia.
+    #[test]
+    fn com_antialias_a_diagonal_mistura_as_cores() {
+        let (largura, altura) = (16, 16);
+        let Ok(mut gpu) = GpuState::novo(largura, altura, None) else {
+            return;
+        };
+        gpu.define_antialias(4);
+        if gpu.amostras <= 1 {
+            println!("placa sem amostragem múltipla");
+            return;
+        }
+        gpu.set_viewport(0, 0, largura as i32, altura as i32);
+        gpu.set_clear_color([0.0, 0.0, 1.0, 1.0]);
+        gpu.clear(gles::GL_COLOR_BUFFER_BIT);
+        let canto = |x: f32, y: f32| Vertex {
+            position: [x, y, 0.0, 1.0],
+            color: [1.0, 0.0, 0.0, 1.0],
+            uv: [0.0, 0.0],
+            normal: [0.0, 0.0, 1.0],
+        };
+        gpu.draw(
+            gles::GL_TRIANGLES,
+            &[canto(-1.0, 1.0), canto(-1.0, -1.0), canto(1.0, 1.0)],
+        );
+        let mut quadro = Vec::new();
+        gpu.frame_rgb565(largura, altura, &mut quadro);
+        assert_eq!(quadro.len(), largura * altura * 2);
+        assert_eq!(pixel(&quadro, largura, 1, 1), (31, 0, 0), "miolo vermelho");
+        assert_eq!(pixel(&quadro, largura, 14, 14), (0, 0, 31), "miolo azul");
+        let misturado = (0..largura).any(|x| {
+            let (r, _, b) = pixel(&quadro, largura, x, largura - 1 - x);
+            r > 0 && b > 0
+        });
+        assert!(misturado, "algum pixel da diagonal devia misturar vermelho e azul");
     }
 
     /// Quem nunca chama `glViewport` tem que desenhar de todo jeito.

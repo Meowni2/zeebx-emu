@@ -655,6 +655,16 @@ impl Session {
         self.machine.quadro_grande()
     }
 
+    /// Quantos quadros de GL o jogo já apresentou.
+    pub fn quadros_apresentados(&self) -> u64 {
+        u64::from(self.machine.gl_swaps())
+    }
+
+    /// Antialias (amostras por pixel) e filtro anisotrópico do 3D na placa; valem na hora.
+    pub fn define_melhorias(&mut self, amostras: usize, anisotropico: usize) {
+        self.machine.define_melhorias(amostras, anisotropico);
+    }
+
     /// Muda a resolução interna do 3D; vale a partir do próximo quadro.
     pub fn define_resolucao_interna(&mut self, escala: usize) {
         self.machine.define_resolucao_interna(escala);

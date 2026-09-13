@@ -112,6 +112,10 @@ pub struct Graphics {
     /// quadro grande só chega à janela quando nada 2D foi desenhado sobre ele — ver
     /// [`crate::machine::Machine::quadro_na_placa`]. Nos outros casos a imagem é a de sempre.
     pub resolucao_interna: u8,
+    /// Antialias do 3D na placa, em amostras por pixel (1 é desligado).
+    pub antialias: u8,
+    /// Filtro anisotrópico das texturas do 3D na placa (1 é desligado).
+    pub anisotropico: u8,
 }
 
 impl Default for Graphics {
@@ -127,6 +131,8 @@ impl Default for Graphics {
             // desenho de todos os outros sem que alguém os tenha olhado.
             gpu_rasterizer: false,
             resolucao_interna: 1,
+            antialias: 1,
+            anisotropico: 1,
         }
     }
 }

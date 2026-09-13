@@ -935,6 +935,13 @@ impl<C: CpuBackend> Machine<C> {
     pub fn define_resolucao_interna(&mut self, escala: usize) {
         self.gl.define_escala(escala);
     }
+
+    /// As melhorias de imagem do rasterizador da placa: antialias e filtro anisotrópico. Ver
+    /// [`Rasterizador::define_antialias`] e [`Rasterizador::define_anisotropico`].
+    pub fn define_melhorias(&mut self, amostras: usize, anisotropico: usize) {
+        self.gl.define_antialias(amostras);
+        self.gl.define_anisotropico(anisotropico);
+    }
 }
 
 /// A fatia de um objeto de buffer que um vetor pede, ou zeros quando ela não cabe.
