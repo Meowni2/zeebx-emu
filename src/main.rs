@@ -292,7 +292,12 @@ fn main() -> ExitCode {
                     .unwrap_or(1)
             };
             let melhorias = (numero("--msaa="), numero("--aniso="));
-            report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial, z_wheel, escala, melhorias))
+            // `--perfil` mede tudo; `--perfil=MS` só a partir desse instante virtual.
+            let perfil = args.iter().find_map(|a| match a.as_str() {
+                "--perfil" => Some(0),
+                outro => outro.strip_prefix("--perfil=").and_then(|n| n.parse::<u32>().ok()),
+            });
+            report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial, z_wheel, escala, melhorias, perfil))
         }
         // Sem argumento nenhum, o que se quer é o emulador, não a ajuda.
         None => launch(),
@@ -309,7 +314,7 @@ fn main() -> ExitCode {
                              [--sem-rede] [--servidor=MAQUINA[:PORTA]] [--ponte]
                              [--portas=controle|teclado|nenhum,...] [--teclas=ms:nome,...]"
             );
-            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N] [--msaa=N] [--aniso=N]  (a sessão da janela, sem janela)");
+            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N] [--msaa=N] [--aniso=N] [--perfil[=MS]]  (a sessão da janela, sem janela)");
             eprintln!("     zeebx bench <arquivo.mod|zip> [--seconds=N] [--keys=ms:tecla,...] [--dump=QUADRO.bmp] [--teclas=ms:nome,...] [--instalados=0xCLSID[:id],...] [--dump-surfaces=DIR]  (Dynarmic, sem janela)");
             ExitCode::FAILURE
         }
@@ -1086,6 +1091,7 @@ fn sessao_sem_janela(
     z_wheel: ui::settings::ZWheel,
     escala: usize,
     melhorias: (usize, usize),
+    perfil: Option<u32>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let serial = serial.map(std::path::Path::new);
     let settings = ui::settings::Settings::load();
@@ -1105,17 +1111,29 @@ fn sessao_sem_janela(
     .map_err(|err| format!("{err:?}"))?;
     session.define_resolucao_interna(escala);
     session.define_melhorias(melhorias.0, melhorias.1);
+    let mut perfil_ligado_em: Option<(u32, std::time::Instant, u64)> = None;
     session.set_installed_applets(
         games
             .iter()
             .filter_map(|game| Some((game.clsid?, library::id_do_modulo(&game.path)?))),
     );
+    let inicio_real = std::time::Instant::now();
     let mut fim = seconds.saturating_mul(1000);
     let mut reaberta = false;
     let mut pad = input::Pad::default();
     let mut fotos: std::collections::VecDeque<u32> = instantes.iter().copied().collect();
     let mut numero = 0;
     while session.clock_ms() < fim {
+        if let (Some(desde), None) = (perfil, perfil_ligado_em) {
+            if session.clock_ms() >= desde {
+                session.liga_perfil_de_api();
+                perfil_ligado_em = Some((
+                    session.clock_ms(),
+                    std::time::Instant::now(),
+                    session.instrucoes(),
+                ));
+            }
+        }
         let antes = pad;
         if !reaberta {
             keys.apply(session.clock_ms(), &mut pad);
@@ -1150,8 +1168,9 @@ fn sessao_sem_janela(
                     std::fs::write(nome.replace(".bmp", ".gl.bmp"), gl.to_bmp())?;
                 }
                 println!(
-                    "foto {numero}:    {} ms virtuais, {} quadros de GL até aqui",
+                    "foto {numero}:    {} ms virtuais, {} ms reais, {} quadros de GL até aqui",
                     session.clock_ms(),
+                    inicio_real.elapsed().as_millis(),
                     session.quadros_apresentados()
                 );
                 let na_janela = session.quadro_na_placa().is_some();
@@ -1224,6 +1243,33 @@ fn sessao_sem_janela(
         std::fs::write(path, session.screen().to_bmp())?;
     }
     println!("tempo:     {} ms virtuais", session.clock_ms());
+    if let Some((desde, inicio, instrucoes_antes)) = perfil_ligado_em {
+        let real = inicio.elapsed();
+        let virtual_ms = session.clock_ms().saturating_sub(desde);
+        let api = session.perfil_de_api();
+        let total: u64 = api.iter().map(|(_, ns)| ns).sum();
+        println!(
+            "perfil:    desde {desde} ms: {} ms reais para {virtual_ms} ms virtuais ({:.0}% do console), {} ms atendendo a API ({:.0}%)",
+            real.as_millis(),
+            f64::from(virtual_ms) / real.as_millis().max(1) as f64 * 100.0,
+            total / 1_000_000,
+            total as f64 / real.as_nanos().max(1) as f64 * 100.0,
+        );
+        let instrucoes = session.instrucoes().saturating_sub(instrucoes_antes);
+        println!(
+            "           {:.0} milhões de instruções ARM: {:.0} por segundo real, {:.0} por segundo virtual (o console faz 528)",
+            instrucoes as f64 / 1e6,
+            instrucoes as f64 / 1e6 / real.as_secs_f64().max(1e-9),
+            instrucoes as f64 / 1e6 / (f64::from(virtual_ms) / 1000.0).max(1e-9),
+        );
+        for (nome, ns) in api.iter().take(PROFILE_LINES) {
+            println!(
+                "  {:5.1}%  {:>8} ms  {nome}",
+                *ns as f64 / total.max(1) as f64 * 100.0,
+                ns / 1_000_000
+            );
+        }
+    }
     for linha in session.log() {
         println!("{linha}");
     }

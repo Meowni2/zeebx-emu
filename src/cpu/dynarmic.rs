@@ -32,6 +32,14 @@ const MAX_SEMIHOSTING_STRING: u32 = 4096;
 /// Granularidade que o Dynarmic usa para indexar código recompilado.
 const PAGE: u32 = 4096;
 
+/// Quantas páginas de 4 KB cabem nos 32 bits do guest: o tamanho da tabela de páginas.
+const PAGINAS: usize = 1 << 20;
+
+/// Bytes reservados além do fim de cada região gravável. Uma leitura de quatro bytes nos últimos
+/// bytes de uma página que termina a região cruza a borda na memória do host; com a folga, ela
+/// lê memória alocada em vez de sair do vetor.
+const FOLGA_DA_REGIAO: usize = 16;
+
 /// O que uma callback pediu que `run` devolva. O Dynarmic recebe os acessos de memória dentro
 /// do bloco recompilado; guardar o motivo aqui preserva a distinção entre API, retorno e falha.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,9 +112,19 @@ struct Estado {
     limite: Cell<u64>,
     parada: Cell<Parada>,
     jit: Cell<*mut Jit<Estado>>,
+    /// A tabela de páginas do Dynarmic: `PAGINAS` ponteiros, o início de cada página no host, ou
+    /// nulo para a página que precisa passar pelas callbacks. Ver [`DynarmicCpu::tabela`].
+    tabela: *mut *mut u8,
 }
 
 impl Estado {
+    /// Tira a página da tabela: dali em diante leitura e escrita nela passam pelas callbacks.
+    fn anula_pagina(&self, pagina: u32) {
+        if (pagina as usize) < PAGINAS {
+            unsafe { *self.tabela.add(pagina as usize) = std::ptr::null_mut() };
+        }
+    }
+
     fn para(cb: &CallbackImpl<Self>, parada: Parada) {
         cb.parada.set(parada);
         let jit = cb.jit.get();
@@ -190,7 +208,13 @@ impl Callbacks for Estado {
     fn memory_read_code(cb: &CallbackImpl<Self>, addr: VAddr) -> Option<u32> {
         let mut bytes = [0; 4];
         if cb.le(addr, &mut bytes) {
-            cb.paginas_executadas.marca(addr / PAGE);
+            // Página que vira código sai da tabela, para que toda escrita nela chegue à callback
+            // que invalida o bloco recompilado.
+            let pagina = addr / PAGE;
+            if !cb.paginas_executadas.contem(pagina) {
+                cb.paginas_executadas.marca(pagina);
+                cb.anula_pagina(pagina);
+            }
             Some(u32::from_le_bytes(bytes))
         } else {
             Self::para(cb, Parada::Fetch(addr));
@@ -288,6 +312,17 @@ pub struct DynarmicCpu {
     memoria: Rc<RefCell<GuestMemory>>,
     semihosting: Rc<RefCell<String>>,
     jit: Option<Box<Jit<Estado>>>,
+    /// **A tabela de páginas: o acesso à memória sem callback.** Sem ela, cada leitura e escrita
+    /// do código recompilado saía do JIT para uma callback Rust, pegava o mapa por `RefCell` e
+    /// procurava a região. No Need for Speed, na corrida, isso deixava o emulador em 176 milhões
+    /// de instruções por segundo — 69% da velocidade do console.
+    ///
+    /// Cada entrada aponta para o início da página na memória das regiões graváveis, que não
+    /// muda de lugar depois do `reset`. Ficam nulas, e continuam nas callbacks: as regiões só de
+    /// leitura, as páginas que já foram executadas (escrita nelas invalida código), as páginas
+    /// com vigia de escrita (superfícies e buffers que o emulador precisa ver sujos) e a última
+    /// página de uma região que não a completa.
+    tabela: Box<[*mut u8]>,
 }
 
 impl DynarmicCpu {
@@ -296,7 +331,25 @@ impl DynarmicCpu {
             memoria: Default::default(),
             semihosting: Default::default(),
             jit: None,
+            tabela: vec![std::ptr::null_mut(); PAGINAS].into_boxed_slice(),
         })
+    }
+
+    /// Recoloca na tabela as páginas de `[inicio, fim)` que nada mais precisa interceptar.
+    fn restaura_paginas(&mut self, inicio: u32, fim: u32) {
+        let Some(jit) = self.jit.as_deref() else {
+            return;
+        };
+        let vigias = jit.vigias.borrow();
+        let memoria = self.memoria.borrow();
+        for pagina in (inicio / PAGE)..=(fim.saturating_sub(1) / PAGE) {
+            let (de, ate) = (pagina * PAGE, (pagina * PAGE).saturating_add(PAGE));
+            let vigiada = vigias.iter().any(|v| de < v.2 && ate > v.1);
+            if vigiada || jit.paginas_executadas.contem(pagina) {
+                continue;
+            }
+            self.tabela[pagina as usize] = ponteiro_da_pagina(&memoria, pagina);
+        }
     }
 
     fn jit(&self) -> Result<&Jit<Estado>, CpuError> {
@@ -367,6 +420,13 @@ impl CpuBackend for DynarmicCpu {
                 )
                 .map_err(|e| CpuError(e.to_string()))?;
         }
+        for regiao in copia.regions_mut() {
+            regiao.bytes.reserve_exact(FOLGA_DA_REGIAO);
+        }
+        self.tabela.fill(std::ptr::null_mut());
+        for pagina in 0..PAGINAS as u32 {
+            self.tabela[pagina as usize] = ponteiro_da_pagina(&copia, pagina);
+        }
         self.memoria = Rc::new(RefCell::new(copia));
         self.semihosting.borrow_mut().clear();
         let estado = Estado {
@@ -381,10 +441,14 @@ impl CpuBackend for DynarmicCpu {
             limite: Cell::new(0),
             parada: Cell::new(Parada::Nenhuma),
             jit: Cell::new(std::ptr::null_mut()),
+            tabela: self.tabela.as_mut_ptr(),
         };
         let mut config = Jit::<Estado>::new_config();
         config.arch_ver(ArchVersion::V6K);
         config.code_cache_size(64 * 1024 * 1024);
+        // Entrada = início da página no host, sem deslocamento absoluto nem bits de atributo.
+        config.page_table_mask(0);
+        unsafe { config.page_table(self.tabela.as_mut_ptr().cast()) };
         let mut jit = Box::new(config.init(estado));
         let ptr = &mut *jit as *mut Jit<Estado>;
         jit.jit.set(ptr);
@@ -420,13 +484,28 @@ impl CpuBackend for DynarmicCpu {
             .borrow_mut()
             .push((id, base, base.saturating_add(len), true));
         jit.recalcula_envoltorio();
+        // Escrita em faixa vigiada tem de passar pela callback que a marca suja.
+        let fim = base.saturating_add(len);
+        for pagina in (base / PAGE)..=(fim.saturating_sub(1) / PAGE) {
+            jit.anula_pagina(pagina);
+        }
         Ok(())
     }
 
     fn unwatch_dirty(&mut self, id: u32) {
-        if let Ok(jit) = self.jit_mut() {
-            jit.vigias.borrow_mut().retain(|vigia| vigia.0 != id);
-            jit.recalcula_envoltorio();
+        let Ok(jit) = self.jit_mut() else {
+            return;
+        };
+        let faixa = jit
+            .vigias
+            .borrow()
+            .iter()
+            .find(|vigia| vigia.0 == id)
+            .map(|vigia| (vigia.1, vigia.2));
+        jit.vigias.borrow_mut().retain(|vigia| vigia.0 != id);
+        jit.recalcula_envoltorio();
+        if let Some((inicio, fim)) = faixa {
+            self.restaura_paginas(inicio, fim);
         }
     }
 
@@ -516,6 +595,24 @@ impl CpuBackend for DynarmicCpu {
             Parada::Excecao(pc) => Ok(StopReason::Exception { pc }),
         }
     }
+}
+
+/// O início da `pagina` na memória do host, quando ela é gravável e cabe inteira numa região.
+fn ponteiro_da_pagina(memoria: &GuestMemory, pagina: u32) -> *mut u8 {
+    let inicio = u64::from(pagina) * u64::from(PAGE);
+    let fim = inicio + u64::from(PAGE);
+    memoria
+        .regions()
+        .iter()
+        .find(|r| {
+            r.writable
+                && inicio >= u64::from(r.base)
+                && fim <= u64::from(r.base) + r.bytes.len() as u64
+        })
+        .map_or(std::ptr::null_mut(), |r| {
+            // A região não é realocada depois do `reset`: o vetor só é escrito, nunca cresce.
+            unsafe { r.bytes.as_ptr().add((inicio - u64::from(r.base)) as usize) as *mut u8 }
+        })
 }
 
 #[cfg(test)]

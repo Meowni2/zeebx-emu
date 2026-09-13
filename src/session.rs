@@ -655,6 +655,21 @@ impl Session {
         self.machine.quadro_grande()
     }
 
+    /// Liga a contagem de tempo real por método de API. Ver [`Session::perfil_de_api`].
+    pub fn liga_perfil_de_api(&mut self) {
+        self.machine.enable_api_profile();
+    }
+
+    /// Quanto tempo real cada método de API custou, do mais caro para o mais barato, em ns.
+    pub fn perfil_de_api(&self) -> Vec<(String, u64)> {
+        self.machine.api_profile()
+    }
+
+    /// Quantas instruções ARM o jogo já executou.
+    pub fn instrucoes(&self) -> u64 {
+        self.machine.instructions()
+    }
+
     /// Quantos quadros de GL o jogo já apresentou.
     pub fn quadros_apresentados(&self) -> u64 {
         u64::from(self.machine.gl_swaps())

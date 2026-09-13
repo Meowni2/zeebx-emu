@@ -153,6 +153,10 @@ impl GuestMemory {
     pub fn regions(&self) -> &[Region] {
         &self.regions
     }
+
+    pub fn regions_mut(&mut self) -> &mut [Region] {
+        &mut self.regions
+    }
 }
 
 #[cfg(test)]

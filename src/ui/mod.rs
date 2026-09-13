@@ -115,6 +115,8 @@ pub struct App {
     session: Option<Session>,
     /// A textura em que o quadro do console é enviado para a placa de vídeo.
     frame: Option<egui::TextureHandle>,
+    /// A tela que está na [`App::frame`]: série, escritas e o filtro. Igual, não há o que subir.
+    frame_chave: Option<(u64, u64, bool)>,
     /// O que deu errado na última tentativa de abrir um jogo.
     error: Option<String>,
     paused: bool,
@@ -216,6 +218,7 @@ impl App {
             sync_unlocked: None,
             session: None,
             frame: None,
+            frame_chave: None,
             error: None,
             paused: false,
             last_step: std::time::Instant::now(),
@@ -1727,7 +1730,14 @@ impl App {
             && self.gl.is_some()
             && !self.gpu_falhou.load(std::sync::atomic::Ordering::Relaxed);
         if !pela_placa {
-            upload(ctx, &mut self.frame, session.screen(), smooth);
+            // Subir a textura só quando a tela mudou: a janela repinta mais vezes que o jogo
+            // desenha, e cada subida inteira custa uma conversão e uma ida à placa.
+            let tela = session.screen();
+            let chave = (tela.serie(), tela.escritas(), smooth);
+            if self.frame.is_none() || self.frame_chave != Some(chave) {
+                upload(ctx, &mut self.frame, tela, smooth);
+                self.frame_chave = Some(chave);
+            }
         }
         // O quadro 3D grande só vai pela placa, e só quando é ele que está na tela.
         let na_placa = pela_placa.then(|| session.quadro_na_placa()).flatten();
@@ -2156,12 +2166,16 @@ fn upload(
     screen: &Framebuffer,
     smooth: bool,
 ) {
-    let mut rgba = Vec::with_capacity(screen.to_argb().len() * 4);
-    for pixel in screen.to_argb() {
-        rgba.extend_from_slice(&[(pixel >> 16) as u8, (pixel >> 8) as u8, pixel as u8, 255]);
-    }
+    // Uma passada só, do RGB565 direto para as cores do egui. Antes eram duas chamadas ao
+    // `to_argb` — uma delas só para saber a capacidade —, uma cópia em RGBA e outra dentro do
+    // `from_rgba_unmultiplied`: quatro vetores do tamanho da tela por repaint.
     let size = [screen.width() as usize, screen.height() as usize];
-    let image = egui::ColorImage::from_rgba_unmultiplied(size, &rgba);
+    let pixels = screen
+        .to_argb()
+        .into_iter()
+        .map(|p| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8))
+        .collect();
+    let image = egui::ColorImage::new(size, pixels);
     // O pixel do console é grande e quadrado; suavizar é escolha de quem olha, não padrão.
     let options = match smooth {
         true => egui::TextureOptions::LINEAR,

@@ -174,3 +174,33 @@ segundo virtual a 100% e a 200% de CPU — o jogo já bate no teto do retraço d
 deixava lento no aparelho era a GPU, que aqui não é emulada. Uma opção de CPU mais rápida foi
 experimentada e retirada por não mudar nada. O que limita a fluidez no emulador é o host conseguir
 manter a velocidade real (50 s virtuais em ~44 s reais no `sessao`, sem janela).
+
+## Desempenho: a corrida do Need for Speed abaixo da velocidade do console
+
+Medido com `zeebx sessao <zip> --placa --escala=3 --perfil=45000`, que liga o perfil de API só a
+partir do instante dado e conta as instruções ARM no intervalo. Na corrida, de 45 s a 59 s virtuais:
+
+| | velocidade | tempo real | instruções/s real | troca de quadro |
+|---|---|---|---|---|
+| antes | 69% do console | 20,3 s | 132 milhões | 4,9 ms/quadro |
+| leitura em RGB565 | — | — | — | 2,1 ms/quadro |
+| + tabela de páginas | **108%** | 12,9 s | 207 milhões | 2,6 ms/quadro |
+
+O jogo executa 192 milhões de instruções por segundo virtual na corrida — 36% da CPU do console; o
+que o deixava lento no aparelho era a GPU. As mesmas 2.682 milhões de instruções e os mesmos quadros
+nas duas medições: o comportamento não mudou, só o custo.
+
+- **Leitura do quadro em RGB565.** O `eglSwapBuffers` copia o 3D para a tela do console. A leitura em
+  RGBA com conversão na CPU custava 1,8 ms por quadro, seis vezes a leitura em si; agora a placa
+  entrega `GL_RGB`/`GL_UNSIGNED_SHORT_5_6_5` (no GLES, onde isso não é garantido, fica o RGBA), a
+  mesma medida vira cópia, e o `present_gl` reaproveita o buffer do quadro anterior.
+- **Tabela de páginas do Dynarmic.** Toda leitura e escrita do código recompilado saía para uma
+  callback Rust com `RefCell` e busca de região. A tabela (`DynarmicCpu::tabela`, 2^20 ponteiros)
+  aponta direto para as páginas das regiões graváveis. Continuam nas callbacks, com a entrada nula:
+  regiões só de leitura (as vtables, que são como o JIT devolve o controle nas APIs), páginas já
+  executadas (anuladas na primeira busca de código, para a escrita nelas invalidar o bloco), páginas
+  com vigia de escrita (anuladas no `watch_dirty` e restauradas no `unwatch_dirty`) e a página
+  parcial do fim de uma região. A execução ARM foi de ~176 para ~350 milhões de instruções por
+  segundo. Crash Nitro Kart saiu idêntico pixel a pixel, e a Z-Wheel segue lançando jogos.
+- **Janela sem `gpu_present`.** A textura do egui é subida só quando a tela muda (série e escritas), e
+  numa passada só; antes eram duas chamadas a `to_argb` e duas cópias por repaint.

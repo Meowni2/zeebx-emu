@@ -563,6 +563,36 @@ impl GpuState {
         }
     }
 
+    /// Lê o quadro para `self.pixels` em RGB565, dois bytes por pixel na ordem do host, com a
+    /// linha 0 no topo. Devolve `false` quando leu em RGBA: no GLES a leitura em 5-6-5 não é
+    /// garantida, e ali fica o formato que sempre vale.
+    fn le_quadro_rgb565(&mut self, largura: usize, altura: usize) -> bool {
+        if self.gl.version().is_embedded {
+            self.le_quadro(largura, altura);
+            return false;
+        }
+        self.liga_para_leitura();
+        self.pixels.clear();
+        self.pixels.resize(largura * altura * 2, 0);
+        unsafe {
+            // Cada linha tem `largura * 2` bytes; o alinhamento padrão de quatro enviesaria
+            // larguras ímpares.
+            self.gl.pixel_store_i32(glow::PACK_ALIGNMENT, 2);
+            self.gl.read_pixels(
+                0,
+                0,
+                largura as i32,
+                altura as i32,
+                glow::RGB,
+                glow::UNSIGNED_SHORT_5_6_5,
+                glow::PixelPackData::Slice(Some(&mut self.pixels)),
+            );
+            self.gl.pixel_store_i32(glow::PACK_ALIGNMENT, 4);
+        }
+        self.devolve_o_contexto();
+        true
+    }
+
     /// Lê o quadro da placa para `self.pixels`, em RGBA, com a linha 0 no topo.
     fn le_quadro(&mut self, largura: usize, altura: usize) {
         self.liga_para_leitura();
@@ -1279,18 +1309,32 @@ impl Rasterizador for GpuState {
         if sw == 0 || sh == 0 {
             return;
         }
-        self.le_quadro(sw, sh);
+        // **A placa entrega o quadro já em RGB565.** Converter RGBA na CPU custava 1,8 ms por
+        // quadro no Need for Speed — seis vezes a leitura em si —, e a 60 quadros por segundo era
+        // a maior fatia do `eglSwapBuffers`. No mesmo tamanho é uma cópia; com reamostragem, o
+        // índice de cada coluna sai uma vez por quadro, e não uma vez por pixel.
+        let em_565 = self.le_quadro_rgb565(sw, sh);
         out.clear();
         out.resize(width * height * 2, 0);
-        let converte = |p: &[u8]| -> u16 {
-            ((p[0] as u16 >> 3) << 11) | ((p[1] as u16 >> 2) << 5) | (p[2] as u16 >> 3)
-        };
-        for (y, saida) in out.chunks_exact_mut(width * 2).enumerate() {
-            let linha = (y * sh / height).min(sh - 1);
-            for (x, par) in saida.chunks_exact_mut(2).enumerate() {
-                let coluna = (x * sw / width).min(sw - 1);
-                let offset = (linha * sw + coluna) * 4;
-                par.copy_from_slice(&converte(&self.pixels[offset..offset + 4]).to_le_bytes());
+        if em_565 && sw == width && sh == height {
+            out.copy_from_slice(&self.pixels[..width * height * 2]);
+        } else {
+            let (passo, converte): (usize, fn(&[u8]) -> [u8; 2]) = match em_565 {
+                true => (2, |p| [p[0], p[1]]),
+                false => (4, |p| {
+                    (((p[0] as u16 >> 3) << 11) | ((p[1] as u16 >> 2) << 5) | (p[2] as u16 >> 3))
+                        .to_le_bytes()
+                }),
+            };
+            let colunas: Vec<usize> = (0..width)
+                .map(|x| (x * sw / width).min(sw - 1) * passo)
+                .collect();
+            for (y, saida) in out.chunks_exact_mut(width * 2).enumerate() {
+                let inicio = (y * sh / height).min(sh - 1) * sw * passo;
+                let linha = &self.pixels[inicio..inicio + sw * passo];
+                for (par, &coluna) in saida.chunks_exact_mut(2).zip(&colunas) {
+                    par.copy_from_slice(&converte(&linha[coluna..coluna + passo]));
+                }
             }
         }
         self.sujo = false;
@@ -1402,15 +1446,6 @@ impl Rasterizador for GpuState {
         self.submete_com(glow::TRIANGLE_FAN, 1.0, Some(ponte));
         self.fill = guarda;
         self.devolve_o_contexto();
-    }
-
-    fn present(&mut self, width: usize, height: usize) -> Vec<u16> {
-        let mut bytes = Vec::new();
-        self.frame_rgb565(width, height, &mut bytes);
-        bytes
-            .chunks_exact(2)
-            .map(|p| u16::from_le_bytes([p[0], p[1]]))
-            .collect()
     }
 
     fn define_escala(&mut self, escala: usize) {

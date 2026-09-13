@@ -461,7 +461,6 @@ pub trait Rasterizador {
     fn read_rect(&mut self, x: i32, y: i32, width: usize, height: usize) -> Vec<[u8; 4]>;
     fn frame_rgb565(&mut self, width: usize, height: usize, out: &mut Vec<u8>);
     fn import_rgb565_changes(&mut self, width: usize, height: usize, old: &[u8], new: &[u8]);
-    fn present(&mut self, width: usize, height: usize) -> Vec<u16>;
 
     /// Quantas vezes o quadro é desenhado maior que o do console, por lado. O jogo continua
     /// vendo 640×480: viewport, leitura de pixels e cópia do quadro são convertidas. Só a placa
@@ -652,9 +651,6 @@ impl Rasterizador for GlState {
     }
     fn import_rgb565_changes(&mut self, width: usize, height: usize, old: &[u8], new: &[u8]) {
         GlState::import_rgb565_changes(self, width, height, old, new)
-    }
-    fn present(&mut self, width: usize, height: usize) -> Vec<u16> {
-        GlState::present(self, width, height)
     }
 }
 
@@ -1939,6 +1935,7 @@ impl GlState {
         self.sujo = false;
     }
 
+    #[cfg(test)]
     pub fn present(&mut self, width: usize, height: usize) -> Vec<u16> {
         // Entregar o quadro é o ponto em que ele precisa estar pintado — quem pede o resultado
         // não tem por que saber que o desenho é acumulado.

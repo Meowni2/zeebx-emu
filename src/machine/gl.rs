@@ -899,8 +899,10 @@ impl<C: CpuBackend> Machine<C> {
             let target = self.screen();
             (target.width() as usize, target.height() as usize)
         };
-        let frame = self.gl.present(width, height);
-        let bytes: Vec<u8> = frame.iter().flat_map(|p| p.to_le_bytes()).collect();
+        // O quadro vai direto para o buffer do anterior, em RGB565: sem o vetor de `u16` e a volta
+        // para bytes, e sem conversão nenhuma quando nada foi desenhado desde o último.
+        let mut bytes = std::mem::take(&mut self.gl_last_frame);
+        self.gl.frame_rgb565(width, height, &mut bytes);
         match self.bitmaps.get_mut(&self.device_bitmap) {
             Some(surface) => surface.load_rgb565_bytes(&bytes),
             None => self.screen.load_rgb565_bytes(&bytes),
