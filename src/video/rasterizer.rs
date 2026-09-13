@@ -421,6 +421,8 @@ pub trait Rasterizador {
     fn set_alpha_func(&mut self, func: u32, reference: f32);
     fn set_depth_func(&mut self, func: u32);
     fn set_depth_mask(&mut self, on: bool);
+    /// `glDepthRange`: para onde a profundidade normalizada vai no buffer de profundidade.
+    fn set_depth_range(&mut self, perto: f32, longe: f32);
     fn set_color_mask(&mut self, mask: [bool; 4]);
     fn set_cull_face(&mut self, mode: u32);
     fn set_front_face(&mut self, face: u32);
@@ -571,6 +573,9 @@ impl Rasterizador for GlState {
     fn set_depth_mask(&mut self, on: bool) {
         GlState::set_depth_mask(self, on)
     }
+    fn set_depth_range(&mut self, perto: f32, longe: f32) {
+        self.depth_range = (perto.clamp(0.0, 1.0), longe.clamp(0.0, 1.0));
+    }
     fn set_color_mask(&mut self, mask: [bool; 4]) {
         GlState::set_color_mask(self, mask)
     }
@@ -697,6 +702,13 @@ pub struct GlState {
     client_unit: u32,
     depth_test: bool,
     depth_mask: bool,
+    /// O `glDepthRange`: `(perto, longe)`, de 0 a 1.
+    ///
+    /// **Ignorá-lo fazia a pista do Crash Nitro Kart surgir do nada perto do jogador.** O jogo
+    /// desenha partes da cena em faixas de profundidade diferentes — `(0, 0,985)` e `(0, 1)` —
+    /// para que umas fiquem sempre à frente de outras. Com todas na faixa inteira, um pedaço de
+    /// pista distante perdia o teste de profundidade para o cenário e só aparecia de perto.
+    depth_range: (f32, f32),
     /// Quais canais de cor podem ser escritos, do `glColorMask`.
     color_mask: [bool; 4],
     depth_func: u32,
@@ -790,6 +802,7 @@ impl GlState {
             client_unit: 0,
             depth_test: false,
             depth_mask: true,
+            depth_range: (0.0, 1.0),
             color_mask: [true; 4],
             depth_func: gles::GL_LESS,
             blend: false,
@@ -868,6 +881,20 @@ impl GlState {
             seen_x.max((x + width).max(0) as usize),
             seen_y.max((y + height).max(0) as usize),
         ));
+    }
+
+    /// A viewport com o `y` contado do topo, que é como os nossos quadros são guardados.
+    ///
+    /// **O `glViewport` conta o `y` de baixo para cima.** Com a viewport da tela inteira isso não
+    /// aparece. O Crash Nitro Kart desenha o trecho seguinte da pista através do portal dele, com
+    /// a viewport no retângulo do portal na tela — um retângulo estreito perto do horizonte. Usado
+    /// como se contasse do topo, o trecho ia parar espelhado na parte de baixo da tela, e o que se
+    /// via era um vazio à frente até o kart atravessar o portal, com o cenário surgindo de baixo
+    /// para cima.
+    fn viewport_do_topo(&self) -> (i32, i32, i32, i32) {
+        let (x, y, largura, altura) = self.viewport;
+        let altura_da_superficie = self.surface().1 as i32;
+        (x, altura_da_superficie - y - altura, largura, altura)
     }
 
     /// Declara o tamanho da superfície, quando o jogo o informa.
@@ -1522,7 +1549,7 @@ impl GlState {
             ([right, bottom], [s1, t0]),
             ([right, top], [s1, t1]),
         ];
-        let (vx, vy, vw, vh) = self.viewport;
+        let (vx, vy, vw, vh) = self.viewport_do_topo();
         if vw <= 0 || vh <= 0 {
             return;
         }
@@ -1598,7 +1625,7 @@ impl GlState {
     /// atributos divididos por `w` — sai daqui pronto. É o que permite preencher o mesmo
     /// triângulo em várias faixas da tela ao mesmo tempo sem repetir conta nenhuma.
     fn prepare(&self, tri: [Vertex; 3], batch: &mut Batch) {
-        let (vx, vy, vw, vh) = self.viewport;
+        let (vx, vy, vw, vh) = self.viewport_do_topo();
         if vw <= 0 || vh <= 0 {
             return;
         }
@@ -1608,10 +1635,11 @@ impl GlState {
         for (slot, vertex) in screen.iter_mut().zip(tri.iter()) {
             let [x, y, z, w] = vertex.position;
             let inv_w = 1.0 / w;
+            let (perto, longe) = self.depth_range;
             *slot = [
                 vx as f32 + (x * inv_w * 0.5 + 0.5) * vw as f32,
                 vy as f32 + (0.5 - y * inv_w * 0.5) * vh as f32,
-                z * inv_w * 0.5 + 0.5,
+                perto + (longe - perto) * (z * inv_w * 0.5 + 0.5),
                 inv_w,
             ];
         }
@@ -2933,6 +2961,41 @@ mod tests {
         assert_eq!(pixels(&mut state)[8 * 4 + 4], [255, 0, 0, 255]);
         quad(&mut state, -0.5, [0.0, 0.0, 1.0, 1.0]);
         assert_eq!(pixels(&mut state)[8 * 4 + 4], [0, 0, 255, 255]);
+    }
+
+    /// O `y` do `glViewport` conta de baixo para cima, e o quadro é guardado de cima para baixo.
+    ///
+    /// Uma viewport em `y = 0` com metade da altura é a metade **de baixo** da imagem. Tratar o
+    /// `y` como contado do topo punha o trecho de pista que o Crash Nitro Kart desenha pelo portal
+    /// espelhado na parte de baixo da tela.
+    #[test]
+    fn a_viewport_conta_o_y_de_baixo_para_cima() {
+        let mut state = GlState::new(8, 8);
+        state.set_viewport(0, 0, 8, 8);
+        state.clear(gles::GL_COLOR_BUFFER_BIT);
+        state.set_viewport(0, 0, 8, 4);
+        quad(&mut state, 0.0, [1.0, 0.0, 0.0, 1.0]);
+        let quadro = pixels(&mut state);
+        assert_eq!(quadro[6 * 8 + 4], [255, 0, 0, 255], "metade de baixo pintada");
+        assert_eq!(quadro[8 + 4], [0, 0, 0, 255], "metade de cima intacta");
+    }
+
+    /// O `glDepthRange` decide quem fica na frente entre faixas, não a profundidade normalizada.
+    ///
+    /// É assim que o Crash Nitro Kart põe o brilho do kart sempre por cima: o desenho mais
+    /// "longe" em coordenadas normalizadas, mas numa faixa mais perto, tem de passar no teste.
+    #[test]
+    fn a_faixa_de_profundidade_manda_na_ordem() {
+        let mut state = GlState::new(8, 8);
+        state.set_capability(gles::GL_DEPTH_TEST, true);
+        state.set_depth_func(gles::GL_LESS);
+        state.clear(gles::GL_COLOR_BUFFER_BIT | gles::GL_DEPTH_BUFFER_BIT);
+
+        Rasterizador::set_depth_range(&mut state, 0.9, 1.0);
+        quad(&mut state, -0.5, [1.0, 0.0, 0.0, 1.0]);
+        Rasterizador::set_depth_range(&mut state, 0.0, 0.1);
+        quad(&mut state, 0.5, [0.0, 1.0, 0.0, 1.0]);
+        assert_eq!(pixels(&mut state)[8 * 4 + 4], [0, 255, 0, 255]);
     }
 
     #[test]

@@ -47,6 +47,8 @@ struct Textura {
 struct Estado {
     teste_profundidade: bool,
     mascara_profundidade: bool,
+    /// O `glDepthRange`, `(perto, longe)`.
+    faixa_profundidade: (f32, f32),
     func_profundidade: u32,
     mistura: bool,
     mistura_src: u32,
@@ -67,7 +69,11 @@ struct Estado {
     env_textura: u32,
     textura_ligada: u32,
     texturando: bool,
+    /// A viewport como o jogo a passou, com o `y` de baixo para cima.
     viewport: (i32, i32, i32, i32),
+    /// Uma viewport interna já contada do topo, que não passa pela conversão — a do
+    /// [`GpuState::import_rgb565_changes`]. Ver [`GpuState::viewport_do_topo`].
+    viewport_do_topo_fixa: Option<(i32, i32, i32, i32)>,
     limpa_cor: [f32; 4],
     limpa_profundidade: f32,
     limpa_stencil: i32,
@@ -78,6 +84,7 @@ impl Default for Estado {
         Self {
             teste_profundidade: false,
             mascara_profundidade: true,
+            faixa_profundidade: (0.0, 1.0),
             func_profundidade: gles::GL_LESS,
             mistura: false,
             mistura_src: gles::GL_ONE,
@@ -99,6 +106,7 @@ impl Default for Estado {
             textura_ligada: 0,
             texturando: false,
             viewport: (0, 0, 0, 0),
+            viewport_do_topo_fixa: None,
             limpa_cor: [0.0, 0.0, 0.0, 1.0],
             limpa_profundidade: 1.0,
             limpa_stencil: 0,
@@ -382,14 +390,27 @@ impl GpuState {
         }
     }
 
+    /// A viewport com o `y` contado do topo, que é como o destino é guardado.
+    ///
+    /// O `glViewport` conta de baixo para cima; ver o mesmo método no rasterizador de software
+    /// para o que isso quebrava no Crash Nitro Kart.
+    fn viewport_do_topo(&self) -> (i32, i32, i32, i32) {
+        if let Some(fixa) = self.fill.viewport_do_topo_fixa {
+            return fixa;
+        }
+        let (x, y, largura, altura) = self.fill.viewport;
+        let altura_da_superficie = self.estado.surface().1 as i32;
+        (x, altura_da_superficie - y - altura, largura, altura)
+    }
+
     /// Põe na placa o estado anotado. Chamado uma vez por draw.
     fn aplica(&mut self) {
+        let (x, y, w, h) = self.viewport_do_topo();
         let gl = &self.gl;
         let e = &self.fill;
         unsafe {
             // A viewport vem em pixels do console; o anexo é `escala` vezes maior.
             let n = self.escala as i32;
-            let (x, y, w, h) = e.viewport;
             gl.viewport(x * n, y * n, w.max(0) * n, h.max(0) * n);
             // **O rasterizador de software só recorta no plano próximo.** O OpenGL recorta nos
             // seis planos do frustum, e o plano distante fazia superfícies inteiras desaparecerem
@@ -402,6 +423,7 @@ impl GpuState {
             liga(gl, glow::DEPTH_TEST, e.teste_profundidade);
             gl.depth_func(e.func_profundidade);
             gl.depth_mask(e.mascara_profundidade);
+            gl.depth_range_f32(e.faixa_profundidade.0, e.faixa_profundidade.1);
             liga(gl, glow::BLEND, e.mistura);
             gl.blend_func(e.mistura_src, e.mistura_dst);
             let [r, g, b, a] = e.mascara_cor;
@@ -633,6 +655,7 @@ impl GpuState {
             gl.disable(glow::DEPTH_CLAMP);
             gl.disable(glow::BLEND);
             gl.depth_mask(true);
+            gl.depth_range_f32(0.0, 1.0);
             gl.stencil_mask(u32::MAX);
             gl.color_mask(true, true, true, true);
         }
@@ -1025,6 +1048,10 @@ impl Rasterizador for GpuState {
         self.estado.set_depth_mask(on);
         self.fill.mascara_profundidade = on;
     }
+    fn set_depth_range(&mut self, perto: f32, longe: f32) {
+        self.estado.set_depth_range(perto, longe);
+        self.fill.faixa_profundidade = (perto.clamp(0.0, 1.0), longe.clamp(0.0, 1.0));
+    }
     fn set_color_mask(&mut self, mask: [bool; 4]) {
         self.estado.set_color_mask(mask);
         self.fill.mascara_cor = mask;
@@ -1241,7 +1268,7 @@ impl Rasterizador for GpuState {
         let (esquerda, direita) = (x, x + width);
         let (topo, base) = (altura_superficie - y - height, altura_superficie - y);
         let cor = self.current_color();
-        let (vx, vy, vw, vh) = self.fill.viewport;
+        let (vx, vy, vw, vh) = self.viewport_do_topo();
         if vw <= 0 || vh <= 0 {
             return;
         }
@@ -1431,7 +1458,7 @@ impl Rasterizador for GpuState {
             });
         }
         let guarda = self.fill.clone();
-        self.fill.viewport = (0, 0, fw as i32, fh as i32);
+        self.fill.viewport_do_topo_fixa = Some((0, 0, fw as i32, fh as i32));
         self.fill.teste_profundidade = false;
         self.fill.teste_stencil = false;
         self.fill.mistura = false;

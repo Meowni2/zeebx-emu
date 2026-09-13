@@ -488,8 +488,6 @@ fn escalar(palavra: u32, fixo: bool) -> f32 {
 
 const ATENDIDAS_EM_SILENCIO: &[&str] = &[
     "DepthFunc",
-    "DepthRangef",
-    "DepthRangex",
     "Fogf",
     "Fogfv",
     "Fogx",
