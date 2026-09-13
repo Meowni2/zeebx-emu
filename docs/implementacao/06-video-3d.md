@@ -33,6 +33,23 @@ Deduzir a superfície de um conjunto vazio de viewports dava 1×1, e a apresenta
 único pixel por toda a tela — foi a causa da "tela branca" do Zeebo Sports Peteca, e eu culpei a
 janela antes de achar isso.
 
+A segunda regra: **o `y` do `glViewport` conta a partir de baixo.** Os dois rasterizadores guardam
+o quadro de cima para baixo, e por muito tempo usaram o `y` como se contasse do topo. Com viewport
+de tela cheia (`y = 0`, altura igual à da superfície) as duas leituras coincidem, e por isso quase
+nenhum jogo mostrava diferença. O Crash Nitro Kart mostrava: ele desenha o trecho seguinte da pista
+através de um portal, com a viewport e o recorte no retângulo do portal. O trecho ia parar
+espelhado na metade de baixo da tela, a área do portal ficava vazia, e quando o kart atravessava
+e o portal virava tela cheia, o cenário "surgia de baixo para cima". Parecia distância de desenho,
+e o limite de profundidade da recursão de portais do jogo não tinha nada a ver com isso.
+
+A conversão fica num lugar só, `viewport_do_topo()`, com `y_topo = altura_da_superfície − y −
+altura`, usada no desenho e no `draw_texture`. A viewport interna que o `import_rgb565_changes` da
+placa monta já é contada do topo e não passa por ela.
+
+`glDepthRange` também é atendido nos dois rasterizadores: o `z` normalizado vai para
+`perto + (longe − perto) × (z/w × 0,5 + 0,5)`. O Crash alterna faixas para pôr o brilho do kart
+por cima do resto, e antes a chamada era ignorada em silêncio.
+
 ## A matriz de textura
 
 `GL_TEXTURE` **precisa** ser aplicada às coordenadas `uv`. Os jogos mandam UV em ponto fixo

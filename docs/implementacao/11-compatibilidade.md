@@ -97,7 +97,7 @@ Passou os seis segundos, mas o relatório apontou alguma coisa. O balde é conse
 | Action Hero 3D - Wild Dog and IMICRO3D | para no laço — acesso inválido a 0x00000000 (pc 0x00055568) |
 | Alice no Pais das Maravilhas | para no laço na volta 204 — acesso inválido a 0x00000000 (pc 0x000105ac) |
 | Bejeweled Twist | para no laço — acesso inválido a 0x00000024 (pc 0x00032b78) |
-| Need For Speed - Carbon - Domine a Cidade | não chega a criar o applet |
+| Need For Speed - Carbon - Domine a Cidade | não chega a criar o applet — na varredura; corrigido depois, hoje chega à corrida ([abaixo](#need-for-speed-carbon-não-era-lentidão-era-uma-parada-de-propósito--corrigido)) |
 | Prey Evil | para no laço — salta para o endereço zero (lr 0x000161d8) |
 | Turma da Monica em Vamos Brincar Vol. 1 | para no laço na volta 4 — acesso inválido a 0x00000000 (pc 0x0008a5a0) |
 | Z-Wheel | não chega a criar o applet — pede `AEECLSID_SQLMGR` |
@@ -323,6 +323,31 @@ Vale a lição de método, que é a terceira vez que aparece nesta página: o `-
 imprimia nada** quando o jogo morria antes do laço de quadros, que é justamente o caso do Need
 For Speed. Enquanto o perfil só existia no laço, "orçamento esgotado" não tinha como virar
 "parada de propósito na linha tal".
+
+**Da abertura à corrida.** Depois disso vieram mais duas paradas, e hoje o jogo chega à corrida:
+
+- **Acesso inválido a `0x00000006`, em `0x001eefd8`.** As partes das malhas têm nome de quatro
+  bytes **sem terminador**, e o jogo converte esse nome com `atoi`. O nosso `atoi` só aceitava a
+  string inteira como número e devolvia zero para todas; o do C para no primeiro caractere que não
+  é dígito. Com todas as partes no índice zero, a malha não era achada e o jogo lia um campo de um
+  ponteiro nulo.
+- **Salto para `0x00000000` ao pular a cena de abertura.** Pular cria um `IMedia` da classe
+  `AEECLSID_MEDIAMPEG4` (`0x01005505`) e usa o objeto sem conferir o retorno. A classe passou a ser
+  aceita como mídia.
+- **Velocidade.** Na corrida ele rodava a 69% do console no host; a tabela de páginas do Dynarmic e
+  a leitura do quadro em RGB565 levaram a 108%. Os números estão no
+  [19](19-jit-arm-e-renderizadores.md).
+
+Ainda em aberto: o vídeo de abertura sai com triângulos pretos e rasgados, e falta uma referência
+do console para saber o que é esperado ali.
+
+### Crash Nitro Kart: o cenário que surgia de perto era a viewport — corrigido
+
+O relato era de distância de desenho: um vazio à frente até o kart atravessar, e então o trecho
+seguinte aparecendo de baixo para cima. Não era distância. O jogo desenha o trecho seguinte por um
+portal, com a viewport no retângulo dele, e nós contávamos o `y` do `glViewport` a partir do topo.
+A explicação e a correção estão no [06](06-video-3d.md#a-superfície). Por isso não existe opção de
+distância de desenho: o jogo já desenhava tudo, só que no lugar errado.
 
 ## A largura do `printf` era um defeito invisível
 

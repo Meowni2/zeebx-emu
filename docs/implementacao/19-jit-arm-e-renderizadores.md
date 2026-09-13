@@ -128,7 +128,8 @@ Com o rasterizador da placa ligado, a aba gráfica oferece **resolução interna
 `GpuState` cresce.
 
 - **Desenho.** `destino()` cria o anexo com `medida × escala`, e `aplica()` multiplica a viewport
-  pelo fator. Tudo o que o jogo passa em pixels — viewport, `draw_texture`, o quadrilátero do
+  pelo fator, depois de convertê-la para contada do topo (`viewport_do_topo()`; o `y` do
+  `glViewport` conta de baixo, ver o [06](06-video-3d.md#a-superfície)). Tudo o que o jogo passa em pixels — viewport, `draw_texture`, o quadrilátero do
   `import_rgb565_changes` — continua em pixels do console e é escalado só na hora de ir para a placa.
 - **Leitura.** `liga_para_leitura()` reduz o quadro grande na placa (`glBlitFramebuffer` com filtro
   linear) para um framebuffer do tamanho do console antes de qualquer leitura: `frame_rgb565`
