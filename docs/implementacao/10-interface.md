@@ -133,6 +133,38 @@ Uma logo que não abra não impede a janela de abrir: o ícone simplesmente não
 **No macOS o ícone da janela vem do pacote `.app`, não desta chamada** — o `with_icon` vale em
 Windows e Linux. Um `.app` de verdade ainda não é montado por nós.
 
+## Título da janela do jogo
+
+A sessão só conhece a pasta de extração, que leva a impressão digital do pacote
+(`Zeebo-Extreme-Boia-Cross-21503726-1788761080`). O título da janela sai da biblioteca pelo
+ClassID — o nome da Z-Wheel quando ela descreve o jogo, o do pacote quando não —, e só na falta
+dele a pasta, sem os dois números do fim (`library::sem_impressao_digital`).
+
+## Aviso de abertura
+
+Na partida, um modal diz que o emulador está em desenvolvimento e pede para configurar o
+controle antes de jogar. "Não mostrar de novo" grava a versão em `aviso_dispensado_na_versao`; uma
+versão nova mostra o aviso outra vez.
+
+## Rich Presence do Discord
+
+`ui/discord.rs`. O Discord fala por um soquete local que pode sumir a qualquer hora, então a
+conexão mora numa thread: a interface diz o que mostrar a cada quadro, e só uma mudança vira
+pedido. A thread conecta, reenvia e tenta de novo a cada 15 s enquanto o Discord estiver fechado.
+
+| Onde | Linha de cima | Imagem grande | Ícone pequeno |
+|---|---|---|---|
+| biblioteca | "No menu" | `zeebx` | — |
+| Z-Wheel | "Na Z-Wheel" | `zeebx` | — |
+| jogo | "Jogando {nome}" | a capa | `zeebx` |
+
+O nome que aparece no perfil é o do **aplicativo** Zeebx do Developer Portal, cujo ID está em
+`discord::APLICATIVO`. As imagens também não passam pelo soquete: o Discord só
+mostra uma chave cadastrada no aplicativo ou uma URL `https`. A exportação e o endereço das capas
+existem no código mas estão **fora das configurações** por enquanto. A exportação grava
+`zeebx.png` e `jogo_<clsid>.png` (512×512, a capa inteira centrada) com o nome igual à chave,
+prontos para as Art Assets. Quem publicar as capas pode dar o endereço com `{chave}` ou `{clsid}`.
+
 ## Linha de comando
 
 ```bash

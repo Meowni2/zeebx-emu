@@ -188,5 +188,17 @@
   "welcome.controls": "Before starting a game, set up your controller in Settings → Controls.",
   "welcome.controls.open": "Set up controller",
   "welcome.dismiss": "Got it",
-  "welcome.dont_show": "Don't show again until the next version"
+  "welcome.dont_show": "Don't show again until the next version",
+  "discord.playing": "Playing {name}",
+  "discord.menu": "In the menu",
+  "discord.z_wheel": "In the Z-Wheel",
+  "settings.discord": "Discord",
+  "settings.discord.on": "Show what I'm playing on Discord (Rich Presence)",
+  "settings.discord.connected": "Connected to Discord.",
+  "settings.discord.waiting": "Waiting for Discord to open…",
+  "settings.discord.covers_url": "Covers address",
+  "settings.discord.covers.hint": "Discord only shows images registered in the application or published online. Export the images and upload the folder under Rich Presence → Art Assets (file names are already the keys), or publish the covers and enter the address with {chave} or {clsid} in place of the game. Empty uses the application's images.",
+  "settings.discord.export": "Export icon and covers…",
+  "settings.discord.exported": "{count} images written to {path}.",
+  "settings.discord.export_failed": "Could not export: {reason}"
 }

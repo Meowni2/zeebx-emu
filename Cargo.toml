@@ -51,6 +51,7 @@ zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }
 # som que toca e sai errado. O symphonia é Rust puro (sem build C) e MPL-2.0, que se combina com
 # o GPLv2 daqui. Só o MP3 entra: o resto dos codecs fica fora.
 symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
+discord-rich-presence = "1.1"
 
 # O `cargo run` sem `--release` rodava o Quake 6,9x mais devagar — 21,7 s contra 3,2 s para o
 # mesmo trabalho (668 M instruções, 378 voltas). Não é surpresa: o rasterizador e o despacho de

@@ -258,8 +258,28 @@ pub struct Settings {
     pub audio: Audio,
     pub controls: crate::input::bindings::Controls,
     pub z_wheel: ZWheel,
+    pub discord: Discord,
     /// A versão em que o aviso de abertura foi dispensado de vez. Outra versão mostra de novo.
     pub aviso_dispensado_na_versao: Option<String>,
+}
+
+/// O Rich Presence do Discord. Ver [`crate::ui::discord`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Discord {
+    pub ativo: bool,
+    /// Onde as capas estão publicadas, com `{clsid}` ou `{chave}` no lugar do jogo. Vazio usa
+    /// as imagens cadastradas no próprio aplicativo.
+    pub capas_url: String,
+}
+
+impl Default for Discord {
+    fn default() -> Self {
+        Self {
+            ativo: true,
+            capas_url: String::new(),
+        }
+    }
 }
 
 /// O controle de movimento, fora do mapeamento de cada porta.
@@ -418,6 +438,10 @@ mod tests {
             z_wheel: ZWheel {
                 fim_de_vida: false,
                 ..ZWheel::default()
+            },
+            discord: Discord {
+                ativo: false,
+                capas_url: "https://exemplo/{chave}.png".into(),
             },
             aviso_dispensado_na_versao: Some("0.1.0".into()),
         };

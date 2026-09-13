@@ -188,5 +188,17 @@
   "welcome.controls": "Antes de iniciar um jogo, configure o seu controle em Configurações → Controles.",
   "welcome.controls.open": "Configurar controle",
   "welcome.dismiss": "Entendi",
-  "welcome.dont_show": "Não mostrar de novo até a próxima versão"
+  "welcome.dont_show": "Não mostrar de novo até a próxima versão",
+  "discord.playing": "Jogando {name}",
+  "discord.menu": "No menu",
+  "discord.z_wheel": "Na Z-Wheel",
+  "settings.discord": "Discord",
+  "settings.discord.on": "Mostrar o que estou jogando no Discord (Rich Presence)",
+  "settings.discord.connected": "Conectado ao Discord.",
+  "settings.discord.waiting": "Esperando o Discord abrir…",
+  "settings.discord.covers_url": "Endereço das capas",
+  "settings.discord.covers.hint": "O Discord só mostra imagens cadastradas no aplicativo ou publicadas na internet. Exporte as imagens e envie a pasta em Rich Presence → Art Assets (os nomes dos arquivos já são as chaves), ou publique as capas e informe o endereço com {chave} ou {clsid} no lugar do jogo. Vazio usa as imagens do aplicativo.",
+  "settings.discord.export": "Exportar ícone e capas…",
+  "settings.discord.exported": "{count} imagens gravadas em {path}.",
+  "settings.discord.export_failed": "Não deu para exportar: {reason}"
 }

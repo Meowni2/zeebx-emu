@@ -6,6 +6,7 @@
 //! que é o que mantém a janela viva enquanto o jogo corre.
 
 pub mod acervo;
+pub mod discord;
 mod vitrine;
 pub mod gpu;
 pub mod i18n;
@@ -222,6 +223,12 @@ pub struct App {
     log_status: Option<String>,
     /// A janela de log foi fechada nesta execução. Zera ao abrir outro jogo.
     log_dismissed: bool,
+    /// A presença no Discord e desde quando o que ela mostra começou: o ClassID do jogo aberto,
+    /// ou nenhum no menu, e o instante em milissegundos Unix.
+    presenca: discord::Presenca,
+    inicio_da_presenca: (Option<u32>, i64),
+    /// O resultado da última exportação de imagens para o Discord.
+    discord_recado: Option<String>,
     /// O aviso de abertura ainda está na tela.
     aviso_de_abertura: bool,
     /// A caixa "não mostrar de novo" do aviso de abertura.
@@ -330,6 +337,9 @@ impl App {
             log_status: None,
             log_dismissed: false,
             aviso_de_abertura,
+            presenca: discord::Presenca::default(),
+            inicio_da_presenca: (None, agora_ms()),
+            discord_recado: None,
             aviso_nao_mostrar: false,
             log_gravado: None,
             gamepads: gamepads::Gamepads::default(),
@@ -396,6 +406,133 @@ impl App {
 
     /// O nome com que um jogo aparece: o oficial da Z-Wheel no idioma da interface, quando ela
     /// conhece o jogo, e o da pasta ou do pacote no resto.
+    /// Diz ao Discord o que está acontecendo. Barato de chamar a cada quadro: a presença só
+    /// manda alguma coisa quando o texto ou a imagem mudam.
+    fn atualiza_presenca(&mut self) {
+        let classe = self.session.as_ref().map(Session::classe);
+        if self.inicio_da_presenca.0 != classe {
+            self.inicio_da_presenca = (classe, agora_ms());
+        }
+        let atividade = self
+            .settings
+            .discord
+            .ativo
+            .then(|| self.atividade_do_discord());
+        self.presenca.define(atividade);
+    }
+
+    fn atividade_do_discord(&self) -> discord::Atividade {
+        let inicio_ms = self.inicio_da_presenca.1;
+        let icone = discord::CHAVE_DO_ICONE.to_string();
+        let menu = |chave: &str| discord::Atividade {
+            detalhes: self.catalog.get(chave).to_string(),
+            imagem: icone.clone(),
+            texto_da_imagem: "Zeebx".to_string(),
+            icone: None,
+            inicio_ms,
+        };
+        let Some(classe) = self.session.as_ref().map(Session::classe) else {
+            return menu("discord.menu");
+        };
+        if classe == crate::session::Z_WHEEL {
+            return menu("discord.z_wheel");
+        }
+        let titulo = self
+            .titulo_do_jogo_aberto()
+            .unwrap_or_else(|| self.catalog.get("library.unknown_title").to_string());
+        let chave = discord::chave_da_capa(classe);
+        let modelo = self.settings.discord.capas_url.trim();
+        let imagem = match modelo.is_empty() {
+            true => chave,
+            false => modelo
+                .replace("{clsid}", &format!("{classe:08x}"))
+                .replace("{chave}", &chave),
+        };
+        discord::Atividade {
+            detalhes: self.catalog.format("discord.playing", &[("name", &titulo)]),
+            imagem,
+            texto_da_imagem: titulo,
+            icone: Some((icone, "Zeebx".to_string())),
+            inicio_ms,
+        }
+    }
+
+    /// Grava o ícone e as capas no formato que o Developer Portal aceita, com o nome de arquivo
+    /// igual à chave que a presença usa: é só arrastar a pasta para as Art Assets.
+    ///
+    /// Fora da tela por enquanto, junto com o endereço das capas: as imagens do aplicativo ainda
+    /// vão ser decididas.
+    #[allow(dead_code)]
+    fn exporta_imagens_do_discord(&mut self) {
+        let Some(pasta) = rfd::FileDialog::new().pick_folder() else {
+            return;
+        };
+        let mut gravadas = 0usize;
+        let mut erro = None;
+        let mut grava = |nome: String, dados: Result<Vec<u8>, String>| {
+            match dados.and_then(|d| std::fs::write(pasta.join(nome), d).map_err(|e| e.to_string())) {
+                Ok(()) => gravadas += 1,
+                Err(e) => erro = Some(e),
+            }
+        };
+        grava(format!("{}.png", discord::CHAVE_DO_ICONE), Ok(PLACEHOLDER.to_vec()));
+        for jogo in &self.games {
+            let Some(classe) = jogo.clsid.filter(|&c| c != crate::session::Z_WHEEL) else {
+                continue;
+            };
+            let capa = self
+                .acervo
+                .as_ref()
+                .and_then(|acervo| acervo.ficha(classe))
+                .and_then(|ficha| ficha.capa.as_ref())
+                .or(jogo.art.as_ref());
+            if let Some(capa) = capa {
+                let chave = discord::chave_da_capa(classe);
+                grava(format!("{chave}.png"), discord::png(&discord::capa_quadrada(capa)));
+            }
+        }
+        self.discord_recado = Some(match erro {
+            None => self.catalog.format(
+                "settings.discord.exported",
+                &[("count", &gravadas.to_string()), ("path", &pasta.display().to_string())],
+            ),
+            Some(motivo) => self
+                .catalog
+                .format("settings.discord.export_failed", &[("reason", &motivo)]),
+        });
+    }
+
+    fn secao_do_discord(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
+        ui.label(self.tr("settings.discord"));
+        changed |= ui
+            .checkbox(&mut self.settings.discord.ativo, self.catalog.get("settings.discord.on"))
+            .changed();
+        ui.add_enabled_ui(self.settings.discord.ativo, |ui| {
+            let estado = match self.presenca.conectado() {
+                true => "settings.discord.connected",
+                false => "settings.discord.waiting",
+            };
+            ui.label(self.catalog.get(estado));
+        });
+        changed
+    }
+
+    /// O nome do jogo em execução, como a biblioteca o mostra.
+    ///
+    /// A sessão só conhece a pasta de extração, que leva a impressão digital do pacote
+    /// (`Zeebo-Extreme-Boia-Cross-21503726-1788761080`). O título certo sai do jogo na
+    /// biblioteca pelo ClassID — da Z-Wheel quando ela descreve o jogo, do pacote quando não.
+    fn titulo_do_jogo_aberto(&self) -> Option<String> {
+        let session = self.session.as_ref()?;
+        let classe = session.classe();
+        if let Some(jogo) = self.games.iter().find(|jogo| jogo.clsid == Some(classe)) {
+            return Some(self.titulo_de(jogo));
+        }
+        let titulo = library::sem_impressao_digital(session.title());
+        (!titulo.is_empty()).then_some(titulo)
+    }
+
     fn titulo_de(&self, jogo: &Game) -> String {
         jogo.clsid
             .and_then(|cls| self.acervo.as_ref()?.ficha(cls))
@@ -725,6 +862,9 @@ impl App {
             )
             .changed();
         ui.weak(self.tr("settings.z_wheel_transitions.hint"));
+
+        ui.add_space(16.0);
+        changed |= self.secao_do_discord(ui);
 
         ui.add_space(16.0);
         ui.weak(self.catalog.format(
@@ -1962,10 +2102,9 @@ impl App {
     /// egui vai para a janela em foco, e ler do lugar errado faria o jogo só responder quando a
     /// biblioteca estivesse na frente.
     fn game_window(&mut self, ctx: &egui::Context) {
-        let title = match self.session.as_ref().map(Session::title) {
-            Some(title) if !title.is_empty() => title.to_string(),
-            _ => self.catalog.get("library.unknown_title").to_string(),
-        };
+        let title = self
+            .titulo_do_jogo_aberto()
+            .unwrap_or_else(|| self.catalog.get("library.unknown_title").to_string());
         let id = egui::ViewportId::from_hash_of("jogo");
         let builder = self.settings.graphics.janela_do_jogo.no_construtor(
             egui::ViewportBuilder::default()
@@ -2542,6 +2681,7 @@ impl eframe::App for App {
         if self.aviso_de_abertura {
             self.aviso_de_abertura(ctx);
         }
+        self.atualiza_presenca();
         if self.session.is_some() {
             self.grava_relatorio();
             self.game_window(ctx);
@@ -2551,6 +2691,13 @@ impl eframe::App for App {
             }
         }
     }
+}
+
+/// Agora, em milissegundos Unix — o relógio que o Discord usa para contar o tempo de jogo.
+fn agora_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
 }
 
 /// A luz de um botão apertado agora. Translúcida de propósito: ela acende o botão, não o

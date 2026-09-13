@@ -302,6 +302,24 @@ pub fn title_for(mod_path: &Path) -> String {
     stem.to_string()
 }
 
+/// O nome de uma pasta de extração sem a impressão digital do pacote.
+///
+/// `Zeebo-Extreme-Boia-Cross-21503726-1788761080` vira `Zeebo Extreme Boia Cross`: os dois
+/// números do fim são tamanho e data do `.zip`, e os hífens tomaram o lugar dos espaços.
+pub fn sem_impressao_digital(nome: &str) -> String {
+    let mut partes: Vec<&str> = nome.split('-').collect();
+    for _ in 0..2 {
+        if partes.len() > 1 && partes.last().is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())) {
+            partes.pop();
+        }
+    }
+    partes
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Procura o `.mif` do título e devolve o ClassID do applet.
 ///
 /// O layout instalado é `<titulo>/mod/<id>/<nome>.mod` com o `.mif` em `<titulo>/mif/<id>.mif`;
