@@ -422,6 +422,11 @@ const BV_UNLIMITED: u32 = 0xffff_ffff;
 const AEECLSID_MEDIA: u32 = 0x0100_5500;
 const AEECLSID_MEDIAMIDI: u32 = 0x0100_5501;
 const AEECLSID_MEDIAMP3: u32 = 0x0100_5502;
+/// `AEECLSID_MEDIAMPEG4` = `AEECLSID_MULTIMEDIA + 5`. O Need for Speed a cria ao pular a cena de
+/// abertura e, sem conferir o retorno, chama o `SetMediaParm` do ponteiro — recusá-la era saltar
+/// para o endereço zero. O conteúdo passa pelos mesmos decodificadores; o que nenhum deles lê
+/// termina na hora, como qualquer som que não sabemos tocar.
+const AEECLSID_MEDIAMPEG4: u32 = 0x0100_5505;
 const AEECLSID_MEDIAADPCM: u32 = 0x0100_550a;
 /// `AEECLSID_MEDIAUTIL` = `AEECLSID_MULTIMEDIA + 13` — a fábrica dos objetos de mídia.
 const AEECLSID_MEDIAUTIL: u32 = 0x0100_550d;
@@ -1950,6 +1955,8 @@ pub struct Machine<C: CpuBackend> {
     /// deu, e não se tenta de novo a cada pedido.
     ext_modules: Vec<Option<u32>>,
     pending_launch: Option<u32>,
+    /// As escritas da tela logo depois do último quadro de GL. Ver [`Machine::quadro_na_placa`].
+    escritas_do_quadro_gl: Option<u64>,
     wheel_boot_skipped: bool,
     /// Como a Z-Wheel lê a `tectoy.cfg`. Ver [`Machine::configura_z_wheel`].
     z_wheel: crate::ui::settings::ZWheel,
@@ -2447,6 +2454,7 @@ impl<C: CpuBackend> Machine<C> {
             ext_modules: vec![None; extensoes],
             pending_launch: None,
             wheel_boot_skipped: false,
+            escritas_do_quadro_gl: None,
             z_wheel: crate::ui::settings::ZWheel {
                 fim_de_vida: true,
                 transicoes_sempre: false,

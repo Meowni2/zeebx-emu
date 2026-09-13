@@ -106,6 +106,12 @@ pub struct Graphics {
     /// trinta e dois; sete das nove superfícies saem byte a byte iguais, porque não passam pelo
     /// rasterizador. Sem placa alcançável o emulador segue em software e diz o motivo.
     pub gpu_rasterizer: bool,
+    /// A resolução interna do 3D preenchido na placa, em múltiplos de 640×480 por lado.
+    ///
+    /// Só tem efeito com o [`Graphics::gpu_rasterizer`]: o jogo continua vendo 640×480, e o
+    /// quadro grande só chega à janela quando nada 2D foi desenhado sobre ele — ver
+    /// [`crate::machine::Machine::quadro_na_placa`]. Nos outros casos a imagem é a de sempre.
+    pub resolucao_interna: u8,
 }
 
 impl Default for Graphics {
@@ -120,6 +126,7 @@ impl Default for Graphics {
             // usa. Nos dois títulos medidos ele ganha, mas isso não é licença para trocar o
             // desenho de todos os outros sem que alguém os tenha olhado.
             gpu_rasterizer: false,
+            resolucao_interna: 1,
         }
     }
 }

@@ -138,6 +138,11 @@ impl Framebuffer {
     }
 
     /// Se alguma operação de desenho chegou a tocar a tela.
+    /// Quantas escritas a superfície já recebeu. Serve para saber se ela mudou desde um instante.
+    pub fn escritas(&self) -> u64 {
+        self.touched
+    }
+
     pub fn is_dirty(&self) -> bool {
         self.touched > 0
     }

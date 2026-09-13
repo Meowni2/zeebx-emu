@@ -739,7 +739,7 @@ impl<C: CpuBackend> Machine<C> {
             }
             "atoi" => {
                 let text = self.cpu.read_cstring(a0, MAX_NUMBER);
-                text.trim().parse::<i32>().unwrap_or(0) as u32
+                atoi_de_c(&text) as u32
             }
             // A família de ponto flutuante da stdlib. Na AAPCS um `double` ocupa um par de
             // registradores com a palavra baixa primeiro, então `v1` vem em `r0:r1`, `v2` em
@@ -1001,6 +1001,44 @@ fn junta_caminho(diretorio: &str, arquivo: &str) -> String {
         (true, _) => arquivo.to_string(),
         (false, true) => format!("{diretorio}{arquivo}"),
         (false, false) => format!("{diretorio}/{arquivo}"),
+    }
+}
+
+/// O `atoi` do C: espaço em branco à frente, sinal opcional e os dígitos que vierem, parando no
+/// primeiro que não for dígito. Sem dígito nenhum, zero.
+///
+/// **O que vem depois do número não invalida o número.** O Need for Speed procura as partes de
+/// uma malha pelo nome, com `atoi` num campo de quatro bytes sem terminador (`"1   "` seguido do
+/// resto do registro). Exigir o texto inteiro numérico dava zero para todas, a parte `1` nunca era
+/// achada, e o jogo lia um ponteiro nulo em `0x20738`.
+fn atoi_de_c(texto: &str) -> i32 {
+    let resto = texto.trim_start_matches([' ', '\t', '\n', '\r', '\x0b', '\x0c']);
+    let (negativo, resto) = match resto.as_bytes().first() {
+        Some(b'-') => (true, &resto[1..]),
+        Some(b'+') => (false, &resto[1..]),
+        _ => (false, resto),
+    };
+    let valor = resto
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .fold(0i32, |acc, d| acc.wrapping_mul(10).wrapping_add(i32::from(d - b'0')));
+    match negativo {
+        true => valor.wrapping_neg(),
+        false => valor,
+    }
+}
+
+#[cfg(test)]
+mod testes_do_atoi {
+    use super::atoi_de_c;
+
+    #[test]
+    fn para_no_primeiro_nao_digito() {
+        assert_eq!(atoi_de_c("1   \u{10}xyz"), 1);
+        assert_eq!(atoi_de_c("  -42abc"), -42);
+        assert_eq!(atoi_de_c("+7"), 7);
+        assert_eq!(atoi_de_c("abc"), 0);
+        assert_eq!(atoi_de_c(""), 0);
     }
 }
 

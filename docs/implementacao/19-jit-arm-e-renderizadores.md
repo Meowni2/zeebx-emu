@@ -120,3 +120,29 @@ cargo test --release
 
 O próximo trabalho é ampliar esses testes para roteiros interativos de CNK3D, Tekken e Kingdom
 Hearts, especialmente menus e telas de opção, onde código e tabelas mutáveis são mais comuns.
+
+## Resolução interna do 3D (upscale)
+
+Com o rasterizador da placa ligado, a aba gráfica oferece **resolução interna de 1x a 6x**
+(`graphics.resolucao_interna`). O jogo continua vendo 640×480; só o anexo de cor e profundidade do
+`GpuState` cresce.
+
+- **Desenho.** `destino()` cria o anexo com `medida × escala`, e `aplica()` multiplica a viewport
+  pelo fator. Tudo o que o jogo passa em pixels — viewport, `draw_texture`, o quadrilátero do
+  `import_rgb565_changes` — continua em pixels do console e é escalado só na hora de ir para a placa.
+- **Leitura.** `liga_para_leitura()` reduz o quadro grande na placa (`glBlitFramebuffer` com filtro
+  linear) para um framebuffer do tamanho do console antes de qualquer leitura: `frame_rgb565`
+  (o `GetColorBufferQUALCOMM` e a cópia para a tela) e `read_rect` (o `glReadPixels`). Ler o quadro
+  grande seria mover o quadrado do fator em bytes para jogar quase tudo fora.
+- **Janela.** `Machine::quadro_na_placa()` devolve a textura grande **só quando a tela é exatamente o
+  que o último `eglSwapBuffers` pôs lá**: a contagem de escritas da tela é guardada no `present_gl`, e
+  qualquer desenho 2D depois disso a muda. Nesse caso — HUD pelo `IDisplay`, caixa de mensagem, a
+  Z-Wheel, que compõe o 3D na CPU — a janela fica com a tela de 640×480. O `Pintor` desenha a textura
+  do rasterizador direto, no mesmo contexto que o egui usa, com o recorte da superfície.
+- **Teto.** O fator é limitado pelo `GL_MAX_TEXTURE_SIZE`/`GL_MAX_RENDERBUFFER_SIZE` da placa.
+- **Sem janela.** `zeebx sessao <zip> --placa --escala=N --dump=…` grava também `*.grande.bmp` e diz se
+  a janela mostraria o quadro grande. Medido no Crash Nitro Kart: 20 s virtuais em ~2,9 s reais nas
+  escalas 1 e 3, e o contorno dos modelos sai liso em 1920×1440.
+
+O rasterizador de software ignora a opção: o custo cresceria com o quadrado do fator. Jogos 2D não
+ganham nada, porque a imagem já sai pronta em 640×480.

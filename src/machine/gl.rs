@@ -906,6 +906,34 @@ impl<C: CpuBackend> Machine<C> {
             None => self.screen.load_rgb565_bytes(&bytes),
         }
         self.gl_last_frame = bytes;
+        self.escritas_do_quadro_gl = Some(self.screen().escritas());
+    }
+
+    /// O quadro 3D na resolução interna, quando é ele que está na tela.
+    ///
+    /// Só vale enquanto a tela é exatamente o que o último `eglSwapBuffers` pôs lá: qualquer
+    /// desenho 2D depois disso — um HUD pelo `IDisplay`, uma caixa de mensagem — vive só na tela
+    /// do console, e mostrar a textura grande o apagaria. Nesse caso a janela fica com a tela de
+    /// 640×480, como sempre.
+    pub fn quadro_na_placa(&self) -> Option<crate::video::rasterizer::QuadroNaPlaca> {
+        let intacta = self.escritas_do_quadro_gl == Some(self.screen().escritas());
+        intacta.then(|| self.gl.quadro_na_placa()).flatten()
+    }
+
+    /// O quadro 3D na resolução interna, como superfície, para gravar sem janela.
+    pub fn quadro_grande(&mut self) -> Option<Framebuffer> {
+        let (w, h, rgba) = self.gl.le_quadro_grande()?;
+        let mut quadro = Framebuffer::new(w as u32, h as u32);
+        for (i, p) in rgba.chunks_exact(4).enumerate() {
+            let cor = Rgb { r: p[0], g: p[1], b: p[2] };
+            quadro.set_pixel((i % w) as i32, (i / w) as i32, cor);
+        }
+        Some(quadro)
+    }
+
+    /// A resolução interna do rasterizador da placa. Ver [`Rasterizador::define_escala`].
+    pub fn define_resolucao_interna(&mut self, escala: usize) {
+        self.gl.define_escala(escala);
     }
 }
 

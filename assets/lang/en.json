@@ -80,6 +80,8 @@
   "graphics.gpu_present.hint": "The frame goes up in the format it is already in, and the card does the scaling. It does not change how the game draws, only how the finished frame reaches the screen.",
   "graphics.gpu_rasterizer": "Fill the 3D on the graphics card",
   "graphics.gpu_rasterizer.hint": "The console's 3D is filled by the card instead of the CPU. Measured: Z-Wheel 35% less time in the emulator, Crash on the track 19%. The drawing is not identical to the software one — about 1% of pixels differ a little. Takes effect on the next game you start, and falls back to software when no card is reachable.",
+  "graphics.internal_resolution": "3D internal resolution",
+  "graphics.internal_resolution.hint": "Renders the 3D larger on the graphics card and scales it to the window. The game still sees 640×480. It only shows when the frame on screen is fully 3D; screens with 2D drawn on top stay at the console resolution. High factors are heavy on the card.",
   "language.name": "English",
   "library.count": "{count} game(s)",
   "library.empty": "No ROM found in {folder}.",

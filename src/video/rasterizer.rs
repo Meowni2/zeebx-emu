@@ -462,6 +462,30 @@ pub trait Rasterizador {
     fn frame_rgb565(&mut self, width: usize, height: usize, out: &mut Vec<u8>);
     fn import_rgb565_changes(&mut self, width: usize, height: usize, old: &[u8], new: &[u8]);
     fn present(&mut self, width: usize, height: usize) -> Vec<u16>;
+
+    /// Quantas vezes o quadro é desenhado maior que o do console, por lado. O jogo continua
+    /// vendo 640×480: viewport, leitura de pixels e cópia do quadro são convertidas. Só a placa
+    /// sabe fazer isto; no software o custo cresceria com o quadrado do fator, e ele ignora.
+    fn define_escala(&mut self, _escala: usize) {}
+
+    /// O quadro na resolução interna, lido da placa em RGBA com a linha 0 no topo. Para conferir
+    /// o upscale sem janela; a janela usa o [`Rasterizador::quadro_na_placa`].
+    fn le_quadro_grande(&mut self) -> Option<(usize, usize, Vec<u8>)> {
+        None
+    }
+
+    /// O quadro na resolução interna, como textura da placa, para a janela pintar direto.
+    fn quadro_na_placa(&self) -> Option<QuadroNaPlaca> {
+        None
+    }
+}
+
+/// Uma textura de cor da placa com o quadro já desenhado, e o pedaço dela que é a imagem.
+#[derive(Debug, Clone, Copy)]
+pub struct QuadroNaPlaca {
+    pub textura: eframe::glow::Texture,
+    /// A fração da textura que a superfície do jogo ocupa, em `(u, v)`; a linha 0 é o topo.
+    pub recorte: [f32; 2],
 }
 
 impl Rasterizador for GlState {

@@ -22,12 +22,14 @@ use eframe::glow::{self, HasContext};
 /// Sai mais barato que um quadrado com dois triângulos, e — o que importa mais aqui — dispensa
 /// buffer de vértices: o `gl_VertexID` é o único dado de entrada.
 const VERTICE: &str = r#"
+uniform vec2 recorte;
 out vec2 uv;
 void main() {
     vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
     // A origem da textura é em cima; a do OpenGL, embaixo. Inverter aqui evita inverter o
-    // quadro inteiro na CPU.
-    uv = vec2(p.x, 1.0 - p.y);
+    // quadro inteiro na CPU. O `recorte` é a fração da textura que é imagem: o quadro 3D da
+    // placa pode ter a superfície do jogo menor que o anexo.
+    uv = vec2(p.x, 1.0 - p.y) * recorte;
     gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 }
 "#;
@@ -139,8 +141,44 @@ impl Pintor {
                     gl.tex_parameter_i32(glow::TEXTURE_2D, nome, valor);
                 }
             }
+            self.pinta(gl, [1.0, 1.0], vp);
+        }
+    }
+
+    /// Desenha uma textura que já está na placa: o quadro 3D na resolução interna.
+    ///
+    /// A textura é do rasterizador, no mesmo contexto que o egui usa. Ampliar ou reduzir para o
+    /// retângulo da janela é da placa, com o mesmo filtro escolhido para o caminho normal.
+    pub fn desenha_textura(
+        &mut self,
+        gl: &glow::Context,
+        quadro: crate::video::rasterizer::QuadroNaPlaca,
+        vp: &egui::epaint::ViewportInPixels,
+        suave: bool,
+    ) {
+        unsafe {
+            gl.use_program(Some(self.program));
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D, Some(quadro.textura));
+            let filtro = match suave {
+                true => glow::LINEAR,
+                false => glow::NEAREST,
+            } as i32;
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, filtro);
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, filtro);
+            self.pinta(gl, quadro.recorte, vp);
+            gl.bind_texture(glow::TEXTURE_2D, None);
+        }
+    }
+
+    /// O triângulo com a textura ligada na unidade zero, e o estado devolvido ao egui.
+    unsafe fn pinta(&self, gl: &glow::Context, recorte: [f32; 2], vp: &egui::epaint::ViewportInPixels) {
+        unsafe {
             if let Some(local) = gl.get_uniform_location(self.program, "quadro") {
                 gl.uniform_1_i32(Some(&local), 0);
+            }
+            if let Some(local) = gl.get_uniform_location(self.program, "recorte") {
+                gl.uniform_2_f32(Some(&local), recorte[0], recorte[1]);
             }
             gl.viewport(vp.left_px, vp.from_bottom_px, vp.width_px, vp.height_px);
             gl.bind_vertex_array(Some(self.vao));

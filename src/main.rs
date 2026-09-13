@@ -280,7 +280,12 @@ fn main() -> ExitCode {
             if args.iter().any(|a| a == "--sem-transicoes") {
                 z_wheel.transicoes_sempre = false;
             }
-            report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial, z_wheel))
+            let escala = args
+                .iter()
+                .find_map(|a| a.strip_prefix("--escala="))
+                .and_then(|n| n.parse::<usize>().ok())
+                .unwrap_or(1);
+            report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial, z_wheel, escala))
         }
         // Sem argumento nenhum, o que se quer é o emulador, não a ajuda.
         None => launch(),
@@ -297,7 +302,7 @@ fn main() -> ExitCode {
                              [--sem-rede] [--servidor=MAQUINA[:PORTA]] [--ponte]
                              [--portas=controle|teclado|nenhum,...] [--teclas=ms:nome,...]"
             );
-            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes]  (a sessão da janela, sem janela)");
+            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N]  (a sessão da janela, sem janela)");
             eprintln!("     zeebx bench <arquivo.mod|zip> [--seconds=N] [--keys=ms:tecla,...] [--dump=QUADRO.bmp] [--teclas=ms:nome,...] [--instalados=0xCLSID[:id],...] [--dump-surfaces=DIR]  (Dynarmic, sem janela)");
             ExitCode::FAILURE
         }
@@ -1072,6 +1077,7 @@ fn sessao_sem_janela(
     placa: bool,
     serial: Option<&str>,
     z_wheel: ui::settings::ZWheel,
+    escala: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let serial = serial.map(std::path::Path::new);
     let settings = ui::settings::Settings::load();
@@ -1089,6 +1095,7 @@ fn sessao_sem_janela(
         z_wheel,
     )
     .map_err(|err| format!("{err:?}"))?;
+    session.define_resolucao_interna(escala);
     session.set_installed_applets(
         games
             .iter()
@@ -1133,6 +1140,20 @@ fn sessao_sem_janela(
                 if let Some(gl) = session.quadro_gl() {
                     std::fs::write(nome.replace(".bmp", ".gl.bmp"), gl.to_bmp())?;
                 }
+                let na_janela = session.quadro_na_placa().is_some();
+                if let Some(grande) = session.quadro_grande() {
+                    std::fs::write(nome.replace(".bmp", ".grande.bmp"), grande.to_bmp())?;
+                    println!(
+                        "grande:    {}x{} aos {} ms, {}",
+                        grande.width(),
+                        grande.height(),
+                        session.clock_ms(),
+                        match na_janela {
+                            true => "a janela mostra este",
+                            false => "a janela mostra a tela de 640×480 (há 2D por cima)",
+                        }
+                    );
+                }
                 std::fs::write(nome, session.screen().to_bmp())?;
             }
         }
@@ -1161,6 +1182,7 @@ fn sessao_sem_janela(
                 z_wheel,
             )
             .map_err(|err| format!("{err:?}"))?;
+            session.define_resolucao_interna(escala);
             session.set_installed_applets(
                 games
                     .iter()
@@ -1173,6 +1195,13 @@ fn sessao_sem_janela(
         }
         if parou {
             println!("parou:     {:?}", session.stopped_reason());
+            let (regs, pilha, lr) = session.falha();
+            if let Some(lr) = lr {
+                let regs: Vec<String> = regs.iter().enumerate().map(|(i, v)| format!("r{i}={v:#x}")).collect();
+                println!("           {} lr={lr:#x}", regs.join(" "));
+                let pilha: Vec<String> = pilha.iter().map(|v| format!("{v:#x}")).collect();
+                println!("           pilha: {}", pilha.join(" "));
+            }
             break;
         }
     }

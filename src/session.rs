@@ -632,6 +632,34 @@ impl Session {
         self.machine.gl_frame()
     }
 
+    /// Os registradores `r0`–`r11` e os prováveis endereços de retorno na pilha, da última falha.
+    pub fn falha(&self) -> ([u32; 12], &[u32], Option<u32>) {
+        let lr = match self.stopped {
+            Some(Outcome::Fault { lr, .. }) => Some(lr),
+            _ => None,
+        };
+        (self.machine.fault_regs(), self.machine.fault_stack(), lr)
+    }
+
+    /// O quadro 3D na resolução interna, quando é ele que está à mostra. Ver
+    /// [`crate::machine::Machine::quadro_na_placa`].
+    pub fn quadro_na_placa(&self) -> Option<crate::video::rasterizer::QuadroNaPlaca> {
+        match self.intermediario {
+            Some(_) => None,
+            None => self.machine.quadro_na_placa(),
+        }
+    }
+
+    /// O quadro 3D na resolução interna, para gravar sem janela.
+    pub fn quadro_grande(&mut self) -> Option<Framebuffer> {
+        self.machine.quadro_grande()
+    }
+
+    /// Muda a resolução interna do 3D; vale a partir do próximo quadro.
+    pub fn define_resolucao_interna(&mut self, escala: usize) {
+        self.machine.define_resolucao_interna(escala);
+    }
+
     /// O ClassID do applet que roda nesta sessão.
     pub fn classe(&self) -> u32 {
         self.classe

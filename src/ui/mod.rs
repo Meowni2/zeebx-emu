@@ -320,6 +320,7 @@ impl App {
             self.settings.z_wheel,
         ) {
             Ok(mut session) => {
+                session.define_resolucao_interna(self.settings.graphics.resolucao_interna as usize);
                 if let Some(tela) = tela_anterior.filter(|_| session.classe() != crate::session::Z_WHEEL) {
                     session.herda_tela(&tela);
                 }
@@ -1043,7 +1044,35 @@ impl App {
             )
             .changed();
         ui.weak(self.catalog.get("graphics.gpu_rasterizer.hint"));
-        changed
+
+        ui.add_space(12.0);
+        let mut resolucao_mudou = false;
+        ui.add_enabled_ui(graphics.gpu_rasterizer, |ui| {
+            ui.label(self.catalog.get("graphics.internal_resolution"));
+            let atual = graphics.resolucao_interna.clamp(1, 6);
+            egui::ComboBox::from_id_salt("resolucao-interna")
+                .selected_text(rotulo_da_resolucao(atual))
+                .show_ui(ui, |ui| {
+                    for fator in 1..=6u8 {
+                        resolucao_mudou |= ui
+                            .selectable_value(
+                                &mut graphics.resolucao_interna,
+                                fator,
+                                rotulo_da_resolucao(fator),
+                            )
+                            .changed();
+                    }
+                });
+            ui.weak(self.catalog.get("graphics.internal_resolution.hint"));
+        });
+        // Vale na hora para o jogo aberto: o destino é refeito no próximo quadro.
+        if resolucao_mudou {
+            let fator = graphics.resolucao_interna as usize;
+            if let Some(session) = self.session.as_mut() {
+                session.define_resolucao_interna(fator);
+            }
+        }
+        changed | resolucao_mudou
     }
 
     fn audio_tab(&mut self, ui: &mut egui::Ui) -> bool {
@@ -1662,6 +1691,8 @@ impl App {
         if !pela_placa {
             upload(ctx, &mut self.frame, session.screen(), smooth);
         }
+        // O quadro 3D grande só vai pela placa, e só quando é ele que está na tela.
+        let na_placa = pela_placa.then(|| session.quadro_na_placa()).flatten();
         // O que vai na tela sai da sessão agora, antes de desenhar: o empréstimo do jogo não
         // pode atravessar os fechos da interface, que precisam do `self` inteiro.
         //
@@ -1764,14 +1795,22 @@ impl App {
                                     }
                                 }
                                 if let Some(pintor) = guarda.as_mut() {
-                                    pintor.desenha(
-                                        painter.gl(),
-                                        &bytes,
-                                        largura,
-                                        altura,
-                                        &info.viewport_in_pixels(),
-                                        suave,
-                                    );
+                                    match na_placa {
+                                        Some(quadro) => pintor.desenha_textura(
+                                            painter.gl(),
+                                            quadro,
+                                            &info.viewport_in_pixels(),
+                                            suave,
+                                        ),
+                                        None => pintor.desenha(
+                                            painter.gl(),
+                                            &bytes,
+                                            largura,
+                                            altura,
+                                            &info.viewport_in_pixels(),
+                                            suave,
+                                        ),
+                                    }
                                 }
                             },
                         )),
@@ -2052,6 +2091,19 @@ fn draw_controller(
 }
 
 /// Envia o quadro do console para a textura, criando-a na primeira vez.
+/// O nome de um fator de resolução interna, com o tamanho que ele dá e o vídeo mais próximo.
+fn rotulo_da_resolucao(fator: u8) -> String {
+    let (largura, altura) = (640 * u32::from(fator), 480 * u32::from(fator));
+    let referencia = match fator {
+        1 => "nativa",
+        2 => "~720p",
+        3 => "~1080p",
+        4 => "~1440p",
+        _ => "~4K",
+    };
+    format!("{fator}x · {largura}×{altura} · {referencia}")
+}
+
 fn upload(
     ctx: &egui::Context,
     handle: &mut Option<egui::TextureHandle>,

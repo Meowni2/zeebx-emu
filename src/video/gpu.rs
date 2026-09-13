@@ -16,7 +16,7 @@
 
 use super::contexto::Contexto;
 use super::gles;
-use super::rasterizer::{GlState, Matrix, Rasterizador, Vertex};
+use super::rasterizer::{GlState, Matrix, QuadroNaPlaca, Rasterizador, Vertex};
 use eframe::glow::{self, HasContext};
 use std::collections::HashMap;
 
@@ -128,13 +128,19 @@ pub struct GpuState {
     pixels: Vec<u8>,
     /// Se alguma coisa foi desenhada desde a última conversão do quadro.
     sujo: bool,
+    /// A resolução interna, em múltiplos do quadro do console. Ver [`Rasterizador::define_escala`].
+    escala: usize,
+    /// O quadro reduzido ao tamanho do console, de onde saem as leituras quando `escala > 1`.
+    reduzido: Option<(glow::Framebuffer, glow::Texture, (usize, usize))>,
 }
 
 struct Destino {
     fbo: glow::Framebuffer,
     cor: glow::Texture,
     profundidade: glow::Renderbuffer,
+    /// Em pixels do console; o anexo tem `medida * escala`.
     medida: (usize, usize),
+    escala: usize,
 }
 
 impl GpuState {
@@ -190,13 +196,20 @@ impl GpuState {
             vertices: Vec::new(),
             pixels: Vec::new(),
             sujo: true,
+            escala: 1,
+            reduzido: None,
         })
     }
 
     /// Garante que o destino existe no tamanho do quadro e o deixa ligado.
     fn destino(&mut self) {
         let medida = self.estado.frame_size();
-        if self.quadro.as_ref().is_some_and(|d| d.medida == medida) {
+        let escala = self.escala;
+        if self
+            .quadro
+            .as_ref()
+            .is_some_and(|d| d.medida == medida && d.escala == escala)
+        {
             let fbo = self.quadro.as_ref().map(|d| d.fbo);
             unsafe { self.gl.bind_framebuffer(glow::FRAMEBUFFER, fbo) };
             return;
@@ -208,7 +221,7 @@ impl GpuState {
                 gl.delete_texture(antigo.cor);
                 gl.delete_renderbuffer(antigo.profundidade);
             }
-            let (largura, altura) = (medida.0 as i32, medida.1 as i32);
+            let (largura, altura) = ((medida.0 * escala) as i32, (medida.1 * escala) as i32);
             let cor = gl.create_texture().expect("textura de cor");
             gl.bind_texture(glow::TEXTURE_2D, Some(cor));
             gl.tex_image_2d(
@@ -275,6 +288,7 @@ impl GpuState {
                 cor,
                 profundidade,
                 medida,
+                escala,
             });
         }
     }
@@ -284,8 +298,10 @@ impl GpuState {
         let gl = &self.gl;
         let e = &self.fill;
         unsafe {
+            // A viewport vem em pixels do console; o anexo é `escala` vezes maior.
+            let n = self.escala as i32;
             let (x, y, w, h) = e.viewport;
-            gl.viewport(x, y, w.max(0), h.max(0));
+            gl.viewport(x * n, y * n, w.max(0) * n, h.max(0) * n);
             // **O rasterizador de software só recorta no plano próximo.** O OpenGL recorta nos
             // seis planos do frustum, e o plano distante fazia superfícies inteiras desaparecerem
             // — na Z-Wheel era uma faixa do fundo, entre a linha do horizonte e o chão. Preso em
@@ -388,9 +404,76 @@ impl GpuState {
         self.vertices.extend_from_slice(&v.uv);
     }
 
+    /// Deixa ligado, para leitura, um framebuffer com o quadro no tamanho do console.
+    ///
+    /// Com `escala` 1 é o próprio destino. Acima disso o quadro grande é reduzido na placa, com
+    /// filtro linear, antes de qualquer leitura: é o que o jogo vê — o `GetColorBufferQUALCOMM`, o
+    /// `glReadPixels`, a cópia para a tela —, e ler o quadro grande seria mover o quadrado do fator
+    /// em bytes para jogar quase tudo fora.
+    fn liga_para_leitura(&mut self) {
+        self.destino();
+        if self.escala <= 1 {
+            return;
+        }
+        let medida = self.estado.frame_size();
+        let (fw, fh) = (medida.0 as i32, medida.1 as i32);
+        let n = self.escala as i32;
+        let gl = &self.gl;
+        unsafe {
+            if self.reduzido.as_ref().is_none_or(|r| r.2 != medida) {
+                if let Some((fbo, cor, _)) = self.reduzido.take() {
+                    gl.delete_framebuffer(fbo);
+                    gl.delete_texture(cor);
+                }
+                let cor = gl.create_texture().expect("textura reduzida");
+                gl.bind_texture(glow::TEXTURE_2D, Some(cor));
+                gl.tex_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    glow::RGBA8 as i32,
+                    fw,
+                    fh,
+                    0,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelUnpackData::Slice(None),
+                );
+                let fbo = gl.create_framebuffer().expect("framebuffer reduzido");
+                gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+                gl.framebuffer_texture_2d(
+                    glow::FRAMEBUFFER,
+                    glow::COLOR_ATTACHMENT0,
+                    glow::TEXTURE_2D,
+                    Some(cor),
+                    0,
+                );
+                gl.bind_texture(glow::TEXTURE_2D, None);
+                self.reduzido = Some((fbo, cor, medida));
+            }
+            let origem = self.quadro.as_ref().map(|d| d.fbo);
+            let destino = self.reduzido.as_ref().map(|r| r.0);
+            gl.bind_framebuffer(glow::READ_FRAMEBUFFER, origem);
+            gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, destino);
+            gl.disable(glow::SCISSOR_TEST);
+            gl.blit_framebuffer(
+                0,
+                0,
+                fw * n,
+                fh * n,
+                0,
+                0,
+                fw,
+                fh,
+                glow::COLOR_BUFFER_BIT,
+                glow::LINEAR,
+            );
+            gl.bind_framebuffer(glow::FRAMEBUFFER, destino);
+        }
+    }
+
     /// Lê o quadro da placa para `self.pixels`, em RGBA, com a linha 0 no topo.
     fn le_quadro(&mut self, largura: usize, altura: usize) {
-        self.destino();
+        self.liga_para_leitura();
         self.pixels.clear();
         self.pixels.resize(largura * altura * 4, 0);
         unsafe {
@@ -1054,7 +1137,7 @@ impl Rasterizador for GpuState {
         if width == 0 || height == 0 {
             return Vec::new();
         }
-        self.destino();
+        self.liga_para_leitura();
         let mut bytes = vec![0u8; width * height * 4];
         unsafe {
             self.gl.read_pixels(
@@ -1217,6 +1300,62 @@ impl Rasterizador for GpuState {
             .map(|p| u16::from_le_bytes([p[0], p[1]]))
             .collect()
     }
+
+    fn define_escala(&mut self, escala: usize) {
+        // O teto é o maior anexo que a placa aceita: um fator acima dele não criaria o destino.
+        let maximo = unsafe {
+            self.gl
+                .get_parameter_i32(glow::MAX_RENDERBUFFER_SIZE)
+                .min(self.gl.get_parameter_i32(glow::MAX_TEXTURE_SIZE))
+        }
+        .max(1) as usize;
+        let (fw, fh) = self.estado.frame_size();
+        let cabe = (maximo / fw.max(fh).max(1)).max(1);
+        let escala = escala.clamp(1, cabe);
+        if escala != self.escala {
+            self.escala = escala;
+            self.sujo = true;
+        }
+    }
+
+    fn le_quadro_grande(&mut self) -> Option<(usize, usize, Vec<u8>)> {
+        if self.escala <= 1 {
+            return None;
+        }
+        self.destino();
+        let (sw, sh) = self.estado.surface();
+        let (w, h) = (sw * self.escala, sh * self.escala);
+        let mut bytes = vec![0u8; w * h * 4];
+        unsafe {
+            self.gl.read_pixels(
+                0,
+                0,
+                w as i32,
+                h as i32,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelPackData::Slice(Some(&mut bytes)),
+            );
+        }
+        self.devolve_o_contexto();
+        Some((w, h, bytes))
+    }
+
+    fn quadro_na_placa(&self) -> Option<QuadroNaPlaca> {
+        let destino = self.quadro.as_ref()?;
+        if destino.escala <= 1 {
+            return None;
+        }
+        let (fw, fh) = destino.medida;
+        let (sw, sh) = self.estado.surface();
+        Some(QuadroNaPlaca {
+            textura: destino.cor,
+            recorte: [
+                sw.min(fw) as f32 / fw.max(1) as f32,
+                sh.min(fh) as f32 / fh.max(1) as f32,
+            ],
+        })
+    }
 }
 
 #[cfg(test)]
@@ -1306,6 +1445,54 @@ mod tests {
             baixo_placa, baixo_software,
             "canto de baixo: placa {baixo_placa:?} contra software {baixo_software:?}"
         );
+    }
+
+    /// Com resolução interna maior, o jogo lê de volta o mesmo quadro de sempre.
+    ///
+    /// O desenho acontece num anexo `escala` vezes maior, e a leitura passa por uma redução na
+    /// placa. Longe das bordas o pixel tem de ser o do quadro nativo; nas bordas a redução mistura
+    /// vizinhos, e é justamente isso que suaviza — por isso só os interiores são comparados. A
+    /// textura para a janela tem de existir, e o recorte, cobrir a superfície inteira.
+    #[test]
+    fn com_escala_a_leitura_continua_no_tamanho_do_console() {
+        let (largura, altura) = (16, 16);
+        let Some((mut nativa, mut sw)) = par(largura, altura) else {
+            return;
+        };
+        let Ok(mut grande) = GpuState::novo(largura, altura, None) else {
+            return;
+        };
+        grande.define_escala(2);
+        let cena = |r: &mut dyn Rasterizador| {
+            r.set_viewport(0, 0, largura as i32, altura as i32);
+            r.set_clear_color([0.0, 0.0, 1.0, 1.0]);
+            r.clear(gles::GL_COLOR_BUFFER_BIT);
+            let canto = |x: f32, y: f32| Vertex {
+                position: [x, y, 0.0, 1.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+                uv: [0.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
+            };
+            r.draw(
+                gles::GL_TRIANGLES,
+                &[canto(-1.0, 1.0), canto(-1.0, -1.0), canto(1.0, 1.0)],
+            );
+        };
+        let (a, _) = ambos(&mut nativa, &mut sw, largura, altura, cena);
+        cena(&mut grande);
+        let mut b = Vec::new();
+        grande.frame_rgb565(largura, altura, &mut b);
+        assert_eq!(b.len(), a.len(), "a leitura sai no tamanho do console");
+        for (x, y) in [(1, 1), (2, 3), (14, 14), (13, 12)] {
+            assert_eq!(
+                pixel(&b, largura, x, y),
+                pixel(&a, largura, x, y),
+                "pixel ({x}, {y}) com escala 2"
+            );
+        }
+        let quadro = grande.quadro_na_placa().expect("textura grande para a janela");
+        assert_eq!(quadro.recorte, [1.0, 1.0]);
+        assert!(nativa.quadro_na_placa().is_none(), "na escala 1 a janela usa a tela de sempre");
     }
 
     /// Quem nunca chama `glViewport` tem que desenhar de todo jeito.
