@@ -704,6 +704,11 @@ impl Session {
         self.machine.define_resolucao_interna(escala);
     }
 
+    /// A proporção experimental do 3D, largura sobre altura; `None` é o 4:3 do console.
+    pub fn define_proporcao(&mut self, aspecto: Option<f32>) {
+        self.machine.define_proporcao(aspecto);
+    }
+
     /// O ClassID do applet que roda nesta sessão.
     pub fn classe(&self) -> u32 {
         self.classe

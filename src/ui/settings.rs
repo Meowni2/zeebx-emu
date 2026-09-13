@@ -162,6 +162,44 @@ pub struct Graphics {
     pub antialias: u8,
     /// Filtro anisotrópico das texturas do 3D na placa (1 é desligado).
     pub anisotropico: u8,
+    /// **Experimental.** A proporção em que o 3D na placa é renderizado.
+    pub proporcao: Proporcao,
+}
+
+/// A proporção do 3D renderizado na placa. Fora do nativo, a cena em perspectiva ganha lados em
+/// vez de ser esticada; HUD e 2D ficam em 4:3 no centro.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Proporcao {
+    #[default]
+    Nativa,
+    Larga16x9,
+    Larga16x10,
+    /// A da janela do jogo.
+    Janela,
+}
+
+impl Proporcao {
+    pub const TODAS: [Self; 4] = [Self::Nativa, Self::Larga16x9, Self::Larga16x10, Self::Janela];
+
+    pub fn chave(self) -> &'static str {
+        match self {
+            Self::Nativa => "graphics.aspect.native",
+            Self::Larga16x9 => "graphics.aspect.16x9",
+            Self::Larga16x10 => "graphics.aspect.16x10",
+            Self::Janela => "graphics.aspect.window",
+        }
+    }
+
+    /// Largura sobre altura, com a da janela quando é o caso. `None` é o nativo.
+    pub fn aspecto(self, janela: f32) -> Option<f32> {
+        match self {
+            Self::Nativa => None,
+            Self::Larga16x9 => Some(16.0 / 9.0),
+            Self::Larga16x10 => Some(16.0 / 10.0),
+            Self::Janela => Some(janela),
+        }
+    }
 }
 
 impl Default for Graphics {
@@ -181,6 +219,7 @@ impl Default for Graphics {
             resolucao_interna: 1,
             antialias: 1,
             anisotropico: 1,
+            proporcao: Proporcao::Nativa,
         }
     }
 }

@@ -942,6 +942,11 @@ impl<C: CpuBackend> Machine<C> {
         self.gl.define_escala(escala);
     }
 
+    /// A proporção experimental do 3D. Ver [`Rasterizador::define_proporcao`].
+    pub fn define_proporcao(&mut self, aspecto: Option<f32>) {
+        self.gl.define_proporcao(aspecto);
+    }
+
     /// As melhorias de imagem do rasterizador da placa: antialias e filtro anisotrópico. Ver
     /// [`Rasterizador::define_antialias`] e [`Rasterizador::define_anisotropico`].
     pub fn define_melhorias(&mut self, amostras: usize, anisotropico: usize) {

@@ -149,15 +149,22 @@ pub struct GpuState {
     amostras: usize,
     /// O filtro anisotrópico aplicado às texturas do jogo; 1 é desligado.
     anisotropia: f32,
+    /// A proporção pedida para o 3D, largura sobre altura. `None` é o 4:3 do console. Ver
+    /// [`GpuState::extra`].
+    proporcao: Option<f32>,
+    /// Se o lote que vai para a placa foi transformado por uma projeção em perspectiva.
+    em_perspectiva: bool,
 }
 
 struct Destino {
     fbo: glow::Framebuffer,
     cor: glow::Texture,
     profundidade: glow::Renderbuffer,
-    /// Em pixels do console; o anexo tem `medida * escala`.
+    /// Em pixels do console; o anexo tem `(medida.0 + 2 * extra, medida.1) * escala`.
     medida: (usize, usize),
     escala: usize,
+    /// As colunas a mais de cada lado, em pixels do console, para a proporção larga.
+    extra: usize,
     amostras: usize,
     /// Com antialias, o desenho vai para este framebuffer de várias amostras — cor e a
     /// profundidade acima —, e é resolvido na `cor` antes de qualquer leitura.
@@ -225,6 +232,8 @@ impl GpuState {
             pixels: Vec::new(),
             sujo: true,
             escala: 1,
+            proporcao: None,
+            em_perspectiva: false,
             reduzido: None,
             amostras: 1,
             anisotropia: 1.0,
@@ -232,11 +241,27 @@ impl GpuState {
     }
 
     /// Garante que o destino existe no tamanho do quadro e o deixa ligado.
+    /// As colunas a mais de cada lado, em pixels do console, para a proporção pedida.
+    ///
+    /// Só quando a superfície ocupa o quadro inteiro: um pbuffer menor que o quadro (a Z-Wheel
+    /// desenha em 640×330) não tem "lados" para abrir.
+    fn extra(&self) -> usize {
+        let (fw, fh) = self.estado.frame_size();
+        let Some(aspecto) = self.proporcao else {
+            return 0;
+        };
+        if self.estado.surface() != (fw, fh) || fh == 0 {
+            return 0;
+        }
+        let largura = (fh as f32 * aspecto).round() as usize;
+        largura.saturating_sub(fw) / 2
+    }
+
     fn destino(&mut self) {
         let medida = self.estado.frame_size();
-        let (escala, amostras) = (self.escala, self.amostras);
+        let (escala, amostras, extra) = (self.escala, self.amostras, self.extra());
         if self.quadro.as_ref().is_some_and(|d| {
-            d.medida == medida && d.escala == escala && d.amostras == amostras
+            d.medida == medida && d.escala == escala && d.amostras == amostras && d.extra == extra
         }) {
             let fbo = self.quadro.as_ref().map(Destino::desenho);
             unsafe { self.gl.bind_framebuffer(glow::FRAMEBUFFER, fbo) };
@@ -247,7 +272,10 @@ impl GpuState {
             if let Some(antigo) = self.quadro.take() {
                 solta_destino(gl, antigo);
             }
-            let (largura, altura) = ((medida.0 * escala) as i32, (medida.1 * escala) as i32);
+            let (largura, altura) = (
+                ((medida.0 + 2 * extra) * escala) as i32,
+                (medida.1 * escala) as i32,
+            );
             let cor = gl.create_texture().expect("textura de cor");
             gl.bind_texture(glow::TEXTURE_2D, Some(cor));
             gl.tex_image_2d(
@@ -360,6 +388,7 @@ impl GpuState {
                 profundidade,
                 medida,
                 escala,
+                extra,
                 amostras,
                 multi,
             };
@@ -377,7 +406,7 @@ impl GpuState {
             return;
         };
         let (w, h) = (
-            (destino.medida.0 * destino.escala) as i32,
+            ((destino.medida.0 + 2 * destino.extra) * destino.escala) as i32,
             (destino.medida.1 * destino.escala) as i32,
         );
         let gl = &self.gl;
@@ -406,6 +435,20 @@ impl GpuState {
     /// Põe na placa o estado anotado. Chamado uma vez por draw.
     fn aplica(&mut self) {
         let (x, y, w, h) = self.viewport_do_topo();
+        let extra = self.quadro.as_ref().map_or(0, |d| d.extra) as i32;
+        // **Na proporção larga, a perspectiva ganha lados e o resto só vai para o centro.** A
+        // viewport de um lote em perspectiva cresce na razão `k` e o `x` de recorte encolhe na
+        // mesma razão (em `draw`): o que estava na tela cai no mesmo pixel de antes, deslocado
+        // para o centro, e o que ficava fora do recorte aparece nos lados. HUD e 2D, em
+        // ortográfica, só se deslocam.
+        let (x, w) = match (self.em_perspectiva, extra > 0) {
+            (true, true) => {
+                let sw = self.estado.surface().0 as i32;
+                let largura = w * (sw + 2 * extra) / sw.max(1);
+                (extra + x + w / 2 - largura / 2, largura)
+            }
+            _ => (x + extra, w),
+        };
         let gl = &self.gl;
         let e = &self.fill;
         unsafe {
@@ -524,7 +567,8 @@ impl GpuState {
     fn liga_para_leitura(&mut self) {
         self.destino();
         self.resolve();
-        if self.escala <= 1 {
+        let extra = self.quadro.as_ref().map_or(0, |d| d.extra) as i32;
+        if self.escala <= 1 && extra == 0 {
             let fbo = self.quadro.as_ref().map(|d| d.fbo);
             unsafe { self.gl.bind_framebuffer(glow::FRAMEBUFFER, fbo) };
             return;
@@ -569,10 +613,12 @@ impl GpuState {
             gl.bind_framebuffer(glow::READ_FRAMEBUFFER, origem);
             gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, destino);
             gl.disable(glow::SCISSOR_TEST);
+            // Na proporção larga, o jogo lê só o centro: é ali que está a imagem de 640×480 que
+            // ele desenhou, e os lados são nossos.
             gl.blit_framebuffer(
+                extra * n,
                 0,
-                0,
-                fw * n,
+                (extra + fw) * n,
                 fh * n,
                 0,
                 0,
@@ -1249,17 +1295,30 @@ impl Rasterizador for GpuState {
             _ => return,
         };
         self.estado.etapa_de_vertice(vertices);
+        let extra = self.extra();
+        let perspectiva = extra > 0 && self.estado.projecao_em_perspectiva();
+        // O `x` de recorte encolhe na razão em que a viewport cresce — ver [`GpuState::aplica`].
+        let k = match perspectiva {
+            true => {
+                let sw = self.estado.surface().0 as f32;
+                sw / (sw + 2.0 * extra as f32)
+            }
+            false => 1.0,
+        };
         // O buffer sai do `self` antes do laço: assim `transformados()` empresta o estado só de
         // leitura e não briga com a escrita no buffer.
         let mut destino = std::mem::take(&mut self.vertices);
         destino.clear();
         for v in self.estado.transformados() {
-            destino.extend_from_slice(&v.position);
+            let [px, py, pz, pw] = v.position;
+            destino.extend_from_slice(&[px * k, py, pz, pw]);
             destino.extend_from_slice(&v.color);
             destino.extend_from_slice(&v.uv);
         }
         self.vertices = destino;
+        self.em_perspectiva = perspectiva;
         self.submete_com(modo, -1.0, None);
+        self.em_perspectiva = false;
     }
 
     fn draw_texture(&mut self, x: f32, y: f32, z: f32, width: f32, height: f32) {
@@ -1508,13 +1567,14 @@ impl Rasterizador for GpuState {
     }
 
     fn le_quadro_grande(&mut self) -> Option<(usize, usize, Vec<u8>)> {
-        if self.escala <= 1 {
+        let extra = self.extra();
+        if self.escala <= 1 && extra == 0 {
             return None;
         }
         self.destino();
         self.resolve();
         let (sw, sh) = self.estado.surface();
-        let (w, h) = (sw * self.escala, sh * self.escala);
+        let (w, h) = ((sw + 2 * extra) * self.escala, sh * self.escala);
         let mut bytes = vec![0u8; w * h * 4];
         unsafe {
             self.gl.read_pixels(
@@ -1529,6 +1589,15 @@ impl Rasterizador for GpuState {
         }
         self.devolve_o_contexto();
         Some((w, h, bytes))
+    }
+
+    fn define_proporcao(&mut self, aspecto: Option<f32>) {
+        // Mais estreito que o nativo não abre nada; o teto evita um anexo absurdo.
+        let aspecto = aspecto.filter(|a| a.is_finite()).map(|a| a.clamp(4.0 / 3.0, 3.6));
+        if aspecto != self.proporcao {
+            self.proporcao = aspecto;
+            self.sujo = true;
+        }
     }
 
     fn define_antialias(&mut self, amostras: usize) {
@@ -1571,17 +1640,19 @@ impl Rasterizador for GpuState {
 
     fn quadro_na_placa(&self) -> Option<QuadroNaPlaca> {
         let destino = self.quadro.as_ref()?;
-        if destino.escala <= 1 {
+        if destino.escala <= 1 && destino.extra == 0 {
             return None;
         }
         let (fw, fh) = destino.medida;
         let (sw, sh) = self.estado.surface();
+        let extra = destino.extra;
         Some(QuadroNaPlaca {
             textura: destino.cor,
             recorte: [
-                sw.min(fw) as f32 / fw.max(1) as f32,
+                (sw.min(fw) + 2 * extra) as f32 / (fw + 2 * extra).max(1) as f32,
                 sh.min(fh) as f32 / fh.max(1) as f32,
             ],
+            proporcao: (sw.min(fw) + 2 * extra) as f32 / sh.min(fh).max(1) as f32,
         })
     }
 }

@@ -469,6 +469,10 @@ pub trait Rasterizador {
     /// sabe fazer isto; no software o custo cresceria com o quadrado do fator, e ele ignora.
     fn define_escala(&mut self, _escala: usize) {}
 
+    /// **Experimental.** Renderiza o 3D em perspectiva numa proporção mais larga que o 4:3 do
+    /// console, abrindo o campo de visão na horizontal em vez de esticar. `None` é o nativo.
+    fn define_proporcao(&mut self, _aspecto: Option<f32>) {}
+
     /// Antialias por amostragem múltipla (MSAA), em amostras por pixel; 1 desliga. Suaviza as
     /// bordas dos polígonos; transparência recortada por teste de alfa não é afetada.
     fn define_antialias(&mut self, _amostras: usize) {}
@@ -495,6 +499,9 @@ pub struct QuadroNaPlaca {
     pub textura: eframe::glow::Texture,
     /// A fração da textura que a superfície do jogo ocupa, em `(u, v)`; a linha 0 é o topo.
     pub recorte: [f32; 2],
+    /// Largura sobre altura da imagem: 4:3 no nativo, mais larga com a
+    /// [`Rasterizador::define_proporcao`].
+    pub proporcao: f32,
 }
 
 impl Rasterizador for GlState {
@@ -973,6 +980,13 @@ impl GlState {
     /// `glClientActiveTexture` — a mesma escolha, para o vetor de coordenadas de textura.
     pub fn set_client_active_texture(&mut self, unit: u32) {
         self.client_unit = unit.wrapping_sub(gles::GL_TEXTURE0);
+    }
+
+    /// Se a projeção corrente é em perspectiva, e não ortográfica: a última linha da matriz tem
+    /// o `-z` que faz o `w`. HUD e 2D desenham em ortográfica.
+    pub fn projecao_em_perspectiva(&self) -> bool {
+        let p = self.projection.last().expect("pilha nunca fica vazia");
+        p[11] != 0.0 && p[15] == 0.0
     }
 
     /// Se a unidade ativa é a base — a única que o pipeline desenha.

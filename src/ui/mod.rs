@@ -456,6 +456,7 @@ impl App {
         ) {
             Ok(mut session) => {
                 session.define_resolucao_interna(self.settings.graphics.resolucao_interna as usize);
+                session.define_proporcao(self.settings.graphics.proporcao.aspecto(16.0 / 9.0));
                 session.define_melhorias(
                     self.settings.graphics.antialias as usize,
                     self.settings.graphics.anisotropico as usize,
@@ -1497,6 +1498,7 @@ impl App {
         ui.add_space(12.0);
         let mut resolucao_mudou = false;
         let mut melhoria_mudou = false;
+        let mut proporcao_mudou = false;
         let desligado = self.catalog.get("common.off").to_string();
         ui.add_enabled_ui(graphics.gpu_rasterizer, |ui| {
             ui.label(self.catalog.get("graphics.internal_resolution"));
@@ -1515,6 +1517,23 @@ impl App {
                     }
                 });
             ui.weak(self.catalog.get("graphics.internal_resolution.hint"));
+
+            ui.add_space(8.0);
+            ui.label(self.catalog.get("graphics.aspect"));
+            egui::ComboBox::from_id_salt("proporcao")
+                .selected_text(self.catalog.get(graphics.proporcao.chave()))
+                .show_ui(ui, |ui| {
+                    for opcao in crate::ui::settings::Proporcao::TODAS {
+                        proporcao_mudou |= ui
+                            .selectable_value(
+                                &mut graphics.proporcao,
+                                opcao,
+                                self.catalog.get(opcao.chave()),
+                            )
+                            .changed();
+                    }
+                });
+            ui.colored_label(ui.visuals().warn_fg_color, self.catalog.get("graphics.aspect.hint"));
 
             ui.add_space(8.0);
             ui.label(self.catalog.get("graphics.antialias"));
@@ -1549,13 +1568,19 @@ impl App {
             }
         }
         // Vale na hora para o jogo aberto: o destino é refeito no próximo quadro.
+        if proporcao_mudou {
+            let aspecto = graphics.proporcao.aspecto(16.0 / 9.0);
+            if let Some(session) = self.session.as_mut() {
+                session.define_proporcao(aspecto);
+            }
+        }
         if resolucao_mudou {
             let fator = graphics.resolucao_interna as usize;
             if let Some(session) = self.session.as_mut() {
                 session.define_resolucao_interna(fator);
             }
         }
-        changed | resolucao_mudou | melhoria_mudou
+        changed | resolucao_mudou | melhoria_mudou | proporcao_mudou
     }
 
     fn audio_tab(&mut self, ui: &mut egui::Ui) -> bool {
@@ -2334,10 +2359,22 @@ impl App {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(egui::Color32::BLACK))
             .show(ctx, |ui| {
+                // A proporção "da janela" acompanha o tamanho dela: o destino só é refeito quando as
+                // colunas a mais mudam.
+                if self.settings.graphics.proporcao == crate::ui::settings::Proporcao::Janela {
+                    let area = ui.available_size();
+                    let aspecto = area.x / area.y.max(1.0);
+                    if let Some(session) = self.session.as_mut() {
+                        session.define_proporcao(Some(aspecto));
+                    }
+                }
+                // O quadro largo experimental tem a proporção dele; o resto é o 4:3 do console.
+                let aspecto = na_placa.map_or(SCREEN[0] as f32 / SCREEN[1] as f32, |q| q.proporcao);
                 let size = placement(
                     ui.available_size(),
                     self.settings.graphics.scaling,
                     self.settings.graphics.keep_aspect,
+                    aspecto,
                 );
                 // Com contexto de GL, o quadro vai para a placa em RGB565 e é ela que amplia.
                 // Sem ele, vale a textura do egui — que é o caminho de sempre.
@@ -2666,8 +2703,8 @@ fn upload(
 ///
 /// Separado da interface porque é a única parte com regra de verdade, e a única que dá para
 /// conferir sem abrir uma janela.
-fn placement(area: egui::Vec2, scaling: Scaling, keep_aspect: bool) -> egui::Vec2 {
-    let native = egui::vec2(SCREEN[0] as f32, SCREEN[1] as f32);
+fn placement(area: egui::Vec2, scaling: Scaling, keep_aspect: bool, aspecto: f32) -> egui::Vec2 {
+    let native = egui::vec2(SCREEN[1] as f32 * aspecto, SCREEN[1] as f32);
     if area.x <= 0.0 || area.y <= 0.0 {
         return native;
     }
@@ -2776,32 +2813,32 @@ mod tests {
     #[test]
     fn a_ampliacao_inteira_so_usa_multiplos_exatos() {
         // Numa janela de 1500x1100 cabem duas vezes a tela de 640x480, e não duas e pouco.
-        let size = placement(egui::vec2(1500.0, 1100.0), Scaling::Integer, true);
+        let size = placement(egui::vec2(1500.0, 1100.0), Scaling::Integer, true, 4.0 / 3.0);
         assert_eq!(size, egui::vec2(1280.0, 960.0));
     }
 
     #[test]
     fn a_ampliacao_inteira_encolhe_quando_nao_cabe_uma_vez() {
         // Uma janela menor que a tela não pode esconder o jogo, então ali ela encolhe.
-        let size = placement(egui::vec2(320.0, 240.0), Scaling::Integer, true);
+        let size = placement(egui::vec2(320.0, 240.0), Scaling::Integer, true, 4.0 / 3.0);
         assert_eq!(size, egui::vec2(320.0, 240.0));
     }
 
     #[test]
     fn caber_na_janela_mantem_a_proporcao() {
         // Janela larga demais: sobra borda dos lados, não estica.
-        let size = placement(egui::vec2(1920.0, 480.0), Scaling::Fit, true);
+        let size = placement(egui::vec2(1920.0, 480.0), Scaling::Fit, true, 4.0 / 3.0);
         assert_eq!(size, egui::vec2(640.0, 480.0));
     }
 
     #[test]
     fn preencher_so_deforma_quando_a_proporcao_e_dispensada() {
         let area = egui::vec2(1000.0, 500.0);
-        assert_eq!(placement(area, Scaling::Stretch, false), area);
+        assert_eq!(placement(area, Scaling::Stretch, false, 4.0 / 3.0), area);
         // Com a proporção mantida, "preencher" vira "caber".
         assert_eq!(
-            placement(area, Scaling::Stretch, true),
-            placement(area, Scaling::Fit, true)
+            placement(area, Scaling::Stretch, true, 4.0 / 3.0),
+            placement(area, Scaling::Fit, true, 4.0 / 3.0)
         );
     }
 }

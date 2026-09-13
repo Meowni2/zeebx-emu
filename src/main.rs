@@ -366,7 +366,7 @@ fn main() -> ExitCode {
                              [--sem-rede] [--servidor=MAQUINA[:PORTA]] [--ponte]
                              [--portas=controle|teclado|nenhum,...] [--teclas=ms:nome,...]"
             );
-            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N] [--msaa=N] [--aniso=N] [--perfil[=MS]] [--boomerang] [--movimento=ms:x:y:z,...] [--wiimote]  (a sessão da janela, sem janela)");
+            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N] [--msaa=N] [--aniso=N] [--perfil[=MS]] [--boomerang] [--movimento=ms:x:y:z,...] [--wiimote] [--proporcao=16:9]  (a sessão da janela, sem janela)");
             eprintln!("     zeebx bench <arquivo.mod|zip> [--seconds=N] [--keys=ms:tecla,...] [--dump=QUADRO.bmp] [--teclas=ms:nome,...] [--instalados=0xCLSID[:id],...] [--dump-surfaces=DIR]  (Dynarmic, sem janela)");
             ExitCode::FAILURE
         }
@@ -503,6 +503,16 @@ fn instalados(lista: &str) -> Vec<(u32, String)> {
             Some((classe, id))
         })
         .collect()
+}
+
+/// `--proporcao=16:9`: a proporção larga experimental do 3D, largura sobre altura.
+fn proporcao_da_linha() -> Option<f32> {
+    std::env::args()
+        .find_map(|a| a.strip_prefix("--proporcao=").map(str::to_string))
+        .and_then(|p| {
+            let (largura, altura) = p.split_once(':')?;
+            Some(largura.parse::<f32>().ok()? / altura.parse::<f32>().ok()?)
+        })
 }
 
 fn teclado(lista: &str) -> Vec<(u32, u32)> {
@@ -1178,6 +1188,7 @@ fn sessao_sem_janela(
     )
     .map_err(|err| format!("{err:?}"))?;
     session.define_resolucao_interna(escala);
+    session.define_proporcao(proporcao_da_linha());
     session.define_melhorias(melhorias.0, melhorias.1);
     let mut perfil_ligado_em: Option<(u32, std::time::Instant, u64)> = None;
     session.set_installed_applets(
@@ -1315,6 +1326,7 @@ fn sessao_sem_janela(
             )
             .map_err(|err| format!("{err:?}"))?;
             session.define_resolucao_interna(escala);
+            session.define_proporcao(proporcao_da_linha());
             session.define_melhorias(melhorias.0, melhorias.1);
                     session.set_installed_applets(
                 games

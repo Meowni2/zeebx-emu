@@ -148,6 +148,29 @@ Com o rasterizador da placa ligado, a aba gráfica oferece **resolução interna
 O rasterizador de software ignora a opção: o custo cresceria com o quadrado do fator. Jogos 2D não
 ganham nada, porque a imagem já sai pronta em 640×480.
 
+## Proporção larga, experimental
+
+`graphics.proporcao` (Nativa, 16:9, 16:10, a da janela), só no rasterizador da placa. Não estica:
+**renderiza** a cena em perspectiva mais larga, como o hack de widescreen do Dolphin.
+
+- **O anexo ganha colunas dos lados** (`GpuState::extra`, 106 por lado em 16:9 com 480 linhas),
+  só quando a superfície ocupa o quadro inteiro — um pbuffer menor não tem lados para abrir.
+- **Perspectiva abre, o resto se desloca.** Um lote com projeção em perspectiva
+  (`GlState::projecao_em_perspectiva`: `p[11] ≠ 0` e `p[15] = 0`) tem o `x` de recorte
+  multiplicado por `k = 640 / (640 + 2·extra)` e a viewport alargada na razão inversa, em torno do
+  mesmo centro deslocado. O que estava na tela cai no mesmo pixel de antes, e o que o recorte
+  cortava aparece nos lados. HUD em ortográfica, `draw_texture` e a composição 2D só vão para o
+  centro.
+- **O jogo continua vendo 640×480.** A leitura (`liga_para_leitura`) copia só o centro, então
+  `glReadPixels` e a cópia para a tela saem idênticos ao nativo — conferido no Crash Nitro Kart.
+- **A janela** pinta o quadro largo na proporção dele (`QuadroNaPlaca::proporcao`) quando a tela é
+  3D pura; com 2D por cima, volta ao 4:3.
+- Sem janela: `zeebx sessao <zip> --placa --proporcao=16:9 --dump=…` grava o `*.grande.bmp` largo.
+
+Problemas esperados, e por isso experimental: objetos que surgem nas bordas (o jogo não desenha o
+que acha que está fora da tela), a imagem alternando entre largo e 4:3 quando há 2D por cima, e
+jogos que desenham o HUD em perspectiva, que se deformam junto com a cena.
+
 ## Antialias (MSAA) e filtro anisotrópico
 
 Também só no rasterizador da placa, na aba gráfica, desligados por padrão.
