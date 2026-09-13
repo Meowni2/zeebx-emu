@@ -359,6 +359,10 @@ fn launch() -> ExitCode {
         // `zeebx.desktop` instalado e tira o ícone de lá. Sem ele, a janela fica com o
         // genérico do sistema. Precisa ser igual ao nome do arquivo `.desktop`.
         .with_app_id(APP_ID);
+    viewport = ui::settings::Settings::load()
+        .graphics
+        .janela
+        .no_construtor(viewport);
     if let Some(icon) = window_icon() {
         viewport = viewport.with_icon(icon);
     }

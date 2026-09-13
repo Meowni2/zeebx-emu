@@ -6,6 +6,10 @@
 //! `TITLETEXT` guarda o nome em cada idioma. O `class_id` é o mesmo ClassID que a biblioteca usa
 //! como chave, então a ligação não depende de nome de arquivo nem de pasta.
 //!
+//! O logo do rolo de cima vem de outro banco, o `asset_cache`: a tabela `ASSETS` diz de que jogo
+//! (`owner`, o `game_id`) é cada cena do palco (`assets/stage_slides/<dslid>/`), e a cena traz o
+//! logo como textura, `slidebanner.qxt`. Só os jogos em destaque têm cena — 12 no pacote.
+//!
 //! O pacote pode estar solto numa pasta ou num `.zip`; os dois são lidos sem extrair nada.
 
 use std::collections::HashMap;
@@ -16,6 +20,15 @@ use crate::video::icon::{self, Image};
 
 /// O banco da Z-Wheel, ao lado do `tectoy.mod`.
 const BANCO: &str = "tt_game_info";
+/// O banco que liga as cenas do palco aos jogos.
+const CENAS: &str = "asset_cache";
+/// O tipo das cenas do palco na tabela `ASSETS`. Os outros são as páginas de ajuda (6 e 7) e as
+/// pastas das capas (8).
+const TIPO_CENA: i64 = 5;
+/// O formato de textura QX dos logos: ATITC só de cor, blocos de 8 bytes.
+const QXT_ATC_RGB: u32 = 0x0c;
+/// O cabeçalho de um `.qxt` antes dos texels.
+const QXT_CABECALHO: usize = 40;
 
 /// O que a Z-Wheel guarda de um jogo.
 #[derive(Debug, Clone, Default)]
@@ -24,6 +37,10 @@ pub struct Ficha {
     titulos: HashMap<String, String>,
     descricoes: HashMap<String, String>,
     pub capa: Option<Image>,
+    /// O logo com que o jogo aparece no rolo de cima da Z-Wheel, quando ele tem cena no palco.
+    pub logo: Option<Image>,
+    /// A classificação indicativa (`rating.jpg`).
+    pub classificacao: Option<Image>,
 }
 
 impl Ficha {
@@ -59,8 +76,17 @@ impl Acervo {
         let linhas = le_banco(&banco)
             .inspect_err(|err| eprintln!("acervo da Z-Wheel: {err}"))
             .ok()?;
+        // Sem o banco das cenas o acervo continua servindo: só não há logos.
+        let cenas = fonte
+            .le(CENAS)
+            .and_then(|dados| {
+                le_cenas(&dados)
+                    .inspect_err(|err| eprintln!("cenas da Z-Wheel: {err}"))
+                    .ok()
+            })
+            .unwrap_or_default();
         let mut fichas = HashMap::new();
-        for (class_id, pasta, titulos) in linhas {
+        for (game_id, class_id, pasta, titulos) in linhas {
             let pasta = pasta.trim_start_matches("./").trim_end_matches('/');
             let mut descricoes = HashMap::new();
             for idioma in ["pt", "en", "es"] {
@@ -73,12 +99,21 @@ impl Acervo {
                 .iter()
                 .filter_map(|nome| fonte.le(&format!("{pasta}/{nome}")))
                 .find_map(|dados| icon::decode(&dados).ok());
+            let classificacao = fonte
+                .le(&format!("{pasta}/rating.jpg"))
+                .and_then(|dados| icon::decode(&dados).ok());
+            let logo = cenas.get(&game_id).and_then(|cena| {
+                let cena = cena.trim_start_matches("./").trim_end_matches('/');
+                textura_qx(&fonte.le(&format!("{cena}/slidebanner.qxt"))?)
+            });
             fichas.insert(
                 class_id,
                 Ficha {
                     titulos,
                     descricoes,
                     capa,
+                    logo,
+                    classificacao,
                 },
             );
         }
@@ -94,18 +129,68 @@ impl Acervo {
     }
 }
 
-/// `(class_id, pasta da capa, títulos por idioma)` de cada jogo do banco.
-fn le_banco(dados: &[u8]) -> rusqlite::Result<Vec<(u32, String, HashMap<String, String>)>> {
-    // O SQLite só abre arquivo. Copiar para o cache serve às duas origens igual, e a Z-Wheel
-    // que estiver rodando nunca tem o banco dela aberto por nós.
-    let copia = crate::loader::archive::cache_dir().join("z-wheel-tt_game_info.db");
+/// Abre uma cópia do banco `nome` com o conteúdo `dados`.
+///
+/// O SQLite só abre arquivo. Copiar para o cache serve às duas origens igual, e a Z-Wheel que
+/// estiver rodando nunca tem o banco dela aberto por nós.
+fn abre_copia(nome: &str, dados: &[u8]) -> rusqlite::Result<rusqlite::Connection> {
+    let copia = crate::loader::archive::cache_dir().join(format!("z-wheel-{nome}.db"));
     if let Some(pasta) = copia.parent() {
         let _ = std::fs::create_dir_all(pasta);
     }
     std::fs::write(&copia, dados)
         .map_err(|err| rusqlite::Error::ToSqlConversionFailure(err.into()))?;
-    let conexao =
-        rusqlite::Connection::open_with_flags(&copia, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    rusqlite::Connection::open_with_flags(&copia, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+}
+
+/// A pasta da primeira cena de cada jogo, pelo `game_id`. O Crash e o Rally Master Pro têm duas,
+/// com o mesmo logo.
+fn le_cenas(dados: &[u8]) -> rusqlite::Result<HashMap<i64, String>> {
+    let conexao = abre_copia(CENAS, dados)?;
+    let mut consulta = conexao
+        .prepare("SELECT owner, path FROM ASSETS WHERE type = ?1 AND owner <> 0 ORDER BY dslid")?;
+    let linhas = consulta.query_map([TIPO_CENA], |linha| {
+        Ok((linha.get::<_, i64>(0)?, linha.get::<_, String>(1)?))
+    })?;
+    let mut cenas = HashMap::new();
+    for linha in linhas {
+        let (jogo, pasta) = linha?;
+        cenas.entry(jogo).or_insert(pasta);
+    }
+    Ok(cenas)
+}
+
+/// Uma textura do QXEngine, no único formato que os logos usam.
+///
+/// O cabeçalho tem a assinatura `QX\0\0QXT\0`, a largura em `+12`, a altura em `+16` e o formato
+/// em `+20`; os texels começam em `+40`. As texturas dos modelos usam outros formatos, que ficam
+/// para quando os modelos forem lidos.
+fn textura_qx(dados: &[u8]) -> Option<Image> {
+    if dados.get(..8)? != b"QX\0\0QXT\0" {
+        return None;
+    }
+    let campo = |em: usize| Some(u32::from_le_bytes(dados.get(em..em + 4)?.try_into().ok()?));
+    let (largura, altura, formato) = (campo(12)? as usize, campo(16)? as usize, campo(20)?);
+    let blocos = largura.div_ceil(4) * altura.div_ceil(4) * 8;
+    if formato != QXT_ATC_RGB || largura == 0 || altura == 0 || largura * altura > 1024 * 1024 {
+        return None;
+    }
+    let texels = dados.get(QXT_CABECALHO..QXT_CABECALHO + blocos)?;
+    let rgba = crate::video::atc::decode(texels, largura, altura, false)
+        .into_iter()
+        .flatten()
+        .collect();
+    Some(Image {
+        width: largura,
+        height: altura,
+        rgba,
+    })
+}
+
+/// `(game_id, class_id, pasta da capa, títulos por idioma)` de cada jogo do banco.
+#[allow(clippy::type_complexity)]
+fn le_banco(dados: &[u8]) -> rusqlite::Result<Vec<(i64, u32, String, HashMap<String, String>)>> {
+    let conexao = abre_copia(BANCO, dados)?;
     let mut titulos: HashMap<i64, HashMap<String, String>> = HashMap::new();
     let mut consulta = conexao.prepare("SELECT game_id, lang_id, titletext FROM TITLETEXT")?;
     let linhas = consulta.query_map([], |linha| {
@@ -135,6 +220,7 @@ fn le_banco(dados: &[u8]) -> rusqlite::Result<Vec<(u32, String, HashMap<String, 
         let (jogo, class_id, pasta) = linha?;
         let Some(pasta) = pasta else { continue };
         jogos.push((
+            jogo,
             class_id as u32,
             pasta,
             titulos.remove(&jogo).unwrap_or_default(),
@@ -260,6 +346,9 @@ mod pacote_real {
         let caminho = PathBuf::from(std::env::var("ZEEBX_Z_WHEEL").expect("ZEEBX_Z_WHEEL"));
         let acervo = Acervo::carrega(&caminho).expect("acervo");
         let com_capa = acervo.fichas.values().filter(|f| f.capa.is_some()).count();
+        let com_logo = acervo.fichas.values().filter(|f| f.logo.is_some()).count();
+        println!("{com_logo} com logo");
+        assert_eq!(com_logo, 12);
         let alien = acervo
             .fichas
             .values()

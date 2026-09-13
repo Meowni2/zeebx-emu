@@ -6,6 +6,7 @@
 //! que é o que mantém a janela viva enquanto o jogo corre.
 
 pub mod acervo;
+mod vitrine;
 pub mod gpu;
 pub mod i18n;
 pub mod library;
@@ -49,14 +50,6 @@ const SCREEN: [usize; 2] = [640, 480];
 
 /// A imagem de quem não tem imagem nenhuma.
 const PLACEHOLDER: &[u8] = include_bytes!("../../assets/zeebx.png");
-
-/// Largura de um cartão da biblioteca, e o quadro em que a imagem cabe: em pé, na proporção da
-/// caixa dos jogos que a Z-Wheel traz (170×220). Um ícone de `.mif` fica centrado nele.
-const CARD_WIDTH: f32 = 136.0;
-const CARD_ART: f32 = 112.0;
-const CARD_ART_ALTURA: f32 = 145.0;
-/// Espaço reservado ao título, embaixo. Duas linhas.
-const CARD_TEXT: f32 = 36.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -137,6 +130,8 @@ pub struct App {
     z_wheel: Option<PathBuf>,
     /// Capas, nomes e descrições que a Z-Wheel traz dos jogos.
     acervo: Option<acervo::Acervo>,
+    /// A escolha e a animação da biblioteca.
+    vitrine: vitrine::Vitrine,
     teclado_apertado: HashSet<egui::Key>,
     teclas_entregues: HashSet<u32>,
     /// O que dizer sobre a última tentativa de exportar o log.
@@ -233,6 +228,7 @@ impl App {
             aberto_pela_z_wheel: false,
             z_wheel: None,
             acervo: None,
+            vitrine: Default::default(),
             teclado_apertado: HashSet::new(),
             teclas_entregues: HashSet::new(),
             log_status: None,
@@ -296,6 +292,8 @@ impl App {
             });
         self.acervo = self.z_wheel.as_deref().and_then(acervo::Acervo::carrega);
         self.art_cache.clear();
+        self.vitrine.logos.clear();
+        self.vitrine.classificacoes.clear();
     }
 
     /// O nome com que um jogo aparece: o oficial da Z-Wheel no idioma da interface, quando ela
@@ -442,94 +440,6 @@ impl App {
                     self.sync_unlocked = None;
                 }
             });
-        }
-    }
-
-    /// Os jogos que a lista mostra: todos menos a Z-Wheel, que abre pela barra de cima.
-    fn visiveis(&self) -> Vec<usize> {
-        (0..self.games.len())
-            .filter(|&i| self.games[i].clsid != Some(crate::session::Z_WHEEL))
-            .collect()
-    }
-
-    fn library_screen(&mut self, ui: &mut egui::Ui) {
-        let Some(dir) = self.settings.roms_dir.clone() else {
-            ui.vertical_centered(|ui| {
-                ui.add_space(48.0);
-                ui.label(self.tr("library.no_folder"));
-                if ui.button(self.tr("nav.settings")).clicked() {
-                    self.settings_open = true;
-                }
-            });
-            return;
-        };
-
-        ui.horizontal(|ui| {
-            ui.label(
-                self.catalog
-                    .format("library.count", &[("count", &self.visiveis().len().to_string())]),
-            );
-            if ui.button(self.tr("library.rescan")).clicked() {
-                self.rescan();
-            }
-        });
-        ui.separator();
-
-        if let Some(error) = &self.error {
-            ui.colored_label(ui.visuals().error_fg_color, error);
-            ui.separator();
-        }
-
-        if self.games.is_empty() {
-            ui.label(
-                self.catalog
-                    .format("library.empty", &[("folder", &dir.display().to_string())]),
-            );
-            return;
-        }
-
-        // A escolha sai do laço: mexer em `self` enquanto a lista está emprestada não passa
-        // pelo compilador, e guardar o caminho é mais claro que contorná-lo.
-        let mut chosen = None;
-        let idioma = self.catalog.current().to_string();
-        let mut lista: Vec<(String, usize)> = self
-            .visiveis()
-            .into_iter()
-            .map(|i| (self.titulo_de(&self.games[i]), i))
-            .collect();
-        lista.sort_by_key(|(titulo, _)| titulo.to_lowercase());
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            // Os cartões se acomodam sozinhos na largura da janela em vez de ocuparem um
-            // número fixo de colunas: a mesma tela serve numa janela estreita e numa larga.
-            ui.horizontal_wrapped(|ui| {
-                let Self {
-                    games,
-                    art_cache,
-                    placeholder,
-                    acervo,
-                    ..
-                } = self;
-                for (titulo, i) in &lista {
-                    let game = &games[*i];
-                    let ficha = game.clsid.and_then(|cls| acervo.as_ref()?.ficha(cls));
-                    let texture = art_cache.entry(game.path.clone()).or_insert_with(|| {
-                        // A capa deixada ao lado do jogo é escolha de quem montou a pasta, e vale
-                        // mais que a da Z-Wheel; a da Z-Wheel vale mais que o ícone do `.mif`.
-                        let capa = ficha
-                            .and_then(|ficha| ficha.capa.as_ref())
-                            .filter(|_| library::cover(&game.path).is_none());
-                        upload_art_of(ui.ctx(), game, capa, placeholder)
-                    });
-                    let descricao = ficha.and_then(|ficha| ficha.descricao(&idioma));
-                    if game_card(ui, titulo, descricao, game.clsid, texture.as_ref()).clicked() {
-                        chosen = Some(game.path.clone());
-                    }
-                }
-            });
-        });
-        if let Some(path) = chosen {
-            self.aberto_pela_z_wheel = false;
-            self.play(path);
         }
     }
 
@@ -681,6 +591,21 @@ impl App {
                 changed = true;
             }
         }
+
+        ui.add_space(16.0);
+        ui.label(self.tr("settings.library_view"));
+        ui.weak(self.tr("settings.library_view.hint"));
+        ui.horizontal(|ui| {
+            use crate::ui::settings::ModoDaBiblioteca;
+            for (modo, chave) in [
+                (ModoDaBiblioteca::Grade, "settings.library_view.grid"),
+                (ModoDaBiblioteca::Slider, "settings.library_view.slider"),
+            ] {
+                changed |= ui
+                    .selectable_value(&mut self.settings.biblioteca, modo, self.catalog.get(chave))
+                    .changed();
+            }
+        });
 
         ui.add_space(16.0);
         changed |= self.secao_da_z_wheel(ui);
@@ -1145,6 +1070,36 @@ impl App {
         let mut changed = false;
         let graphics = &mut self.settings.graphics;
 
+        let mut janela_mudou = false;
+        for (rotulo, modo) in [
+            ("graphics.window.main", &mut graphics.janela),
+            ("graphics.window.game", &mut graphics.janela_do_jogo),
+        ] {
+            ui.horizontal(|ui| {
+                ui.label(self.catalog.get(rotulo));
+                egui::ComboBox::from_id_salt(rotulo)
+                    .selected_text(self.catalog.get(modo.chave()))
+                    .show_ui(ui, |ui| {
+                        for opcao in crate::ui::settings::ModoDaJanela::TODOS {
+                            let mudou = ui
+                                .selectable_value(modo, opcao, self.catalog.get(opcao.chave()))
+                                .changed();
+                            janela_mudou |= mudou && rotulo == "graphics.window.main";
+                            changed |= mudou;
+                        }
+                    });
+            });
+        }
+        // A principal já está aberta: a escolha vale na hora. A do jogo vale no próximo jogo.
+        if janela_mudou {
+            for comando in graphics.janela.comandos() {
+                ui.ctx()
+                    .send_viewport_cmd_to(egui::ViewportId::ROOT, comando);
+            }
+        }
+        ui.weak(self.catalog.get("graphics.window.hint"));
+
+        ui.add_space(12.0);
         ui.label(self.catalog.get("graphics.scaling"));
         for option in Scaling::ALL {
             let label = self.catalog.get(option.key()).to_string();
@@ -1594,10 +1549,12 @@ impl App {
             _ => self.catalog.get("library.unknown_title").to_string(),
         };
         let id = egui::ViewportId::from_hash_of("jogo");
-        let builder = egui::ViewportBuilder::default()
-            .with_title(format!("{title} — Zeebx"))
-            .with_inner_size([SCREEN[0] as f32, SCREEN[1] as f32 + 32.0])
-            .with_min_inner_size([320.0, 240.0]);
+        let builder = self.settings.graphics.janela_do_jogo.no_construtor(
+            egui::ViewportBuilder::default()
+                .with_title(format!("{title} — Zeebx"))
+                .with_inner_size([SCREEN[0] as f32, SCREEN[1] as f32 + 32.0])
+                .with_min_inner_size([320.0, 240.0]),
+        );
         let mut close = false;
         ctx.show_viewport_immediate(id, builder, |ctx, _class| {
             close = self.playing_screen(ctx);
@@ -1844,6 +1801,12 @@ impl App {
                 return false;
             }
         }
+        // Aberto pela biblioteca, o jogo que sai sozinho fecha a janela dele: a biblioteca é a
+        // tela inicial de quem não passou pela Z-Wheel, e uma janela parada no último quadro não
+        // serve para nada. Uma falha continua na tela, com o motivo.
+        if session.saiu_sozinho() {
+            return true;
+        }
         // Sem barra superior, o teclado é o único caminho: `Esc` encerra e `P` pausa. Nenhuma
         // das duas colide com o controle do Zeebo, que usa setas, Z, X, C, V, Q, W, F, G, H,
         // Backspace e Enter.
@@ -1852,6 +1815,7 @@ impl App {
         if ctx.input(|i| i.key_pressed(egui::Key::P)) {
             self.paused = !self.paused;
         }
+        alterna_tela_cheia(ctx);
 
         let smooth = self.settings.graphics.smooth;
         // O quadro em RGB565, do jeito que a superfície do console o guarda: é o que o pintor
@@ -2053,6 +2017,7 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // A janela principal é só a biblioteca. As configurações e o jogo são janelas do
         // sistema, cada uma com o seu título e o seu botão de fechar.
+        alterna_tela_cheia(ctx);
         egui::TopBottomPanel::top("nav").show(ctx, |ui| self.nav(ui));
         egui::CentralPanel::default().show(ctx, |ui| self.library_screen(ui));
         if self.settings_open {
@@ -2114,82 +2079,17 @@ fn upload_art(ctx: &egui::Context, art: &PadArt) -> ArtTextures {
 /// lista de botões.
 const ART_HEIGHT: f32 = 210.0;
 
-/// Manda a imagem de um jogo para a placa de vídeo, caindo na reserva quando ele não tem uma.
-fn upload_art_of(
-    ctx: &egui::Context,
-    game: &Game,
-    capa: Option<&crate::video::icon::Image>,
-    placeholder: &Option<crate::video::icon::Image>,
-) -> Option<egui::TextureHandle> {
-    let image = capa.or(game.art.as_ref()).or(placeholder.as_ref())?;
-    let color = egui::ColorImage::from_rgba_unmultiplied([image.width, image.height], &image.rgba);
-    // Um ícone de 26 pixels aparece ampliado quatro vezes: interpolar viraria um borrão, e o
-    // bloco quadrado é o que o console mostrava. Uma imagem grande já entra reduzida, e aí a
-    // interpolação é que evita o serrilhado.
-    let options = match image.width < CARD_ART as usize && image.height < CARD_ART_ALTURA as usize {
-        true => egui::TextureOptions::NEAREST,
-        false => egui::TextureOptions::LINEAR,
-    };
-    Some(ctx.load_texture(format!("capa-{}", game.path.display()), color, options))
-}
-
-/// Um cartão da biblioteca: a imagem do jogo, o título embaixo, e o clique que o abre.
-fn game_card(
-    ui: &mut egui::Ui,
-    titulo: &str,
-    descricao: Option<&str>,
-    clsid: Option<u32>,
-    texture: Option<&egui::TextureHandle>,
-) -> egui::Response {
-    let size = egui::vec2(CARD_WIDTH, CARD_ART_ALTURA + CARD_TEXT + 24.0);
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-    let visuals = ui.style().interact(&response);
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 8.0, visuals.weak_bg_fill);
-    painter.rect_stroke(rect, 8.0, visuals.bg_stroke, egui::StrokeKind::Inside);
-
-    let frame = egui::Rect::from_center_size(
-        egui::pos2(rect.center().x, rect.top() + 12.0 + CARD_ART_ALTURA / 2.0),
-        egui::vec2(CARD_ART, CARD_ART_ALTURA),
-    );
-    if let Some(texture) = texture {
-        // A imagem cabe no quadro sem esticar: um ícone de 65×42 deformado até virar quadrado
-        // fica pior que um com sobra dos lados.
-        let source = texture.size_vec2();
-        let scale = (frame.width() / source.x).min(frame.height() / source.y);
-        let placed = egui::Rect::from_center_size(frame.center(), source * scale);
-        painter.image(
-            texture.id(),
-            placed,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            egui::Color32::WHITE,
-        );
+/// `F11`, ou `Alt+Enter`, põe e tira a janela em foco da tela cheia.
+///
+/// O `Alt+Enter` só vale com o `Alt`: o `Enter` sozinho é botão do controle no teclado.
+fn alterna_tela_cheia(ctx: &egui::Context) {
+    let pediu = ctx.input(|i| {
+        i.key_pressed(egui::Key::F11) || (i.modifiers.alt && i.key_pressed(egui::Key::Enter))
+    });
+    if pediu {
+        let cheia = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!cheia));
     }
-
-    let galley = painter.layout(
-        titulo.to_string(),
-        egui::FontId::proportional(12.0),
-        visuals.text_color(),
-        rect.width() - 16.0,
-    );
-    let text = egui::pos2(
-        rect.center().x - galley.size().x / 2.0,
-        frame.bottom() + 8.0,
-    );
-    painter.galley(text, galley, visuals.text_color());
-
-    // O cartão corta o título comprido, então o nome inteiro fica à espera do ponteiro, com a
-    // descrição da Z-Wheel quando ela conhece o jogo.
-    response.on_hover_ui(|ui| {
-        ui.set_max_width(320.0);
-        ui.strong(titulo);
-        if let Some(descricao) = descricao {
-            ui.label(descricao);
-        }
-        if let Some(clsid) = clsid {
-            ui.weak(format!("{clsid:#010x}"));
-        }
-    })
 }
 
 /// A luz, como a interface a entende.

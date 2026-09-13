@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use eframe::egui;
 use serde::{Deserialize, Serialize};
 
 /// Nome da pasta do emulador dentro do diretório de configuração do sistema.
@@ -17,9 +18,10 @@ const FILE_NAME: &str = "settings.json";
 #[serde(rename_all = "snake_case")]
 pub enum Scaling {
     /// Só múltiplos inteiros do tamanho original. Nunca borra, mas sobra borda.
-    #[default]
     Integer,
-    /// O maior tamanho que cabe na janela, mantendo a proporção.
+    /// O maior tamanho que cabe na janela, mantendo a proporção. É o padrão: numa janela
+    /// maximizada o pixel inteiro deixa uma moldura larga à toa.
+    #[default]
     Fit,
     /// Preenche a janela inteira, custe o que custar à proporção.
     Stretch,
@@ -35,6 +37,46 @@ impl Scaling {
             Self::Fit => "graphics.scaling.fit",
             Self::Stretch => "graphics.scaling.stretch",
         }
+    }
+}
+
+/// Como uma janela abre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModoDaJanela {
+    /// Do tamanho que o emulador escolhe.
+    Janela,
+    #[default]
+    Maximizada,
+    TelaCheia,
+}
+
+impl ModoDaJanela {
+    pub const TODOS: [Self; 3] = [Self::Janela, Self::Maximizada, Self::TelaCheia];
+
+    pub fn chave(self) -> &'static str {
+        match self {
+            Self::Janela => "graphics.window.windowed",
+            Self::Maximizada => "graphics.window.maximized",
+            Self::TelaCheia => "graphics.window.fullscreen",
+        }
+    }
+
+    /// Aplica o modo a uma janela que ainda vai abrir.
+    pub fn no_construtor(self, janela: egui::ViewportBuilder) -> egui::ViewportBuilder {
+        match self {
+            Self::Janela => janela,
+            Self::Maximizada => janela.with_maximized(true),
+            Self::TelaCheia => janela.with_fullscreen(true),
+        }
+    }
+
+    /// Os comandos que levam uma janela aberta a este modo.
+    pub fn comandos(self) -> [egui::ViewportCommand; 2] {
+        [
+            egui::ViewportCommand::Fullscreen(self == Self::TelaCheia),
+            egui::ViewportCommand::Maximized(self == Self::Maximizada),
+        ]
     }
 }
 
@@ -75,6 +117,10 @@ impl Default for DebugView {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Graphics {
+    /// Como a janela principal abre.
+    pub janela: ModoDaJanela,
+    /// Como a janela do jogo abre.
+    pub janela_do_jogo: ModoDaJanela,
     pub scaling: Scaling,
     /// Interpolar ao ampliar. Desligado, o pixel do console aparece como bloco.
     pub smooth: bool,
@@ -121,6 +167,8 @@ pub struct Graphics {
 impl Default for Graphics {
     fn default() -> Self {
         Self {
+            janela: ModoDaJanela::Maximizada,
+            janela_do_jogo: ModoDaJanela::Maximizada,
             scaling: Scaling::default(),
             smooth: false,
             keep_aspect: true,
@@ -163,11 +211,24 @@ pub struct Settings {
     pub roms_dir: Option<PathBuf>,
     /// O pacote da Z-Wheel: abre pela barra de cima e empresta as capas à biblioteca.
     pub z_wheel_path: Option<PathBuf>,
+    /// Como a biblioteca mostra os jogos.
+    pub biblioteca: ModoDaBiblioteca,
     pub graphics: Graphics,
     pub debug: DebugView,
     pub audio: Audio,
     pub controls: crate::input::bindings::Controls,
     pub z_wheel: ZWheel,
+}
+
+/// A disposição da biblioteca na tela principal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModoDaBiblioteca {
+    /// Cartões lado a lado, quantos couberem na largura.
+    #[default]
+    Grade,
+    /// Um jogo por vez, no jeito da Z-Wheel: o rolo de logos em cima e as caixas passando.
+    Slider,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -279,6 +340,7 @@ mod tests {
             language: Some("pt-BR".into()),
             roms_dir: Some(PathBuf::from("/jogos/zeebo")),
             z_wheel_path: Some(PathBuf::from("/jogos/Z-Wheel.zip")),
+            biblioteca: ModoDaBiblioteca::Slider,
             graphics: Graphics {
                 scaling: Scaling::Fit,
                 ..Graphics::default()
