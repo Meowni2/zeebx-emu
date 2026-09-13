@@ -172,6 +172,7 @@ impl<C: CpuBackend> Machine<C> {
     ///
     /// Com a serial ligada, a linha também vai crua para o arquivo. Ver [`Machine::liga_serial`].
     pub(super) fn record_debug(&mut self, message: String) {
+        self.procura_calibracao(&message);
         // O mesmo relógio que o resto do emulador reporta: o `clock_us` sozinho ignora o
         // tempo que as instruções gastaram, e a serial ficaria atrasada em relação ao rastro.
         let agora = self.now_ms();

@@ -1902,6 +1902,10 @@ pub struct Machine<C: CpuBackend> {
     /// O contador de pacotes do receptor do Boomerang. Ver [`Machine::pacote_do_boomerang`].
     boomerang_sequencia: u8,
     ultimo_relatorio_boomerang_us: u64,
+    ultimo_pacote_boomerang_us: u64,
+    /// Quantas vezes o jogo começou e terminou uma calibração do movimento, pelo que dá para
+    /// ver de fora. Ver [`Machine::calibracao`].
+    calibracoes: (u32, u32),
     /// Teclas apertadas e ainda não entregues, como `(código AVK, apertada)`.
     teclas: std::collections::VecDeque<(u32, bool)>,
     /// Os últimos toques entregues, para o relatório.
@@ -2440,6 +2444,8 @@ impl<C: CpuBackend> Machine<C> {
             movimento: [[0.0, 0.0, 1.0]; input::PORTAS],
             boomerang_sequencia: 0,
             ultimo_relatorio_boomerang_us: 0,
+            ultimo_pacote_boomerang_us: 0,
+            calibracoes: (0, 0),
             // Uma porta com controle é o que sempre houve; a interface muda isto ao aplicar os
             // ajustes, e o modo sem janela nunca mexe.
             portas: std::array::from_fn(|n| {

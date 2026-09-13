@@ -557,6 +557,12 @@ impl Session {
         self.machine.set_port_pad(porta, pad);
     }
 
+    /// As calibrações do movimento que o jogo começou e terminou. Ver
+    /// [`crate::machine::Machine::calibracao`].
+    pub fn calibracao(&self) -> (u32, u32) {
+        self.machine.calibracao()
+    }
+
     /// A aceleração de uma porta com Boomerang. Ver [`crate::machine::Machine::set_port_motion`].
     pub fn set_port_motion(&mut self, porta: usize, aceleracao: [f32; 3]) {
         self.machine.set_port_motion(porta, aceleracao);

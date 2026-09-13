@@ -213,11 +213,28 @@ pub struct Settings {
     pub z_wheel_path: Option<PathBuf>,
     /// Como a biblioteca mostra os jogos.
     pub biblioteca: ModoDaBiblioteca,
+    pub movimento: Movimento,
     pub graphics: Graphics,
     pub debug: DebugView,
     pub audio: Audio,
     pub controls: crate::input::bindings::Controls,
     pub z_wheel: ZWheel,
+}
+
+/// O controle de movimento, fora do mapeamento de cada porta.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Movimento {
+    /// O aviso no canto do jogo enquanto ele calibra o Boomerang.
+    pub aviso_de_calibracao: bool,
+}
+
+impl Default for Movimento {
+    fn default() -> Self {
+        Self {
+            aviso_de_calibracao: true,
+        }
+    }
 }
 
 /// A disposição da biblioteca na tela principal.
@@ -341,6 +358,9 @@ mod tests {
             roms_dir: Some(PathBuf::from("/jogos/zeebo")),
             z_wheel_path: Some(PathBuf::from("/jogos/Z-Wheel.zip")),
             biblioteca: ModoDaBiblioteca::Slider,
+            movimento: Movimento {
+                aviso_de_calibracao: false,
+            },
             graphics: Graphics {
                 scaling: Scaling::Fit,
                 ..Graphics::default()

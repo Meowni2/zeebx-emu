@@ -386,6 +386,35 @@ impl<C: CpuBackend> Machine<C> {
         }
     }
 
+    /// `(começadas, terminadas)`: as calibrações do movimento que o jogo fez até agora.
+    ///
+    /// Nenhum jogo avisa o sistema, então isto é o que dá para ver de fora: as mensagens de
+    /// depuração do jogo ("calib" ou o `ACCEL 1` do Crash Nitro Kart começam; o `ACCEL…CENTER`
+    /// dele termina). A
+    /// interface completa o resto olhando se o controle está parado.
+    ///
+    /// **A primeira leitura do Boomerang não serve de sinal.** Todo jogo lê o controle na
+    /// abertura, e os da Boomerang Sports só calibram depois da escolha de personagem: o aviso
+    /// abria no lugar errado. Eles também não deixam rastro de texto na hora — o nome das telas
+    /// de calibração só passa pelas funções do BREW na pré-carga —, e o estado da calibração fica
+    /// num objeto cujo layout muda de jogo para jogo.
+    pub fn calibracao(&self) -> (u32, u32) {
+        self.calibracoes
+    }
+
+    /// Lê uma mensagem de depuração do jogo à procura de calibração.
+    pub(super) fn procura_calibracao(&mut self, mensagem: &str) {
+        let minuscula = mensagem.to_ascii_lowercase();
+        // O Crash Nitro Kart escreve "ACCEL 1" ao reconhecer o Boomerang, e abre a calibração em
+        // seguida.
+        if minuscula.contains("calib") || matches!(mensagem.trim(), "ACCEL 1" | "ACCEL 2") {
+            self.calibracoes.0 += 1;
+        }
+        if minuscula.contains("center =") {
+            self.calibracoes.1 += 1;
+        }
+    }
+
     pub(super) fn e_boomerang(&self, porta: usize) -> bool {
         self.portas.get(porta).copied().flatten() == Some(crate::input::bindings::Aparelho::Boomerang)
     }
@@ -409,7 +438,7 @@ impl<C: CpuBackend> Machine<C> {
     ///   marca pacote perdido, e na partida ele espera o contador mudar para dar o receptor como
     ///   vivo. Parado, o jogo fica preso nesse laço.
     ///
-    /// Cada leitura é um pacote novo, e os dois jogadores se alternam nele.
+    /// Um pacote novo a cada [`BOOMERANG_PERIODO_US`], alternando os dois jogadores.
     pub(super) fn pacote_do_boomerang(&mut self, addr: u32) -> Result<(), CpuError> {
         if addr == 0 {
             return Ok(());
@@ -419,15 +448,29 @@ impl<C: CpuBackend> Machine<C> {
         const ESCALA: f32 = 60.0;
         const COS: f32 = 0.94;
         const SEN: f32 = 0.342;
+        // **Um pacote novo por período do receptor, não por leitura.** O Queimada lê três vezes por
+        // quadro e só processa os botões de um jogador numa leitura sem pacote novo dele: com um
+        // pacote a cada leitura, nenhum aperto chegava. Dentro do período, a leitura repete o
+        // último pacote.
+        let agora = self.now_us();
+        if agora.saturating_sub(self.ultimo_pacote_boomerang_us) >= BOOMERANG_PERIODO_US {
+            self.ultimo_pacote_boomerang_us = agora;
+            self.boomerang_sequencia = self.boomerang_sequencia.wrapping_add(1);
+        }
         let sequencia = self.boomerang_sequencia;
-        self.boomerang_sequencia = sequencia.wrapping_add(1);
+        // Os dois jogadores se alternam sempre; o que não tem controle vai como "desconectado".
+        // O Queimada precisa dessa alternância para processar os botões.
+        let boomerangs = self.portas_com(crate::input::bindings::Aparelho::Boomerang);
         let jogador = usize::from(sequencia & 1);
-        let porta = self
-            .portas_com(crate::input::bindings::Aparelho::Boomerang)
-            .get(jogador)
-            .copied();
+        let porta = boomerangs.get(jogador).copied();
         let mut campos = [0u32; input::POSITION_INFO_WORDS];
-        let [x, y, z] = porta.map_or([0.0, 0.0, 1.0], |p| self.movimento[p]);
+        // **O jogador desconectado leva a aceleração do primeiro.** O Crash Nitro Kart lê o
+        // acelerômetro sem olhar de quem é o pacote: com o segundo jogador entrando parado a cada
+        // relatório, a direção pulava entre o movimento e o repouso, o kart virava a esmo e a
+        // calibração passava sem esperar. O Queimada ignora a aceleração de quem está desconectado.
+        let [x, y, z] = porta
+            .or(boomerangs.first().copied())
+            .map_or([0.0, 0.0, 1.0], |p| self.movimento[p]);
         // O inverso do giro que o jogo aplica: assim ele chega à aceleração que entregamos.
         let bruto = [COS * x - SEN * y, SEN * x + COS * y, z];
         for (campo, valor) in campos[1..4].iter_mut().zip(bruto) {
@@ -456,7 +499,7 @@ impl<C: CpuBackend> Machine<C> {
             Some(_) => 1,
             None => 0,
         };
-        campos[5] = (tipo << 1) | u32::from(sequencia & 1);
+        campos[5] = (tipo << 1) | jogador as u32;
         campos[8] = u32::from(sequencia);
         let bytes: Vec<u8> = campos.iter().flat_map(|w| w.to_le_bytes()).collect();
         self.cpu.write_mem(addr, &bytes)

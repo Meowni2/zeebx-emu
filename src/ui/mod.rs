@@ -51,6 +51,80 @@ const SCREEN: [usize; 2] = [640, 480];
 /// A imagem de quem não tem imagem nenhuma.
 const PLACEHOLDER: &[u8] = include_bytes!("../../assets/zeebx.png");
 
+/// Quanto tempo o controle precisa ficar parado para o aviso dar a calibração por feita.
+const PARADO_PARA_CALIBRAR: Duration = Duration::from_millis(1500);
+
+/// O estado do aviso de calibração na janela do jogo.
+struct AvisoDeCalibracao {
+    aberto_em: std::time::Instant,
+    /// As últimas leituras, para dizer se o controle está parado.
+    recentes: std::collections::VecDeque<[f32; 3]>,
+    parado_desde: Option<std::time::Instant>,
+    concluido_em: Option<std::time::Instant>,
+}
+
+impl AvisoDeCalibracao {
+    /// Quanto a leitura pode variar e o controle ainda contar como parado, em g.
+    const TOLERANCIA: f32 = 0.05;
+    const LEITURAS: usize = 20;
+    /// A animação até ficar reto, e quanto o aviso fica depois dela.
+    const ASSENTA: Duration = Duration::from_millis(400);
+    const FICA: Duration = Duration::from_millis(1200);
+    /// Um aviso que nunca conclui não fica para sempre na tela.
+    const MAXIMO: Duration = Duration::from_secs(30);
+
+    fn novo(agora: std::time::Instant) -> Self {
+        Self {
+            aberto_em: agora,
+            recentes: Default::default(),
+            parado_desde: None,
+            concluido_em: None,
+        }
+    }
+
+    /// Guarda uma leitura e diz se o controle está parado.
+    fn amostra(&mut self, leitura: [f32; 3], agora: std::time::Instant) -> bool {
+        if self.recentes.len() == Self::LEITURAS {
+            self.recentes.pop_front();
+        }
+        self.recentes.push_back(leitura);
+        let parado = self.recentes.len() == Self::LEITURAS
+            && (0..3).all(|eixo| {
+                let (menor, maior) = self.recentes.iter().fold((f32::MAX, f32::MIN), |(a, b), l| {
+                    (a.min(l[eixo]), b.max(l[eixo]))
+                });
+                maior - menor < Self::TOLERANCIA
+            });
+        match (parado, self.parado_desde) {
+            (true, None) => self.parado_desde = Some(agora),
+            (false, _) => self.parado_desde = None,
+            _ => {}
+        }
+        parado
+    }
+
+    fn parado_ha(&self, agora: std::time::Instant) -> Duration {
+        self.parado_desde.map_or(Duration::ZERO, |desde| agora - desde)
+    }
+
+    fn conclui(&mut self, agora: std::time::Instant) {
+        self.concluido_em.get_or_insert(agora);
+    }
+
+    fn progresso_da_conclusao(&self, agora: std::time::Instant) -> f32 {
+        self.concluido_em.map_or(0.0, |em| {
+            ((agora - em).as_secs_f32() / Self::ASSENTA.as_secs_f32()).clamp(0.0, 1.0)
+        })
+    }
+
+    fn expirou(&self, agora: std::time::Instant) -> bool {
+        agora - self.aberto_em > Self::MAXIMO
+            || self
+                .concluido_em
+                .is_some_and(|em| agora - em > Self::ASSENTA + Self::FICA)
+    }
+}
+
 /// Quantas leituras paradas a calibração do movimento junta: meio segundo a 100 por segundo.
 const AMOSTRAS_DA_CALIBRACAO: usize = 50;
 
@@ -145,6 +219,9 @@ pub struct App {
     boomerang_textura: Option<egui::TextureHandle>,
     /// A calibração do movimento em andamento: a porta e as leituras juntadas até agora.
     calibrando: Option<(usize, Vec<[f32; 3]>)>,
+    /// O aviso de calibração aberto na janela do jogo, e as calibrações da sessão já vistas.
+    aviso_calibracao: Option<AvisoDeCalibracao>,
+    calibracoes_vistas: (u32, u32),
     teclas_entregues: HashSet<u32>,
     /// O que dizer sobre a última tentativa de exportar o log.
     log_status: Option<String>,
@@ -245,6 +322,8 @@ impl App {
             wiimotes: crate::input::wiimote::Wiimotes::inicia(),
             boomerang_textura: None,
             calibrando: None,
+            aviso_calibracao: None,
+            calibracoes_vistas: (0, 0),
             teclas_entregues: HashSet::new(),
             log_status: None,
             log_dismissed: false,
@@ -346,6 +425,9 @@ impl App {
 
     fn play(&mut self, path: PathBuf) {
         self.error = None;
+        // As contagens de calibração são da sessão: a nova começa do zero.
+        self.calibracoes_vistas = (0, 0);
+        self.aviso_calibracao = None;
         self.pad_anterior = Default::default();
         self.teclado_apertado.clear();
         self.teclas_entregues.clear();
@@ -721,11 +803,9 @@ impl App {
     /// A prévia do Boomerang: a imagem inclina com o Wii Remote, e embaixo ficam o que está
     /// apertado, a aceleração e a calibração.
     ///
-    /// O desenho é o controle visto de cima, e a gravidade não mede giro nesse plano. Então a
-    /// prévia o trata como visto de lado: levantar a ponta (inclinar para a frente) gira a
-    /// imagem, e girar o controle em torno do próprio comprimento a achata, como um cartão
-    /// virando. As duas saem da gravidade e só valem com o controle quase parado — é o mesmo que
-    /// os jogos fazem.
+    /// O desenho é a face do controle, e é assim que o jogador o vê segurando como volante: a
+    /// imagem gira pelo ângulo que o Crash Nitro Kart usa para virar. Sai da gravidade e só vale
+    /// com o controle quase parado — é o mesmo que os jogos fazem.
     fn boomerang_view(&mut self, ui: &mut egui::Ui) {
         self.gamepads.poll();
         ui.ctx().request_repaint();
@@ -750,28 +830,13 @@ impl App {
                 self.save();
             }
         }
-        let textura = self
-            .boomerang_textura
-            .get_or_insert_with(|| {
-                let imagem = crate::video::icon::decode(BOOMERANG)
-                    .map(|imagem| imagem.downscaled(480))
-                    .unwrap_or(crate::video::icon::Image {
-                        width: 1,
-                        height: 1,
-                        rgba: vec![0; 4],
-                    });
-                ui.ctx().load_texture(
-                    "boomerang",
-                    egui::ColorImage::from_rgba_unmultiplied(
-                        [imagem.width, imagem.height],
-                        &imagem.rgba,
-                    ),
-                    egui::TextureOptions::LINEAR,
-                )
-            })
-            .clone();
-        let arfagem = y.atan2((x * x + z * z).sqrt());
-        let rolagem = x.atan2(z);
+        let textura = self.textura_do_boomerang(ui.ctx());
+        // O ângulo de volante, o mesmo que o Crash Nitro Kart calcula: a gravidade no plano da
+        // face. Deitado, ela sai desse plano e o ângulo vira ruído, então a imagem só gira quando
+        // a gravidade está de fato ali.
+        let no_plano = (x * x + y * y).sqrt();
+        let volante = (-x).atan2(y);
+        let giro = volante * ((no_plano - 0.3) / 0.4).clamp(0.0, 1.0);
         let calibrando = self.calibrando.is_some();
         let mut calibrar = false;
         let mut restaurar = false;
@@ -780,11 +845,13 @@ impl App {
             let fonte = textura.size_vec2();
             let altura = largura * fonte.y / fonte.x;
             let (area, _) =
-                ui.allocate_exact_size(egui::vec2(largura, altura * 1.6), egui::Sense::hover());
-            let tamanho = egui::vec2(largura, altura * rolagem.cos().abs().max(0.12));
+                ui.allocate_exact_size(egui::vec2(largura, largura * 0.9), egui::Sense::hover());
             egui::Image::new(&textura)
-                .rotate(-arfagem, egui::Vec2::splat(0.5))
-                .paint_at(ui, egui::Rect::from_center_size(area.center(), tamanho));
+                .rotate(giro, egui::Vec2::splat(0.5))
+                .paint_at(
+                    ui,
+                    egui::Rect::from_center_size(area.center(), egui::vec2(largura, altura)),
+                );
 
             let nomes: Vec<&str> = ["up", "down", "left", "right", "b1", "b2", "back"]
                 .into_iter()
@@ -798,7 +865,7 @@ impl App {
             ui.label(estado);
             ui.monospace(format!(
                 "x {x:+.2}  y {y:+.2}  z {z:+.2} g   {}  {}",
-                format!("↕ {:+.0}°  ⟲ {:+.0}°", arfagem.to_degrees(), rolagem.to_degrees()),
+                format!("⟲ {:+.0}°", volante.to_degrees()),
                 nomes.join(" ")
             ));
             ui.horizontal(|ui| {
@@ -820,6 +887,125 @@ impl App {
             self.settings.controls.player_mut(porta).calibracao_movimento = Default::default();
             self.save();
         }
+    }
+
+    /// A imagem do Boomerang, subida uma vez e usada na prévia e no aviso de calibração.
+    fn textura_do_boomerang(&mut self, ctx: &egui::Context) -> egui::TextureHandle {
+        self.boomerang_textura
+            .get_or_insert_with(|| {
+                let imagem = crate::video::icon::decode(BOOMERANG)
+                    .map(|imagem| imagem.downscaled(480))
+                    .unwrap_or(crate::video::icon::Image {
+                        width: 1,
+                        height: 1,
+                        rgba: vec![0; 4],
+                    });
+                ctx.load_texture(
+                    "boomerang",
+                    egui::ColorImage::from_rgba_unmultiplied(
+                        [imagem.width, imagem.height],
+                        &imagem.rgba,
+                    ),
+                    egui::TextureOptions::LINEAR,
+                )
+            })
+            .clone()
+    }
+
+    /// O aviso de calibração no canto de baixo à direita da janela do jogo.
+    ///
+    /// Abre quando a sessão diz que o jogo começou uma calibração
+    /// ([`Session::calibracao`]) e mostra o Boomerang inclinando com o Wii Remote e se ele está
+    /// parado. Fecha quando o jogo diz que terminou, ou quando o controle fica parado o bastante
+    /// para qualquer calibração ter pegado: aí o modelo anima até ficar reto e o aviso some
+    /// sozinho logo depois.
+    fn aviso_de_calibracao(&mut self, ctx: &egui::Context, calibracao: (u32, u32)) {
+        use crate::input::bindings::Aparelho;
+        let agora = std::time::Instant::now();
+        let (comecadas, terminadas) = calibracao;
+        let novas = (comecadas > self.calibracoes_vistas.0, terminadas > self.calibracoes_vistas.1);
+        self.calibracoes_vistas = calibracao;
+        let Some(porta) = self
+            .settings
+            .controls
+            .ligadas()
+            .find(|(_, jogador)| jogador.aparelho == Aparelho::Boomerang)
+            .map(|(indice, _)| indice)
+        else {
+            self.aviso_calibracao = None;
+            return;
+        };
+        if novas.0 && self.settings.movimento.aviso_de_calibracao {
+            self.aviso_calibracao = Some(AvisoDeCalibracao::novo(agora));
+        }
+        let movimento = self.movimento_da_porta(porta);
+        let com_wiimote = self
+            .wiimote_da_porta(porta)
+            .is_some_and(|wiimote| wiimote.com_acelerometro);
+        let Some(aviso) = &mut self.aviso_calibracao else {
+            return;
+        };
+        if novas.1 {
+            aviso.conclui(agora);
+        }
+        let parado = aviso.amostra(movimento, agora);
+        if parado && aviso.parado_ha(agora) >= PARADO_PARA_CALIBRAR {
+            aviso.conclui(agora);
+        }
+        if aviso.expirou(agora) {
+            self.aviso_calibracao = None;
+            return;
+        }
+        let [x, y, _] = movimento;
+        let no_plano = (x * x + y * y).sqrt();
+        let volante = (-x).atan2(y) * ((no_plano - 0.3) / 0.4).clamp(0.0, 1.0);
+        // Concluída, a inclinação vai a zero em uma animação curta: o modelo "assenta".
+        let giro = volante * (1.0 - aviso.progresso_da_conclusao(agora));
+        let concluido = aviso.concluido_em.is_some();
+        let titulo = match concluido {
+            true => self.tr("calibration.toast.done"),
+            false => self.tr("calibration.toast.title"),
+        };
+        let estado = match (com_wiimote, parado, concluido) {
+            (_, _, true) => String::new(),
+            (false, _, _) => self.tr("controls.boomerang.no_wiimote"),
+            (true, true, _) => self.tr("calibration.toast.still"),
+            (true, false, _) => self.tr("calibration.toast.moving"),
+        };
+        let textura = self.textura_do_boomerang(ctx);
+        egui::Area::new(egui::Id::new("aviso-de-calibracao"))
+            .anchor(egui::Align2::RIGHT_BOTTOM, [-16.0, -16.0])
+            .interactable(false)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let largura = 110.0;
+                        let fonte = textura.size_vec2();
+                        let (area, _) = ui.allocate_exact_size(
+                            egui::vec2(largura, largura * 0.7),
+                            egui::Sense::hover(),
+                        );
+                        egui::Image::new(&textura).rotate(giro, egui::Vec2::splat(0.5)).paint_at(
+                            ui,
+                            egui::Rect::from_center_size(
+                                area.center(),
+                                egui::vec2(largura, largura * fonte.y / fonte.x),
+                            ),
+                        );
+                        ui.vertical(|ui| {
+                            ui.strong(titulo);
+                            if !estado.is_empty() {
+                                let cor = match parado {
+                                    true => ui.visuals().text_color(),
+                                    false => ui.visuals().warn_fg_color,
+                                };
+                                ui.colored_label(cor, estado);
+                            }
+                        });
+                    });
+                });
+            });
+        ctx.request_repaint();
     }
 
     /// O desenho do controle. Devolve o botão clicado.
@@ -872,6 +1058,12 @@ impl App {
             .player(self.porta_editada)
             .is_some_and(|jogador| jogador.aparelho == crate::input::bindings::Aparelho::Boomerang);
         if e_boomerang {
+            changed |= ui
+                .checkbox(
+                    &mut self.settings.movimento.aviso_de_calibracao,
+                    self.catalog.get("calibration.toast.setting"),
+                )
+                .changed();
             self.boomerang_view(ui);
         } else if let Some(button) = self.controller_view(ui) {
             // Clicar na peça é o mesmo que clicar em "Atribuir" na linha dela.
@@ -1816,16 +2008,22 @@ impl App {
 
     /// A aceleração que o Boomerang de uma porta sente. Sem Wii Remote, parado de face para cima.
     ///
-    /// Os dois controles se seguram do mesmo jeito — apontando para a tela, com os botões para
-    /// cima —, então os eixos passam direto.
+    /// **O comprimento do Boomerang é o X dele; o do Wii Remote é o Y.** O Crash Nitro Kart manda
+    /// segurar o Boomerang deitado, com as duas mãos e a face para o jogador, e virar como um
+    /// volante: a direção é o ângulo da gravidade entre X e Y. Com os eixos passando direto, o Wii
+    /// Remote seguro do mesmo jeito punha a gravidade no eixo errado, e o kart virava a esmo. A
+    /// face é a mesma nos dois, então o Z fica, e os outros dois giram 90° no plano dela: o X do
+    /// Boomerang aponta para longe do direcional, e o Y do Wii Remote aponta para o direcional.
     fn movimento_da_porta(&self, porta: usize) -> [f32; 3] {
         let Some(bruto) = self.movimento_bruto_da_porta(porta) else {
             return [0.0, 0.0, 1.0];
         };
-        self.settings
+        let [x, y, z] = self
+            .settings
             .controls
             .player(porta)
-            .map_or(bruto, |jogador| jogador.calibracao_movimento.aplica(bruto))
+            .map_or(bruto, |jogador| jogador.calibracao_movimento.aplica(bruto));
+        [-y, x, z]
     }
 
     /// A aceleração que o Wii Remote da porta mede, sem calibração.
@@ -1922,9 +2120,12 @@ impl App {
     const INTERVALO_DO_RELATORIO: std::time::Duration = std::time::Duration::from_secs(2);
 
     fn playing_screen(&mut self, ctx: &egui::Context) -> bool {
-        if self.session.is_none() {
+        let Some(calibracao) = self.session.as_ref().map(Session::calibracao) else {
             return true;
-        }
+        };
+        // O aviso é uma área flutuante: pode ser declarado antes dos painéis sem tirar espaço
+        // do quadro.
+        self.aviso_de_calibracao(ctx, calibracao);
         // A entrada é lida antes de pegar a sessão emprestada: montar o estado do controle
         // precisa do mapeamento e dos controles ligados, que também vivem no `self`.
         let pads = match self.paused {
