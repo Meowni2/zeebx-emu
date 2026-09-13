@@ -975,6 +975,11 @@ impl GlState {
         self.client_unit = unit.wrapping_sub(gles::GL_TEXTURE0);
     }
 
+    /// Se a unidade ativa é a base — a única que o pipeline desenha.
+    pub fn base_active_unit(&self) -> bool {
+        self.active_unit == 0
+    }
+
     /// A mesma pergunta para o vetor de coordenadas.
     pub fn base_client_unit(&self) -> bool {
         self.client_unit == 0

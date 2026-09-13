@@ -1009,7 +1009,9 @@ impl Rasterizador for GpuState {
             gles::GL_ALPHA_TEST => self.fill.teste_alfa = on,
             gles::GL_CULL_FACE => self.fill.descarte = on,
             gles::GL_STENCIL_TEST => self.fill.teste_stencil = on,
-            gles::GL_TEXTURE_2D => self.fill.texturando = on,
+            // Ligar e desligar textura é por unidade, e só a base desenha. O Resident Evil 4
+            // desliga a unidade 1 no fim de cada bloco.
+            gles::GL_TEXTURE_2D if self.estado.base_active_unit() => self.fill.texturando = on,
             _ => {}
         }
     }
@@ -1088,19 +1090,29 @@ impl Rasterizador for GpuState {
     fn base_client_unit(&self) -> bool {
         self.estado.base_client_unit()
     }
+    // **Só a unidade zero desenha**, aqui como no estado de software: o Resident Evil 4 termina
+    // cada bloco ligando textura na unidade 1, e deixar essa ligação valer trocava a textura
+    // base e pintava a vila de branco. Ver o `active_unit` do `GlState`.
     fn bind_texture(&mut self, name: u32) {
         self.estado.bind_texture(name);
-        self.fill.textura_ligada = name;
+        if self.estado.base_active_unit() {
+            self.fill.textura_ligada = name;
+        }
     }
     fn bound_texture(&self) -> u32 {
         self.estado.bound_texture()
     }
     fn set_texture_env(&mut self, mode: u32) {
         self.estado.set_texture_env(mode);
-        self.fill.env_textura = mode;
+        if self.estado.base_active_unit() {
+            self.fill.env_textura = mode;
+        }
     }
     fn set_texture_parameter(&mut self, name: u32, value: u32) {
         self.estado.set_texture_parameter(name, value);
+        if !self.estado.base_active_unit() {
+            return;
+        }
         let ligada = self.fill.textura_ligada;
         if let Some(t) = self.texturas.get_mut(&ligada) {
             match name {
@@ -1117,6 +1129,9 @@ impl Rasterizador for GpuState {
     }
     fn set_texture_crop(&mut self, crop: [i32; 4]) {
         self.estado.set_texture_crop(crop);
+        if !self.estado.base_active_unit() {
+            return;
+        }
         let ligada = self.fill.textura_ligada;
         if let Some(t) = self.texturas.get_mut(&ligada) {
             t.crop = crop;
