@@ -56,7 +56,7 @@ Versão considerada na análise: v0.1.1
 | Street Hoop | 🔄 | Jogável, porém sem som |
 | Super BurgerTime | 🔄 | Jogável, porém sem som |
 | Tekken 2 | ✅ | |
-| Tork and Kral - 🔄 Prehistorik Adventure | ❌ | Abre todo bugado |
+| Tork and Kral - A Prehistorik Adventure | ❌ | Abre todo bugado |
 | Toy Raid | 🔄 | Jogável, porém sem som e com glitches visuais |
 | Treino Cerebral | ✅ | |
 | Turma da Monica em Vamos Brincar Vol. 1 | ❌ | acesso inválido a 0x00e60125, em 0x00060338 |
