@@ -13,14 +13,26 @@
 //! próprio, criado pelo backend no tamanho da superfície do console. O pbuffer existe só porque
 //! o EGL exige uma superfície para tornar um contexto corrente.
 
+//!
+//! **No macOS não há EGL** — o `glutin` só oferece o CGL, que pede uma janela. Lá o contexto fora
+//! de tela responde que não existe, e o caminho sem janela usa o rasterizador de software. Com
+//! janela nada muda: o backend recebe o contexto do `eframe`.
+
 use eframe::glow;
+#[cfg(not(target_os = "macos"))]
 use glutin::config::{ConfigSurfaceTypes, ConfigTemplateBuilder};
-use glutin::context::{
-    ContextApi, ContextAttributesBuilder, NotCurrentGlContext, PossiblyCurrentContext, Version,
-};
-use glutin::display::{Display, DisplayApiPreference, GlDisplay};
-use glutin::surface::{PbufferSurface, Surface, SurfaceAttributesBuilder};
+#[cfg(not(target_os = "macos"))]
+use glutin::context::{ContextApi, ContextAttributesBuilder, NotCurrentGlContext, Version};
+use glutin::context::PossiblyCurrentContext;
+#[cfg(not(target_os = "macos"))]
+use glutin::display::{DisplayApiPreference, GlDisplay};
+use glutin::display::Display;
+#[cfg(not(target_os = "macos"))]
+use glutin::surface::SurfaceAttributesBuilder;
+use glutin::surface::{PbufferSurface, Surface};
+#[cfg(not(target_os = "macos"))]
 use raw_window_handle::{RawDisplayHandle, XlibDisplayHandle};
+#[cfg(not(target_os = "macos"))]
 use std::num::NonZeroU32;
 
 /// O contexto e o carregador de funções, vivos enquanto o backend existir.
@@ -43,6 +55,12 @@ impl Contexto {
     ///
     /// Falhar aqui é um caso normal, não um erro do programa: num terminal sem EGL alcançável não
     /// há placa para usar. Quem chama trata o `Err` caindo para o rasterizador de software.
+    #[cfg(target_os = "macos")]
+    pub fn novo() -> Result<Self, String> {
+        Err("o macOS não tem EGL para um contexto fora de tela".to_string())
+    }
+
+    #[cfg(not(target_os = "macos"))]
     pub fn novo() -> Result<Self, String> {
         // `display: None` é o `EGL_DEFAULT_DISPLAY`: pede ao EGL o display que ele considera
         // padrão, sem precisar de uma conexão de janela aberta por nós.
