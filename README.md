@@ -1,4 +1,4 @@
-# Zeebx
+# Zeebx 
 
 Emulador do Zeebo, o console que a TecToy lançou em 2009 no Brasil e no México.
 
