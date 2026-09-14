@@ -216,7 +216,7 @@ impl<C: CpuBackend> Machine<C> {
                     mixer.stop(this);
                 }
                 if tocando {
-                    self.avisa_na_saida(this, MM_CMD_PLAY, MM_STATUS_DONE)?;
+                    self.notify_media(this, MM_CMD_PLAY, MM_STATUS_DONE)?;
                 }
                 SUCCESS
             }
@@ -541,94 +541,58 @@ impl<C: CpuBackend> Machine<C> {
     /// O aviso é o que fecha o ciclo de quem toca uma coisa de cada vez: sem ele o jogo fica
     /// esperando para sempre o efeito anterior terminar, e o som para depois do primeiro.
     ///
-    /// **Ele sai na volta do laço de eventos, e não na saída da chamada.** No BREW o aviso vem
-    /// pelo laço, depois de o tratador do jogo devolver o controle. Os Zeebo Extreme contam com
-    /// isso: o gerenciador de som marca o som como "pedido" (2) *depois* do `Play`, e o `START`
-    /// o passa a "tocando" (1). Entregue na saída do `Play`, o `START` chegava antes da marca, e
-    /// o som ficava em 2 para sempre. O `Stop` deles só age em 1, então a música do menu nunca
-    /// parava; a da pista ficava na fila esperando o canal, e com música na fila o jogo recusa
-    /// todo efeito — o Bóia Cross corria só com a trilha. A exceção é o `DONE` do `Stop`: ver
-    /// [`Machine::avisa_na_saida`].
+    /// **Todo aviso sai na volta do laço de eventos, e não na saída da chamada** — como no BREW,
+    /// que entrega pelo laço depois de o tratador do jogo devolver o controle. Três jogos
+    /// mediram as duas escolhas:
+    ///
+    /// - Os **Zeebo Extreme** marcam o som como "pedido" (2) *depois* do `Play`, e o `START` o
+    ///   passa a "tocando" (1). Entregue na saída do `Play`, o `START` chegava antes da marca e o
+    ///   som ficava em 2 para sempre; o `Stop` deles só age em 1, a música do menu nunca parava, e
+    ///   com a da pista na fila o tocador recusava todo efeito — o Bóia Cross corria só com a trilha.
+    /// - O **Double Dragon** repete a música pelo `DONE`: se o objeto ainda está marcado, agenda
+    ///   um `Play` para dali a 100 ms. Ele desmarca e solta o objeto logo depois do `Stop`. Com o
+    ///   `DONE` na saída do `Stop`, o tratador via o objeto ainda marcado, e o `Play` agendado caía
+    ///   num `IMedia` já liberado — endereço zero, ao apertar voltar.
+    /// - O **Zeebo F.C. Super League** também para e solta, e espera o `DONE` desse som. Por isso o
+    ///   aviso **não** some com o `Release`: o tratador é guardado quando o aviso nasce. Descartado
+    ///   junto com o objeto, a abertura parava na tela de aviso.
     pub(super) fn notify_media(
         &mut self,
         this: u32,
         cmd: u32,
         status: u32,
     ) -> Result<(), CpuError> {
-        if self.media.get(&this).is_some_and(|state| state.notify.function != 0) {
-            self.avisos_de_midia.push((this, cmd, status));
+        if let Some(state) = self.media.get(&this)
+            && state.notify.function != 0
+        {
+            self.avisos_de_midia.push((this, cmd, status, state.notify));
         }
-        Ok(())
-    }
-
-    /// Avisa na saída da chamada, antes de o jogo seguir. Só o `Stop` avisa assim.
-    ///
-    /// **O `DONE` do `Stop` não pode esperar a volta do laço.** O Zeebo F.C. Super League para
-    /// o som e segue contando que o aviso já passou: adiado, ele chegava depois de o jogo ter
-    /// reaproveitado a estrutura do som, e o jogo ficava parado na tela de aviso da abertura.
-    fn avisa_na_saida(&mut self, this: u32, cmd: u32, status: u32) -> Result<(), CpuError> {
-        let Some(state) = self.media.get(&this).copied() else {
-            return Ok(());
-        };
-        if state.notify.function == 0 {
-            return Ok(());
-        }
-        let block = match state.bloco_do_stop {
-            0 => {
-                let block = self.heap.alloc(MEDIA_NOTIFY_LEN).unwrap_or(0);
-                if let Some(state) = self.media.get_mut(&this) {
-                    state.bloco_do_stop = block;
-                }
-                block
-            }
-            block => block,
-        };
-        if block == 0 {
-            return Ok(());
-        }
-        for (index, value) in [0, this, cmd, 0, status, 0, 0].into_iter().enumerate() {
-            self.cpu.write_u32(block + index as u32 * 4, value)?;
-        }
-        self.pending_calls.push(GuestCall {
-            function: state.notify.function,
-            args: [state.notify.context, block, 0, 0],
-        });
         Ok(())
     }
 
     /// Entrega os avisos enfileirados, em ordem.
     ///
-    /// O `AEEMediaCmdNotify` vai num bloco por objeto, e é escrito **na hora de cada chamada**:
-    /// um `START` e um `DONE` do mesmo som na mesma volta leriam o mesmo bloco, e escrito na
-    /// entrada os dois diriam `DONE`.
+    /// O `AEEMediaCmdNotify` é escrito **na hora de cada chamada**, num bloco só: um `START` e um
+    /// `DONE` na mesma volta, escritos na entrada, diriam os dois `DONE`.
     pub fn entrega_avisos_de_midia(&mut self, budget: u64) -> Result<(), CpuError> {
-        for (this, cmd, status) in std::mem::take(&mut self.avisos_de_midia) {
-            // Um objeto solto entre o aviso e a entrega não tem mais a quem avisar.
-            let Some(state) = self.media.get(&this).copied() else {
-                continue;
-            };
-            if state.notify.function == 0 {
-                continue;
-            }
-            let block = match state.notify_block {
-                0 => {
-                    let block = self.heap.alloc(MEDIA_NOTIFY_LEN).unwrap_or(0);
-                    if let Some(state) = self.media.get_mut(&this) {
-                        state.notify_block = block;
-                    }
-                    block
-                }
-                block => block,
-            };
-            if block == 0 {
-                continue;
-            }
+        if self.avisos_de_midia.is_empty() {
+            return Ok(());
+        }
+        if self.bloco_de_aviso_de_midia == 0 {
+            self.bloco_de_aviso_de_midia = self.heap.alloc(MEDIA_NOTIFY_LEN).unwrap_or(0);
+        }
+        let block = self.bloco_de_aviso_de_midia;
+        if block == 0 {
+            self.avisos_de_midia.clear();
+            return Ok(());
+        }
+        for (this, cmd, status, notify) in std::mem::take(&mut self.avisos_de_midia) {
             // `AEEMediaCmdNotify`: clsMedia, pIMedia, nCmd, nSubCmd, nStatus, pCmdData, dwSize.
             // A classe vai zerada — o jogo identifica o som pelo ponteiro, não por ela.
             for (index, value) in [0, this, cmd, 0, status, 0, 0].into_iter().enumerate() {
                 self.cpu.write_u32(block + index as u32 * 4, value)?;
             }
-            self.call_guest(state.notify.function, [state.notify.context, block, 0, 0], budget)?;
+            self.call_guest(notify.function, [notify.context, block, 0, 0], budget)?;
         }
         Ok(())
     }

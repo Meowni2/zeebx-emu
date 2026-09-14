@@ -90,9 +90,13 @@ tocador), e com música na fila o tocador recusa todo efeito: o Bóia Cross corr
 sem uma chamada de som sequer. O bloco do aviso é escrito na hora de cada entrega, porque um
 `START` e um `DONE` do mesmo objeto na mesma volta dividem o bloco.
 
-**O `DONE` do `Stop` é a exceção: sai na hora** (`Machine::avisa_na_saida`, com bloco próprio). O
-Zeebo F.C. Super League para o som e segue contando que o aviso já passou; adiado, ele chegava
-depois de a estrutura do som ter sido reaproveitada, e a abertura parava na tela de aviso.
+**Todo aviso sai assim, inclusive o `DONE` do `Stop`, e ele não some com o `Release`.** O
+Double Dragon repete a música pelo `DONE`: se o objeto ainda está marcado, agenda um `Play` para
+dali a 100 ms. Ele desmarca e solta o objeto logo depois do `Stop`; com o `DONE` na saída do
+`Stop`, o tratador ainda via o objeto marcado, e o `Play` agendado caía num `IMedia` já liberado —
+endereço zero, ao apertar voltar. O Zeebo F.C. Super League, ao contrário, para e solta e **espera**
+o `DONE` daquele som: se o aviso fosse descartado com o objeto, a abertura parava na tela de aviso.
+Por isso o tratador é guardado quando o aviso nasce, e a entrega não depende de o objeto existir.
 
 **Um som entregue por memória é relido a cada `Play`.** O `IMedia` do aparelho não copia o buffer.
 O Super League tem um objeto só para os efeitos da partida, com um buffer de 500 KB: escreve o

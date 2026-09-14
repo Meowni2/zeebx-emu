@@ -1438,12 +1438,6 @@ struct MediaState {
     muted: bool,
     /// `PFNMEDIANOTIFY` registrado por `RegisterNotify`.
     notify: Callback,
-    /// O bloco na memória do guest onde o `AEEMediaCmdNotify` é montado. Um por objeto, criado
-    /// na primeira notificação e reaproveitado: o callback só o lê enquanto roda.
-    notify_block: u32,
-    /// O bloco do aviso que sai na saída do `Stop`. Separado do de cima porque os avisos da
-    /// volta do laço ainda podem estar na fila quando o `Stop` escreve o dele.
-    bloco_do_stop: u32,
     /// Quando o som acaba, no relógio virtual. Zero é "não está tocando", e `u64::MAX` é o
     /// `repeat` infinito.
     ends_us: u64,
@@ -1464,8 +1458,6 @@ impl Default for MediaState {
                 function: 0,
                 context: 0,
             },
-            notify_block: 0,
-            bloco_do_stop: 0,
             ends_us: 0,
         }
     }
@@ -2128,9 +2120,13 @@ pub struct Machine<C: CpuBackend> {
     /// Fila única porque todos têm a mesma forma — um endereço de função e até quatro
     /// argumentos — e porque nenhum deles pode rodar no meio do despacho de uma chamada.
     pending_calls: Vec<GuestCall>,
-    /// Os avisos do `IMedia` ainda não entregues — objeto, comando e status. Saem na volta do
-    /// laço, não na saída da chamada: ver [`Machine::notify_media`].
-    avisos_de_midia: Vec<(u32, u32, u32)>,
+    /// Os avisos do `IMedia` ainda não entregues — objeto, comando, status e o tratador de quando
+    /// o aviso nasceu. Saem na volta do laço, não na saída da chamada: ver
+    /// [`Machine::notify_media`].
+    avisos_de_midia: Vec<(u32, u32, u32, Callback)>,
+    /// O bloco onde cada `AEEMediaCmdNotify` é montado na hora da entrega. Um só basta: os avisos
+    /// saem um de cada vez, e o tratador só o lê enquanto roda.
+    bloco_de_aviso_de_midia: u32,
     /// Recursos que **algum** arquivo forneceu. Ver [`Machine::missing_files`].
     recursos_lidos: BTreeSet<u16>,
     /// Se a árvore de widgets já foi despejada na serial.
@@ -2592,6 +2588,7 @@ impl<C: CpuBackend> Machine<C> {
             sounds: HashMap::new(),
             pending_calls: Vec::new(),
             avisos_de_midia: Vec::new(),
+            bloco_de_aviso_de_midia: 0,
             recursos_lidos: BTreeSet::new(),
             despejou: false,
             proximo_serial: 0,
