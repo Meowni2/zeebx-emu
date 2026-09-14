@@ -1,8 +1,8 @@
 # Status geral
 Versão considerada na análise: v0.1.1
 
-| Status | Jogos | % |
-|---|---|---|
+| Status | Legenda | Jogos | % |
+|---|---|---|---|
 | ✅ | (compatível) | 24 | 40% |
 | 🔄 | (roda com ressalvas) | 15 | 25% |
 | ❌ | (incompatível) | 21 | 35% |
