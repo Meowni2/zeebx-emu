@@ -90,8 +90,13 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 SUCCESS
             }
-            // GetDeviceInfo(AEEHIDDeviceInfo *pInfo): { int type; uint16 pid; uint16 vid;
+            // GetDeviceInfo(AEEHIDDeviceInfo *pInfo): { AEEUID type; uint16 pid; uint16 vid;
             // boolean bluetooth }. Em IHID a struct vem no segundo argumento.
+            //
+            // O `type` é o **UID do tipo de dispositivo**, o mesmo que o jogo passa ao
+            // `GetConnectedDevices`, e não um número pequeno. O Bad Dudes vs. DragonNinja
+            // compara o campo com `0x0106c3fd` antes de criar o aparelho: com o `1` que
+            // respondíamos ele nunca chamava o `CreateDevice`, e o menu não via botão nenhum.
             "GetDeviceInfo" => {
                 let out = if iface == Interface::Hid { a2 } else { a1 };
                 // No `IHID` o identificador da porta vem em `r1`; no `IHIDDevice` é o próprio
@@ -101,8 +106,8 @@ impl<C: CpuBackend> Machine<C> {
                     false => self.porta_do(this),
                 };
                 let tipo = match self.portas[porta] {
-                    Some(crate::input::bindings::Aparelho::Teclado) => HID_TYPE_KEYBOARD,
-                    _ => HID_TYPE_GAMEPAD,
+                    Some(crate::input::bindings::Aparelho::Teclado) => UID_KEYBOARD_DEVICE,
+                    _ => UID_JOYSTICK_DEVICE,
                 };
                 let (vendedor, produto) = match self.portas[porta] {
                     Some(crate::input::bindings::Aparelho::Boomerang) => {

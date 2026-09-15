@@ -129,6 +129,18 @@ anda e fica.
 desses dois é suposição**: o arquivo nomeia os eixos sem dizer o sentido, então seguimos a mesma
 convenção do par esquerdo, e a tela de configuração tem uma caixa "Inverter".
 
+### O `type` do `AEEHIDDeviceInfo` é um UID
+
+Antes de criar o aparelho, alguns jogos conferem o que o `IHID::GetDeviceInfo` diz dele. O
+primeiro campo da struct é o **UID do tipo de dispositivo** — o mesmo `0x0106c3fd` de joystick
+que o jogo passa ao `GetConnectedDevices`, e `0x0106c3fc` para teclado —, e não um número
+pequeno. Nós respondíamos `1`.
+
+O **Bad Dudes vs. DragonNinja** compara esse campo com `0x0106c3fd`; com `1` ele nunca chamava o
+`CreateDevice` e ficava parado no aviso inicial, sem ver botão nenhum. Ele também pula o
+aparelho de produto `3` e fabricante `0x15a2`, que é o receptor do Boomerang. Os outros ports da
+Data East não conferem o tipo, e por isso funcionavam.
+
 ## Mapeamento configurável
 
 `input/bindings.rs`. O mapeamento é guardado **por nome** — o nome da tecla, o do botão do controle do

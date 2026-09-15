@@ -372,7 +372,6 @@ const BOOMERANG_PRODUCT_ID: u16 = 0x0003;
 const fn handle_da_porta(porta: usize) -> u32 {
     porta as u32 + 1
 }
-const HID_TYPE_GAMEPAD: u32 = 1;
 const HID_STATUS_CONNECTED: u32 = 1;
 /// `AEEUID_HID_Joystick_Device`, de `AEEHIDDevice_Joystick.h`: o tipo de dispositivo que os
 /// jogos pedem em `GetConnectedDevices`.
@@ -384,8 +383,6 @@ const UID_JOYSTICK_DEVICE: u32 = 0x0106_c3fd;
 /// imprime `No keyboard reported`. Ou seja, o console enumera teclado USB, e a mensagem que a
 /// gente via no log era a resposta certa para "não tem nenhum ligado".
 const UID_KEYBOARD_DEVICE: u32 = 0x0106_c3fc;
-/// O tipo que o `GetDeviceInfo` reporta para um teclado.
-const HID_TYPE_KEYBOARD: u32 = 2;
 /// `EBADPARM` do BREW.
 const EBADPARM: u32 = 2;
 /// `AEE_EUNSUPPORTED`, de `AEEStdErr.h`: a API existe, mas não para este item.
@@ -505,6 +502,30 @@ const MMD_FILE_NAME: u32 = 0;
 /// O maior som que lemos de uma vez. Um tamanho absurdo é ponteiro errado, não música.
 const MAX_MEDIA_BUFFER: u32 = 64 * 1024 * 1024;
 const MMD_BUFFER: u32 = 1;
+/// `MMD_ISOURCE`, o `clsData` de um `AEEMediaDataEx` cujos dados vêm de um `ISource` que o
+/// próprio jogo implementa. É o `AEECLSID_SOURCE` do BREW, e é o que os ports de arcade da Data
+/// East passam, com `bRaw` ligado e um `AEEMediaWaveSpec` dizendo o formato das amostras.
+const MMD_ISOURCE: u32 = 0x0100_1012;
+/// Slot de `Read` na vtable de `ISource`: `AddRef`, `Release`, `QueryInterface`, `Read`,
+/// `Readable`.
+const ISOURCE_READ_SLOT: u32 = 3;
+/// O maior pedaço de PCM pedido ao `ISource` de uma vez, em bytes.
+const MAX_LEITURA_PCM: u32 = 16 * 1024;
+
+/// Um som que o jogo gera enquanto toca: o `ISource` de onde as amostras vêm e o formato delas.
+#[derive(Debug, Clone, Copy)]
+struct FluxoPcm {
+    fonte: u32,
+    taxa: u32,
+    canais: u16,
+    bits: u16,
+    sem_sinal: bool,
+    /// Quando o `Play` começou, no relógio virtual, e quantos quadros já foram pedidos desde
+    /// então. A diferença entre o que o relógio manda e o que já veio é o que falta pedir.
+    inicio_us: u64,
+    quadros_lidos: u64,
+    tocando: bool,
+}
 
 /// Comandos e status de `IMedia`, de `inc/AEEIMedia.h` do SDK do BREW 4.0.2.
 const MM_CMD_PLAY: u32 = 4;
@@ -2189,6 +2210,10 @@ pub struct Machine<C: CpuBackend> {
     /// o aviso nasceu. Saem na volta do laço, não na saída da chamada: ver
     /// [`Machine::notify_media`].
     avisos_de_midia: Vec<(u32, u32, u32, Callback)>,
+    /// Os `IMedia` que tocam PCM gerado pelo jogo, por objeto. Ver [`FluxoPcm`].
+    fluxos_pcm: HashMap<u32, FluxoPcm>,
+    /// O buffer no guest onde o `ISource::Read` escreve as amostras.
+    buffer_de_fluxo: u32,
     /// O bloco onde cada `AEEMediaCmdNotify` é montado na hora da entrega. Um só basta: os avisos
     /// saem um de cada vez, e o tratador só o lê enquanto roda.
     bloco_de_aviso_de_midia: u32,
@@ -2659,6 +2684,8 @@ impl<C: CpuBackend> Machine<C> {
             sounds: HashMap::new(),
             pending_calls: Vec::new(),
             avisos_de_midia: Vec::new(),
+            fluxos_pcm: HashMap::new(),
+            buffer_de_fluxo: 0,
             bloco_de_aviso_de_midia: 0,
             recursos_lidos: BTreeSet::new(),
             despejou: false,

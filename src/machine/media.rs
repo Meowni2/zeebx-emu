@@ -104,6 +104,7 @@ impl<C: CpuBackend> Machine<C> {
                 let remaining = self.objects.release(this);
                 if remaining == 0 {
                     self.media.remove(&this);
+                    self.fluxos_pcm.remove(&this);
                     // Uma música em repetição seguia tocando depois de o objeto sumir.
                     if let Some(mixer) = &self.audio {
                         mixer.stop(this);
@@ -149,6 +150,7 @@ impl<C: CpuBackend> Machine<C> {
                     .unwrap_or(MediaState::default());
                 let mut resultado = SUCCESS;
                 match parm {
+                    MM_PARM_MEDIA_DATA if self.le_fluxo_pcm(this, p1)? => {}
                     MM_PARM_MEDIA_DATA => match self.read_media_data(p1)? {
                         Entrega::Pronta(carga) => {
                             (state.carga, state.pendente, state.buffer) = (carga, (0, 0), (0, 0))
@@ -207,6 +209,9 @@ impl<C: CpuBackend> Machine<C> {
             // trata os dois status do mesmo jeito.
             (Interface::Media, "Stop") => {
                 let tocando = self.esta_tocando(this);
+                if let Some(fluxo) = self.fluxos_pcm.get_mut(&this) {
+                    fluxo.tocando = false;
+                }
                 if let Some(state) = self.media.get_mut(&this) {
                     state.state = MM_STATE_READY;
                     state.ends_us = 0;
@@ -460,6 +465,9 @@ impl<C: CpuBackend> Machine<C> {
     /// tocar de novo, sem outro `SetMediaParm`. Guardado da primeira leitura, todo efeito saía
     /// com o som de seleção do menu, que foi o primeiro a passar por ali.
     pub(super) fn media_play(&mut self, this: u32) -> Result<u32, CpuError> {
+        if self.fluxos_pcm.contains_key(&this) {
+            return self.inicia_fluxo(this);
+        }
         if let Some(state) = self.media.get_mut(&this)
             && state.buffer.1 != 0
         {
@@ -597,6 +605,157 @@ impl<C: CpuBackend> Machine<C> {
         Ok(())
     }
 
+    /// Reconhece a entrega de um som que o jogo gera enquanto toca, e guarda o formato dele.
+    ///
+    /// O `AEEMediaDataEx` é `{ clsData, pData, dwSize, dwStructSize, dwCaps, bRaw, pSpec,
+    /// dwSpecSize, dwBufferSize }`, e o `AEEMediaWaveSpec` apontado por `pSpec` é `{ uint16
+    /// wSize; AEECLSID clsMedia; uint16 wChannels; uint32 dwSamplesPerSec; uint16
+    /// wBitsPerSample; boolean bUnsigned; uint32 dwAvgBytesPerSec; uint16 wBlockAlign }`. O
+    /// Caveman Ninja monta exatamente isso: 11025 Hz, mono, 16 bits.
+    ///
+    /// Devolve `false` quando a entrega não é essa, para seguir pelo caminho de memória e arquivo.
+    pub(super) fn le_fluxo_pcm(&mut self, this: u32, pointer: u32) -> Result<bool, CpuError> {
+        if pointer == 0 || self.cpu.read_u32(pointer)? != MMD_ISOURCE {
+            return Ok(false);
+        }
+        let fonte = self.cpu.read_u32(pointer + 4)?;
+        let bruto = self.cpu.read_u32(pointer + 20)? & 0xff != 0;
+        let spec = self.cpu.read_u32(pointer + 24)?;
+        if fonte == 0 || spec == 0 || !bruto {
+            self.bad_pointers
+                .insert("um som veio de um ISource sem ser PCM cru, e só sabemos tocar PCM".into());
+            return Ok(false);
+        }
+        let mut bytes = [0u8; 24];
+        self.cpu.read_mem(spec, &mut bytes)?;
+        let u16_em = |i: usize| u16::from_le_bytes([bytes[i], bytes[i + 1]]);
+        let canais = u16_em(8);
+        let taxa = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
+        let bits = u16_em(16);
+        let sem_sinal = bytes[18] != 0;
+        if canais == 0 || taxa == 0 || !matches!(bits, 8 | 16) {
+            self.bad_pointers.insert(format!(
+                "PCM de {canais} canal(is), {taxa} Hz e {bits} bits, que não sabemos tocar"
+            ));
+            return Ok(false);
+        }
+        self.fluxos_pcm.insert(
+            this,
+            FluxoPcm {
+                fonte,
+                taxa,
+                canais,
+                bits,
+                sem_sinal,
+                inicio_us: 0,
+                quadros_lidos: 0,
+                tocando: false,
+            },
+        );
+        Ok(true)
+    }
+
+    /// `Play` de um fluxo: a partir daqui as amostras são pedidas ao jogo a cada volta do laço.
+    fn inicia_fluxo(&mut self, this: u32) -> Result<u32, CpuError> {
+        let now = self.now_us();
+        let state = self.media.entry(this).or_default();
+        state.state = MM_STATE_PLAY;
+        // Um fluxo não tem fim conhecido: acaba no `Stop`.
+        state.ends_us = u64::MAX;
+        let gain = state.gain();
+        let Some(fluxo) = self.fluxos_pcm.get_mut(&this) else {
+            return Ok(SUCCESS);
+        };
+        fluxo.inicio_us = now;
+        fluxo.quadros_lidos = 0;
+        fluxo.tocando = true;
+        let (taxa, canais) = (fluxo.taxa, fluxo.canais);
+        if let Some(mixer) = &self.audio {
+            mixer.open_stream(this, taxa, canais, gain);
+        }
+        self.notify_media(this, MM_CMD_PLAY, MM_STATUS_START)?;
+        Ok(SUCCESS)
+    }
+
+    /// Pede ao jogo as amostras que o relógio virtual já deve, e as manda para o mixer.
+    ///
+    /// Quem marca o ritmo é o **tempo virtual**, como no resto do som: sem placa o emulador
+    /// continua pedindo, e o jogo, que em geral emula o chip de som dentro do `Read`, anda do mesmo
+    /// jeito. Um décimo de segundo vai adiantado, para a placa não esvaziar entre duas voltas.
+    pub(super) fn bombeia_fluxos_pcm(&mut self, budget: u64) -> Result<(), CpuError> {
+        let tocando: Vec<u32> = self
+            .fluxos_pcm
+            .iter()
+            .filter(|(this, fluxo)| {
+                fluxo.tocando
+                    && self
+                        .media
+                        .get(this)
+                        .is_some_and(|state| state.state == MM_STATE_PLAY)
+            })
+            .map(|(this, _)| *this)
+            .collect();
+        if tocando.is_empty() {
+            return Ok(());
+        }
+        if self.buffer_de_fluxo == 0 {
+            self.buffer_de_fluxo = self.heap.alloc(MAX_LEITURA_PCM).unwrap_or(0);
+            if self.buffer_de_fluxo == 0 {
+                return Ok(());
+            }
+        }
+        let buffer = self.buffer_de_fluxo;
+        let now = self.now_us();
+        for this in tocando {
+            let Some(fluxo) = self.fluxos_pcm.get(&this).copied() else {
+                continue;
+            };
+            let por_quadro = u32::from(fluxo.canais) * u32::from(fluxo.bits / 8);
+            let devidos = (now.saturating_sub(fluxo.inicio_us) + 100_000) * u64::from(fluxo.taxa)
+                / 1_000_000;
+            let mut faltam = devidos.saturating_sub(fluxo.quadros_lidos);
+            let Ok(vtable) = self.cpu.read_u32(fluxo.fonte) else {
+                continue;
+            };
+            let read = self.cpu.read_u32(vtable + ISOURCE_READ_SLOT * 4)?;
+            // Algumas leituras por volta bastam; um `Read` que devolve menos é o jogo sem
+            // amostras prontas, e insistir na mesma volta só gasta.
+            for _ in 0..8 {
+                if faltam == 0 {
+                    break;
+                }
+                let pedido = (faltam * u64::from(por_quadro)).min(u64::from(MAX_LEITURA_PCM)) as u32;
+                let pedido = pedido - pedido % por_quadro;
+                if pedido == 0 {
+                    break;
+                }
+                let outcome = self.call_guest(read, [fluxo.fonte, buffer, pedido, 0], budget)?;
+                let Outcome::Returned { code } = outcome else {
+                    break;
+                };
+                let lidos = code as i32;
+                if lidos <= 0 {
+                    break;
+                }
+                let lidos = (lidos as u32).min(pedido);
+                let bytes = self.read_bytes(buffer, lidos)?;
+                let amostras = pcm_para_f32(&bytes, fluxo.bits, fluxo.sem_sinal);
+                if let Some(mixer) = &self.audio {
+                    mixer.feed_stream(this, &amostras);
+                }
+                let quadros = u64::from(lidos / por_quadro);
+                if let Some(guardado) = self.fluxos_pcm.get_mut(&this) {
+                    guardado.quadros_lidos += quadros;
+                }
+                faltam = faltam.saturating_sub(quadros);
+                if lidos < pedido {
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Enfileira o aviso de fim dos sons que já terminaram.
     pub(super) fn poll_media(&mut self) -> Result<(), CpuError> {
         let now = self.now_us();
@@ -614,5 +773,28 @@ impl<C: CpuBackend> Machine<C> {
             self.notify_media(this, MM_CMD_PLAY, MM_STATUS_DONE)?;
         }
         Ok(())
+    }
+}
+
+/// Amostras PCM de 8 ou 16 bits, little-endian, para `f32` em [-1, 1].
+pub(super) fn pcm_para_f32(bytes: &[u8], bits: u16, sem_sinal: bool) -> Vec<f32> {
+    match bits {
+        8 => bytes
+            .iter()
+            .map(|&b| match sem_sinal {
+                true => (f32::from(b) - 128.0) / 128.0,
+                false => f32::from(b as i8) / 128.0,
+            })
+            .collect(),
+        _ => bytes
+            .chunks_exact(2)
+            .map(|c| {
+                let valor = u16::from_le_bytes([c[0], c[1]]);
+                match sem_sinal {
+                    true => (f32::from(valor) - 32768.0) / 32768.0,
+                    false => f32::from(valor as i16) / 32768.0,
+                }
+            })
+            .collect(),
     }
 }

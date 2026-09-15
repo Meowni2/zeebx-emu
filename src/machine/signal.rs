@@ -95,6 +95,7 @@ impl<C: CpuBackend> Machine<C> {
         // Os avisos do `IMedia` desta volta: ver [`Machine::notify_media`].
         self.poll_media()?;
         self.entrega_avisos_de_midia(budget)?;
+        self.bombeia_fluxos_pcm(budget)?;
         let pending = std::mem::take(&mut self.pending_signals);
         let mut outcomes = Vec::new();
         for callback in pending {
