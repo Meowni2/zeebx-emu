@@ -263,8 +263,11 @@ impl<C: CpuBackend> Machine<C> {
             }
             // `ClearDepth` já recebe a profundidade em `[0, 1]`, que é a faixa do buffer.
             "ClearDepthx" | "ClearDepthf" => self.gl.set_clear_depth(number(a[0]).clamp(0.0, 1.0)),
+            // O OpenGL ES 1.1 limita a cor corrente a [0, 1] quando ela é definida. O Alien Breaker
+            // Deluxe pinta com `glColor4f(255, 255, 255, a)`: sem o limite, a textura era
+            // multiplicada por 255 e o título e os menus estouravam para o branco.
             "Color4x" | "Color4f" => {
-                let c = std::array::from_fn(|i| number(a[i]));
+                let c = std::array::from_fn(|i| number(a[i]).clamp(0.0, 1.0));
                 self.gl.set_color(c);
             }
             "Color4ub" => {

@@ -679,6 +679,10 @@ impl<C: CpuBackend> Machine<C> {
     /// Layout, de `inc/AEEIDIB.h`: `pvt`, `pPaletteMap`, `pBmp`, `pRGB`, `ncTransparent`,
     /// `cx`, `cy`, `nPitch`, `cntRGB`, `nDepth`, `nColorScheme` e seis bytes reservados.
     pub(super) fn expose_dib(&mut self, bitmap: u32) -> Result<(), CpuError> {
+        // O `IDIB` do decodificador já está publicado, no formato dele.
+        if self.dib_do_decodificador.contains_key(&bitmap) {
+            return Ok(());
+        }
         let Some(fb) = self.bitmaps.get(&bitmap) else {
             return Ok(());
         };
@@ -779,6 +783,9 @@ impl<C: CpuBackend> Machine<C> {
     /// Só os buffers que **nós** reservamos voltam — os que têm capacidade anotada. O de uma
     /// superfície do jogo (`IDIB` dele) é memória dele.
     pub(super) fn solta_dib(&mut self, bitmap: u32) {
+        if let Some((buffer, capacidade)) = self.dib_do_decodificador.remove(&bitmap) {
+            self.solta_superficie(buffer, capacidade);
+        }
         let Some(capacidade) = self.dib_capacity.remove(&bitmap) else {
             return;
         };

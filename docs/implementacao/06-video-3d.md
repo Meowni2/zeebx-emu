@@ -84,6 +84,28 @@ Os blocos ATITC são 4×4 texels, como o DXT1: duas cores e dois bits de índice
 diferença está no bit mais alto da primeira cor, que escolhe entre interpolar as quatro cores da
 paleta ou reservar a primeira para o preto.
 
+### O PNG do decodificador chega à textura no formato dele
+
+Muitos jogos montam as texturas a partir do `IImageDecoder` de PNG: pegam o bitmap, leem os
+campos do `IDIB` e copiam `pBmp` para um `glTexImage2D`. O **Alien Breaker Deluxe** mostra o
+contrato na desmontagem: com `nDepth` 8 ele usa a paleta; fora isso copia `nDepth / 8` bytes por
+pixel e escolhe `GL_RGB` para 3 e `GL_RGBA` para os outros. O nosso bitmap anunciava RGB565, 16
+bits, e o jogo copiava dois bytes por pixel achando que eram quatro: os logos saíam brancos.
+
+O bitmap do decodificador agora publica o `IDIB` no formato do próprio PNG — 32 bits em RGBA
+quando a imagem tem alfa, 24 em RGB quando não tem, linhas contíguas e 8 bits por canal. A cópia
+em RGB565 continua no mapa de superfícies para os nossos blits, e esse buffer fica fora da
+sincronização. O mesmo erro era o "imagens lotadas de glitch" do **Heavy Weapon**, que agora mostra
+o mapa da missão, e as imagens erradas do **Tork and Kral**.
+
+### A cor corrente é limitada a [0, 1]
+
+O OpenGL ES 1.1 limita a cor de `glColor4f`/`glColor4x` a [0, 1] no momento em que ela é
+definida. O Alien Breaker Deluxe pinta com `glColor4f(255, 255, 255, a)` — é o valor de byte num
+parâmetro de ponto flutuante —, e no console isso é branco puro, que deixa a textura intacta.
+Guardando 255, o nosso modulador multiplicava a textura por 255, e o título e os menus saíam
+estourados para o branco, com só as bordas escuras aparecendo.
+
 ## `GL_OES_draw_texture`
 
 O blit de tela: um retângulo desenhado **em coordenadas de janela**, sem passar pelas matrizes.

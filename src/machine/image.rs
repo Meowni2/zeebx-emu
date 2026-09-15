@@ -118,12 +118,52 @@ impl<C: CpuBackend> Machine<C> {
         if addr == 0 {
             return Ok(0);
         }
+        self.publica_dib_do_png(addr, &fed)?;
         let transparent = self.transparency.contains_key(&addr);
         if let Some(state) = self.decoders.get_mut(&decoder) {
             state.bitmap = Some(addr);
             state.transparent = transparent;
         }
         Ok(addr)
+    }
+
+    /// Publica o `IDIB` de um bitmap do decodificador no formato do PNG: 24 bits por pixel em
+    /// RGB, ou 32 em RGBA quando a imagem tem alfa, linhas contíguas e sem enchimento.
+    ///
+    /// É o que o decodificador do BREW entrega, e o Alien Breaker Deluxe prova pelo uso: ele lê o
+    /// `nDepth`, trata 8 bits como paleta e, fora isso, copia `nDepth / 8` bytes por pixel direto
+    /// para uma textura `GL_RGB` (3) ou `GL_RGBA`. Com o nosso RGB565 ele copiava dois bytes por
+    /// pixel achando que eram quatro, e os logos saíam como quadrados brancos.
+    ///
+    /// A nossa cópia em RGB565 continua no mapa de superfícies para os blits; este buffer não
+    /// entra na sincronização.
+    pub(super) fn publica_dib_do_png(&mut self, bitmap: u32, png: &[u8]) -> Result<(), CpuError> {
+        let Some((largura, altura, canais, bytes)) = decode_png_bytes(png) else {
+            return Ok(());
+        };
+        // Um buffer publicado antes por outro caminho não serve mais: o formato é outro.
+        self.solta_dib(bitmap);
+        let Some((buffer, capacidade)) = self.reserva_superficie(bytes.len() as u32) else {
+            return Ok(());
+        };
+        self.cpu.write_mem(buffer, &bytes)?;
+        self.dib_do_decodificador.insert(bitmap, (buffer, capacidade));
+        let passo = largura as usize * canais;
+        let (profundidade, esquema) = match canais {
+            4 => (32u8, 0u8),
+            _ => (24u8, IDIB_COLORSCHEME_888),
+        };
+        self.cpu.write_u32(bitmap + 4, 0)?; // pPaletteMap
+        self.cpu.write_u32(bitmap + 8, buffer)?; // pBmp
+        self.cpu.write_u32(bitmap + 12, 0)?; // pRGB
+        self.cpu.write_u32(bitmap + 16, 0)?; // ncTransparent
+        self.cpu.write_mem(bitmap + 20, &(largura as u16).to_le_bytes())?;
+        self.cpu.write_mem(bitmap + 22, &(altura as u16).to_le_bytes())?;
+        self.cpu.write_mem(bitmap + 24, &(passo as i16).to_le_bytes())?;
+        self.cpu.write_mem(bitmap + 26, &0u16.to_le_bytes())?; // cntRGB
+        self.cpu.write_mem(bitmap + 28, &[profundidade, esquema])?;
+        self.cpu.write_mem(bitmap + 30, &[0u8; 6])?;
+        Ok(())
     }
 
     /// Um `IBitmap` com a imagem já decodificada dentro.

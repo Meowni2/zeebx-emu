@@ -790,6 +790,8 @@ const AEEIID_TRANSFORM: u32 = 0x0100_1029;
 const AEEIID_CANVAS: u32 = 0x0101_e443;
 /// `IDIB_COLORSCHEME_565`, de `inc/AEEIDIB.h`: 5 bits de vermelho, 6 de verde, 5 de azul.
 const IDIB_COLORSCHEME_565: u8 = 16;
+/// `IDIB_COLORSCHEME_888`: 8 bits por canal.
+const IDIB_COLORSCHEME_888: u8 = 24;
 /// `AEECLSID_DIB` = `AEECLSID_CORE + 69`. É o bitmap com acesso direto aos pixels.
 const AEECLSID_DIB: u32 = 0x0100_1045;
 /// `AEEIID_IBitmap`, de `inc/AEEIBitmap.h`.
@@ -1384,6 +1386,33 @@ fn decode_png(bytes: &[u8]) -> Option<DecodedImage> {
         alfa: so_com_meio_tom(alfa),
         frame_width: 0,
     })
+}
+
+/// Um PNG em bytes de 8 bits por canal: RGB, ou RGBA quando a imagem tem alfa.
+///
+/// É o formato em que o decodificador de PNG do BREW entrega o `IDIB`. Tons de cinza viram RGB,
+/// com ou sem alfa, e a paleta é expandida.
+fn decode_png_bytes(bytes: &[u8]) -> Option<(u32, u32, usize, Vec<u8>)> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(
+        png::Transformations::EXPAND | png::Transformations::normalize_to_color8(),
+    );
+    let mut reader = decoder.read_info().ok()?;
+    let mut raw = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut raw).ok()?;
+    let data = &raw[..info.buffer_size()];
+    let (canais, saida) = match info.color_type {
+        png::ColorType::Rgba => (4, data.to_vec()),
+        png::ColorType::Rgb => (3, data.to_vec()),
+        png::ColorType::GrayscaleAlpha => (
+            4,
+            data.chunks_exact(2)
+                .flat_map(|c| [c[0], c[0], c[0], c[1]])
+                .collect(),
+        ),
+        _ => (3, data.iter().flat_map(|&c| [c, c, c]).collect()),
+    };
+    Some((info.width, info.height, canais, saida))
 }
 
 /// O alfa de uma imagem, ou nada quando ele não tem meio-tom — aí o `opaque` já diz tudo, e o
@@ -2284,6 +2313,11 @@ pub struct Machine<C: CpuBackend> {
     /// do Kingdom Hearts viravam blocos, com a folha de glifos substituída pela imagem
     /// decodificada antes dela.
     dib_herdados: HashSet<u32>,
+    /// Bitmaps do decodificador de PNG cujo `IDIB` mostra os pixels no formato do próprio PNG
+    /// (RGB de 24 bits ou RGBA de 32), e não em RGB565: o buffer e a capacidade dele. Ficam fora
+    /// da sincronização — a nossa cópia em RGB565 serve aos blits, e o buffer é só leitura para o
+    /// jogo.
+    dib_do_decodificador: HashMap<u32, (u32, u32)>,
     /// A [`Framebuffer::serie`] de cada superfície na última vez que o buffer do jogo e a nossa
     /// cópia ficaram iguais — dali em diante, só a caixa suja dela precisa ir para o jogo.
     ///
@@ -2668,6 +2702,7 @@ impl<C: CpuBackend> Machine<C> {
             dib_buffers: HashMap::new(),
             dib_capacity: HashMap::new(),
             dib_herdados: HashSet::new(),
+            dib_do_decodificador: HashMap::new(),
             dib_publicado: HashMap::new(),
             surface_next: loader::SURFACE_BASE,
             superficies_livres: Vec::new(),
