@@ -30,8 +30,12 @@ O desenho completo está em [ARCHITECTURE.md](ARCHITECTURE.md).
 
 Poucas ROMs ainda rodam sem problemas, diversos jogos podem apresentar travamentos antes da inicialização ou durante a execução.
 
+Jogos que utilizam do Boomerang podem ser jogados usando Wii Remote e seus sensores de movimento!
+
+Jogos 3D são compatíveis com recursos de resolução experimentais, podendo atingir resoluções de até 4k em 16:9.
+
 O estado de cada título, com os endereços de cada parada, está em
-[docs/implementacao/11-compatibilidade.md](docs/implementacao/11-compatibilidade.md).
+[COMPATIBILIDADE.MD](COMPATIBILIDADE.MD).
 
 ## Compilando
 
@@ -88,7 +92,7 @@ o backlog do projeto. As opções de depuração estão em [ARCHITECTURE.md](ARC
 
 ## Plataformas
 
-Linux, Windows e macOS. Mobile está fora do escopo por enquanto.
+Linux, Windows e macOS. Mobile está nos planos, mas o foco agora é no desktop!
 
 ## Jogos
 
