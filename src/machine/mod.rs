@@ -416,7 +416,14 @@ const AEECLSID_BMP: u32 = 0x0100_4001;
 const AEECLSID_PNGDECODER: u32 = 0x0102_6e23;
 const AEECLSID_PNGDECODER_BREW: u32 = 0x0103_0766;
 /// `IPARM_*` de `inc/AEEIImage.h`.
+///
+/// O `SIZE`, o `OFFSET` e o `ROP` saíram do uso: o Action Hero 3D escreve cada letra do menu
+/// com `SetParm(0, cx, 12)`, `SetParm(1, x, 0|12|24)` e `Draw` sobre a folha de fontes de
+/// 201x37 — três linhas de 12 pixels —, e prepara a imagem com `SetParm(3, AEE_RO_TRANSPARENT)`.
+const IPARM_SIZE: u32 = 0;
+const IPARM_OFFSET: u32 = 1;
 const IPARM_CXFRAME: u32 = 2;
+const IPARM_ROP: u32 = 3;
 const IPARM_NFRAMES: u32 = 4;
 const IPARM_GETBITMAP: u32 = 10;
 /// `AEECLSID_MEMASTREAM` = `AEECLSID_CORE + 12`, de `sdk/inc/AEEClassIDs.h`.
@@ -1596,6 +1603,18 @@ struct CipherState {
     pending: Vec<u8>,
 }
 
+/// O pedaço de uma `IImage` que o `Draw` desenha, e como.
+#[derive(Debug, Clone, Copy, Default)]
+struct RecorteDeImagem {
+    /// `IPARM_OFFSET`: o canto do pedaço, dentro da imagem (ou do quadro).
+    x: i32,
+    y: i32,
+    /// `IPARM_SIZE`: o tamanho do pedaço. Sem ele, até a borda da imagem.
+    tamanho: Option<(i32, i32)>,
+    /// `IPARM_ROP`: com `AEE_RO_TRANSPARENT`, a cor reservada não é desenhada.
+    transparente: bool,
+}
+
 /// Um desenho numa superfície do próprio jogo, à espera da fronteira da chamada.
 #[derive(Debug, Clone, Copy)]
 struct PendingBlit {
@@ -2059,6 +2078,8 @@ pub struct Machine<C: CpuBackend> {
     profiling_api: bool,
     /// Callback de `IIMAGE_Notify`, por objeto.
     image_notify: HashMap<u32, Callback>,
+    /// O retângulo e a operação que o `IIMAGE_SetParm` deixou para os próximos `Draw`.
+    recortes_de_imagem: HashMap<u32, RecorteDeImagem>,
     /// Blocos de memória apresentados como stream.
     streams: HashMap<u32, MemStream>,
     /// Estado de cada `ISound` vivo.
@@ -2555,6 +2576,7 @@ impl<C: CpuBackend> Machine<C> {
             api_time: HashMap::new(),
             profiling_api: false,
             image_notify: HashMap::new(),
+            recortes_de_imagem: HashMap::new(),
             parametros_de_colecao: HashMap::new(),
             vetores: HashMap::new(),
             sources: HashMap::new(),

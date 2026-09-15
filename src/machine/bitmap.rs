@@ -129,7 +129,7 @@ impl<C: CpuBackend> Machine<C> {
             || cy == 0
             || buffer == 0
             || depth != COLOR_DEPTH as u8
-            || pitch != (cx * 2) as i32
+            || pitch != ((cx * 2).div_ceil(4) * 4) as i32
         {
             self.assumptions
                 .insert("uma superfície do jogo usa um formato que ainda não sabemos desenhar");
@@ -140,7 +140,7 @@ impl<C: CpuBackend> Machine<C> {
         self.dib_buffers.insert(target, buffer);
         // Aqui o buffer é do próprio jogo, e é dele que os pixels vêm.
         self.dib_herdados.remove(&target);
-        self.cpu.watch_dirty(target, buffer, cx * cy * 2)?;
+        self.cpu.watch_dirty(target, buffer, pitch as u32 * cy)?;
         self.sync_from_guest(target)?;
         Ok(())
     }
@@ -231,6 +231,65 @@ impl<C: CpuBackend> Machine<C> {
                     self.transformacoes.remove(&this);
                 }
                 restam
+            }
+            // int TransformBltSimple(ITransform *p, int x, int y, IBitmap *pSrc, int xSrc,
+            //                        int ySrc, unsigned dx, unsigned dy, uint16 unTransform,
+            //                        uint8 nComposite)
+            //
+            // As mesmas regras do `TransformBltComplex`, com a matriz montada das flags: rotação
+            // em quartos de volta nos bits 0-1, espelho em X no bit 2 e a escala a partir do bit
+            // 3. O Action Hero 3D passa `unTransform = 8` com `x = 160`, `y = 120` e um canvas
+            // 320x240 — o quadro dobrado centrado na tela 640x480, então `8` é a escala 2x.
+            "TransformBltSimple" => {
+                let Some(&destino) = self.transformacoes.get(&this) else {
+                    return Ok(Some(EBADPARM));
+                };
+                let (x, y) = (
+                    self.cpu.read_reg(Reg::R1) as i32,
+                    self.cpu.read_reg(Reg::R2) as i32,
+                );
+                let origem = self.cpu.read_reg(Reg::R3);
+                let x_origem = self.stack_arg(0)? as i32;
+                let y_origem = self.stack_arg(1)? as i32;
+                let largura = self.stack_arg(2)? as i32;
+                let altura = self.stack_arg(3)? as i32;
+                let flags = self.stack_arg(4)? & 0xffff;
+                let escala = match (flags >> 3) & 0x7 {
+                    0 => 1.0,
+                    1 => 2.0,
+                    _ => {
+                        self.assumptions.insert(
+                            "ITransform::TransformBltSimple com uma escala além de 1x e 2x — desenhada em 1x",
+                        );
+                        1.0
+                    }
+                };
+                let espelho = if flags & 0x4 != 0 { -1.0 } else { 1.0 };
+                // Rotação no sentido horário, com o y da tela crescendo para baixo.
+                let (cos, sin) = match flags & 0x3 {
+                    0 => (1.0, 0.0),
+                    1 => (0.0, 1.0),
+                    2 => (-1.0, 0.0),
+                    _ => (0.0, -1.0),
+                };
+                // R · espelho · escala
+                let m = [
+                    cos * espelho * escala,
+                    -sin * escala,
+                    sin * espelho * escala,
+                    cos * escala,
+                ];
+                self.transforma(TransformBlt {
+                    destino,
+                    origem,
+                    x,
+                    y,
+                    x_origem,
+                    y_origem,
+                    largura,
+                    altura,
+                    m,
+                })
             }
             // int TransformBltComplex(ITransform *p, int x, int y, IBitmap *pSrc, int xSrc,
             //                         int ySrc, unsigned dx, unsigned dy,
@@ -602,7 +661,7 @@ impl<C: CpuBackend> Machine<C> {
                 SUCCESS
             }
             "GetTransparencyColor" => {
-                let value = self.transparency.get(&this).copied().unwrap_or(0);
+                let value = self.transparency.get(&this).copied().unwrap_or(TRANSPARENT_KEY);
                 let out = self.cpu.read_reg(Reg::R1);
                 if out != 0 {
                     self.cpu.write_u32(out, value as u32)?;
@@ -623,8 +682,8 @@ impl<C: CpuBackend> Machine<C> {
         let Some(fb) = self.bitmaps.get(&bitmap) else {
             return Ok(());
         };
-        let (cx, cy) = (fb.width(), fb.height());
-        let precisa = cx * 2 * cy;
+        let cy = fb.height();
+        let precisa = fb.passo_do_dib() as u32 * cy;
         // **O cabeçalho é reescrito toda vez, e não só na primeira.** O endereço de um objeto
         // volta a ser usado quando o anterior é liberado, e o bitmap novo tem outro tamanho:
         // com a checagem por endereço, o `IDIB` de uma imagem nova continuava anunciando o
@@ -693,9 +752,9 @@ impl<C: CpuBackend> Machine<C> {
             return Ok(());
         };
         let (cx, cy) = (fb.width(), fb.height());
-        let pitch = cx * 2;
+        let pitch = fb.passo_do_dib() as u32;
         let buffer = self.dib_buffers.get(&bitmap).copied().unwrap_or(0);
-        let transparent = self.transparency.get(&bitmap).copied().unwrap_or(0) as u32;
+        let transparent = self.transparency.get(&bitmap).copied().unwrap_or(TRANSPARENT_KEY) as u32;
         self.cpu.write_u32(bitmap + 4, 0)?; // pPaletteMap
         self.cpu.write_u32(bitmap + 8, buffer)?; // pBmp
         self.cpu.write_u32(bitmap + 12, 0)?; // pRGB: RGB565 não tem paleta
@@ -796,12 +855,24 @@ impl<C: CpuBackend> Machine<C> {
                 return Ok(());
             };
             let largura = fb.width() as usize;
-            let inicio = y0 as usize * largura + x0 as usize;
-            let fim = (y1 as usize - 1) * largura + x1 as usize;
-            let bytes = fb.rgb565_intervalo(inicio, fim);
-            self.cpu.write_mem(buffer + inicio as u32 * 2, &bytes)?;
+            let passo = fb.passo_do_dib();
+            if passo == largura * 2 {
+                let inicio = y0 as usize * largura + x0 as usize;
+                let fim = (y1 as usize - 1) * largura + x1 as usize;
+                let bytes = fb.rgb565_intervalo(inicio, fim);
+                self.cpu.write_mem(buffer + inicio as u32 * 2, &bytes)?;
+            } else {
+                // Com enchimento no fim da linha, a faixa contígua não bate com o buffer: vai
+                // linha a linha.
+                for linha in y0 as usize..y1 as usize {
+                    let inicio = linha * largura + x0 as usize;
+                    let bytes = fb.rgb565_intervalo(inicio, linha * largura + x1 as usize);
+                    let destino = linha * passo + x0 as usize * 2;
+                    self.cpu.write_mem(buffer + destino as u32, &bytes)?;
+                }
+            }
         } else {
-            let bytes = fb.to_rgb565_bytes();
+            let bytes = fb.to_dib_bytes();
             self.cpu.write_mem(buffer, &bytes)?;
         }
         self.dib_herdados.remove(&bitmap);
@@ -825,7 +896,7 @@ impl<C: CpuBackend> Machine<C> {
         if x < 0 || y < 0 || x >= width || y >= height {
             return None;
         }
-        Some(buffer + ((y * width + x) as u32) * 2)
+        Some(buffer + (y as usize * fb.passo_do_dib()) as u32 + x as u32 * 2)
     }
 
     pub(super) fn sync_from_guest(&mut self, bitmap: u32) -> Result<(), CpuError> {
@@ -835,7 +906,7 @@ impl<C: CpuBackend> Machine<C> {
         let Some(fb) = self.bitmaps.get(&bitmap) else {
             return Ok(());
         };
-        let tamanho = (fb.width() * fb.height() * 2) as usize;
+        let tamanho = fb.passo_do_dib() * fb.height() as usize;
         // Bytes do objeto anterior: o host está à frente, e não há nada do jogo para trazer.
         if self.dib_herdados.contains(&bitmap) {
             return Ok(());
@@ -849,7 +920,7 @@ impl<C: CpuBackend> Machine<C> {
         let mut bytes = vec![0u8; tamanho];
         self.cpu.read_mem(buffer, &mut bytes)?;
         if let Some(fb) = self.bitmaps.get_mut(&bitmap) {
-            fb.load_rgb565_bytes(&bytes);
+            fb.load_dib_bytes(&bytes);
             // Acabamos de copiar o buffer inteiro por cima da nossa cópia: os dois lados estão
             // iguais, e nada do que desenhamos antes ainda precisa ir para o jogo.
             fb.toma_sujeira();
@@ -895,7 +966,11 @@ impl<C: CpuBackend> Machine<C> {
         };
         if let Some(source) = self.bitmaps.get(&src) {
             let transparent = if rop == AEE_RO_TRANSPARENT {
-                self.transparency.get(&src).copied()
+                // Sem cor pedida, vale a do BREW: `RGB_MASK_COLOR`, o magenta. O Action Hero 3D
+                // desenha cada letra com `AEE_RO_TRANSPARENT` de uma folha de fundo magenta
+                // sem nunca chamar `SetTransparencyColor`; sem o padrão, a folha inteira
+                // aparecia na tela a cada letra.
+                Some(self.transparency.get(&src).copied().unwrap_or(TRANSPARENT_KEY))
             } else {
                 None
             };

@@ -257,6 +257,7 @@ impl<C: CpuBackend> Machine<C> {
                 if remaining == 0 {
                     self.images.remove(&this);
                     self.image_bitmaps.remove(&this);
+                    self.recortes_de_imagem.remove(&this);
                 }
                 remaining
             }
@@ -384,6 +385,19 @@ impl<C: CpuBackend> Machine<C> {
         p2: u32,
     ) -> Result<(), CpuError> {
         match parm {
+            IPARM_SIZE => {
+                self.recortes_de_imagem.entry(image).or_default().tamanho =
+                    Some((p1 as i32, p2 as i32));
+            }
+            IPARM_OFFSET => {
+                let recorte = self.recortes_de_imagem.entry(image).or_default();
+                recorte.x = p1 as i32;
+                recorte.y = p2 as i32;
+            }
+            IPARM_ROP => {
+                self.recortes_de_imagem.entry(image).or_default().transparente =
+                    p1 == AEE_RO_TRANSPARENT;
+            }
             IPARM_CXFRAME => {
                 if let Some(info) = self.images.get_mut(&image) {
                     std::rc::Rc::make_mut(info).frame_width = p1 as u16;
@@ -470,6 +484,7 @@ impl<C: CpuBackend> Machine<C> {
             return Ok(());
         }
         let clip = self.clip;
+        let recorte = self.recortes_de_imagem.get(&image).copied().unwrap_or_default();
         // **A imagem não é copiada para ser lida.** Ler o mapa de imagens e escrever no de
         // superfícies são campos diferentes do `self`, e separá-los aqui é o que deixa o
         // empréstimo passar sem cópia.
@@ -496,8 +511,15 @@ impl<C: CpuBackend> Machine<C> {
         // apareça. Percorrer a imagem toda e conferir pixel a pixel eram 3,9 bilhões de pixels
         // lidos em quatro segundos virtuais para pôr na tela algumas centenas de milhares — e
         // ainda punha na tela o que o jogo mandou esconder.
-        let (mut first_column, mut last_column) = (0, frame_width as i32);
-        let (mut first_row, mut last_row) = (0, info.height as i32);
+        //
+        // O pedaço pedido por `IPARM_OFFSET` e `IPARM_SIZE` entra antes de tudo: `(column, row)`
+        // continua sendo a posição **na tela** a partir de `(x, y)`, e o pixel lido é deslocado
+        // pelo canto do pedaço.
+        let (recorte_x, recorte_y) = (recorte.x.max(0), recorte.y.max(0));
+        let (largura, altura) = recorte.tamanho.unwrap_or((i32::MAX, i32::MAX));
+        let (mut first_column, mut last_column) =
+            (0, largura.min(frame_width as i32 - recorte_x));
+        let (mut first_row, mut last_row) = (0, altura.min(info.height as i32 - recorte_y));
         if let Some(clip) = clip {
             first_column = first_column.max(clip.x as i32 - x);
             last_column = last_column.min(clip.x as i32 + clip.width as i32 - x);
@@ -512,10 +534,15 @@ impl<C: CpuBackend> Machine<C> {
 
         for row in first_row..last_row {
             for column in first_column..last_column {
-                let source = (row as u32 * info.width + column as u32 + offset) as usize;
+                let source = ((row + recorte_y) as u32 * info.width
+                    + (column + recorte_x) as u32
+                    + offset) as usize;
                 let Some(&pixel) = info.pixels.get(source) else {
                     continue;
                 };
+                if recorte.transparente && pixel == TRANSPARENT_KEY {
+                    continue;
+                }
                 match info.alfa.get(source).copied() {
                     Some(0) => {}
                     Some(u8::MAX) => surface.set_pixel_native(x + column, y + row, pixel),

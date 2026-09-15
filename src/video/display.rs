@@ -376,6 +376,51 @@ impl Framebuffer {
         }
     }
 
+    /// Bytes por linha no buffer do `IDIB`: a largura em RGB565 alinhada em 4 bytes.
+    ///
+    /// Numa largura par é o mesmo `largura * 2`; numa ímpar sobra um pixel de enchimento no
+    /// fim de cada linha. O Action Hero 3D anda pelas linhas de uma imagem de largura ímpar
+    /// com passo `cx + 1` — sem o enchimento, o logo de 149 pixels e os retratos de 179 saíam
+    /// com as linhas escorregando e pedaços cortados.
+    pub fn passo_do_dib(&self) -> usize {
+        (self.width as usize * 2).div_ceil(4) * 4
+    }
+
+    /// Como [`Framebuffer::to_rgb565_bytes`], com as linhas no passo do `IDIB`.
+    pub fn to_dib_bytes(&self) -> Vec<u8> {
+        let passo = self.passo_do_dib();
+        let largura = self.width as usize;
+        if passo == largura * 2 {
+            return self.to_rgb565_bytes();
+        }
+        let mut bytes = vec![0u8; passo * self.height as usize];
+        for (linha, pixels) in self.pixels.chunks_exact(largura).enumerate() {
+            for (coluna, pixel) in pixels.iter().enumerate() {
+                let at = linha * passo + coluna * 2;
+                bytes[at..at + 2].copy_from_slice(&pixel.to_le_bytes());
+            }
+        }
+        bytes
+    }
+
+    /// Como [`Framebuffer::load_rgb565_bytes`], com as linhas no passo do `IDIB`.
+    pub fn load_dib_bytes(&mut self, bytes: &[u8]) {
+        let passo = self.passo_do_dib();
+        let largura = self.width as usize;
+        if passo == largura * 2 {
+            return self.load_rgb565_bytes(bytes);
+        }
+        for (pixels, origem) in self.pixels.chunks_exact_mut(largura).zip(bytes.chunks(passo)) {
+            for (pixel, chunk) in pixels.iter_mut().zip(origem.chunks_exact(2)) {
+                let value = u16::from_le_bytes([chunk[0], chunk[1]]);
+                if *pixel != value {
+                    *pixel = value;
+                    self.touched += 1;
+                }
+            }
+        }
+    }
+
     /// Os pixels em `0x00RRGGBB`, que é o formato que as janelas do host esperam.
     pub fn to_argb(&self) -> Vec<u32> {
         self.pixels
@@ -441,6 +486,26 @@ impl Framebuffer {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn largura_impar_ganha_um_pixel_de_enchimento_por_linha_no_dib() {
+        let mut fb = Framebuffer::new(3, 2);
+        fb.set_pixel_native(0, 1, 0x1234);
+        fb.set_pixel_native(2, 1, 0xabcd);
+        assert_eq!(fb.passo_do_dib(), 8);
+        let bytes = fb.to_dib_bytes();
+        assert_eq!(bytes.len(), 16);
+        // A segunda linha começa no byte 8, não no 6.
+        assert_eq!(&bytes[8..10], &0x1234u16.to_le_bytes());
+        assert_eq!(&bytes[12..14], &0xabcdu16.to_le_bytes());
+
+        let mut volta = Framebuffer::new(3, 2);
+        volta.load_dib_bytes(&bytes);
+        assert_eq!(volta.get_pixel(0, 1), 0x1234);
+        assert_eq!(volta.get_pixel(2, 1), 0xabcd);
+        // Numa largura par nada muda.
+        assert_eq!(Framebuffer::new(4, 1).passo_do_dib(), 8);
+    }
 
     #[test]
     fn a_conversao_para_a_janela_espalha_os_bits_ate_o_fim_da_faixa() {
