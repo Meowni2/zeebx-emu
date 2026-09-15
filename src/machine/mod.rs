@@ -161,21 +161,36 @@ fn fold_case(units: &[u16], take: usize) -> Vec<u16> {
 /// Base 0 significa deduzir do prefixo, como no `strtoul` do C: `0x` é hexadecimal, `0` é
 /// octal e o resto é decimal. Devolve o valor e quantos bytes foram consumidos.
 fn parse_unsigned(text: &str, base: u32) -> (u32, usize) {
-    let start = text.len() - text.trim_start().len();
-    let rest = &text[start..];
+    // O espaço do `isspace` do C, e não o do Unicode: lido em Latin-1, o `0xA0` viraria espaço.
+    let start = text.len() - text.trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r']).len();
+    // **O sinal vale.** A `strtoul` do C aceita `+` e `-`, e com `-` devolve o número negado. O
+    // Alice no País das Maravilhas lê linhas como `-2 12 16 73 ...`: parado no `-`, o laço dele
+    // contava o campo sem sair do lugar e repetia a linha até esgotar os 18 MB do pool.
+    let (negativo, depois_do_sinal) = match text[start..].as_bytes().first() {
+        Some(b'-') => (true, start + 1),
+        Some(b'+') => (false, start + 1),
+        _ => (false, start),
+    };
+    let rest = &text[depois_do_sinal..];
+    let hex = rest.starts_with("0x") || rest.starts_with("0X");
     let (digits, base) = match base {
-        0 if rest.starts_with("0x") || rest.starts_with("0X") => (&rest[2..], 16),
-        16 if rest.starts_with("0x") || rest.starts_with("0X") => (&rest[2..], 16),
-        0 if rest.starts_with('0') && rest.len() > 1 => (&rest[1..], 8),
+        0 | 16 if hex => (&rest[2..], 16),
+        // O `0` do prefixo octal também é dígito: `"0 1"` consome o zero.
+        0 if rest.starts_with('0') => (rest, 8),
         0 => (rest, 10),
         base => (rest, base),
     };
     let taken = digits.chars().take_while(|c| c.is_digit(base)).count();
-    let value = u32::from_str_radix(&digits[..taken], base).unwrap_or(0);
+    let value = u32::from_str_radix(&digits[..taken], base).unwrap_or(u32::MAX);
     let consumed = if taken == 0 {
         0
     } else {
         text.len() - digits.len() + taken
+    };
+    let value = match (taken, negativo) {
+        (0, _) => 0,
+        (_, true) => value.wrapping_neg(),
+        (_, false) => value,
     };
     (value, consumed)
 }
