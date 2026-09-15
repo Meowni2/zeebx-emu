@@ -62,9 +62,13 @@ impl<C: CpuBackend> Machine<C> {
 
         self.objects.release(source);
         self.bitmaps.remove(&source);
-        self.dib_buffers.remove(&source);
-        self.dib_herdados.remove(&source);
-        self.dib_publicado.remove(&source);
+        // **O buffer volta para a região pelo caminho normal.** Tirando só o `dib_buffers` aqui,
+        // a capacidade anotada ficava para trás: o próximo bitmap a nascer neste endereço via a
+        // anotação, concluía que o buffer dele já cabia e publicava um `IDIB` com `pBmp` nulo. O
+        // Bejeweled Twist morria nisso — o `BltIn` dele monta a tabela de linhas a partir do
+        // `pBmp`, e sem ela o objeto de origem ficava sem pixels e o jogo caía no primeiro
+        // desenho.
+        self.solta_dib(source);
         self.cpu.unwatch_dirty(source);
         self.transparency.remove(&source);
         Ok(())

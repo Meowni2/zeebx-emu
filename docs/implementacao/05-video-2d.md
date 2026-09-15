@@ -49,6 +49,14 @@ região de superfícies não recicla e um jogo que decodifique centenas de image
 A lição é a mesma de outras vezes: **o que um jogo lê de uma struct nossa vale tanto quanto o
 que devolvemos de uma chamada.** Aqui nenhuma chamada falhou, e o relatório saiu limpo.
 
+**E a anotação de capacidade tem de morrer junto com o buffer.** Ao desenhar numa superfície do
+jogo montamos um `IBitmap` nosso como origem e o descartamos em seguida. O descarte tirava o
+buffer da anotação, mas deixava a capacidade para trás; o bitmap seguinte a nascer naquele
+endereço lia a sobra, concluía que o buffer dele já cabia e publicava um `IDIB` com `pBmp`
+**nulo**. Quem lesse os pixels por ali recebia zero: o `BltIn` do Bejeweled Twist monta a tabela
+de linhas a partir do `pBmp`. Hoje a origem temporária é devolvida pelo `solta_dib`, que solta as
+duas coisas.
+
 **O buffer reaproveitado ainda tem os pixels do morto.** Reescrever só o cabeçalho deixa no
 buffer a imagem do objeto anterior, e o bitmap novo só tem os pixels certos do nosso lado. No
 Unicorn isso não aparecia: a vigia de escrita dizia "o jogo não mexeu aqui", a importação não
