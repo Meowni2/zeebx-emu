@@ -492,6 +492,14 @@ impl<C: CpuBackend> Machine<C> {
             // É como o jogo faz a foto do boneco: desenha e lê o quadro de volta. Enquanto isto
             // não existia, ele lia o que estivesse no buffer dele — daí a imagem embaralhada.
             "ReadPixels" => self.gles_read_pixels(&a)?,
+            // glScissor(x, y, width, height) — o retângulo fora do qual nada é desenhado, com o
+            // `y` de baixo para cima, como a viewport.
+            //
+            // O Peggle desenha a folha de fontes inteira e aperta a tesoura para aparecer uma
+            // letra só. Ignorada, a folha inteira ia para a tela por cima do jogo.
+            "Scissor" => self
+                .gl
+                .set_scissor(a[0] as i32, a[1] as i32, a[2] as i32, a[3] as i32),
             // glColorMask(r, g, b, a) — booleanos, um por canal.
             "ColorMask" => self.gl.set_color_mask(std::array::from_fn(|i| a[i] != 0)),
             outro => {

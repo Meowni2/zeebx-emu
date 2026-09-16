@@ -400,6 +400,7 @@ pub trait Rasterizador {
     fn pop_matrix(&mut self);
 
     fn set_viewport(&mut self, x: i32, y: i32, width: i32, height: i32);
+    fn set_scissor(&mut self, x: i32, y: i32, width: i32, height: i32);
     fn set_surface(&mut self, width: usize, height: usize);
     fn surface(&self) -> (usize, usize);
     fn frame_size(&self) -> (usize, usize);
@@ -525,6 +526,9 @@ impl Rasterizador for GlState {
     }
     fn set_viewport(&mut self, x: i32, y: i32, width: i32, height: i32) {
         GlState::set_viewport(self, x, y, width, height)
+    }
+    fn set_scissor(&mut self, x: i32, y: i32, width: i32, height: i32) {
+        GlState::set_scissor(self, x, y, width, height)
     }
     fn set_surface(&mut self, width: usize, height: usize) {
         GlState::set_surface(self, width, height)
@@ -686,6 +690,15 @@ pub struct GlState {
     texture_matrix: Vec<Matrix>,
 
     viewport: (i32, i32, i32, i32),
+    /// O `glScissor`, já com o `y` contado do topo, e só quando o `GL_SCISSOR_TEST` está ligado.
+    ///
+    /// O Peggle desenha a folha de fontes inteira e conta com ele para aparecer uma letra só —
+    /// o mesmo truque que o Pac-Mania faz com o recorte do `IDisplay`. Ignorá-lo punha a folha
+    /// inteira na tela.
+    tesoura: Option<(i32, i32, i32, i32)>,
+    /// O retângulo cru do `glScissor`, com o `y` de baixo para cima, como o jogo o passou.
+    tesoura_crua: (i32, i32, i32, i32),
+    tesoura_ligada: bool,
     surface: Option<(usize, usize)>,
     clear_color: [f32; 4],
     clear_depth: f32,
@@ -797,6 +810,9 @@ impl GlState {
             projection: vec![IDENTITY],
             texture_matrix: vec![IDENTITY],
             viewport: (0, 0, width as i32, height as i32),
+            tesoura: None,
+            tesoura_crua: (0, 0, width as i32, height as i32),
+            tesoura_ligada: false,
             surface: None,
             clear_color: [0.0, 0.0, 0.0, 1.0],
             clear_depth: 1.0,
@@ -875,6 +891,30 @@ impl GlState {
         if stack.len() > 1 {
             stack.pop();
         }
+    }
+
+    /// O retângulo do `glScissor`. Guardado cru e convertido para o topo quando vale.
+    pub fn set_scissor(&mut self, x: i32, y: i32, width: i32, height: i32) {
+        self.tesoura_crua = (x, y, width, height);
+        self.atualiza_tesoura();
+    }
+
+    /// Liga ou desliga o `GL_SCISSOR_TEST`.
+    pub fn set_scissor_test(&mut self, ligado: bool) {
+        self.tesoura_ligada = ligado;
+        self.atualiza_tesoura();
+    }
+
+    /// Converte o retângulo do `glScissor` para a nossa superfície, que conta o `y` do topo.
+    fn atualiza_tesoura(&mut self) {
+        let (x, y, largura, altura) = self.tesoura_crua;
+        self.tesoura = match self.tesoura_ligada {
+            false => None,
+            true => {
+                let altura_da_superficie = self.surface().1 as i32;
+                Some((x, altura_da_superficie - y - altura, largura, altura))
+            }
+        };
     }
 
     pub fn set_viewport(&mut self, x: i32, y: i32, width: i32, height: i32) {
@@ -1020,9 +1060,7 @@ impl GlState {
             {
                 self.lights[(capacidade - gles::GL_LIGHT0) as usize].enabled = on;
             }
-            // O recorte por tesoura ainda não existe; ignorá-lo desenha demais, nunca de
-            // menos, e é o erro menos visível dos dois.
-            gles::GL_SCISSOR_TEST => {}
+            gles::GL_SCISSOR_TEST => self.set_scissor_test(on),
             // **O stencil ainda não existe, e faz falta medida.** O palco da Z-Wheel arma
             // `glStencilFunc` e `glStencilOp` duas vezes por quadro, que é a receita do reflexo
             // plano: marcar o chão no stencil e desenhar o modelo espelhado só onde ele marcou.
@@ -1692,6 +1730,17 @@ impl GlState {
         let max_x = max_x.min(vx + vw).min(self.width as i32);
         let min_y = min_y.max(vy).max(0);
         let max_y = max_y.min(vy + vh).min(self.height as i32);
+        // O `glScissor` entra aqui, junto com a viewport: um retângulo alinhado aos eixos só
+        // precisa apertar a caixa do triângulo, e assim ele não custa nada por pixel.
+        let (min_x, max_x, min_y, max_y) = match self.tesoura {
+            None => (min_x, max_x, min_y, max_y),
+            Some((tx, ty, tw, th)) => (
+                min_x.max(tx),
+                max_x.min(tx + tw),
+                min_y.max(ty),
+                max_y.min(ty + th),
+            ),
+        };
         if min_x >= max_x || min_y >= max_y {
             return;
         }

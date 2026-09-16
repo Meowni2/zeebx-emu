@@ -106,6 +106,19 @@ parâmetro de ponto flutuante —, e no console isso é branco puro, que deixa a
 Guardando 255, o nosso modulador multiplicava a textura por 255, e o título e os menus saíam
 estourados para o branco, com só as bordas escuras aparecendo.
 
+### O `glScissor` recorta de verdade
+
+Era aceito e ignorado, com a justificativa de que desenhar demais é o erro menos visível. Não é,
+quando o jogo **conta** com o recorte: o Peggle desenha a folha de fontes inteira e aperta a
+tesoura em volta de uma letra, o mesmo truque que o Pac-Mania faz com o recorte do `IDisplay`.
+Ignorado, cada letra punha a folha inteira na tela — o menu e a mesa do jogo saíam cobertos de
+alfabetos.
+
+Nos dois motores o retângulo entra junto com a viewport, e com a mesma convenção: o `y` do
+`glScissor` conta de baixo para cima, e a nossa superfície conta do topo. No rasterizador de
+software ele aperta a caixa de cada triângulo, e por isso não custa nada por pixel; na placa é o
+`glScissor` dela, multiplicado pela escala do anexo.
+
 ## `GL_OES_draw_texture`
 
 O blit de tela: um retângulo desenhado **em coordenadas de janela**, sem passar pelas matrizes.

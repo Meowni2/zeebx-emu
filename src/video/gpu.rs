@@ -74,6 +74,9 @@ struct Estado {
     /// Uma viewport interna já contada do topo, que não passa pela conversão — a do
     /// [`GpuState::import_rgb565_changes`]. Ver [`GpuState::viewport_do_topo`].
     viewport_do_topo_fixa: Option<(i32, i32, i32, i32)>,
+    /// O `glScissor` como o jogo o passou, e se o `GL_SCISSOR_TEST` está ligado.
+    tesoura: (i32, i32, i32, i32),
+    tesoura_ligada: bool,
     limpa_cor: [f32; 4],
     limpa_profundidade: f32,
     limpa_stencil: i32,
@@ -107,6 +110,8 @@ impl Default for Estado {
             texturando: false,
             viewport: (0, 0, 0, 0),
             viewport_do_topo_fixa: None,
+            tesoura: (0, 0, 0, 0),
+            tesoura_ligada: false,
             limpa_cor: [0.0, 0.0, 0.0, 1.0],
             limpa_profundidade: 1.0,
             limpa_stencil: 0,
@@ -220,6 +225,7 @@ impl GpuState {
             // aparecia, porque ele põe a sua própria.
             fill: Estado {
                 viewport: (0, 0, largura as i32, altura as i32),
+                tesoura: (0, 0, largura as i32, altura as i32),
                 ..Estado::default()
             },
             quadro: None,
@@ -463,6 +469,13 @@ impl GpuState {
             // É core desde o OpenGL 3.2, que é o perfil pedido. Na queda para GLES 3.0 ele não
             // existe e a chamada não tem efeito: ali o plano distante volta a recortar.
             gl.enable(glow::DEPTH_CLAMP);
+            // O `glScissor` do jogo vem em pixels do console, com o `y` de baixo para cima —
+            // a mesma convenção da viewport —, e o anexo é `escala` vezes maior.
+            liga(gl, glow::SCISSOR_TEST, e.tesoura_ligada);
+            if e.tesoura_ligada {
+                let (sx, sy, sw, sh) = e.tesoura;
+                gl.scissor(sx * n, sy * n, sw.max(0) * n, sh.max(0) * n);
+            }
             liga(gl, glow::DEPTH_TEST, e.teste_profundidade);
             gl.depth_func(e.func_profundidade);
             gl.depth_mask(e.mascara_profundidade);
@@ -980,6 +993,10 @@ impl Rasterizador for GpuState {
         self.estado.set_viewport(x, y, width, height);
         self.fill.viewport = (x, y, width, height);
     }
+    fn set_scissor(&mut self, x: i32, y: i32, width: i32, height: i32) {
+        self.estado.set_scissor(x, y, width, height);
+        self.fill.tesoura = (x, y, width, height);
+    }
     fn set_surface(&mut self, width: usize, height: usize) {
         self.estado.set_surface(width, height);
     }
@@ -1055,6 +1072,10 @@ impl Rasterizador for GpuState {
             gles::GL_ALPHA_TEST => self.fill.teste_alfa = on,
             gles::GL_CULL_FACE => self.fill.descarte = on,
             gles::GL_STENCIL_TEST => self.fill.teste_stencil = on,
+            gles::GL_SCISSOR_TEST => {
+                self.fill.tesoura_ligada = on;
+                self.estado.set_scissor_test(on);
+            }
             // Ligar e desligar textura é por unidade, e só a base desenha. O Resident Evil 4
             // desliga a unidade 1 no fim de cada bloco.
             gles::GL_TEXTURE_2D if self.estado.base_active_unit() => self.fill.texturando = on,
