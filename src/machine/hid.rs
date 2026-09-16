@@ -230,13 +230,20 @@ impl<C: CpuBackend> Machine<C> {
                 SUCCESS
             }
             // GetNextConnectEvent(int *pnDevHandle, int *pnStatus, boolean *pbDropped).
+            // GetNextConnectEvent(uint32 *pdwHandle, boolean *pbConnected, uint32 *pdwTimestamp)
+            //
+            // **A fila está sempre vazia, e vazia responde `EFAILED`** — é o "não há mais evento"
+            // do BREW, o mesmo do `GetNextButtonEvent`. Respondendo sucesso com os campos
+            // zerados, o jogo entendia que havia um evento de conexão a cada pergunta: os Zeebo
+            // Extreme ficavam em `GetNextConnectEvent` e `GetDeviceInfo` para sempre, sem armar
+            // timer nem desenhar, e a sessão terminava por falta do que fazer.
             "GetNextConnectEvent" => {
                 for out in [a1, a2, a3] {
                     if out != 0 {
                         self.cpu.write_u32(out, 0)?;
                     }
                 }
-                SUCCESS
+                EFAILED
             }
             // Os `RegisterFor*` recebem um `ISignal` que devemos disparar quando houver evento.
             // Guardamos qual é; disparar de fato depende de ligar a entrada do host.

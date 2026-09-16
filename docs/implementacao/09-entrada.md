@@ -141,6 +141,13 @@ O **Bad Dudes vs. DragonNinja** compara esse campo com `0x0106c3fd`; com `1` ele
 aparelho de produto `3` e fabricante `0x15a2`, que é o receptor do Boomerang. Os outros ports da
 Data East não conferem o tipo, e por isso funcionavam.
 
+**E a fila de eventos de conexão vazia responde `EFAILED`.** O `GetNextConnectEvent` respondia
+sucesso com os campos zerados, o que para o jogo é "houve um evento" — um aparelho de identificador
+zero conectando, a cada pergunta. Enquanto o `type` era `1`, os Zeebo Extreme descartavam o evento
+e seguiam; com o UID certo eles passaram a tratá-lo, e ficaram em `GetNextConnectEvent` e
+`GetDeviceInfo` para sempre, sem armar timer nem desenhar. A sessão então terminava sozinha, por
+falta do que fazer, e o jogo "não abria". Fila vazia é `EFAILED`, como no `GetNextButtonEvent`.
+
 ## Mapeamento configurável
 
 `input/bindings.rs`. O mapeamento é guardado **por nome** — o nome da tecla, o do botão do controle do
