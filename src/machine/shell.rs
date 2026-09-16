@@ -573,7 +573,11 @@ impl<C: CpuBackend> Machine<C> {
             AEECLSID_UNZIPSTREAM => Interface::UnzipStream,
             AEECLSID_LICENSE => Interface::License,
             AEECLSID_MEMASTREAM => Interface::MemAStream,
-            AEECLSID_PNG | AEECLSID_BMP => Interface::Image,
+            // O decodificador é um por formato no console, e todos são `IImage` alimentados por
+            // `IAStream`. O nosso olha a assinatura dos bytes, então os quatro caem no mesmo
+            // lugar — e faltando o JPEG na lista, o Zuma's Revenge recebia recusa e seguia com
+            // um ponteiro nulo até quebrar.
+            AEECLSID_PNG | AEECLSID_BMP | AEECLSID_JPEG | AEECLSID_GIF => Interface::Image,
             AEECLSID_PNGDECODER | AEECLSID_PNGDECODER_BREW => Interface::ImageDecoder,
             AEECLSID_THREAD => Interface::Thread,
             AEECLSID_QEGL => Interface::Egl,
