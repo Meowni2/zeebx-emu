@@ -3,9 +3,9 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 
 | Status | Legenda | Jogos | % |
 |---|---|---|---|
-| ✅ | (compatível) | 38 | 63% |
+| ✅ | (compatível) | 40 | 67% |
 | 🔄 | (roda com ressalvas) | 11 | 18% |
-| ❌ | (incompatível) | 11 | 18% |
+| ❌ | (incompatível) | 9 | 15% |
 
 
 # Observações:
@@ -43,10 +43,10 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 | Need For Speed - Carbon - Domine a Cidade | 🔄 | Jogável porém requer otimizacão (esse realmente PRECISA DE VELOCIDADE) |
 | Pac-Mania | ✅ | |
 | Peggle | ✅ | Joga; menus e mesa corretos |
-| Powerboat Challenge | ❌ | |
-| Prey 2 Evil | ❌ | |
+| Powerboat Challenge | ❌ | Chega ao menu de idioma e prende na tela de carregamento |
+| Prey 2 Evil | ❌ | Roda e lê os dados, mas a tela fica preta |
 | Quake | 🔄 | Podem existir crashes in-game ou lagging |
-| Quake 2 | ❌ | acesso inválido a 0x00000000, em 0x00000000 |
+| Quake 2 | ❌ | Menus funcionam; quebra ao iniciar a fase |
 | Raging Thunder 2 | 🔄 | Jogável, porém sem som |
 | Rally Master Pro | ✅ | |
 | Reckless Racing | 🔄 | Abre, porém com uma série de glitches nos modelos e texturas |
@@ -59,9 +59,9 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 | Tork and Kral - A Prehistorik Adventure | ❌ | Abre todo bugado |
 | Toy Raid | 🔄 | Jogável, porém sem som e com glitches visuais |
 | Treino Cerebral | ✅ | |
-| Turma da Monica em Vamos Brincar Vol. 1 | ❌ | acesso inválido a 0x00e60125, em 0x00060338 |
+| Turma da Monica em Vamos Brincar Vol. 1 | ✅ | Abre, navega os menus e chega à escolha de nome |
 | Ultimate Chess 3D | ✅ | |
-| Um Jogo de Ovos | ❌ | Não detecta controles |
+| Um Jogo de Ovos | ✅ | Menus e controles respondem |
 | Wizard Fire | ✅ | Emulador de arcade embutido, com som |
 | Zeebo Clube | ❌ | Envolve sistema online, recriacão pendente |
 | Zeebo Extreme Baja | ✅ | |
