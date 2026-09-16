@@ -3,9 +3,9 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 
 | Status | Legenda | Jogos | % |
 |---|---|---|---|
-| ✅ | (compatível) | 40 | 67% |
+| ✅ | (compatível) | 41 | 68% |
 | 🔄 | (roda com ressalvas) | 11 | 18% |
-| ❌ | (incompatível) | 9 | 15% |
+| ❌ | (incompatível) | 8 | 13% |
 
 
 # Observações:
@@ -67,7 +67,7 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 | Zeebo Extreme Baja | ✅ | |
 | Zeebo Extreme Boia Cross | ✅ | |
 | Zeebo Extreme Corrida Aerea | ✅ | |
-| Zeebo Extreme Jetboard | ❌ | |
+| Zeebo Extreme Jetboard | ✅ | Precisa do Boomerang: com ele calibra e segue para o jogo |
 | Zeebo Extreme Rolima | ✅ | Abre e chega ao menu; corrida não conferida aqui |
 | Zeebo Family Pack | ✅ | |
 | Zeebo F.C. Foot Camp | ✅ | |
