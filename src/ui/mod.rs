@@ -1402,7 +1402,17 @@ impl App {
                     None => crate::input::bindings::Player::default(),
                 };
                 atual.ligada = ligada;
-                atual.aparelho = aparelho;
+                // **Um controle do host numa porta de teclado vira um controle para o console.**
+                // O `aparelho` é o que o console enumera, e uma porta marcada como teclado não
+                // entra na lista de joysticks que os jogos pedem: quem escolhia o segundo
+                // controle para a porta dois continuava sem ser visto como segundo jogador. As
+                // outras escolhas (Z-Pad, Boomerang) já são controle e ficam onde estão.
+                atual.aparelho = match (aparelho, &atual.device) {
+                    (crate::input::bindings::Aparelho::Teclado, Some(_)) => {
+                        crate::input::bindings::Aparelho::Controle
+                    }
+                    (outro, _) => outro,
+                };
                 changed = true;
             }
             if ui.button(self.catalog.get("controls.rescan")).clicked() {

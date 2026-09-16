@@ -461,12 +461,35 @@ impl Controls {
         for player in &mut self.players {
             player.adopt_axes();
             player.migrate_axis_convention();
+            player.migra_aparelho_do_controle();
         }
         while self.players.len() < crate::input::PORTAS {
             self.players.push(Player {
                 ligada: false,
                 ..Player::default()
             });
+        }
+    }
+}
+
+impl Player {
+    /// Uma porta com controle do host escolhido não é uma porta de teclado.
+    ///
+    /// Escolher o controle na lista trocava o mapeamento e deixava o `aparelho` como estava, e
+    /// `aparelho` é o que o console **enumera**: uma porta marcada como teclado não entra na
+    /// lista de joysticks que os jogos pedem. Quem punha o segundo controle na porta dois para
+    /// jogar com dois continuava com um joystick só na conta do jogo, e a opção de dois
+    /// jogadores ficava apagada.
+    ///
+    /// O Wii Remote é a exceção que fica: ele não passa pelo gilrs e os botões dele se somam
+    /// aos das teclas na própria porta, então ali o mapeamento de teclado é o certo.
+    fn migra_aparelho_do_controle(&mut self) {
+        let wiimote = self
+            .device
+            .as_deref()
+            .is_some_and(|nome| crate::input::wiimote::Wiimotes::indice_do_nome(nome).is_some());
+        if self.aparelho == Aparelho::Teclado && self.device.is_some() && !wiimote {
+            self.aparelho = Aparelho::Controle;
         }
     }
 }
@@ -730,6 +753,24 @@ mod tests {
         controls.player_mut(3);
         assert_eq!(controls.players.len(), 4);
         assert_eq!(controls.player(3), Some(&Player::default()));
+    }
+
+    #[test]
+    fn porta_com_controle_escolhido_deixa_de_ser_teclado() {
+        // O `aparelho` é o que o console enumera: com teclado ali, a porta não conta como
+        // joystick e o jogo de dois jogadores não vê o segundo.
+        let mut controls = Controls::default();
+        controls.players[1].ligada = true;
+        controls.players[1].aparelho = Aparelho::Teclado;
+        controls.players[1].device = Some("Meu Controle #2".into());
+        controls.adopt();
+        assert_eq!(controls.players[1].aparelho, Aparelho::Controle);
+        // Sem controle escolhido, teclado continua teclado.
+        let mut so_teclado = Controls::default();
+        so_teclado.players[0].aparelho = Aparelho::Teclado;
+        so_teclado.players[0].device = None;
+        so_teclado.adopt();
+        assert_eq!(so_teclado.players[0].aparelho, Aparelho::Teclado);
     }
 
     /// As duas portas nascem com o mesmo mapeamento, e só a primeira ligada. Ligar as duas por
