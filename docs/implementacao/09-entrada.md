@@ -114,7 +114,7 @@ indireta pode explicar tudo o que se observou e ainda assim descrever outro apar
 
 Contando as chamadas de `IHIDDevice` em dez segundos de cada uma das 62 ROMs:
 
-- **Só o eixo, nunca o evento de botão**: os ports de arcade da Data East (Magical Drop 3,
+- **Só o eixo e a varredura, nunca o evento de botão**: os ports de arcade da Data East (Magical Drop 3,
   Karnov's Revenge, Wizard Fire, Street Hoop, Spin Master, Caveman Ninja, Dark Seal, Super
   BurgerTime). Eles chamam `GetPositionState` umas quinhentas vezes e `GetNextButtonEvent`
   **zero**.
@@ -124,6 +124,20 @@ Contando as chamadas de `IHIDDevice` em dez segundos de cada uma das 62 ROMs:
 Por isso os dois canais ficam. Desligar qualquer um deles deixa parte da biblioteca sem entrada
 nenhuma — foi medido: com o direcional só nos eixos, o menu do Tênis não anda; só nos botões, ele
 anda e fica.
+
+### Há um terceiro canal, e nele a ordem da lista é tudo
+
+Os ports da Data East não param no eixo: eles chamam `GetButtonInfo` **dezesseis vezes por
+quadro**, com os índices de 0 a 15, e guardam o estado de cada um num vetor indexado pela
+posição. O laço está em `0x1f2a8` no módulo do Bad Dudes, e é literal — `mov r1, r4`, chamada,
+`ldr r3, [sp, #4]`, `strb r3, [r5, #0x13c]`, `add r4, r4, #1`, `cmp r4, #0x10`.
+
+Para quem lê assim, **o UID não importa: importa a posição**. Enquanto a lista abria com o
+`Button_2` e trazia o `Right_Shoulder_Upper` logo atrás, o botão 2 do controle chegava ao arcade
+como o gatilho direito e o 4 como o 3 — e o `b2` e o `b3`, que estavam nas posições 16 e 17, não
+chegavam a ser lidos. Por isso os quatro botões de face abrem a lista, na ordem 1, 2, 3, 4, e o
+que não é botão do aparelho (o `LeftThumb_X` que o arquivo do console deixou no meio, e a segunda
+aparição do `Right_Shoulder_Upper`) foi para o fim, fora da faixa que o arcade varre.
 
 `Z` e `RZ` não tinham nada os alimentando até o manche direito ser ligado neles. **O sentido
 desses dois é suposição**: o arquivo nomeia os eixos sem dizer o sentido, então seguimos a mesma
@@ -167,6 +181,12 @@ manche está em repouso.
 
 `Y` vai invertido porque no HID o eixo vertical cresce para baixo e na biblioteca de controles
 cima é positivo. Errar esse sinal inverte o eixo vertical de todo jogo que o lê — tem teste.
+
+**O controle do host também é guardado por nome, e dois iguais têm o mesmo nome.** Quem liga dois
+aparelhos do mesmo modelo e marca o segundo na porta 2 gravava a mesma string da porta 1, e a
+busca — que varre a lista do sistema procurando o nome — devolvia sempre o primeiro: a porta 2
+respondia ao controle 1. A lista numera as repetições (` #2`, ` #3`) e a busca usa a mesma lista,
+então continua sendo nome, que sobrevive a desligar e religar um aparelho.
 
 ## Migração de configuração
 
