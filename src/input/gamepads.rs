@@ -91,21 +91,32 @@ impl Gamepads {
     }
 
     /// O nome de cada controle ligado, na ordem em que o sistema os lista.
+    ///
+    /// **Dois controles do mesmo modelo têm o mesmo nome**, e quem escolhe "o segundo" na lista
+    /// precisa de algo que o distinga do primeiro. A partir da segunda aparição o nome ganha um
+    /// ` #2`, ` #3` e por aí. Enquanto o nome era só o do modelo, marcar o segundo controle na
+    /// porta 2 guardava a mesma string da porta 1 — e a prévia, que procura o controle por
+    /// nome, encontrava sempre o primeiro: a porta 2 respondia ao controle 1.
+    ///
+    /// Continua sendo nome, e não índice: o índice do sistema muda quando alguém desliga um
+    /// controle, e a configuração salva ontem tem de valer hoje.
     pub fn names(&self) -> Vec<String> {
         let Some(gilrs) = &self.gilrs else {
             return Vec::new();
         };
-        gilrs
-            .gamepads()
-            .map(|(_, pad)| pad.name().to_string())
-            .collect()
+        numera(gilrs.gamepads().map(|(_, pad)| pad.name().to_string()))
     }
 
     /// O controle de nome `device`, ou o primeiro ligado se `device` for `None`.
+    ///
+    /// O nome procurado é o da lista do [`Self::names`], com a numeração das repetições.
     fn find(&self, device: Option<&str>) -> Option<gilrs::Gamepad<'_>> {
         let gilrs = self.gilrs.as_ref()?;
         match device {
-            Some(name) => gilrs.gamepads().find(|(_, pad)| pad.name() == name),
+            Some(name) => {
+                let qual = self.names().iter().position(|n| n == name)?;
+                gilrs.gamepads().nth(qual)
+            }
             None => gilrs.gamepads().next(),
         }
         .map(|(_, pad)| pad)
@@ -164,9 +175,35 @@ impl Gamepads {
     }
 }
 
+/// Distingue nomes repetidos acrescentando ` #2`, ` #3` e por aí, na ordem de chegada.
+fn numera(nomes: impl Iterator<Item = String>) -> Vec<String> {
+    let mut vistos: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    nomes
+        .map(|nome| {
+            let quantos = vistos.entry(nome.clone()).or_insert(0);
+            *quantos += 1;
+            match *quantos {
+                1 => nome,
+                n => format!("{nome} #{n}"),
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dois_controles_do_mesmo_modelo_ganham_nomes_diferentes() {
+        // Sem isto, escolher "o segundo" na lista guarda a mesma string do primeiro e a porta 2
+        // acaba respondendo ao controle da porta 1.
+        let nomes = ["Z-Pad", "Z-Pad", "Wii Remote", "Z-Pad"];
+        assert_eq!(
+            numera(nomes.iter().map(|n| n.to_string())),
+            ["Z-Pad", "Z-Pad #2", "Wii Remote", "Z-Pad #3"]
+        );
+    }
 
     #[test]
     fn os_nomes_de_botao_vao_e_voltam() {
