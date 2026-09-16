@@ -84,6 +84,31 @@ atendemos. Reentrar é seguro desde que:
 para entrar no guest sem interromper nada pela metade. `CALLBACK_ROUNDS` limita quantas rodadas
 entregar, porque um callback pode enfileirar outro.
 
+## O teto de instruções devolve a vez, e o trecho continua depois
+
+O teto de instruções existe para o laço de quadros poder entregar entrada e conferir o relógio: um
+jogo que nunca devolve a vez seria dono do emulador. Mas cortar não pode ser **perder**.
+
+O **Zeebo Extreme Rolima** roda o carregamento inteiro dentro do `EVT_APP_START`, sem chamar
+`IThread::Suspend` nem voltar entre quadros — os irmãos dele cedem a vez, ele não. O teto cortava o
+trecho, o laço de eventos não achava timer nem callback nenhum, e a sessão terminava sozinha aos 3,8
+segundos, como se o jogo tivesse acabado.
+
+Hoje o corte guarda onde continuar, e a volta seguinte retoma antes de qualquer outra coisa —
+entregar um timer por cima de um quadro pela metade seria entregá-lo fora de hora. Duas
+sutilezas:
+
+- **O modo vai junto.** O endereço de retomada leva o bit 0 ligado quando o guest estava em Thumb,
+  que é como o ARM diz "continue em Thumb". Sem isso, um jogo Thumb volta decodificado como ARM e
+  salta para o endereço zero.
+- **Os registradores também.** Entre o corte e a retomada o emulador ainda entrega os sinais e os
+  callbacks daquela volta, e entrar no guest para isso sobrescreve `r0`-`r3` e o `lr`. O contexto
+  é guardado no corte e restaurado na retomada.
+
+Só o trecho **mais de fora** é retomado: um trecho aninhado — um callback chamado de dentro do
+despacho de uma API — tem quem o espera do lado de cá, e esse quadro já se foi quando a volta
+termina. Aninhado, o teto continua sendo só um pedido de vez.
+
 ## Threads cooperativas
 
 `IThread` do BREW não tem preempção: o guest só perde o controle quando chama `Suspend`. É

@@ -2120,6 +2120,9 @@ pub struct Machine<C: CpuBackend> {
     updates_na_volta: usize,
     /// Profundidade atual de reentrada no guest.
     nesting: u32,
+    /// O trecho de guest que o teto de instruções interrompeu, quando ele era o trecho mais de
+    /// fora: onde continuar e os registradores de então. Ver [`Machine::retoma_trecho`].
+    trecho_interrompido: Option<(u32, [u32; 15])>,
     /// Superfícies do jogo à espera de serem consultadas sobre onde ficam seus pixels.
     pending_probes: Vec<u32>,
     /// Desenhos que precisam passar pelo `BltIn` de uma superfície do jogo.
@@ -2638,6 +2641,7 @@ impl<C: CpuBackend> Machine<C> {
             quadros_do_update: Default::default(),
             updates_na_volta: 0,
             nesting: 0,
+            trecho_interrompido: None,
             pending_probes: Vec::new(),
             pending_blits: Vec::new(),
             probed: HashSet::new(),
@@ -2888,6 +2892,7 @@ impl<C: CpuBackend> Machine<C> {
             let gasto = self.cpu.instructions().saturating_sub(comeco);
             let fatia = teto.saturating_sub(gasto).min(budget);
             if fatia == 0 {
+                self.anota_trecho_interrompido(pc);
                 return Ok(Outcome::Budget);
             }
             match self.cpu.run(pc, fatia)? {
@@ -2958,9 +2963,55 @@ impl<C: CpuBackend> Machine<C> {
                     return Ok(Outcome::Fault { addr, pc, lr });
                 }
                 StopReason::Exception { pc } => return Ok(Outcome::Exception { pc }),
-                StopReason::Budget => return Ok(Outcome::Budget),
+                StopReason::Budget => {
+                    // O bit 0 diz o modo, como em toda retomada do ARM.
+                    let parou = self.cpu.read_reg(Reg::Pc) & !1;
+                    let modo = u32::from(self.cpu.em_thumb());
+                    self.anota_trecho_interrompido(parou | modo);
+                    return Ok(Outcome::Budget);
+                }
             }
         }
+    }
+
+    /// Guarda onde continuar o trecho que o teto de instruções interrompeu.
+    ///
+    /// **Só o trecho mais de fora.** O guest guarda o estado dele nos registradores e na pilha
+    /// dele, então retomar é continuar do `pc` — mas um trecho aninhado (um callback chamado de
+    /// dentro do despacho de uma API) tem quem o espera do lado de cá, e esse quadro já se foi
+    /// quando a volta termina. Aninhado, o teto continua sendo só um pedido de vez.
+    fn anota_trecho_interrompido(&mut self, pc: u32) {
+        if self.nesting != 0 {
+            return;
+        }
+        // **Os registradores vão junto.** Entre o corte e a retomada o emulador ainda entrega
+        // sinais e callbacks desta volta, e entrar no guest para isso sobrescreve `r0`-`r3`,
+        // o `lr` e o que mais o tratador usar. Sem guardar o contexto, a retomada continuava
+        // com os registradores de outra coisa — e o Rolima saltava para o endereço zero.
+        let mut estado = [0u32; 15];
+        for (slot, reg) in estado.iter_mut().zip(THREAD_REGS) {
+            *slot = self.cpu.read_reg(reg);
+        }
+        estado[14] = self.cpu.read_reg(Reg::Lr);
+        self.trecho_interrompido = Some((pc, estado));
+    }
+
+    /// Continua o trecho interrompido, se houver um.
+    ///
+    /// **Um jogo pode rodar o laço inteiro dele dentro do `EVT_APP_START`.** O Zeebo Extreme
+    /// Rolima faz isso: ele nunca cede a vez com `IThread::Suspend`, como os irmãos dele fazem,
+    /// e o teto de instruções cortava o carregamento no meio. Sem retomada, o trecho sumia — o
+    /// laço de eventos não achava timer nem callback nenhum, e a sessão terminava sozinha aos
+    /// 3,8 segundos, como se o jogo tivesse acabado.
+    fn retoma_trecho(&mut self, budget: u64) -> Result<Option<Outcome>, CpuError> {
+        let Some((pc, estado)) = self.trecho_interrompido.take() else {
+            return Ok(None);
+        };
+        for (valor, reg) in estado.iter().zip(THREAD_REGS) {
+            self.cpu.write_reg(reg, *valor);
+        }
+        self.cpu.write_reg(Reg::Lr, estado[14]);
+        self.execute(pc, budget).map(Some)
     }
 
     /// Atende uma chamada. `None` significa "ainda não implementada".
@@ -3412,6 +3463,11 @@ impl<C: CpuBackend> Machine<C> {
     /// Precisa rodar fora do despacho de uma chamada, como a fila de sinais: os callbacks
     /// executam no guest.
     pub fn advance(&mut self, budget: u64) -> Result<Vec<Outcome>, CpuError> {
+        // O trecho que o teto cortou continua antes de qualquer outra coisa: ele é o jogo no
+        // meio de um quadro, e timer ou callback entregues por cima dele chegariam fora de hora.
+        if let Some(outcome) = self.retoma_trecho(budget)? {
+            return Ok(vec![outcome]);
+        }
         self.skip_idle_time();
 
         // Os vencidos saem da lista *antes* de rodar, porque o callback tipicamente rearma o

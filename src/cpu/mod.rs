@@ -69,6 +69,15 @@ pub trait CpuBackend {
     /// duas execuções iguais deem o mesmo resultado.
     fn instructions(&self) -> u64;
 
+    /// Se o núcleo parou com o guest em modo Thumb.
+    ///
+    /// Serve para retomar um trecho interrompido: quem retoma passa o endereço com o bit 0
+    /// ligado, que é como o ARM diz "continue em Thumb". Sem isso, um jogo inteiro em Thumb —
+    /// o Zenonia, a série Extreme — voltaria decodificado como ARM.
+    fn em_thumb(&self) -> bool {
+        false
+    }
+
     /// Arma um sinalizador de sujeira numa faixa: o hook o liga quando o guest escreve nela.
     ///
     /// Sem isto, descobrir se o jogo mexeu numa superfície exige **ler a faixa inteira e

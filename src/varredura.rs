@@ -444,7 +444,13 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
             }
             medida.voltas += 1;
             match session.step(Duration::ZERO, false) {
-                Step::Presented => medida.quadros += 1,
+                // **A tela intermediária precisa ser consumida.** A janela a mostra e segue; aqui
+                // ninguém a mostra, e sem tirá-la da fila a volta seguinte devolve a mesma tela
+                // para sempre — o Quake ficava em "apresentou" sem o jogo andar um milissegundo.
+                Step::Presented => {
+                    medida.quadros += 1;
+                    while session.mostra_quadro_intermediario() {}
+                }
                 Step::Stopped => {
                     categoria = Categoria::QuebrouNoLaco;
                     break;
