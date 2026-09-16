@@ -3,9 +3,9 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 
 | Status | Legenda | Jogos | % |
 |---|---|---|---|
-| ✅ | (compatível) | 41 | 68% |
+| ✅ | (compatível) | 42 | 70% |
 | 🔄 | (roda com ressalvas) | 11 | 18% |
-| ❌ | (incompatível) | 8 | 13% |
+| ❌ | (incompatível) | 7 | 12% |
 
 
 # Observações:
@@ -51,12 +51,12 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 | Rally Master Pro | ✅ | |
 | Reckless Racing | 🔄 | Abre, porém com uma série de glitches nos modelos e texturas |
 | Resident Evil 4 - Zeebo Edition | ✅ | Reportado pela comunidade: Falta fog em algumas cenas do jogo |
-| Ridge Racer | ❌ | Abre mas completamente bugado e injogável |
+| Ridge Racer | ❌ | Mostra o logo e depois nada: desenha geometria que não aparece |
 | Spin Master | ✅ | Emulador de arcade embutido, com som |
 | Street Hoop | ✅ | Emulador de arcade embutido, com som |
 | Super BurgerTime | ✅ | Emulador de arcade embutido, com som |
 | Tekken 2 | ✅ | |
-| Tork and Kral - A Prehistorik Adventure | ❌ | Abre todo bugado |
+| Tork and Kral - A Prehistorik Adventure | ✅ | Joga; menus e fase corretos |
 | Toy Raid | 🔄 | Jogável, porém sem som e com glitches visuais |
 | Treino Cerebral | ✅ | |
 | Turma da Monica em Vamos Brincar Vol. 1 | ✅ | Abre, navega os menus e chega à escolha de nome |
@@ -79,6 +79,6 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 | Zeebo Sports Volei | ✅ | |
 | Zeetris | ✅ | |
 | Zenonia | ✅ | |
-| Zumas Revenge | ❌ | acesso inválido a 0x0000000c, em 0x00046b9c |
+| Zumas Revenge | ❌ | Quebra no começo, no mesmo desenho em superfície própria do Bejeweled Twist |
 | Z-Wheel | 🔄 | Utilizável, porém ainda com muitos bugs, online não implementado |
 
