@@ -107,17 +107,22 @@ impl Gamepads {
         numera(gilrs.gamepads().map(|(_, pad)| pad.name().to_string()))
     }
 
-    /// O controle de nome `device`, ou o primeiro ligado se `device` for `None`.
+    /// O controle de nome `device`; sem nome, o que está na vez da porta.
     ///
     /// O nome procurado é o da lista do [`Self::names`], com a numeração das repetições.
-    fn find(&self, device: Option<&str>) -> Option<gilrs::Gamepad<'_>> {
+    ///
+    /// **Sem nome escolhido, a porta pega o controle da posição dela**: o primeiro para a porta
+    /// um, o segundo para a porta dois. Enquanto toda porta sem escolha pegava o primeiro
+    /// controle, ligar a porta dois só para jogar com dois duplicava o controle um nas duas — e
+    /// o jogo que pede "jogador 2, aperte um botão" nunca via um segundo jogador de verdade.
+    fn find(&self, device: Option<&str>, porta: usize) -> Option<gilrs::Gamepad<'_>> {
         let gilrs = self.gilrs.as_ref()?;
         match device {
             Some(name) => {
                 let qual = self.names().iter().position(|n| n == name)?;
                 gilrs.gamepads().nth(qual)
             }
-            None => gilrs.gamepads().next(),
+            None => gilrs.gamepads().nth(porta),
         }
         .map(|(_, pad)| pad)
     }
@@ -125,8 +130,8 @@ impl Gamepads {
     /// Se a origem está acionada no controle do jogador.
     ///
     /// Origens de teclado não pertencem aqui: quem sabe do teclado é a janela.
-    pub fn is_active(&self, device: Option<&str>, source: &Source) -> bool {
-        let Some(pad) = self.find(device) else {
+    pub fn is_active(&self, device: Option<&str>, porta: usize, source: &Source) -> bool {
+        let Some(pad) = self.find(device, porta) else {
             return false;
         };
         match source {
@@ -146,8 +151,8 @@ impl Gamepads {
 
     /// O curso de um eixo do controle, de -1 a 1. `None` se não há controle ou o eixo é
     /// desconhecido — e aí o mapeamento daquele eixo simplesmente não vale.
-    pub fn value(&self, device: Option<&str>, axis: &str) -> Option<f32> {
-        let pad = self.find(device)?;
+    pub fn value(&self, device: Option<&str>, porta: usize, axis: &str) -> Option<f32> {
+        let pad = self.find(device, porta)?;
         Some(pad.value(axis_by_name(axis)?))
     }
 
@@ -155,8 +160,8 @@ impl Gamepads {
     ///
     /// Os botões vêm antes dos eixos: quem aperta o direcional de cruz de um controle que
     /// também o reporta como eixo quer o botão, que é o mais específico.
-    pub fn first_active(&self, device: Option<&str>) -> Option<Source> {
-        let pad = self.find(device)?;
+    pub fn first_active(&self, device: Option<&str>, porta: usize) -> Option<Source> {
+        let pad = self.find(device, porta)?;
         for (name, button) in BUTTONS {
             if pad.is_pressed(button) {
                 return Some(Source::button(name));
@@ -248,7 +253,7 @@ mod tests {
         // Um computador sem controle não pode impedir o emulador de abrir.
         let pads = Gamepads { gilrs: None };
         assert!(pads.names().is_empty());
-        assert!(!pads.is_active(None, &Source::button("South")));
-        assert_eq!(pads.first_active(None), None);
+        assert!(!pads.is_active(None, 0, &Source::button("South")));
+        assert_eq!(pads.first_active(None, 0), None);
     }
 }

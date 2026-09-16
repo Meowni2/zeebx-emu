@@ -1603,7 +1603,7 @@ impl App {
                     .controls
                     .player(self.porta_editada)
                     .and_then(|player| player.device.clone());
-                self.gamepads.first_active(device.as_deref())
+                self.gamepads.first_active(device.as_deref(), self.porta_editada)
             }
         };
         let Some(source) = source else {
@@ -2283,8 +2283,8 @@ impl App {
         });
         let gamepads = &self.gamepads;
         let mut pad = player.pad(
-            |source| pressed.contains(source) || gamepads.is_active(device.as_deref(), source),
-            |axis| gamepads.value(device.as_deref(), axis),
+            |source| pressed.contains(source) || gamepads.is_active(device.as_deref(), porta, source),
+            |axis| gamepads.value(device.as_deref(), porta, axis),
         );
         // O Wii Remote da porta soma os botões dele aos mapeados: o direcional no direcional,
         // 1 e A no botão 1, 2 e B no botão 2 e o HOME no HOME.
