@@ -254,6 +254,16 @@ impl<C: CpuBackend> Machine<C> {
                 if a1 != 0 {
                     self.input_signals.insert(name, a1);
                 }
+                // **O registro de posição já vale um aviso.** No console o controle está
+                // conectado e parado quando o jogo registra, e o driver entrega logo a
+                // primeira posição; o jogo usa esse aviso para perguntar a faixa dos eixos
+                // (`GetMinPositionInfo`, `GetMaxPositionInfo`) e onde eles estão. Enquanto o
+                // aviso só saía no primeiro movimento, quem nunca encostasse no analógico
+                // jogava com os eixos sem calibrar — o Ridge Racer chega ao título e não
+                // pergunta nada antes disso.
+                if name == "RegisterForPositionChange" {
+                    self.raise_input_signal(name);
+                }
                 SUCCESS
             }
             "SetExclusiveLevel" | "Rumble" => SUCCESS,
