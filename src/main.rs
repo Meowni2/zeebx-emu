@@ -354,7 +354,22 @@ fn main() -> ExitCode {
                 .unwrap_or_default();
             let boomerang = (args.iter().any(|a| a == "--boomerang") || !movimento.is_empty())
                 .then_some(movimento);
-            report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial, z_wheel, escala, melhorias, perfil, boomerang))
+            // As portas, para testar o que só aparece com dois jogadores. Sem a opção fica o
+            // padrão de sempre: um controle na primeira e a segunda livre.
+            let portas = match args.iter().find_map(|a| a.strip_prefix("--portas=")) {
+                Some(lista) => match aparelhos(lista) {
+                    Some(portas) => Some(portas),
+                    None => {
+                        eprintln!(
+                            "erro: --portas espera nomes separados por vírgula, entre \
+                             'controle', 'zpad', 'teclado', 'boomerang' e 'nenhum'"
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                },
+                None => None,
+            };
+            report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial, z_wheel, escala, melhorias, perfil, boomerang, portas))
         }
         // Sem argumento nenhum, o que se quer é o emulador, não a ajuda.
         None => launch(),
@@ -1166,6 +1181,7 @@ fn sessao_sem_janela(
     melhorias: (usize, usize),
     perfil: Option<u32>,
     boomerang: Option<Vec<(u32, [f32; 3])>>,
+    portas_pedidas: Option<[Option<bindings::Aparelho>; input::PORTAS]>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let serial = serial.map(std::path::Path::new);
     let settings = ui::settings::Settings::load();
@@ -1179,9 +1195,10 @@ fn sessao_sem_janela(
         .any(|a| a == "--wiimote")
         .then(input::wiimote::Wiimotes::inicia);
     let boomerang = boomerang.or(wiimote.as_ref().map(|_| Vec::new()));
-    let portas = match boomerang {
-        Some(_) => [Some(bindings::Aparelho::Boomerang), None],
-        None => PORTAS_PADRAO,
+    let portas = match (portas_pedidas, &boomerang) {
+        (Some(portas), _) => portas,
+        (None, Some(_)) => [Some(bindings::Aparelho::Boomerang), None],
+        (None, None) => PORTAS_PADRAO,
     };
     let mut session = session::Session::start_with(
         std::path::Path::new(path),
