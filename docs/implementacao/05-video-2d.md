@@ -106,6 +106,19 @@ inteira de cada uma dessas chamadas:
 
 Duas mudanças, mesmas 59 milhões de instruções.
 
+### O BMP comprimido em RLE
+
+O decodificador de BMP recusava tudo que viesse comprimido, e essa recusa custava um jogo: o
+**Disney All Star Cards** guarda quase todas as imagens dele em `BI_RLE8` e `BI_RLE4`. Sem elas o
+jogo mostrava o mapa com um retângulo vazio no lugar da arte e, logo depois, ficava sem nada para
+fazer — a sessão terminava sozinha.
+
+O esquema é o do Windows: um par `(contagem, valor)` repete o valor; contagem zero abre uma fuga —
+`0` fim de linha, `1` fim da imagem, `2` um salto `(dx, dy)` e, de `3` para cima, uma sequência
+literal, sempre terminada em fronteira de palavra. No `RLE4` cada byte traz dois pixels, alternando
+o nibble alto e o baixo. O que a imagem não cobrir fica no índice zero da paleta, como o Windows
+faz.
+
 ### O recorte não é acabamento
 
 `IIMAGE_Draw` percorria a imagem inteira e conferia pixel a pixel, sem olhar o recorte. Isso
