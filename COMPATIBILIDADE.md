@@ -51,7 +51,7 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 | Rally Master Pro | ✅ | |
 | Reckless Racing | 🔄 | Abre, porém com uma série de glitches nos modelos e texturas |
 | Resident Evil 4 - Zeebo Edition | ✅ | Reportado pela comunidade: Falta fog em algumas cenas do jogo |
-| Ridge Racer | ❌ | Mostra o logo e depois nada: desenha geometria que não aparece |
+| Ridge Racer | ❌ | Abertura e tela de título certas; no menu e na corrida a câmera aponta para trás da cena e só 2 de cada 27 desenhos passam do recorte |
 | Spin Master | ✅ | Emulador de arcade embutido, com som |
 | Street Hoop | ✅ | Emulador de arcade embutido, com som |
 | Super BurgerTime | ✅ | Emulador de arcade embutido, com som |
