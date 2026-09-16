@@ -182,6 +182,14 @@ manche está em repouso.
 `Y` vai invertido porque no HID o eixo vertical cresce para baixo e na biblioteca de controles
 cima é positivo. Errar esse sinal inverte o eixo vertical de todo jogo que o lê — tem teste.
 
+**O `aparelho` da porta é o que o console enumera, e o controle do host é outra coisa.** São dois
+campos: o aparelho diz se aquela porta é um Z-Pad, um controle, um Boomerang ou um teclado — e o
+`GetConnectedDevices` de joystick só lista os três primeiros —, enquanto o `device` diz de qual
+aparelho do host ela lê. Marcar o segundo controle numa porta de teclado deixava a porta fora da
+conta dos jogos, e a opção de dois jogadores ficava apagada com as duas portas ligadas. Escolher
+um controle na lista agora ajusta o aparelho junto, e uma configuração antiga é corrigida ao
+carregar.
+
 **O controle do host também é guardado por nome, e dois iguais têm o mesmo nome.** Quem liga dois
 aparelhos do mesmo modelo e marca o segundo na porta 2 gravava a mesma string da porta 1, e a
 busca — que varre a lista do sistema procurando o nome — devolvia sempre o primeiro: a porta 2
