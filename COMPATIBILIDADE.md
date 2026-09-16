@@ -3,9 +3,9 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 
 | Status | Legenda | Jogos | % |
 |---|---|---|---|
-| ✅ | (compatível) | 37 | 62% |
+| ✅ | (compatível) | 38 | 63% |
 | 🔄 | (roda com ressalvas) | 11 | 18% |
-| ❌ | (incompatível) | 12 | 20% |
+| ❌ | (incompatível) | 11 | 18% |
 
 
 # Observações:
@@ -42,7 +42,7 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 | Magical Drop 3 | ✅ | Emulador de arcade embutido, com som |
 | Need For Speed - Carbon - Domine a Cidade | 🔄 | Jogável porém requer otimizacão (esse realmente PRECISA DE VELOCIDADE) |
 | Pac-Mania | ✅ | |
-| Peggle | ❌ | exceção do núcleo ARM em 0x000108f4 |
+| Peggle | ✅ | Joga; menus e mesa corretos |
 | Powerboat Challenge | ❌ | |
 | Prey 2 Evil | ❌ | |
 | Quake | 🔄 | Podem existir crashes in-game ou lagging |
