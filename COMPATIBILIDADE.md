@@ -1,11 +1,11 @@
 # Status geral
-Versão considerada na análise: v0.1.1
+Versão considerada na análise: v0.2.0 (em desenvolvimento)
 
 | Status | Legenda | Jogos | % |
 |---|---|---|---|
-| ✅ | (compatível) | 24 | 40% |
-| 🔄 | (roda com ressalvas) | 15 | 25% |
-| ❌ | (incompatível) | 21 | 35% |
+| ✅ | (compatível) | 37 | 62% |
+| 🔄 | (roda com ressalvas) | 11 | 18% |
+| ❌ | (incompatível) | 12 | 20% |
 
 
 # Observações:
@@ -21,25 +21,25 @@ Versão considerada na análise: v0.1.1
 
 | Nome do jogo | Compatibilidade | Observações |
 |---|---|---|
-| Action Hero 3D - Wild Dog and IMICRO3D | ❌ | o jogo chamou ITransform::TransformBltSimple, que ainda não existe aqui (de 0x00018558) |
-| Alice no Pais das Maravilhas | ❌ | acesso inválido a 0x0000000c, em 0x000851cc |
-| Alien Breaker Deluxe | ❌ | |
+| Action Hero 3D - Wild Dog and IMICRO3D | ✅ | Joga; menus, história e fase |
+| Alice no Pais das Maravilhas | ✅ | Joga; chega à fase |
+| Alien Breaker Deluxe | ✅ | Joga |
 | Alpine Racer | ✅ | Poucos problemas visuais e de som, mas completamente jogável |
 | Armageddon Squadron | 🔄 | Jogável, porém sem som |
-| Bad Dudes vs. DragonNinja | ❌ | Travado no menu |
+| Bad Dudes vs. DragonNinja | 🔄 | Abre e joga, mas fica mudo: procura baddudes.pkg e o pacote traz baddudes.zip |
 | Bejeweled Twist | ❌ | acesso inválido a 0x00000024, em 0x0003ab20 |
-| Caveman Ninja | 🔄 | Jogável, porém sem som |
+| Caveman Ninja | ✅ | Emulador de arcade embutido, com som |
 | Crash Bandicoot Nitro Kart 3D | ✅ |  |
-| Dark Seal | 🔄 | Jogável, porém sem som |
-| Disney All Star Cards | ❌ | Crasha após o menu |
+| Dark Seal | ✅ | Emulador de arcade embutido, com som |
+| Disney All Star Cards | ✅ | Joga |
 | Double Dragon | ✅ | |
 | FIFA 09 | ✅ | |
 | Galaxy on Fire | 🔄 | Jogável, porém sem som e com inputs incorretos |
-| Heavy Barrel | ❌ |  |
-| Heavy Weapon | ❌ | Imagens lotadas de glitch |
-| Iron Sight | ❌ | acesso inválido a 0x00000010, em 0x00036060 |
-| Karnovs Revenge | 🔄 | Jogável, porém sem som |
-| Magical Drop 3 | ✅ | Jogável porém sem som |
+| Heavy Barrel | ✅ | Abre e chega ao menu do arcade; partida não conferida aqui |
+| Heavy Weapon | 🔄 | Menus e missão funcionam; falta conferir o tiro |
+| Iron Sight | 🔄 | Menus e campanha funcionam; quebra ao carregar a fase, sem achar os recursos no pacote dele |
+| Karnovs Revenge | ✅ | Emulador de arcade embutido, com som |
+| Magical Drop 3 | ✅ | Emulador de arcade embutido, com som |
 | Need For Speed - Carbon - Domine a Cidade | 🔄 | Jogável porém requer otimizacão (esse realmente PRECISA DE VELOCIDADE) |
 | Pac-Mania | ✅ | |
 | Peggle | ❌ | exceção do núcleo ARM em 0x000108f4 |
@@ -52,9 +52,9 @@ Versão considerada na análise: v0.1.1
 | Reckless Racing | 🔄 | Abre, porém com uma série de glitches nos modelos e texturas |
 | Resident Evil 4 - Zeebo Edition | ✅ | Reportado pela comunidade: Falta fog em algumas cenas do jogo |
 | Ridge Racer | ❌ | Abre mas completamente bugado e injogável |
-| Spin Master | 🔄 | Jogável, porém sem som |
-| Street Hoop | 🔄 | Jogável, porém sem som |
-| Super BurgerTime | 🔄 | Jogável, porém sem som |
+| Spin Master | ✅ | Emulador de arcade embutido, com som |
+| Street Hoop | ✅ | Emulador de arcade embutido, com som |
+| Super BurgerTime | ✅ | Emulador de arcade embutido, com som |
 | Tekken 2 | ✅ | |
 | Tork and Kral - A Prehistorik Adventure | ❌ | Abre todo bugado |
 | Toy Raid | 🔄 | Jogável, porém sem som e com glitches visuais |
@@ -62,13 +62,13 @@ Versão considerada na análise: v0.1.1
 | Turma da Monica em Vamos Brincar Vol. 1 | ❌ | acesso inválido a 0x00e60125, em 0x00060338 |
 | Ultimate Chess 3D | ✅ | |
 | Um Jogo de Ovos | ❌ | Não detecta controles |
-| Wizard Fire | 🔄 | Jogável, porém sem som |
+| Wizard Fire | ✅ | Emulador de arcade embutido, com som |
 | Zeebo Clube | ❌ | Envolve sistema online, recriacão pendente |
 | Zeebo Extreme Baja | ✅ | |
 | Zeebo Extreme Boia Cross | ✅ | |
 | Zeebo Extreme Corrida Aerea | ✅ | |
 | Zeebo Extreme Jetboard | ❌ | |
-| Zeebo Extreme Rolima | ❌ | |
+| Zeebo Extreme Rolima | ✅ | Abre e chega ao menu; corrida não conferida aqui |
 | Zeebo Family Pack | ✅ | |
 | Zeebo F.C. Foot Camp | ✅ | |
 | Zeebo F.C. Super League | ✅ | Herda funcionalidades online do Zeeboids |
