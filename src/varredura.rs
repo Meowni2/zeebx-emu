@@ -46,6 +46,14 @@ const MS_PADRAO: u32 = 6_000;
 /// `timeout 90` da varredura à mão.
 const TETO_PADRAO: u64 = 90;
 
+/// Quanto tempo virtual o placar dá a cada ROM. Curto de propósito: é para responder "quem
+/// abriu", não para jogar.
+const MS_PLACAR: u32 = 5_000;
+
+/// Teto de tempo real por ROM no placar. Um jogo que não cumpre isso é "lento demais" e a
+/// varredura segue.
+const TETO_PLACAR: u64 = 30;
+
 /// Quantos métodos mais chamados o relatório mostra. É onde gargalo aparece.
 const CHAMADAS_MOSTRADAS: usize = 12;
 
@@ -115,6 +123,9 @@ pub struct Desempenho {
     pub voltas: u64,
     /// Quadros que o jogo apresentou.
     pub quadros: u32,
+    /// Escritas na tela. Um jogo 2D pode não apresentar quadro nenhum em poucos segundos e
+    /// ainda assim estar desenhando — é o que separa "abriu" de "tela preta".
+    pub pixels: u64,
     /// Instruções ARM executadas.
     pub instrucoes: u64,
     /// Chamadas de API atendidas.
@@ -480,6 +491,7 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     let sobra = log.len().saturating_sub(LOG_MOSTRADO);
     log.drain(..sobra);
 
+    medida.pixels = session.screen().escritas();
     Relatorio {
         arquivo: arquivo.to_path_buf(),
         // O título sai do arquivo que se pediu, e **não** do `Session::title`: para um `.zip` a
@@ -603,6 +615,79 @@ mod tests {
             roms.len(),
             falhas.join("\n")
         );
+    }
+
+    /// O placar: cada ROM roda alguns segundos e vira uma linha de tabela.
+    ///
+    /// É o teste de ida e volta rápida — o que se quer saber depois de um ajuste é "quem
+    /// continua abrindo", e não o relatório inteiro de cada jogo. Cinco segundos virtuais por
+    /// ROM bastam para separar quem chega ao menu de quem quebra na partida, e o teto de tempo
+    /// real curto impede que um jogo pesado segure a varredura.
+    ///
+    /// **Este teste não falha por jogo quebrado**: a biblioteca tem jogos sabidamente
+    /// incompatíveis, e falhar neles apagaria a única coisa que interessa aqui, que é a tabela.
+    /// Quem cobra regressão é o [`a_rom_indicada_avanca`], com a linha de base.
+    ///
+    /// ```bash
+    /// ZEEBX_ROM=roms cargo test --release placar -- --nocapture
+    /// # mais rápido ainda, e gravando a tabela:
+    /// ZEEBX_ROM=roms ZEEBX_PLACAR_MS=3000 ZEEBX_PLACAR_SAIDA=placar.md \
+    ///   cargo test --release placar -- --nocapture
+    /// ```
+    #[test]
+    fn o_placar_das_roms() {
+        let roms = roms_pedidas();
+        if roms.is_empty() {
+            eprintln!(
+                "o_placar_das_roms: nenhuma ROM para examinar. Aponte ZEEBX_ROM para um \
+                 arquivo, uma lista separada por vírgula ou um diretório, e rode com --release."
+            );
+            return;
+        }
+        let ms = numero("ZEEBX_PLACAR_MS", u64::from(MS_PLACAR)) as u32;
+        let teto = Duration::from_secs(numero("ZEEBX_PLACAR_TETO", TETO_PLACAR));
+        let mut linhas = Vec::new();
+        let mut contagem: std::collections::BTreeMap<&str, usize> = Default::default();
+        for rom in &roms {
+            let relatorio = examina(rom, ms, teto);
+            let d = relatorio.desempenho.unwrap_or_default();
+            let motivo = relatorio
+                .motivo
+                .clone()
+                .unwrap_or_default()
+                .replace('\n', " ");
+            let tela = match (d.quadros, d.pixels) {
+                (0, 0) => "tela preta".to_string(),
+                (0, pixels) => format!("{pixels} pixel(s)"),
+                (quadros, _) => format!("{quadros} quadro(s)"),
+            };
+            let linha = format!(
+                "| {} | {} | {} ms | {} | {:.0}% | {} |",
+                relatorio.titulo,
+                relatorio.categoria.rotulo(),
+                d.virtual_ms,
+                tela,
+                d.velocidade(),
+                motivo
+            );
+            println!("{linha}");
+            *contagem.entry(relatorio.categoria.rotulo()).or_default() += 1;
+            linhas.push(linha);
+        }
+        let resumo: Vec<String> = contagem
+            .iter()
+            .map(|(estado, quantos)| format!("{quantos} {estado}"))
+            .collect();
+        let tabela = format!(
+            "| Jogo | Estado | Tempo virtual | Desenho | Velocidade | Motivo |\n|---|---|---|---|---|---|\n{}\n\n{} ROM(s): {}\n",
+            linhas.join("\n"),
+            roms.len(),
+            resumo.join(", ")
+        );
+        println!("\n{tabela}");
+        if let Ok(caminho) = std::env::var("ZEEBX_PLACAR_SAIDA") {
+            let _ = std::fs::write(caminho, &tabela);
+        }
     }
 
     /// A pergunta genérica: a ROM abre, ou estoura de cara — e com que erro.
