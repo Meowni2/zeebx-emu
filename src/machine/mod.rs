@@ -541,6 +541,17 @@ const MM_STATE_READY: u32 = 2;
 const MM_STATE_PLAY: u32 = 3;
 const MM_STATE_PLAY_PAUSE: u32 = 5;
 
+/// Classes do firmware que não temos e que o jogo usa **sem conferir** se existem.
+///
+/// O Powerboat Challenge cria a `0x01001039`, guarda o ponteiro e chama um método dela sem olhar
+/// o retorno: com a recusa honesta — que é o que o BREW responde para classe que não existe — ele
+/// saltava para o endereço zero antes do menu de idioma. Um objeto que responde sucesso a tudo o
+/// deixa seguir, e o que ele chamar nele aparece no relatório da sonda.
+///
+/// A classe em si continua sendo do firmware do console, que ainda não lemos (ver
+/// [`15-o-que-falta-da-nand.md`](../../docs/implementacao/15-o-que-falta-da-nand.md)).
+const CLASSES_POR_OBSERVACAO: &[u32] = &[0x0100_1039];
+
 /// `AEECLSID_QEGL`, do `AEECLSID_QEGL.bid` do SDK: o objeto que dá acesso ao EGL e ao OpenGL
 /// ES pelas interfaces novas do BREW. É por ele que o Quake tenta primeiro.
 const AEECLSID_QEGL: u32 = 0x0103_d8ec;

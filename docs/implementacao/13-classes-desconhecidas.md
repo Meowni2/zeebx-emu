@@ -170,6 +170,22 @@ aceita:  str r0, [r2]; AddRef; devolve 0
 recusa:  [r2] = 0; devolve 3
 ```
 
+
+## A classe que o jogo usa sem conferir
+
+O BREW responde `ECLASSNOTSUPPORT` para classe que não existe, e escreve nulo no ponteiro de
+saída. Isso é o certo, e quase todo jogo trata. O **Powerboat Challenge** não: ele guarda o
+ponteiro da `0x01001039` e chama um método dela sem olhar o retorno, e o salto para o endereço
+zero acontecia antes mesmo do menu de idioma.
+
+Para essas, a máquina tem uma lista curta — `CLASSES_POR_OBSERVACAO` — atendida com o mesmo objeto
+da sonda: responde sucesso a tudo e registra o que foi chamado. A hipótese aparece no relatório,
+e o que o jogo chamou sai no log da sonda, que é por onde a classe será identificada quando o
+firmware do console for lido.
+
+O Powerboat passa a mostrar o menu de idioma e a tela de carregamento; ele ainda não sai dela, e
+isso é outro problema.
+
 ## O que ela não faz
 
 A sonda não diz **o nome** do método, só o número do slot e o formato. Quem dá nome é o uso: uma

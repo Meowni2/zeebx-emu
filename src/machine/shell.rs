@@ -616,6 +616,21 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 return Ok(SUCCESS);
             }
+            // Uma classe do firmware que o jogo usa sem conferir: ver [`CLASSES_POR_OBSERVACAO`].
+            _ if CLASSES_POR_OBSERVACAO.contains(&clsid) => {
+                let object = self.new_object(Interface::Probe)?;
+                if object == 0 {
+                    return Ok(ENOMEMORY);
+                }
+                self.assumptions.insert(
+                    "uma classe do firmware é atendida por um objeto que responde sucesso a tudo",
+                );
+                self.probe_objects.insert(object, clsid);
+                if out != 0 {
+                    self.cpu.write_u32(out, object)?;
+                }
+                return Ok(SUCCESS);
+            }
             // A sonda entra antes da recusa: o jogo recebe um objeto que não faz nada e segue,
             // e o que ele chamar nele vai para o relatório. É como se descobre que interface a
             // classe é, sem header e sem adivinhação.
