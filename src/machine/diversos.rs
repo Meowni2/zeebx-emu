@@ -166,16 +166,85 @@ impl<C: CpuBackend> Machine<C> {
             | "BlendEquationSeparateEXT"
             | "BlendFuncSeparateEXT"
             | "PointSizePointerOES" => SUCCESS,
-            // Os buffers de vértice da ATI e da Qualcomm. Nenhum jogo do console chegou a
-            // usá-los, e responder sucesso sem guardar nada faria o desenho seguinte sair de
-            // lixo — recusar é mais honesto.
-            "BindBufferQUALCOMM"
-            | "DeleteBuffersQUALCOMM"
-            | "GenBuffersQUALCOMM"
-            | "BufferDataQUALCOMM"
-            | "BufferSubDataQUALCOMM"
-            | "IsBufferQUALCOMM"
-            | "BufferDataATI"
+            // **Os buffers de vértice da Qualcomm são os objetos de buffer de sempre.** O
+            // Ridge Racer preenche cem deles por partida — cem `GenBuffersQUALCOMM`, trezentos
+            // `BufferSubDataQUALCOMM` —, e enquanto a extensão os recusava toda essa geometria
+            // ia para o lixo com a hipótese "usou um buffer que não temos" no relatório.
+            //
+            // A extensão passa o próprio objeto no primeiro argumento, então tudo vem um lugar
+            // à frente; o resto é o mesmo nome, o mesmo alvo e o mesmo conteúdo do
+            // `glBindBuffer` e companhia, e é no mesmo lugar que eles ficam guardados.
+            "GenBuffersQUALCOMM" => {
+                let (quantos, saida) = (self.arg(1), self.arg(2));
+                for i in 0..quantos {
+                    self.gles_next_name += 1;
+                    if saida != 0 {
+                        self.cpu.write_u32(saida + i * 4, self.gles_next_name)?;
+                    }
+                }
+                SUCCESS
+            }
+            "BindBufferQUALCOMM" => {
+                let (alvo, nome) = (self.arg(1), self.arg(2));
+                if nome != 0 {
+                    self.gl_buffers.entry(nome).or_default();
+                }
+                match alvo {
+                    gles::GL_ARRAY_BUFFER => self.gl_array_buffer = nome,
+                    gles::GL_ELEMENT_ARRAY_BUFFER => self.gl_element_buffer = nome,
+                    _ => {}
+                }
+                SUCCESS
+            }
+            "BufferDataQUALCOMM" => {
+                let (alvo, tamanho, dados) = (self.arg(1), self.arg(2), self.arg(3));
+                match self.buffer_ligado(alvo) {
+                    None => SUCCESS,
+                    Some(nome) => {
+                        let conteudo = match dados {
+                            0 => vec![0u8; tamanho as usize],
+                            _ => self.read_bytes(dados, tamanho)?,
+                        };
+                        self.gl_buffers.insert(nome, conteudo);
+                        SUCCESS
+                    }
+                }
+            }
+            "BufferSubDataQUALCOMM" => {
+                let (alvo, inicio, tamanho, dados) =
+                    (self.arg(1), self.arg(2), self.arg(3), self.arg(4));
+                match self.buffer_ligado(alvo) {
+                    None => SUCCESS,
+                    Some(nome) => {
+                        let novo = self.read_bytes(dados, tamanho)?;
+                        if let Some(buffer) = self.gl_buffers.get_mut(&nome) {
+                            let fim = inicio as usize + novo.len();
+                            if fim <= buffer.len() {
+                                buffer[inicio as usize..fim].copy_from_slice(&novo);
+                            }
+                        }
+                        SUCCESS
+                    }
+                }
+            }
+            "DeleteBuffersQUALCOMM" => {
+                let (quantos, lista) = (self.arg(1), self.arg(2));
+                for i in 0..quantos {
+                    let nome = self.cpu.read_u32(lista + i * 4)?;
+                    self.gl_buffers.remove(&nome);
+                    if self.gl_array_buffer == nome {
+                        self.gl_array_buffer = 0;
+                    }
+                    if self.gl_element_buffer == nome {
+                        self.gl_element_buffer = 0;
+                    }
+                }
+                SUCCESS
+            }
+            "IsBufferQUALCOMM" => u32::from(self.gl_buffers.contains_key(&self.arg(1))),
+            // Os buffers da ATI, que nenhum jogo do console chegou a usar. Responder sucesso sem
+            // guardar nada faria o desenho seguinte sair de lixo — recusar é mais honesto.
+            "BufferDataATI"
             | "MeshListATI"
             | "DrawVertexBufferObjectATI"
             | "GetPointerv"

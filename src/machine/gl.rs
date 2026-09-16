@@ -752,7 +752,7 @@ impl<C: CpuBackend> Machine<C> {
     /// `stride` do último elemento fora dela — o que valia antes continua valendo.
     /// Que nome está ligado num alvo de buffer. `None` quando é zero — que não é buffer
     /// nenhum, e sim "os ponteiros são endereços da memória do jogo".
-    fn buffer_ligado(&self, alvo: u32) -> Option<u32> {
+    pub(super) fn buffer_ligado(&self, alvo: u32) -> Option<u32> {
         let nome = match alvo {
             gles::GL_ARRAY_BUFFER => self.gl_array_buffer,
             gles::GL_ELEMENT_ARRAY_BUFFER => self.gl_element_buffer,
