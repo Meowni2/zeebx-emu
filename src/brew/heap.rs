@@ -180,6 +180,40 @@ mod tests {
         assert_eq!(heap.used(), 64, "o bloco livre no meio não está entregue");
     }
 
+    /// Nenhum bloco vivo pode encostar em outro: a fusão mexe em vizinhança, e um erro ali
+    /// entrega o mesmo endereço duas vezes — o jogo escreve por cima do que era dele.
+    #[test]
+    fn sob_estresse_nenhum_bloco_vivo_se_sobrepoe() {
+        let mut heap = Heap::new(0x1000, 0x8000);
+        let mut vivos: Vec<(u32, u32)> = Vec::new();
+        let mut semente: u32 = 12345;
+        let mut sorteia = move || {
+            semente = semente.wrapping_mul(1103515245).wrapping_add(12345);
+            semente >> 8
+        };
+        for passo in 0..4000 {
+            let solta = !vivos.is_empty() && (passo % 3 == 0 || vivos.len() > 40);
+            if solta {
+                let qual = sorteia() as usize % vivos.len();
+                let (addr, _) = vivos.swap_remove(qual);
+                heap.free(addr);
+                continue;
+            }
+            let tamanho = 1 + sorteia() % 600;
+            let Some(addr) = heap.alloc(tamanho) else {
+                continue;
+            };
+            let fim = addr + tamanho;
+            for &(outro, outro_tam) in &vivos {
+                assert!(
+                    fim <= outro || addr >= outro + outro_tam,
+                    "bloco {addr:#x}+{tamanho} encosta em {outro:#x}+{outro_tam}"
+                );
+            }
+            vivos.push((addr, tamanho));
+        }
+    }
+
     #[test]
     fn recusa_quando_o_heap_enche() {
         let mut heap = Heap::new(0x1000, 16);
