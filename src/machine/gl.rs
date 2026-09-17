@@ -387,6 +387,23 @@ impl<C: CpuBackend> Machine<C> {
                 let valor = escalar(a[1], name.ends_with('x'));
                 self.gl.set_light_model(a[0], [valor, 0.0, 0.0, 0.0]);
             }
+            // A névoa. O `GL_FOG_MODE` chega como número — `GL_LINEAR`, `GL_EXP` ou `GL_EXP2`
+            // —, e nas formas `x` ele vem **inteiro**, não em ponto fixo: é uma enumeração, e
+            // convertê-la como escala daria `0x2601/65536`, que não é modo nenhum.
+            "Fogxv" | "Fogfv" => {
+                let valores = match a[0] == gles::GL_FOG_MODE {
+                    true => [self.cpu.read_u32(a[1])? as f32, 0.0, 0.0, 0.0],
+                    false => self.le_parametro(a[0], a[1], name.ends_with("xv"))?,
+                };
+                self.gl.set_fog(a[0], valores);
+            }
+            "Fogx" | "Fogf" => {
+                let valor = match a[0] == gles::GL_FOG_MODE {
+                    true => a[1] as f32,
+                    false => escalar(a[1], name.ends_with('x')),
+                };
+                self.gl.set_fog(a[0], [valor, 0.0, 0.0, 0.0]);
+            }
             "ShadeModel" => self.gl.set_shade_model(a[0]),
             "Normal3x" | "Normal3f" => {
                 let fixo = name.ends_with('x');
@@ -704,6 +721,9 @@ impl<C: CpuBackend> Machine<C> {
                 normal: normais
                     .as_ref()
                     .map_or(self.gl_normal_atual, |n| [n[i][0], n[i][1], n[i][2]]),
+                // Quem calcula o fator da névoa é a etapa de vértice, que é onde a distância em
+                // coordenadas de olho existe.
+                fog: 1.0,
             })
             .collect();
         self.gl.draw(mode, &vertices);
@@ -963,6 +983,12 @@ impl<C: CpuBackend> Machine<C> {
     pub fn define_melhorias(&mut self, amostras: usize, anisotropico: usize) {
         self.gl.define_antialias(amostras);
         self.gl.define_anisotropico(anisotropico);
+    }
+
+    /// Se a névoa do jogo vale. Escolha de quem joga, não do jogo — ver
+    /// [`rasterizer::Rasterizador::define_neblina`].
+    pub fn define_neblina(&mut self, permitida: bool) {
+        self.gl.define_neblina(permitida);
     }
 }
 

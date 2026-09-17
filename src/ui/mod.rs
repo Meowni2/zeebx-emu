@@ -716,6 +716,7 @@ impl App {
                     self.settings.graphics.antialias as usize,
                     self.settings.graphics.anisotropico as usize,
                 );
+                session.define_neblina(self.settings.graphics.neblina);
                 if let Some(tela) = tela_anterior.filter(|_| session.classe() != crate::session::Z_WHEEL) {
                     session.herda_tela(&tela);
                 }
@@ -1758,6 +1759,14 @@ impl App {
         ui.weak(self.catalog.get("graphics.gpu_present.hint"));
 
         ui.add_space(12.0);
+        // A névoa vale nos dois rasterizadores, então fica fora da parte que depende da placa.
+        let neblina_mudou = ui
+            .checkbox(&mut graphics.neblina, self.catalog.get("graphics.fog"))
+            .changed();
+        changed |= neblina_mudou;
+        ui.weak(self.catalog.get("graphics.fog.hint"));
+
+        ui.add_space(12.0);
         changed |= ui
             .checkbox(
                 &mut graphics.gpu_rasterizer,
@@ -1836,6 +1845,13 @@ impl App {
             let (amostras, nivel) = (graphics.antialias as usize, graphics.anisotropico as usize);
             if let Some(session) = self.session.as_mut() {
                 session.define_melhorias(amostras, nivel);
+            }
+        }
+        // Vale na hora: o próximo desenho já sai com ou sem névoa.
+        if neblina_mudou {
+            let permitida = graphics.neblina;
+            if let Some(session) = self.session.as_mut() {
+                session.define_neblina(permitida);
             }
         }
         // Vale na hora para o jogo aberto: o destino é refeito no próximo quadro.

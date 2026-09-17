@@ -26,7 +26,7 @@ const TEXTURE_MAX_ANISOTROPY: u32 = 0x84fe;
 const MAX_TEXTURE_MAX_ANISOTROPY: u32 = 0x84ff;
 
 /// Quantos `f32` cada vértice ocupa no buffer: posição, cor e coordenada de textura.
-const FLOATS_POR_VERTICE: usize = 4 + 4 + 2;
+const FLOATS_POR_VERTICE: usize = 4 + 4 + 2 + 1;
 
 /// O que a placa precisa saber de uma textura do jogo, além dos pixels que já estão nela.
 struct Textura {
@@ -49,6 +49,9 @@ struct Estado {
     mascara_profundidade: bool,
     /// O `glDepthRange`, `(perto, longe)`.
     faixa_profundidade: (f32, f32),
+    /// A névoa no momento do desenho. O fator por vértice vem da etapa de vértice; aqui ficam
+    /// só o "está ligada" e a cor, que o shader de fragmento lê.
+    neblina: crate::video::rasterizer::Neblina,
     func_profundidade: u32,
     mistura: bool,
     mistura_src: u32,
@@ -88,6 +91,7 @@ impl Default for Estado {
             teste_profundidade: false,
             mascara_profundidade: true,
             faixa_profundidade: (0.0, 1.0),
+            neblina: crate::video::rasterizer::Neblina::default(),
             func_profundidade: gles::GL_LESS,
             mistura: false,
             mistura_src: gles::GL_ONE,
@@ -529,7 +533,9 @@ impl GpuState {
                 glow::DYNAMIC_DRAW,
             );
             let passo = (FLOATS_POR_VERTICE * 4) as i32;
-            for (indice, tamanho, deslocamento) in [(0u32, 4i32, 0i32), (1, 4, 16), (2, 2, 32)] {
+            for (indice, tamanho, deslocamento) in
+                [(0u32, 4i32, 0i32), (1, 4, 16), (2, 2, 32), (3, 1, 40)]
+            {
                 gl.enable_vertex_attrib_array(indice);
                 gl.vertex_attrib_pointer_f32(
                     indice,
@@ -556,6 +562,14 @@ impl GpuState {
             );
             uniforme_f32(gl, self.programa, "ref_alfa", self.fill.ref_alfa);
             uniforme_f32(gl, self.programa, "virar", virar);
+            let neblina = self.fill.neblina;
+            uniforme_i32(
+                gl,
+                self.programa,
+                "com_neblina",
+                i32::from(neblina.ligada && neblina.permitida),
+            );
+            uniforme_vec3(gl, self.programa, "cor_neblina", neblina.cor);
             gl.draw_arrays(modo, 0, quantos as i32);
             gl.bind_vertex_array(None);
             gl.use_program(None);
@@ -566,9 +580,7 @@ impl GpuState {
 
     /// Empilha um vértice no buffer de envio.
     fn poe(&mut self, v: &Vertex) {
-        self.vertices.extend_from_slice(&v.position);
-        self.vertices.extend_from_slice(&v.color);
-        self.vertices.extend_from_slice(&v.uv);
+        poe_em(&mut self.vertices, v);
     }
 
     /// Deixa ligado, para leitura, um framebuffer com o quadro no tamanho do console.
@@ -817,6 +829,26 @@ fn uniforme_f32(gl: &glow::Context, programa: glow::Program, nome: &str, valor: 
     }
 }
 
+/// Escreve um vértice no buffer da placa, no layout que [`FLOATS_POR_VERTICE`] declara.
+///
+/// **É o único lugar que conhece esse layout.** O fator da névoa vem pronto da etapa de
+/// vértice, que é a mesma dos dois rasterizadores; aqui ele é só mais um atributo a interpolar.
+fn poe_em(destino: &mut Vec<f32>, v: &Vertex) {
+    destino.extend_from_slice(&v.position);
+    destino.extend_from_slice(&v.color);
+    destino.extend_from_slice(&v.uv);
+    destino.push(v.fog);
+}
+
+/// Um uniforme de três componentes, para a cor da névoa.
+fn uniforme_vec3(gl: &glow::Context, programa: glow::Program, nome: &str, valor: [f32; 4]) {
+    unsafe {
+        if let Some(onde) = gl.get_uniform_location(programa, nome) {
+            gl.uniform_3_f32(Some(&onde), valor[0], valor[1], valor[2]);
+        }
+    }
+}
+
 /// Os bytes de um vetor de `f32`, para o `buffer_data`.
 fn bytes_de_f32(dados: &[f32]) -> &[u8] {
     // Um `f32` não tem invariante de bits, e o alinhamento de quatro serve para um de um.
@@ -861,12 +893,15 @@ const VERTICE: &str = r#"
 layout(location = 0) in vec4 pos;
 layout(location = 1) in vec4 cor;
 layout(location = 2) in vec2 uv;
+layout(location = 3) in float fog;
 uniform float virar;
 out vec4 vcor;
 out vec2 vuv;
+out float vfog;
 void main() {
     vcor = cor;
     vuv = uv;
+    vfog = fog;
     gl_Position = vec4(pos.x, pos.y * virar, pos.z, pos.w);
 }
 "#;
@@ -878,7 +913,10 @@ void main() {
 const FRAGMENTO: &str = r#"
 in vec4 vcor;
 in vec2 vuv;
+in float vfog;
 uniform sampler2D amostra;
+uniform int com_neblina;
+uniform vec3 cor_neblina;
 uniform int texturando;
 uniform int env;
 uniform int func_alfa;
@@ -900,6 +938,11 @@ void main() {
     vec4 cor = vcor;
     if (texturando == 1) {
         cor = combina(cor, texture(amostra, vuv));
+    }
+    // A névoa entra depois da textura e antes do teste de alfa, e mexe só no RGB — a mesma
+    // ordem do rasterizador de software.
+    if (com_neblina == 1) {
+        cor = vec4(mix(cor_neblina, cor.rgb, clamp(vfog, 0.0, 1.0)), cor.a);
     }
     bool passa;
     if      (func_alfa == 0) { passa = false; }
@@ -1079,6 +1122,7 @@ impl Rasterizador for GpuState {
             // Ligar e desligar textura é por unidade, e só a base desenha. O Resident Evil 4
             // desliga a unidade 1 no fim de cada bloco.
             gles::GL_TEXTURE_2D if self.estado.base_active_unit() => self.fill.texturando = on,
+            gles::GL_FOG => self.fill.neblina = self.estado.neblina(),
             _ => {}
         }
     }
@@ -1120,6 +1164,14 @@ impl Rasterizador for GpuState {
     fn set_depth_range(&mut self, perto: f32, longe: f32) {
         self.estado.set_depth_range(perto, longe);
         self.fill.faixa_profundidade = (perto.clamp(0.0, 1.0), longe.clamp(0.0, 1.0));
+    }
+    fn set_fog(&mut self, pname: u32, valores: [f32; 4]) {
+        self.estado.set_fog(pname, valores);
+        self.fill.neblina = self.estado.neblina();
+    }
+    fn define_neblina(&mut self, permitida: bool) {
+        self.estado.define_neblina(permitida);
+        self.fill.neblina = self.estado.neblina();
     }
     fn set_color_mask(&mut self, mask: [bool; 4]) {
         self.estado.set_color_mask(mask);
@@ -1332,9 +1384,17 @@ impl Rasterizador for GpuState {
         destino.clear();
         for v in self.estado.transformados() {
             let [px, py, pz, pw] = v.position;
-            destino.extend_from_slice(&[px * k, py, pz, pw]);
-            destino.extend_from_slice(&v.color);
-            destino.extend_from_slice(&v.uv);
+            // O layout do vértice está num lugar só, o [`GpuState::poe`]: repetido aqui, ele
+            // já saiu de sincronia uma vez — um atributo novo lá e este laço continuava
+            // escrevendo o tamanho antigo, o que desalinha o buffer inteiro e a placa para de
+            // desenhar.
+            poe_em(
+                &mut destino,
+                &Vertex {
+                    position: [px * k, py, pz, pw],
+                    ..*v
+                },
+            );
         }
         self.vertices = destino;
         self.em_perspectiva = perspectiva;
@@ -1377,6 +1437,7 @@ impl Rasterizador for GpuState {
         for ([sx, sy], uv) in cantos {
             let v = Vertex {
                 normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
                 position: [
                     ((sx - vx as f32) / vw as f32) * 2.0 - 1.0,
                     1.0 - ((sy - vy as f32) / vh as f32) * 2.0,
@@ -1562,6 +1623,7 @@ impl Rasterizador for GpuState {
                 color: [1.0; 4],
                 uv,
                 normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
             });
         }
         let guarda = self.fill.clone();
@@ -1753,6 +1815,7 @@ mod tests {
                 color: [1.0, 0.0, 0.0, 1.0],
                 uv: [0.0, 0.0],
                 normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
             };
             r.draw(
                 gles::GL_TRIANGLES,
@@ -1801,6 +1864,7 @@ mod tests {
                 color: [1.0, 0.0, 0.0, 1.0],
                 uv: [0.0, 0.0],
                 normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
             };
             r.draw(
                 gles::GL_TRIANGLES,
@@ -1835,6 +1899,85 @@ mod tests {
         );
     }
 
+    /// A névoa tinge o fragmento igual nos dois rasterizadores, e some quando é desligada.
+    ///
+    /// O fator sai da distância em coordenadas de olho e vem da etapa de vértice, que é comum
+    /// aos dois; o que se compara aqui é o que cada um faz com ele no fragmento.
+    #[test]
+    fn a_nevoa_tinge_igual_nos_dois_rasterizadores() {
+        let (largura, altura) = (16, 16);
+        let Some((mut gpu, mut sw)) = par(largura, altura) else {
+            return;
+        };
+        // Um quadrado vermelho a dez unidades do olho, com névoa azul de 0 a 20: metade do
+        // caminho, então metade da cor de cada um.
+        let cena = |r: &mut dyn Rasterizador| {
+            r.set_viewport(0, 0, largura as i32, altura as i32);
+            r.set_clear_color([0.0, 0.0, 0.0, 1.0]);
+            r.clear(gles::GL_COLOR_BUFFER_BIT);
+            // Uma ortográfica de 1 a 100 em `z`, para o quadrado a dez unidades do olho caber
+            // no recorte sem mexer em `x` e `y`.
+            r.set_matrix_mode(gles::GL_PROJECTION);
+            r.load_identity();
+            let (perto, longe) = (1.0f32, 100.0f32);
+            let mut orto = crate::video::rasterizer::IDENTITY;
+            orto[10] = -2.0 / (longe - perto);
+            orto[14] = -(longe + perto) / (longe - perto);
+            r.mult_matrix(orto);
+            r.set_matrix_mode(gles::GL_MODELVIEW);
+            r.load_identity();
+            r.mult_matrix(crate::video::rasterizer::translation(0.0, 0.0, -10.0));
+            r.set_fog(gles::GL_FOG_MODE, [gles::GL_LINEAR as f32, 0.0, 0.0, 0.0]);
+            r.set_fog(gles::GL_FOG_START, [0.0; 4]);
+            r.set_fog(gles::GL_FOG_END, [20.0, 0.0, 0.0, 0.0]);
+            r.set_fog(gles::GL_FOG_COLOR, [0.0, 0.0, 1.0, 1.0]);
+            let canto = |x: f32, y: f32| Vertex {
+                position: [x, y, 0.0, 1.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+                uv: [0.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
+            };
+            // Em espaço de recorte a projeção é a identidade, então o `z` do olho é o da
+            // translação: dez unidades, metade do caminho até o fim da névoa.
+            r.draw(
+                gles::GL_TRIANGLES,
+                &[canto(-1.0, 1.0), canto(-1.0, -1.0), canto(1.0, 1.0)],
+            );
+        };
+        let com = |r: &mut dyn Rasterizador| {
+            r.set_capability(gles::GL_FOG, true);
+            cena(r);
+        };
+        let (a, b) = ambos(&mut gpu, &mut sw, largura, altura, com);
+        let (placa, software) = (pixel(&a, largura, 1, 1), pixel(&b, largura, 1, 1));
+        assert!(
+            software.0 > 10 && software.0 < 24 && software.2 > 5,
+            "o software devia misturar vermelho e azul, e deu {software:?}"
+        );
+        assert!(
+            placa.0.abs_diff(software.0) <= 1 && placa.2.abs_diff(software.2) <= 1,
+            "com névoa: placa {placa:?} contra software {software:?}"
+        );
+        // Desligada por quem joga, a cor volta a ser a do jogo nos dois.
+        let sem = |r: &mut dyn Rasterizador| {
+            r.define_neblina(false);
+            r.set_capability(gles::GL_FOG, true);
+            cena(r);
+        };
+        let (a, b) = ambos(&mut gpu, &mut sw, largura, altura, sem);
+        assert_eq!(
+            pixel(&b, largura, 1, 1),
+            (31, 0, 0),
+            "sem névoa o software devia deixar o vermelho do jogo"
+        );
+        assert_eq!(
+            pixel(&a, largura, 1, 1),
+            pixel(&b, largura, 1, 1),
+            "sem névoa os dois têm de voltar a concordar"
+        );
+    }
+
     /// Com resolução interna maior, o jogo lê de volta o mesmo quadro de sempre.
     ///
     /// O desenho acontece num anexo `escala` vezes maior, e a leitura passa por uma redução na
@@ -1860,6 +2003,7 @@ mod tests {
                 color: [1.0, 0.0, 0.0, 1.0],
                 uv: [0.0, 0.0],
                 normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
             };
             r.draw(
                 gles::GL_TRIANGLES,
@@ -1907,6 +2051,7 @@ mod tests {
             color: [1.0, 0.0, 0.0, 1.0],
             uv: [0.0, 0.0],
             normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
         };
         gpu.draw(
             gles::GL_TRIANGLES,
@@ -1942,6 +2087,7 @@ mod tests {
                 color: [0.0, 1.0, 0.0, 1.0],
                 uv: [0.0, 0.0],
                 normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
             };
             r.draw(
                 gles::GL_TRIANGLES,
@@ -1985,6 +2131,7 @@ mod tests {
                 color: [0.0, 0.0, 1.0, 1.0],
                 uv: [0.0, 0.0],
                 normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
             };
             r.draw(
                 gles::GL_TRIANGLES,
@@ -2033,6 +2180,7 @@ mod tests {
                         color: [1.0, 1.0, 1.0, 1.0],
                         uv: [0.0, 0.0],
                         normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
                     };
                     // Um triângulo que cobre o centro, nas duas ordens de vértice.
                     let tri = match invertido {

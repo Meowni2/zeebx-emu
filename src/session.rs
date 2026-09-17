@@ -701,6 +701,11 @@ impl Session {
         self.machine.define_melhorias(amostras, anisotropico);
     }
 
+    /// Se a névoa do jogo vale; vale na hora.
+    pub fn define_neblina(&mut self, permitida: bool) {
+        self.machine.define_neblina(permitida);
+    }
+
     /// Muda a resolução interna do 3D; vale a partir do próximo quadro.
     pub fn define_resolucao_interna(&mut self, escala: usize) {
         self.machine.define_resolucao_interna(escala);

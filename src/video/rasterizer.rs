@@ -120,6 +120,12 @@ pub struct Vertex {
     pub uv: [f32; 2],
     /// A normal em coordenadas de objeto, para a iluminação. O padrão do OpenGL é `(0, 0, 1)`.
     pub normal: [f32; 3],
+    /// Quanto da cor do fragmento sobra depois da névoa: 1 é cena limpa, 0 é névoa cheia.
+    ///
+    /// Vem calculado da etapa de vértice, que é onde a distância em coordenadas de olho existe,
+    /// e é interpolado como os outros atributos. Sai daqui pronto porque a etapa de vértice é a
+    /// mesma para os dois rasterizadores — a placa recebe o fator como atributo e só mistura.
+    pub fog: f32,
 }
 
 impl Default for Vertex {
@@ -129,7 +135,67 @@ impl Default for Vertex {
             color: [1.0; 4],
             uv: [0.0; 2],
             normal: [0.0, 0.0, 1.0],
+            fog: 1.0,
         }
+    }
+}
+
+/// A névoa de função fixa: o `glFog*` e o `GL_FOG` do OpenGL ES 1.1.
+///
+/// O fator sai da **distância em coordenadas de olho**, e é ele que diz quanto da cor da névoa
+/// entra no fragmento: 1 é a cena limpa, 0 é a névoa cheia.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Neblina {
+    pub ligada: bool,
+    /// `GL_LINEAR`, `GL_EXP` ou `GL_EXP2`.
+    pub curva: u32,
+    pub densidade: f32,
+    pub inicio: f32,
+    pub fim: f32,
+    pub cor: [f32; 4],
+    /// Desligada por quem está jogando, não pelo jogo. Ver [`Rasterizador::define_neblina`].
+    pub permitida: bool,
+}
+
+impl Default for Neblina {
+    /// Os padrões são os do OpenGL: exponencial, densidade 1, de 0 a 1, preta e transparente.
+    fn default() -> Self {
+        Self {
+            ligada: false,
+            curva: gles::GL_EXP,
+            densidade: 1.0,
+            inicio: 0.0,
+            fim: 1.0,
+            cor: [0.0; 4],
+            permitida: true,
+        }
+    }
+}
+
+impl Neblina {
+    /// Quanto da cor original sobra a essa distância do olho: 1 é cena limpa, 0 é névoa cheia.
+    ///
+    /// Fora da faixa o fator é preso em `[0, 1]`, como manda a especificação — sem isso a névoa
+    /// linear **clareia** o que está mais perto que o `START`, em vez de deixá-lo intacto.
+    pub fn fator(&self, distancia: f32) -> f32 {
+        if !self.ligada || !self.permitida {
+            return 1.0;
+        }
+        let f = match self.curva {
+            gles::GL_LINEAR => {
+                let faixa = self.fim - self.inicio;
+                match faixa.abs() < f32::EPSILON {
+                    true => 1.0,
+                    false => (self.fim - distancia) / faixa,
+                }
+            }
+            gles::GL_EXP2 => {
+                let d = self.densidade * distancia;
+                (-(d * d)).exp()
+            }
+            _ => (-(self.densidade * distancia)).exp(),
+        };
+        f.clamp(0.0, 1.0)
     }
 }
 
@@ -424,6 +490,12 @@ pub trait Rasterizador {
     fn set_depth_mask(&mut self, on: bool);
     /// `glDepthRange`: para onde a profundidade normalizada vai no buffer de profundidade.
     fn set_depth_range(&mut self, perto: f32, longe: f32);
+    /// `glFog*`: um parâmetro da névoa, com até quatro valores (a cor usa os quatro).
+    fn set_fog(&mut self, pname: u32, valores: [f32; 4]);
+    /// Se a névoa do jogo vale. **É escolha de quem joga, não do jogo**: a névoa do console
+    /// costuma esconder o que a distância de desenho dele não alcançava, e aqui a cena chega
+    /// inteira — quem prefere ver longe desliga.
+    fn define_neblina(&mut self, permitida: bool);
     fn set_color_mask(&mut self, mask: [bool; 4]);
     fn set_cull_face(&mut self, mode: u32);
     fn set_front_face(&mut self, face: u32);
@@ -587,6 +659,12 @@ impl Rasterizador for GlState {
     fn set_depth_range(&mut self, perto: f32, longe: f32) {
         self.depth_range = (perto.clamp(0.0, 1.0), longe.clamp(0.0, 1.0));
     }
+    fn set_fog(&mut self, pname: u32, valores: [f32; 4]) {
+        GlState::set_fog(self, pname, valores)
+    }
+    fn define_neblina(&mut self, permitida: bool) {
+        self.fog.permitida = permitida;
+    }
     fn set_color_mask(&mut self, mask: [bool; 4]) {
         GlState::set_color_mask(self, mask)
     }
@@ -722,6 +800,11 @@ pub struct GlState {
     client_unit: u32,
     depth_test: bool,
     depth_mask: bool,
+    /// A névoa do `glFog*`: ligada, curva, cor e os parâmetros de cada curva.
+    ///
+    /// O Resident Evil 4 a usa para escurecer o fundo dos cenários, e é assim que ele separa o
+    /// que está perto do que está longe. Ignorá-la deixava a cena inteira com o mesmo brilho.
+    fog: Neblina,
     /// O `glDepthRange`: `(perto, longe)`, de 0 a 1.
     ///
     /// **Ignorá-lo fazia a pista do Crash Nitro Kart surgir do nada perto do jogador.** O jogo
@@ -825,6 +908,7 @@ impl GlState {
             client_unit: 0,
             depth_test: false,
             depth_mask: true,
+            fog: Neblina::default(),
             depth_range: (0.0, 1.0),
             color_mask: [true; 4],
             depth_func: gles::GL_LESS,
@@ -1039,6 +1123,23 @@ impl GlState {
         self.client_unit == 0
     }
 
+    /// Um parâmetro do `glFog*`. O que não conhecemos fica de fora em vez de virar lixo.
+    pub fn set_fog(&mut self, pname: u32, valores: [f32; 4]) {
+        match pname {
+            gles::GL_FOG_MODE => self.fog.curva = valores[0] as u32,
+            gles::GL_FOG_DENSITY => self.fog.densidade = valores[0].max(0.0),
+            gles::GL_FOG_START => self.fog.inicio = valores[0],
+            gles::GL_FOG_END => self.fog.fim = valores[0],
+            gles::GL_FOG_COLOR => self.fog.cor = valores,
+            _ => {}
+        }
+    }
+
+    /// A névoa como está agora, para quem precisa repassá-la.
+    pub fn neblina(&self) -> Neblina {
+        self.fog
+    }
+
     pub fn set_capability(&mut self, capability: u32, on: bool) {
         match capability {
             // Ligar e desligar textura é por unidade, e só a base conta.
@@ -1060,6 +1161,7 @@ impl GlState {
             {
                 self.lights[(capacidade - gles::GL_LIGHT0) as usize].enabled = on;
             }
+            gles::GL_FOG => self.fog.ligada = on,
             gles::GL_SCISSOR_TEST => self.set_scissor_test(on),
             // **O stencil ainda não existe, e faz falta medida.** O palco da Z-Wheel arma
             // `glStencilFunc` e `glStencilOp` duas vezes por quadro, que é a receita do reflexo
@@ -1499,6 +1601,7 @@ impl GlState {
         let modelview = *self.modelview.last().expect("pilha nunca fica vazia");
         let normais = matriz_de_normais(&modelview);
         let iluminando = self.lighting;
+        let neblina = self.fog;
         let mut clip = std::mem::take(&mut self.transformed);
         clip.clear();
         clip.extend(vertices.iter().map(|v| {
@@ -1506,18 +1609,28 @@ impl GlState {
             // que permite projeção na textura, e vale 1 no caso comum.
             let [s, t, _, q] = transform(&texture_matrix, [v.uv[0], v.uv[1], 0.0, 1.0]);
             let scale = if q == 0.0 { 1.0 } else { 1.0 / q };
-            let color = match iluminando {
-                false => v.color,
-                true => {
-                    let olho = transform(&modelview, v.position);
+            // A névoa e a iluminação querem a mesma coisa: o vértice em coordenadas de olho.
+            // Com uma das duas ligada a conta sai uma vez e serve às duas.
+            let olho = (iluminando || neblina.ligada && neblina.permitida)
+                .then(|| transform(&modelview, v.position));
+            let color = match (iluminando, olho) {
+                (true, Some(olho)) => {
                     let normal = normaliza(gira_normal(&normais, v.normal));
                     self.cor_iluminada(olho, normal, v.color)
                 }
+                _ => v.color,
+            };
+            // A distância do olho é `|z|`, como o OpenGL permite em vez do comprimento do vetor:
+            // é o que toda implementação de função fixa faz, e é o que o jogo espera ver.
+            let fog = match olho {
+                Some(olho) => neblina.fator(olho[2].abs()),
+                None => 1.0,
             };
             Vertex {
                 position: transform(&mvp, v.position),
                 uv: [s * scale, t * scale],
                 color,
+                fog,
                 ..*v
             }
         }));
@@ -1614,6 +1727,7 @@ impl GlState {
             .iter()
             .map(|&([sx, sy], uv)| Vertex {
                 normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
                 position: [
                     ((sx - vx as f32) / vw as f32) * 2.0 - 1.0,
                     1.0 - ((sy - vy as f32) / vh as f32) * 2.0,
@@ -1748,7 +1862,7 @@ impl GlState {
         // Os atributos viajam divididos por `w` — é essa divisão que corrige a perspectiva —,
         // e cada um volta multiplicado pelo `w` interpolado. Fazer a divisão aqui, uma vez por
         // vértice, tira três multiplicações por fragmento de dentro do laço.
-        let mut over_w = [[0.0f32; 6]; 3];
+        let mut over_w = [[0.0f32; 7]; 3];
         for i in 0..3 {
             let w = screen[i][3];
             let v = &tri[i];
@@ -1759,6 +1873,7 @@ impl GlState {
                 v.color[3] * w,
                 v.uv[0] * w,
                 v.uv[1] * w,
+                v.fog * w,
             ];
         }
 
@@ -1826,6 +1941,7 @@ impl GlState {
             depth_test: self.depth_test,
             depth_mask: self.depth_mask,
             color_mask: self.color_mask,
+            fog: self.fog,
             depth_func: self.depth_func,
             blend: self.blend,
             blend_src: self.blend_src,
@@ -2093,7 +2209,7 @@ struct Prepared {
     /// Vértices em coordenadas de tela, com `1/w` no quarto componente.
     screen: [[f32; 4]; 3],
     /// Cor e coordenada de textura de cada vértice, divididas por `w`.
-    over_w: [[f32; 6]; 3],
+    over_w: [[f32; 7]; 3],
     inv_area: f32,
     /// Quanto cada função de aresta anda a cada pixel para a direita.
     step: [f32; 3],
@@ -2165,6 +2281,8 @@ struct Job {
     alpha_ref: f32,
     /// O estado do stencil no momento do desenho. Ver [`GlState::stencil_test`].
     stencil: Stencil,
+    /// A névoa no momento do desenho. Ver [`Neblina`].
+    fog: Neblina,
 }
 
 impl Job {
@@ -2196,6 +2314,7 @@ impl Job {
             alpha_func: self.alpha_func,
             alpha_ref: self.alpha_ref,
             stencil: self.stencil,
+            fog: self.fog,
         }
     }
 }
@@ -2259,6 +2378,8 @@ struct Uniforms<'a> {
     alpha_ref: f32,
     /// O estado do stencil no momento do desenho. Ver [`GlState::stencil_test`].
     stencil: Stencil,
+    /// A névoa no momento do desenho. Ver [`Neblina`].
+    fog: Neblina,
 }
 
 /// Uma faixa horizontal do quadro: o pedaço exclusivo de uma thread.
@@ -2360,6 +2481,14 @@ fn fill_band(tri: &Prepared, uniforms: &Uniforms, band: &mut Band) {
                     };
                     let texel = texture.sample_lod(u, v, lod);
                     source = combine(uniforms.texture_env, source, texel);
+                }
+                // **A névoa entra depois da textura e antes do teste de alfa**, que é a ordem do
+                // OpenGL ES 1.1, e mexe só no RGB: o alfa do fragmento continua sendo o dele.
+                if uniforms.fog.ligada && uniforms.fog.permitida {
+                    let f = attribute(6).clamp(0.0, 1.0);
+                    for canal in 0..3 {
+                        source[canal] += (uniforms.fog.cor[canal] - source[canal]) * (1.0 - f);
+                    }
                 }
                 source
             };
@@ -2510,6 +2639,9 @@ fn clip_near(a: Vertex, b: Vertex) -> Vertex {
         // A normal já foi consumida pela iluminação antes do recorte: aqui ela não muda mais
         // nada, e interpolá-la seria trabalho para ninguém ler.
         normal: a.normal,
+        // O fator da névoa, ao contrário, ainda vai ser lido: o vértice novo fica onde o plano
+        // cortou, e a névoa dele é a do ponto de corte.
+        fog: lerp(a.fog, b.fog),
     }
 }
 
