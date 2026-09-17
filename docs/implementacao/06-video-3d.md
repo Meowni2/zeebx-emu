@@ -119,6 +119,26 @@ Nos dois motores o retângulo entra junto com a viewport, e com a mesma convenç
 software ele aperta a caixa de cada triângulo, e por isso não custa nada por pixel; na placa é o
 `glScissor` dela, multiplicado pela escala do anexo.
 
+## Névoa
+
+O `glFog*` era atendido em silêncio e o `GL_FOG`, ignorado. O Resident Evil 4 pede névoa linear
+de dez a setecentas e oitenta unidades para separar o que está perto do que está longe, e sem ela
+a cena saía toda com o mesmo brilho.
+
+O fator sai da **distância em coordenadas de olho** — `|z|`, como o OpenGL permite em vez do
+comprimento do vetor, e é o que toda implementação de função fixa faz. Ele é calculado na etapa de
+vértice, que é comum aos dois rasterizadores, e viaja no `Vertex` como os outros atributos; no
+fragmento entra **depois da textura e antes do teste de alfa**, mexendo só no RGB, que é a ordem
+do OpenGL ES 1.1. Na placa é mais um atributo do vértice, e quem mistura é o shader.
+
+Nas formas `x` o `GL_FOG_MODE` vem **inteiro**, não em ponto fixo: é uma enumeração, e convertê-la
+como escala daria `0x2601/65536`, que não é modo nenhum.
+
+**A chave dos ajustes gráficos é de quem joga, não do jogo.** No console a névoa costuma esconder
+o que a distância de desenho não alcançava, e aqui a cena chega inteira; quem prefere ver longe
+desliga. Fica ligada por omissão — o jogo pediu a névoa, e em muitos ela é o efeito, não o
+remendo.
+
 ## O `glReadPixels` e o lado de cima
 
 O Zeeboids desenha o boneco e **lê o quadro de volta** para montar a foto do perfil. A origem do
