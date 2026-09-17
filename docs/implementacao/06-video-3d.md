@@ -119,6 +119,19 @@ Nos dois motores o retângulo entra junto com a viewport, e com a mesma convenç
 software ele aperta a caixa de cada triângulo, e por isso não custa nada por pixel; na placa é o
 `glScissor` dela, multiplicado pela escala do anexo.
 
+## O `glReadPixels` e o lado de cima
+
+O Zeeboids desenha o boneco e **lê o quadro de volta** para montar a foto do perfil. A origem do
+`glReadPixels` é o canto inferior esquerdo, e a primeira linha do resultado é a de baixo da tela;
+as nossas superfícies contam do topo, então a leitura inverte a linha.
+
+Isso vale para os dois motores, e é fácil de errar na placa: lá o quadro **também** está guardado
+com a linha 0 no topo, porque o Y é virado no shader de vértice — é o que faz a leitura da tela
+não precisar de espelho na CPU. Quem ler direto do `glReadPixels` da placa recebe, portanto, a
+imagem já na convenção da superfície, que é a errada para o jogo. Lida crua, a foto do Zeeboids
+saía de cabeça para baixo, e com ela o rosto do boneco em todo jogo que o usa depois. Tem teste
+comparando a orientação nos dois rasterizadores.
+
 ## `GL_OES_draw_texture`
 
 O blit de tela: um retângulo desenhado **em coordenadas de janela**, sem passar pelas matrizes.
