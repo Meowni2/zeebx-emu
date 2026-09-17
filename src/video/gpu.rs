@@ -1397,16 +1397,27 @@ impl Rasterizador for GpuState {
         self.fill = guarda;
     }
 
+    /// **O quadro da placa está guardado com a linha 0 no topo**, porque o Y é virado no shader
+    /// de vértice — ver [`VERTICE`]. O `glReadPixels` do jogo, porém, conta o `y` de baixo e
+    /// espera a primeira linha do resultado sendo a de baixo, que é o que o rasterizador de
+    /// software entrega. Ler cru devolvia a imagem **de cabeça para baixo**: era a foto do
+    /// Zeeboids salva invertida, e com ela o rosto do boneco de ponta-cabeça em todo jogo que o
+    /// usa depois.
+    ///
+    /// Então a faixa pedida é convertida para a linha correspondente do framebuffer e o
+    /// resultado sai espelhado de volta.
     fn read_rect(&mut self, x: i32, y: i32, width: usize, height: usize) -> Vec<[u8; 4]> {
         if width == 0 || height == 0 {
             return Vec::new();
         }
         self.liga_para_leitura();
+        let altura_da_superficie = self.surface().1 as i32;
+        let de_baixo = altura_da_superficie - y - height as i32;
         let mut bytes = vec![0u8; width * height * 4];
         unsafe {
             self.gl.read_pixels(
                 x,
-                y,
+                de_baixo,
                 width as i32,
                 height as i32,
                 glow::RGBA,
@@ -1415,10 +1426,11 @@ impl Rasterizador for GpuState {
             );
         }
         self.devolve_o_contexto();
-        bytes
-            .chunks_exact(4)
-            .map(|p| [p[0], p[1], p[2], p[3]])
-            .collect()
+        let mut saida = Vec::with_capacity(width * height);
+        for linha in bytes.chunks_exact(width * 4).rev() {
+            saida.extend(linha.chunks_exact(4).map(|p| [p[0], p[1], p[2], p[3]]));
+        }
+        saida
     }
 
     fn frame_rgb565(&mut self, width: usize, height: usize, out: &mut Vec<u8>) {
@@ -1764,6 +1776,62 @@ mod tests {
         assert_eq!(
             baixo_placa, baixo_software,
             "canto de baixo: placa {baixo_placa:?} contra software {baixo_software:?}"
+        );
+    }
+
+    /// O `glReadPixels` conta o `y` de baixo, e os dois rasterizadores têm de concordar.
+    ///
+    /// A placa guarda o quadro com a linha 0 no topo, porque o Y é virado no shader; o software
+    /// guarda igual, mas converte na leitura. Ler cru da placa devolvia a imagem de cabeça para
+    /// baixo — era a foto do Zeeboids salva invertida, e com ela o rosto do boneco de
+    /// ponta-cabeça em todo jogo que o usa depois.
+    #[test]
+    fn a_leitura_de_pixels_tem_a_mesma_orientacao_nos_dois_rasterizadores() {
+        let (largura, altura) = (16, 16);
+        let Some((mut gpu, mut sw)) = par(largura, altura) else {
+            return;
+        };
+        // Metade de cima vermelha: um quadro que não é simétrico na vertical.
+        let cena = |r: &mut dyn Rasterizador| {
+            r.set_viewport(0, 0, largura as i32, altura as i32);
+            r.set_clear_color([0.0, 0.0, 1.0, 1.0]);
+            r.clear(gles::GL_COLOR_BUFFER_BIT);
+            let canto = |x: f32, y: f32| Vertex {
+                position: [x, y, 0.0, 1.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+                uv: [0.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
+            };
+            r.draw(
+                gles::GL_TRIANGLES,
+                &[canto(-1.0, 1.0), canto(-1.0, 0.0), canto(1.0, 1.0)],
+            );
+            r.draw(
+                gles::GL_TRIANGLES,
+                &[canto(1.0, 1.0), canto(-1.0, 0.0), canto(1.0, 0.0)],
+            );
+        };
+        cena(&mut gpu);
+        cena(&mut sw);
+        let da_placa = gpu.read_rect(0, 0, largura, altura);
+        let do_software = sw.read_rect(0, 0, largura, altura);
+        // A primeira linha do resultado é a de **baixo** da tela, que aqui é azul.
+        assert_eq!(
+            do_software[largura + 1][2], 255,
+            "no software a primeira linha lida devia ser a de baixo, azul"
+        );
+        assert_eq!(
+            da_placa[largura + 1],
+            do_software[largura + 1],
+            "linha de baixo: placa {:?} contra software {:?}",
+            da_placa[largura + 1],
+            do_software[largura + 1]
+        );
+        let alto = (altura - 2) * largura + 1;
+        assert_eq!(
+            da_placa[alto], do_software[alto],
+            "linha de cima: placa {:?} contra software {:?}",
+            da_placa[alto], do_software[alto]
         );
     }
 
