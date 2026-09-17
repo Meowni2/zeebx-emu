@@ -2022,8 +2022,14 @@ pub struct Machine<C: CpuBackend> {
     enumerations: HashMap<u32, std::collections::VecDeque<String>>,
     /// Arquivos que o jogo tentou abrir e não existem — bom indício de asset faltando.
     missing_files: BTreeSet<String>,
-    /// Sinais que o jogo registrou para eventos de entrada, por tipo de evento.
-    input_signals: BTreeMap<&'static str, u32>,
+    /// Sinais que o jogo registrou para eventos de entrada, por tipo de evento **e porta**.
+    ///
+    /// A porta faz parte da chave porque o registro é feito no objeto do aparelho, um por
+    /// controle ligado: com dois, o segundo registro sobrescrevia o primeiro e todo evento
+    /// acordava o callback do controle dois. O jogo então perguntava ao aparelho errado, não
+    /// achava evento nenhum e o controle um não fazia nada — era o Treino Cerebral preso no
+    /// "aperte botão 1" com as duas portas ligadas.
+    input_signals: BTreeMap<(&'static str, usize), u32>,
     /// Callback de cada sinal vivo, indexado pelo ponteiro do objeto no guest.
     signals: HashMap<u32, Callback>,
     /// Sinais disparados e ainda não entregues ao guest.

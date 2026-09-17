@@ -252,7 +252,7 @@ impl<C: CpuBackend> Machine<C> {
             | "RegisterForButtonEvent"
             | "RegisterForPositionChange" => {
                 if a1 != 0 {
-                    self.input_signals.insert(name, a1);
+                    self.input_signals.insert((name, self.porta_do(this)), a1);
                 }
                 // **O registro de posição já vale um aviso.** No console o controle está
                 // conectado e parado quando o jogo registra, e o driver entrega logo a
@@ -262,7 +262,7 @@ impl<C: CpuBackend> Machine<C> {
                 // jogava com os eixos sem calibrar — o Ridge Racer chega ao título e não
                 // pergunta nada antes disso.
                 if name == "RegisterForPositionChange" {
-                    self.raise_input_signal(name);
+                    self.raise_input_signal(name, self.porta_do(this));
                 }
                 SUCCESS
             }
@@ -371,7 +371,7 @@ impl<C: CpuBackend> Machine<C> {
         }
 
         if !changes.is_empty() {
-            self.raise_input_signal("RegisterForButtonEvent");
+            self.raise_input_signal("RegisterForButtonEvent", porta);
         }
         // **O retorno ao centro também é mudança de posição.** Soltar o manche precisa acordar
         // o callback como empurrá-lo: quem lê o eixo só de dentro do callback — e é como um
@@ -380,7 +380,7 @@ impl<C: CpuBackend> Machine<C> {
         // navegação dobrada que isto parecia causar era outra coisa, e está resolvida em
         // [`Machine::raise_input_signal`].
         if moved {
-            self.raise_input_signal("RegisterForPositionChange");
+            self.raise_input_signal("RegisterForPositionChange", porta);
         }
     }
 
@@ -403,8 +403,10 @@ impl<C: CpuBackend> Machine<C> {
             return;
         }
         self.ultimo_relatorio_boomerang_us = agora;
-        if (0..input::PORTAS).any(|porta| self.e_boomerang(porta)) {
-            self.raise_input_signal("RegisterForPositionChange");
+        for porta in 0..input::PORTAS {
+            if self.e_boomerang(porta) {
+                self.raise_input_signal("RegisterForPositionChange", porta);
+            }
         }
     }
 
@@ -652,8 +654,11 @@ impl<C: CpuBackend> Machine<C> {
     }
 
     /// Dispara o sinal registrado num dos `RegisterFor*` do `IHIDDevice`.
-    pub(super) fn raise_input_signal(&mut self, register: &'static str) {
-        let Some(&signal) = self.input_signals.get(register) else {
+    /// O `porta` é parte da chave porque o registro é feito **no objeto do aparelho**, um por
+    /// controle: com dois ligados, guardar só pelo nome do registro fazia o segundo apagar o
+    /// primeiro e todo evento acordar o callback do controle dois.
+    pub(super) fn raise_input_signal(&mut self, register: &'static str, porta: usize) {
+        let Some(&signal) = self.input_signals.get(&(register, porta)) else {
             return;
         };
         if let Some(&callback) = self.signals.get(&signal) {
