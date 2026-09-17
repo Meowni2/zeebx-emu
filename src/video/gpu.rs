@@ -451,14 +451,15 @@ impl GpuState {
         // mesma razão (em `draw`): o que estava na tela cai no mesmo pixel de antes, deslocado
         // para o centro, e o que ficava fora do recorte aparece nos lados. HUD e 2D, em
         // ortográfica, só se deslocam.
-        let (x, w) = match (self.em_perspectiva, extra > 0) {
+        let superficie = self.estado.surface().0 as i32;
+        let para_o_anexo = |x: i32, w: i32| match (self.em_perspectiva, extra > 0) {
             (true, true) => {
-                let sw = self.estado.surface().0 as i32;
-                let largura = w * (sw + 2 * extra) / sw.max(1);
+                let largura = w * (superficie + 2 * extra) / superficie.max(1);
                 (extra + x + w / 2 - largura / 2, largura)
             }
             _ => (x + extra, w),
         };
+        let (x, w) = para_o_anexo(x, w);
         let gl = &self.gl;
         let e = &self.fill;
         unsafe {
@@ -478,6 +479,12 @@ impl GpuState {
             liga(gl, glow::SCISSOR_TEST, e.tesoura_ligada);
             if e.tesoura_ligada {
                 let (sx, sy, sw, sh) = e.tesoura;
+                // **A tesoura passa pela mesma conversão da viewport.** Ela vem em pixels do
+                // console, e na proporção larga o anexo é mais largo: sem converter, um
+                // `glScissor` na tela inteira — que é o que o Resident Evil 4 e o Crash Nitro
+                // Kart ligam — cortava tudo além dos 640 do console e os lados novos ficavam
+                // com a cor de fundo do anexo.
+                let (sx, sw) = para_o_anexo(sx, sw);
                 gl.scissor(sx * n, sy * n, sw.max(0) * n, sh.max(0) * n);
             }
             liga(gl, glow::DEPTH_TEST, e.teste_profundidade);
@@ -2067,6 +2074,66 @@ mod tests {
             r > 0 && b > 0
         });
         assert!(misturado, "algum pixel da diagonal devia misturar vermelho e azul");
+    }
+
+    /// Na proporção larga, a tesoura do jogo não pode cortar os lados novos.
+    ///
+    /// O `glScissor` chega em pixels do console, e o anexo é mais largo: sem a mesma conversão
+    /// que a viewport recebe, uma tesoura na tela inteira — que é o que o Resident Evil 4 e o
+    /// Crash Nitro Kart ligam em jogo — cortava tudo além dos 640 do console, e os lados
+    /// ficavam com a cor de fundo do anexo.
+    #[test]
+    fn na_proporcao_larga_a_tesoura_do_jogo_nao_come_os_lados() {
+        let (largura, altura) = (64, 48);
+        let Ok(mut gpu) = GpuState::novo(largura, altura, None) else {
+            println!("sem placa nesta máquina");
+            return;
+        };
+        gpu.define_proporcao(Some(16.0 / 9.0));
+        gpu.set_viewport(0, 0, largura as i32, altura as i32);
+        // Uma perspectiva qualquer: é ela que faz o lote ganhar os lados.
+        gpu.set_matrix_mode(gles::GL_PROJECTION);
+        gpu.load_identity();
+        let mut perspectiva = crate::video::rasterizer::IDENTITY;
+        perspectiva[11] = -1.0;
+        perspectiva[15] = 0.0;
+        perspectiva[10] = -1.0;
+        perspectiva[14] = -2.0;
+        gpu.mult_matrix(perspectiva);
+        gpu.set_matrix_mode(gles::GL_MODELVIEW);
+        gpu.load_identity();
+        // A tesoura da tela inteira, em pixels do console.
+        gpu.set_scissor(0, 0, largura as i32, altura as i32);
+        gpu.set_capability(gles::GL_SCISSOR_TEST, true);
+        gpu.set_clear_color([0.0, 0.0, 0.0, 1.0]);
+        gpu.clear(gles::GL_COLOR_BUFFER_BIT);
+        // Um quadrado bem maior que a tela, para cobrir também os lados novos.
+        let canto = |x: f32, y: f32| Vertex {
+            position: [x, y, -1.0, 1.0],
+            color: [0.0, 1.0, 0.0, 1.0],
+            uv: [0.0, 0.0],
+            normal: [0.0, 0.0, 1.0],
+            fog: 1.0,
+        };
+        for tri in [
+            [canto(-4.0, 4.0), canto(-4.0, -4.0), canto(4.0, 4.0)],
+            [canto(4.0, 4.0), canto(-4.0, -4.0), canto(4.0, -4.0)],
+        ] {
+            gpu.draw(gles::GL_TRIANGLES, &tri);
+        }
+        let (w, h, rgba) = gpu.le_quadro_grande().expect("o quadro largo existe");
+        assert!(w > largura, "a proporção larga devia alargar o anexo");
+        let verde = |x: usize| {
+            let i = ((h / 2) * w + x) * 4;
+            rgba[i + 1]
+        };
+        assert!(verde(w / 2) > 200, "o centro devia estar pintado");
+        assert!(
+            verde(w - 2) > 200,
+            "a borda direita ficou em {} — a tesoura comeu o lado novo",
+            verde(w - 2)
+        );
+        assert!(verde(1) > 200, "a borda esquerda ficou em {}", verde(1));
     }
 
     /// Quem nunca chama `glViewport` tem que desenhar de todo jeito.
