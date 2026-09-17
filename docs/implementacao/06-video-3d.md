@@ -119,6 +119,12 @@ Nos dois motores o retângulo entra junto com a viewport, e com a mesma convenç
 software ele aperta a caixa de cada triângulo, e por isso não custa nada por pixel; na placa é o
 `glScissor` dela, multiplicado pela escala do anexo.
 
+**E ele passa pela mesma conversão da viewport na proporção larga.** A tesoura chega em pixels do
+console; o anexo é mais largo. Enquanto ela ia crua, uma tesoura na tela inteira — que é o que o
+Resident Evil 4 e o Crash Nitro Kart ligam em jogo — cortava tudo além dos 640 do console, e os
+lados que a proporção larga acabara de abrir ficavam com a cor de fundo do anexo. Quem não usa
+tesoura, como o Raging Thunder 2, nunca viu a faixa.
+
 ## Névoa
 
 O `glFog*` era atendido em silêncio e o `GL_FOG`, ignorado. O Resident Evil 4 pede névoa linear
