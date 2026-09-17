@@ -182,6 +182,13 @@ manche está em repouso.
 `Y` vai invertido porque no HID o eixo vertical cresce para baixo e na biblioteca de controles
 cima é positivo. Errar esse sinal inverte o eixo vertical de todo jogo que o lê — tem teste.
 
+**O aviso de evento é por aparelho, não por tipo de evento.** O jogo registra o `ISignal` do
+`RegisterForButtonEvent` e do `RegisterForPositionChange` **no objeto do aparelho**, um por
+controle ligado. Guardar o sinal só pelo nome do registro fazia o segundo apagar o primeiro: toda
+mudança acordava o callback do controle dois, o jogo perguntava ao aparelho errado, não achava
+evento nenhum e o controle um não fazia nada. O Treino Cerebral ficava preso no "aperte botão 1"
+assim que a porta dois entrava. A chave é o par `(registro, porta)`.
+
 **O `aparelho` da porta é o que o console enumera, e o controle do host é outra coisa.** São dois
 campos: o aparelho diz se aquela porta é um Z-Pad, um controle, um Boomerang ou um teclado — e o
 `GetConnectedDevices` de joystick só lista os três primeiros —, enquanto o `device` diz de qual
