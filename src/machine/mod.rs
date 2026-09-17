@@ -161,21 +161,36 @@ fn fold_case(units: &[u16], take: usize) -> Vec<u16> {
 /// Base 0 significa deduzir do prefixo, como no `strtoul` do C: `0x` é hexadecimal, `0` é
 /// octal e o resto é decimal. Devolve o valor e quantos bytes foram consumidos.
 fn parse_unsigned(text: &str, base: u32) -> (u32, usize) {
-    let start = text.len() - text.trim_start().len();
-    let rest = &text[start..];
+    // O espaço do `isspace` do C, e não o do Unicode: lido em Latin-1, o `0xA0` viraria espaço.
+    let start = text.len() - text.trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r']).len();
+    // **O sinal vale.** A `strtoul` do C aceita `+` e `-`, e com `-` devolve o número negado. O
+    // Alice no País das Maravilhas lê linhas como `-2 12 16 73 ...`: parado no `-`, o laço dele
+    // contava o campo sem sair do lugar e repetia a linha até esgotar os 18 MB do pool.
+    let (negativo, depois_do_sinal) = match text[start..].as_bytes().first() {
+        Some(b'-') => (true, start + 1),
+        Some(b'+') => (false, start + 1),
+        _ => (false, start),
+    };
+    let rest = &text[depois_do_sinal..];
+    let hex = rest.starts_with("0x") || rest.starts_with("0X");
     let (digits, base) = match base {
-        0 if rest.starts_with("0x") || rest.starts_with("0X") => (&rest[2..], 16),
-        16 if rest.starts_with("0x") || rest.starts_with("0X") => (&rest[2..], 16),
-        0 if rest.starts_with('0') && rest.len() > 1 => (&rest[1..], 8),
+        0 | 16 if hex => (&rest[2..], 16),
+        // O `0` do prefixo octal também é dígito: `"0 1"` consome o zero.
+        0 if rest.starts_with('0') => (rest, 8),
         0 => (rest, 10),
         base => (rest, base),
     };
     let taken = digits.chars().take_while(|c| c.is_digit(base)).count();
-    let value = u32::from_str_radix(&digits[..taken], base).unwrap_or(0);
+    let value = u32::from_str_radix(&digits[..taken], base).unwrap_or(u32::MAX);
     let consumed = if taken == 0 {
         0
     } else {
         text.len() - digits.len() + taken
+    };
+    let value = match (taken, negativo) {
+        (0, _) => 0,
+        (_, true) => value.wrapping_neg(),
+        (_, false) => value,
     };
     (value, consumed)
 }
@@ -357,7 +372,6 @@ const BOOMERANG_PRODUCT_ID: u16 = 0x0003;
 const fn handle_da_porta(porta: usize) -> u32 {
     porta as u32 + 1
 }
-const HID_TYPE_GAMEPAD: u32 = 1;
 const HID_STATUS_CONNECTED: u32 = 1;
 /// `AEEUID_HID_Joystick_Device`, de `AEEHIDDevice_Joystick.h`: o tipo de dispositivo que os
 /// jogos pedem em `GetConnectedDevices`.
@@ -369,8 +383,6 @@ const UID_JOYSTICK_DEVICE: u32 = 0x0106_c3fd;
 /// imprime `No keyboard reported`. Ou seja, o console enumera teclado USB, e a mensagem que a
 /// gente via no log era a resposta certa para "não tem nenhum ligado".
 const UID_KEYBOARD_DEVICE: u32 = 0x0106_c3fc;
-/// O tipo que o `GetDeviceInfo` reporta para um teclado.
-const HID_TYPE_KEYBOARD: u32 = 2;
 /// `EBADPARM` do BREW.
 const EBADPARM: u32 = 2;
 /// `AEE_EUNSUPPORTED`, de `AEEStdErr.h`: a API existe, mas não para este item.
@@ -416,7 +428,14 @@ const AEECLSID_BMP: u32 = 0x0100_4001;
 const AEECLSID_PNGDECODER: u32 = 0x0102_6e23;
 const AEECLSID_PNGDECODER_BREW: u32 = 0x0103_0766;
 /// `IPARM_*` de `inc/AEEIImage.h`.
+///
+/// O `SIZE`, o `OFFSET` e o `ROP` saíram do uso: o Action Hero 3D escreve cada letra do menu
+/// com `SetParm(0, cx, 12)`, `SetParm(1, x, 0|12|24)` e `Draw` sobre a folha de fontes de
+/// 201x37 — três linhas de 12 pixels —, e prepara a imagem com `SetParm(3, AEE_RO_TRANSPARENT)`.
+const IPARM_SIZE: u32 = 0;
+const IPARM_OFFSET: u32 = 1;
 const IPARM_CXFRAME: u32 = 2;
+const IPARM_ROP: u32 = 3;
 const IPARM_NFRAMES: u32 = 4;
 const IPARM_GETBITMAP: u32 = 10;
 /// `AEECLSID_MEMASTREAM` = `AEECLSID_CORE + 12`, de `sdk/inc/AEEClassIDs.h`.
@@ -483,6 +502,30 @@ const MMD_FILE_NAME: u32 = 0;
 /// O maior som que lemos de uma vez. Um tamanho absurdo é ponteiro errado, não música.
 const MAX_MEDIA_BUFFER: u32 = 64 * 1024 * 1024;
 const MMD_BUFFER: u32 = 1;
+/// `MMD_ISOURCE`, o `clsData` de um `AEEMediaDataEx` cujos dados vêm de um `ISource` que o
+/// próprio jogo implementa. É o `AEECLSID_SOURCE` do BREW, e é o que os ports de arcade da Data
+/// East passam, com `bRaw` ligado e um `AEEMediaWaveSpec` dizendo o formato das amostras.
+const MMD_ISOURCE: u32 = 0x0100_1012;
+/// Slot de `Read` na vtable de `ISource`: `AddRef`, `Release`, `QueryInterface`, `Read`,
+/// `Readable`.
+const ISOURCE_READ_SLOT: u32 = 3;
+/// O maior pedaço de PCM pedido ao `ISource` de uma vez, em bytes.
+const MAX_LEITURA_PCM: u32 = 16 * 1024;
+
+/// Um som que o jogo gera enquanto toca: o `ISource` de onde as amostras vêm e o formato delas.
+#[derive(Debug, Clone, Copy)]
+struct FluxoPcm {
+    fonte: u32,
+    taxa: u32,
+    canais: u16,
+    bits: u16,
+    sem_sinal: bool,
+    /// Quando o `Play` começou, no relógio virtual, e quantos quadros já foram pedidos desde
+    /// então. A diferença entre o que o relógio manda e o que já veio é o que falta pedir.
+    inicio_us: u64,
+    quadros_lidos: u64,
+    tocando: bool,
+}
 
 /// Comandos e status de `IMedia`, de `inc/AEEIMedia.h` do SDK do BREW 4.0.2.
 const MM_CMD_PLAY: u32 = 4;
@@ -497,6 +540,17 @@ const MEDIA_NOTIFY_LEN: u32 = 28;
 const MM_STATE_READY: u32 = 2;
 const MM_STATE_PLAY: u32 = 3;
 const MM_STATE_PLAY_PAUSE: u32 = 5;
+
+/// Classes do firmware que não temos e que o jogo usa **sem conferir** se existem.
+///
+/// O Powerboat Challenge cria a `0x01001039`, guarda o ponteiro e chama um método dela sem olhar
+/// o retorno: com a recusa honesta — que é o que o BREW responde para classe que não existe — ele
+/// saltava para o endereço zero antes do menu de idioma. Um objeto que responde sucesso a tudo o
+/// deixa seguir, e o que ele chamar nele aparece no relatório da sonda.
+///
+/// A classe em si continua sendo do firmware do console, que ainda não lemos (ver
+/// [`15-o-que-falta-da-nand.md`](../../docs/implementacao/15-o-que-falta-da-nand.md)).
+const CLASSES_POR_OBSERVACAO: &[u32] = &[0x0100_1039];
 
 /// `AEECLSID_QEGL`, do `AEECLSID_QEGL.bid` do SDK: o objeto que dá acesso ao EGL e ao OpenGL
 /// ES pelas interfaces novas do BREW. É por ele que o Quake tenta primeiro.
@@ -520,10 +574,6 @@ fn escalar(palavra: u32, fixo: bool) -> f32 {
 
 const ATENDIDAS_EM_SILENCIO: &[&str] = &[
     "DepthFunc",
-    "Fogf",
-    "Fogfv",
-    "Fogx",
-    "Fogxv",
     "Hint",
     "LineWidth",
     "LineWidthx",
@@ -768,6 +818,8 @@ const AEEIID_TRANSFORM: u32 = 0x0100_1029;
 const AEEIID_CANVAS: u32 = 0x0101_e443;
 /// `IDIB_COLORSCHEME_565`, de `inc/AEEIDIB.h`: 5 bits de vermelho, 6 de verde, 5 de azul.
 const IDIB_COLORSCHEME_565: u8 = 16;
+/// `IDIB_COLORSCHEME_888`: 8 bits por canal.
+const IDIB_COLORSCHEME_888: u8 = 24;
 /// `AEECLSID_DIB` = `AEECLSID_CORE + 69`. É o bitmap com acesso direto aos pixels.
 const AEECLSID_DIB: u32 = 0x0100_1045;
 /// `AEEIID_IBitmap`, de `inc/AEEIBitmap.h`.
@@ -1364,6 +1416,33 @@ fn decode_png(bytes: &[u8]) -> Option<DecodedImage> {
     })
 }
 
+/// Um PNG em bytes de 8 bits por canal: RGB, ou RGBA quando a imagem tem alfa.
+///
+/// É o formato em que o decodificador de PNG do BREW entrega o `IDIB`. Tons de cinza viram RGB,
+/// com ou sem alfa, e a paleta é expandida.
+fn decode_png_bytes(bytes: &[u8]) -> Option<(u32, u32, usize, Vec<u8>)> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(
+        png::Transformations::EXPAND | png::Transformations::normalize_to_color8(),
+    );
+    let mut reader = decoder.read_info().ok()?;
+    let mut raw = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut raw).ok()?;
+    let data = &raw[..info.buffer_size()];
+    let (canais, saida) = match info.color_type {
+        png::ColorType::Rgba => (4, data.to_vec()),
+        png::ColorType::Rgb => (3, data.to_vec()),
+        png::ColorType::GrayscaleAlpha => (
+            4,
+            data.chunks_exact(2)
+                .flat_map(|c| [c[0], c[0], c[0], c[1]])
+                .collect(),
+        ),
+        _ => (3, data.iter().flat_map(|&c| [c, c, c]).collect()),
+    };
+    Some((info.width, info.height, canais, saida))
+}
+
 /// O alfa de uma imagem, ou nada quando ele não tem meio-tom — aí o `opaque` já diz tudo, e o
 /// desenho segue pelo caminho sem mistura.
 fn so_com_meio_tom(alfa: Vec<u8>) -> Vec<u8> {
@@ -1594,6 +1673,18 @@ struct CipherState {
     /// Bytes que ainda não completaram um bloco. O `ICipher1` é de fluxo: o jogo pode entregar
     /// qualquer quantidade e só o `ProcessLast` fecha o que faltar.
     pending: Vec<u8>,
+}
+
+/// O pedaço de uma `IImage` que o `Draw` desenha, e como.
+#[derive(Debug, Clone, Copy, Default)]
+struct RecorteDeImagem {
+    /// `IPARM_OFFSET`: o canto do pedaço, dentro da imagem (ou do quadro).
+    x: i32,
+    y: i32,
+    /// `IPARM_SIZE`: o tamanho do pedaço. Sem ele, até a borda da imagem.
+    tamanho: Option<(i32, i32)>,
+    /// `IPARM_ROP`: com `AEE_RO_TRANSPARENT`, a cor reservada não é desenhada.
+    transparente: bool,
 }
 
 /// Um desenho numa superfície do próprio jogo, à espera da fronteira da chamada.
@@ -1927,8 +2018,14 @@ pub struct Machine<C: CpuBackend> {
     enumerations: HashMap<u32, std::collections::VecDeque<String>>,
     /// Arquivos que o jogo tentou abrir e não existem — bom indício de asset faltando.
     missing_files: BTreeSet<String>,
-    /// Sinais que o jogo registrou para eventos de entrada, por tipo de evento.
-    input_signals: BTreeMap<&'static str, u32>,
+    /// Sinais que o jogo registrou para eventos de entrada, por tipo de evento **e porta**.
+    ///
+    /// A porta faz parte da chave porque o registro é feito no objeto do aparelho, um por
+    /// controle ligado: com dois, o segundo registro sobrescrevia o primeiro e todo evento
+    /// acordava o callback do controle dois. O jogo então perguntava ao aparelho errado, não
+    /// achava evento nenhum e o controle um não fazia nada — era o Treino Cerebral preso no
+    /// "aperte botão 1" com as duas portas ligadas.
+    input_signals: BTreeMap<(&'static str, usize), u32>,
     /// Callback de cada sinal vivo, indexado pelo ponteiro do objeto no guest.
     signals: HashMap<u32, Callback>,
     /// Sinais disparados e ainda não entregues ao guest.
@@ -2036,6 +2133,9 @@ pub struct Machine<C: CpuBackend> {
     updates_na_volta: usize,
     /// Profundidade atual de reentrada no guest.
     nesting: u32,
+    /// O trecho de guest que o teto de instruções interrompeu, quando ele era o trecho mais de
+    /// fora: onde continuar e os registradores de então. Ver [`Machine::retoma_trecho`].
+    trecho_interrompido: Option<(u32, [u32; 15])>,
     /// Superfícies do jogo à espera de serem consultadas sobre onde ficam seus pixels.
     pending_probes: Vec<u32>,
     /// Desenhos que precisam passar pelo `BltIn` de uma superfície do jogo.
@@ -2059,6 +2159,8 @@ pub struct Machine<C: CpuBackend> {
     profiling_api: bool,
     /// Callback de `IIMAGE_Notify`, por objeto.
     image_notify: HashMap<u32, Callback>,
+    /// O retângulo e a operação que o `IIMAGE_SetParm` deixou para os próximos `Draw`.
+    recortes_de_imagem: HashMap<u32, RecorteDeImagem>,
     /// Blocos de memória apresentados como stream.
     streams: HashMap<u32, MemStream>,
     /// Estado de cada `ISound` vivo.
@@ -2124,6 +2226,10 @@ pub struct Machine<C: CpuBackend> {
     /// o aviso nasceu. Saem na volta do laço, não na saída da chamada: ver
     /// [`Machine::notify_media`].
     avisos_de_midia: Vec<(u32, u32, u32, Callback)>,
+    /// Os `IMedia` que tocam PCM gerado pelo jogo, por objeto. Ver [`FluxoPcm`].
+    fluxos_pcm: HashMap<u32, FluxoPcm>,
+    /// O buffer no guest onde o `ISource::Read` escreve as amostras.
+    buffer_de_fluxo: u32,
     /// O bloco onde cada `AEEMediaCmdNotify` é montado na hora da entrega. Um só basta: os avisos
     /// saem um de cada vez, e o tratador só o lê enquanto roda.
     bloco_de_aviso_de_midia: u32,
@@ -2248,6 +2354,11 @@ pub struct Machine<C: CpuBackend> {
     /// do Kingdom Hearts viravam blocos, com a folha de glifos substituída pela imagem
     /// decodificada antes dela.
     dib_herdados: HashSet<u32>,
+    /// Bitmaps do decodificador de PNG cujo `IDIB` mostra os pixels no formato do próprio PNG
+    /// (RGB de 24 bits ou RGBA de 32), e não em RGB565: o buffer e a capacidade dele. Ficam fora
+    /// da sincronização — a nossa cópia em RGB565 serve aos blits, e o buffer é só leitura para o
+    /// jogo.
+    dib_do_decodificador: HashMap<u32, (u32, u32)>,
     /// A [`Framebuffer::serie`] de cada superfície na última vez que o buffer do jogo e a nossa
     /// cópia ficaram iguais — dali em diante, só a caixa suja dela precisa ir para o jogo.
     ///
@@ -2543,6 +2654,7 @@ impl<C: CpuBackend> Machine<C> {
             quadros_do_update: Default::default(),
             updates_na_volta: 0,
             nesting: 0,
+            trecho_interrompido: None,
             pending_probes: Vec::new(),
             pending_blits: Vec::new(),
             probed: HashSet::new(),
@@ -2555,6 +2667,7 @@ impl<C: CpuBackend> Machine<C> {
             api_time: HashMap::new(),
             profiling_api: false,
             image_notify: HashMap::new(),
+            recortes_de_imagem: HashMap::new(),
             parametros_de_colecao: HashMap::new(),
             vetores: HashMap::new(),
             sources: HashMap::new(),
@@ -2588,6 +2701,8 @@ impl<C: CpuBackend> Machine<C> {
             sounds: HashMap::new(),
             pending_calls: Vec::new(),
             avisos_de_midia: Vec::new(),
+            fluxos_pcm: HashMap::new(),
+            buffer_de_fluxo: 0,
             bloco_de_aviso_de_midia: 0,
             recursos_lidos: BTreeSet::new(),
             despejou: false,
@@ -2631,6 +2746,7 @@ impl<C: CpuBackend> Machine<C> {
             dib_buffers: HashMap::new(),
             dib_capacity: HashMap::new(),
             dib_herdados: HashSet::new(),
+            dib_do_decodificador: HashMap::new(),
             dib_publicado: HashMap::new(),
             surface_next: loader::SURFACE_BASE,
             superficies_livres: Vec::new(),
@@ -2789,6 +2905,7 @@ impl<C: CpuBackend> Machine<C> {
             let gasto = self.cpu.instructions().saturating_sub(comeco);
             let fatia = teto.saturating_sub(gasto).min(budget);
             if fatia == 0 {
+                self.anota_trecho_interrompido(pc);
                 return Ok(Outcome::Budget);
             }
             match self.cpu.run(pc, fatia)? {
@@ -2859,9 +2976,55 @@ impl<C: CpuBackend> Machine<C> {
                     return Ok(Outcome::Fault { addr, pc, lr });
                 }
                 StopReason::Exception { pc } => return Ok(Outcome::Exception { pc }),
-                StopReason::Budget => return Ok(Outcome::Budget),
+                StopReason::Budget => {
+                    // O bit 0 diz o modo, como em toda retomada do ARM.
+                    let parou = self.cpu.read_reg(Reg::Pc) & !1;
+                    let modo = u32::from(self.cpu.em_thumb());
+                    self.anota_trecho_interrompido(parou | modo);
+                    return Ok(Outcome::Budget);
+                }
             }
         }
+    }
+
+    /// Guarda onde continuar o trecho que o teto de instruções interrompeu.
+    ///
+    /// **Só o trecho mais de fora.** O guest guarda o estado dele nos registradores e na pilha
+    /// dele, então retomar é continuar do `pc` — mas um trecho aninhado (um callback chamado de
+    /// dentro do despacho de uma API) tem quem o espera do lado de cá, e esse quadro já se foi
+    /// quando a volta termina. Aninhado, o teto continua sendo só um pedido de vez.
+    fn anota_trecho_interrompido(&mut self, pc: u32) {
+        if self.nesting != 0 {
+            return;
+        }
+        // **Os registradores vão junto.** Entre o corte e a retomada o emulador ainda entrega
+        // sinais e callbacks desta volta, e entrar no guest para isso sobrescreve `r0`-`r3`,
+        // o `lr` e o que mais o tratador usar. Sem guardar o contexto, a retomada continuava
+        // com os registradores de outra coisa — e o Rolima saltava para o endereço zero.
+        let mut estado = [0u32; 15];
+        for (slot, reg) in estado.iter_mut().zip(THREAD_REGS) {
+            *slot = self.cpu.read_reg(reg);
+        }
+        estado[14] = self.cpu.read_reg(Reg::Lr);
+        self.trecho_interrompido = Some((pc, estado));
+    }
+
+    /// Continua o trecho interrompido, se houver um.
+    ///
+    /// **Um jogo pode rodar o laço inteiro dele dentro do `EVT_APP_START`.** O Zeebo Extreme
+    /// Rolima faz isso: ele nunca cede a vez com `IThread::Suspend`, como os irmãos dele fazem,
+    /// e o teto de instruções cortava o carregamento no meio. Sem retomada, o trecho sumia — o
+    /// laço de eventos não achava timer nem callback nenhum, e a sessão terminava sozinha aos
+    /// 3,8 segundos, como se o jogo tivesse acabado.
+    fn retoma_trecho(&mut self, budget: u64) -> Result<Option<Outcome>, CpuError> {
+        let Some((pc, estado)) = self.trecho_interrompido.take() else {
+            return Ok(None);
+        };
+        for (valor, reg) in estado.iter().zip(THREAD_REGS) {
+            self.cpu.write_reg(reg, *valor);
+        }
+        self.cpu.write_reg(Reg::Lr, estado[14]);
+        self.execute(pc, budget).map(Some)
     }
 
     /// Atende uma chamada. `None` significa "ainda não implementada".
@@ -3313,6 +3476,11 @@ impl<C: CpuBackend> Machine<C> {
     /// Precisa rodar fora do despacho de uma chamada, como a fila de sinais: os callbacks
     /// executam no guest.
     pub fn advance(&mut self, budget: u64) -> Result<Vec<Outcome>, CpuError> {
+        // O trecho que o teto cortou continua antes de qualquer outra coisa: ele é o jogo no
+        // meio de um quadro, e timer ou callback entregues por cima dele chegariam fora de hora.
+        if let Some(outcome) = self.retoma_trecho(budget)? {
+            return Ok(vec![outcome]);
+        }
         self.skip_idle_time();
 
         // Os vencidos saem da lista *antes* de rodar, porque o callback tipicamente rearma o

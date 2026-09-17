@@ -163,3 +163,25 @@ em **modo usuário**, ver [02-cpu-e-memoria.md](02-cpu-e-memoria.md). Com os doi
 voltas do laço e 418 milhões de instruções** em seis segundos virtuais, com a tela desenhada.
 Sobra a `0x0100a004`, que não está em `.mif` nenhum do pacote nem na tabela de classes do
 firmware, e que ele tolera não ter.
+
+## As funções de C do `AEEHelpers` seguem o C, inclusive nos cantos
+
+As helpers de string e número são reescritas em Rust, e o jeito fácil de errar é seguir o Rust
+em vez do C. A `strtoul` é o exemplo que custou um jogo inteiro.
+
+O **Alice no País das Maravilhas** parava com "acesso inválido a 0x0000000c". O log do jogo dava
+a pista: `TTDMM ASSERT ... Error 7` e `Error Malloc - not enough free memory`. O jogo reserva 18 MB
+de uma vez e administra o pool sozinho; o erro 7 é o fim da lista de livres sem bloco grande o
+bastante, ou seja, falta de memória de verdade, e não corrupção.
+
+Quem comia o pool era o leitor de grades do jogo. Ele lê linhas de oito números com `strtoul` e
+guarda cada linha num vetor que dobra de tamanho. Uma linha trazia `-2 12 16 73 ...`, e a nossa
+`strtoul` não aceitava sinal: devolvia zero sem consumir nada. O laço do jogo trata "nada
+consumido" como um campo vazio, conta o campo e segue **na mesma posição** — e como só sai quando
+o ponteiro chega exatamente ao fim do texto, repetia a linha para sempre. Um arquivo de 149 KB
+virou um vetor de 4 MB, e a cópia seguinte do vetor não coube.
+
+A `strtoul` do C aceita `+` e `-` e, com `-`, devolve o número negado. Agora a nossa também, e o
+espaço inicial é o do `isspace` (`' '`, `\t`, `\n`, `\v`, `\f`, `\r`), não o do Unicode, que lido
+em Latin-1 contaria o `0xA0`. O `0` do prefixo octal na base 0 também passou a ser consumido. Com
+isso o Alice passa do idioma, do título e do menu e chega à fase.

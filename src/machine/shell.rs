@@ -573,7 +573,11 @@ impl<C: CpuBackend> Machine<C> {
             AEECLSID_UNZIPSTREAM => Interface::UnzipStream,
             AEECLSID_LICENSE => Interface::License,
             AEECLSID_MEMASTREAM => Interface::MemAStream,
-            AEECLSID_PNG | AEECLSID_BMP => Interface::Image,
+            // O decodificador é um por formato no console, e todos são `IImage` alimentados por
+            // `IAStream`. O nosso olha a assinatura dos bytes, então os quatro caem no mesmo
+            // lugar — e faltando o JPEG na lista, o Zuma's Revenge recebia recusa e seguia com
+            // um ponteiro nulo até quebrar.
+            AEECLSID_PNG | AEECLSID_BMP | AEECLSID_JPEG | AEECLSID_GIF => Interface::Image,
             AEECLSID_PNGDECODER | AEECLSID_PNGDECODER_BREW => Interface::ImageDecoder,
             AEECLSID_THREAD => Interface::Thread,
             AEECLSID_QEGL => Interface::Egl,
@@ -613,6 +617,21 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 if out != 0 {
                     self.cpu.write_u32(out, objeto)?;
+                }
+                return Ok(SUCCESS);
+            }
+            // Uma classe do firmware que o jogo usa sem conferir: ver [`CLASSES_POR_OBSERVACAO`].
+            _ if CLASSES_POR_OBSERVACAO.contains(&clsid) => {
+                let object = self.new_object(Interface::Probe)?;
+                if object == 0 {
+                    return Ok(ENOMEMORY);
+                }
+                self.assumptions.insert(
+                    "uma classe do firmware é atendida por um objeto que responde sucesso a tudo",
+                );
+                self.probe_objects.insert(object, clsid);
+                if out != 0 {
+                    self.cpu.write_u32(out, object)?;
                 }
                 return Ok(SUCCESS);
             }

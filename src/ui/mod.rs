@@ -716,6 +716,7 @@ impl App {
                     self.settings.graphics.antialias as usize,
                     self.settings.graphics.anisotropico as usize,
                 );
+                session.define_neblina(self.settings.graphics.neblina);
                 if let Some(tela) = tela_anterior.filter(|_| session.classe() != crate::session::Z_WHEEL) {
                     session.herda_tela(&tela);
                 }
@@ -1402,7 +1403,17 @@ impl App {
                     None => crate::input::bindings::Player::default(),
                 };
                 atual.ligada = ligada;
-                atual.aparelho = aparelho;
+                // **Um controle do host numa porta de teclado vira um controle para o console.**
+                // O `aparelho` é o que o console enumera, e uma porta marcada como teclado não
+                // entra na lista de joysticks que os jogos pedem: quem escolhia o segundo
+                // controle para a porta dois continuava sem ser visto como segundo jogador. As
+                // outras escolhas (Z-Pad, Boomerang) já são controle e ficam onde estão.
+                atual.aparelho = match (aparelho, &atual.device) {
+                    (crate::input::bindings::Aparelho::Teclado, Some(_)) => {
+                        crate::input::bindings::Aparelho::Controle
+                    }
+                    (outro, _) => outro,
+                };
                 changed = true;
             }
             if ui.button(self.catalog.get("controls.rescan")).clicked() {
@@ -1603,7 +1614,7 @@ impl App {
                     .controls
                     .player(self.porta_editada)
                     .and_then(|player| player.device.clone());
-                self.gamepads.first_active(device.as_deref())
+                self.gamepads.first_active(device.as_deref(), self.porta_editada)
             }
         };
         let Some(source) = source else {
@@ -1748,6 +1759,14 @@ impl App {
         ui.weak(self.catalog.get("graphics.gpu_present.hint"));
 
         ui.add_space(12.0);
+        // A névoa vale nos dois rasterizadores, então fica fora da parte que depende da placa.
+        let neblina_mudou = ui
+            .checkbox(&mut graphics.neblina, self.catalog.get("graphics.fog"))
+            .changed();
+        changed |= neblina_mudou;
+        ui.weak(self.catalog.get("graphics.fog.hint"));
+
+        ui.add_space(12.0);
         changed |= ui
             .checkbox(
                 &mut graphics.gpu_rasterizer,
@@ -1826,6 +1845,13 @@ impl App {
             let (amostras, nivel) = (graphics.antialias as usize, graphics.anisotropico as usize);
             if let Some(session) = self.session.as_mut() {
                 session.define_melhorias(amostras, nivel);
+            }
+        }
+        // Vale na hora: o próximo desenho já sai com ou sem névoa.
+        if neblina_mudou {
+            let permitida = graphics.neblina;
+            if let Some(session) = self.session.as_mut() {
+                session.define_neblina(permitida);
             }
         }
         // Vale na hora para o jogo aberto: o destino é refeito no próximo quadro.
@@ -2283,8 +2309,8 @@ impl App {
         });
         let gamepads = &self.gamepads;
         let mut pad = player.pad(
-            |source| pressed.contains(source) || gamepads.is_active(device.as_deref(), source),
-            |axis| gamepads.value(device.as_deref(), axis),
+            |source| pressed.contains(source) || gamepads.is_active(device.as_deref(), porta, source),
+            |axis| gamepads.value(device.as_deref(), porta, axis),
         );
         // O Wii Remote da porta soma os botões dele aos mapeados: o direcional no direcional,
         // 1 e A no botão 1, 2 e B no botão 2 e o HOME no HOME.

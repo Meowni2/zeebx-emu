@@ -215,6 +215,101 @@ fn main() -> ExitCode {
         }
         // O JIT entra primeiro como bancada, não como backend implícito da interface. Assim a
         // mesma ROM pode ser comparada com o Unicorn sem esconder uma regressão de compatibilidade.
+        // O que o emulador enxerga de controle, para quando a entrada não responde e não dá
+        // para saber se o problema é o aparelho, o nome salvo ou o mapeamento.
+        Some("controles") => {
+            let pads = input::gamepads::Gamepads::new();
+            let nomes = pads.names();
+            match nomes.is_empty() {
+                true => println!("nenhum controle visto pelo sistema"),
+                false => {
+                    println!("controles vistos, na ordem do sistema:");
+                    for (i, nome) in nomes.iter().enumerate() {
+                        println!("  {i}: {nome}");
+                    }
+                }
+            }
+            let settings = ui::settings::Settings::load();
+            for porta in 0..input::PORTAS {
+                let Some(jogador) = settings.controls.player(porta) else {
+                    continue;
+                };
+                let escolhido = jogador.device.as_deref();
+                let achado = match escolhido {
+                    Some(nome) => match nomes.iter().position(|n| n == nome) {
+                        Some(i) => format!("posição {i}"),
+                        None => "NÃO ESTÁ LIGADO".to_string(),
+                    },
+                    None => match nomes.len() > porta {
+                        true => format!("posição {porta}, por ser a porta {}", porta + 1),
+                        false => "nenhum nessa posição".to_string(),
+                    },
+                };
+                println!(
+                    "porta {}: {}, aparelho {:?}, escolhido {:?} -> {achado}",
+                    porta + 1,
+                    match jogador.ligada {
+                        true => "ligada",
+                        false => "desligada",
+                    },
+                    jogador.aparelho,
+                    escolhido.unwrap_or("nenhum"),
+                );
+            }
+            // Com `--ler`, fica um tempo mostrando o que chega: é a única forma de separar
+            // "o controle não é visto" de "o controle é visto e o mapeamento não bate".
+            if args.iter().any(|a| a == "--ler") {
+                let mut pads = pads;
+                println!("lendo por 15 segundos — aperte os botões");
+                let fim = std::time::Instant::now() + std::time::Duration::from_secs(15);
+                let mut antes: Vec<String> = vec![String::new(); input::PORTAS];
+                let mut antes_cru: Vec<String> = vec![String::new(); nomes.len()];
+                while std::time::Instant::now() < fim {
+                    pads.poll();
+                    // Cru, por controle: separa "o sistema não entrega nada" de "entrega e o
+                    // mapeamento da porta não aproveita".
+                    for (i, nome) in nomes.iter().enumerate() {
+                        let bruto = match pads.first_active(Some(nome), i) {
+                            Some(source) => format!("{source:?}"),
+                            None => String::new(),
+                        };
+                        if bruto != antes_cru[i] {
+                            match bruto.is_empty() {
+                                true => println!("controle {i} ({nome}): nada"),
+                                false => println!("controle {i} ({nome}): {bruto}"),
+                            }
+                            antes_cru[i] = bruto;
+                        }
+                    }
+                    for porta in 0..input::PORTAS {
+                        let Some(jogador) = settings.controls.player(porta) else {
+                            continue;
+                        };
+                        let device = jogador.device.clone();
+                        let pad = jogador.pad(
+                            |source| pads.is_active(device.as_deref(), porta, source),
+                            |axis| pads.value(device.as_deref(), porta, axis),
+                        );
+                        let apertados: Vec<&str> = input::BUTTON_NAMES
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| pad.is_down(*i))
+                            .map(|(_, nome)| *nome)
+                            .collect();
+                        let agora = apertados.join(" ");
+                        if agora != antes[porta] {
+                            match agora.is_empty() {
+                                true => println!("porta {}: nada", porta + 1),
+                                false => println!("porta {}: {agora}", porta + 1),
+                            }
+                            antes[porta] = agora;
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(30));
+                }
+            }
+            ExitCode::SUCCESS
+        }
         Some("bench") if args.len() >= 2 => {
             let seconds = args
                 .iter()
@@ -354,7 +449,22 @@ fn main() -> ExitCode {
                 .unwrap_or_default();
             let boomerang = (args.iter().any(|a| a == "--boomerang") || !movimento.is_empty())
                 .then_some(movimento);
-            report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial, z_wheel, escala, melhorias, perfil, boomerang))
+            // As portas, para testar o que só aparece com dois jogadores. Sem a opção fica o
+            // padrão de sempre: um controle na primeira e a segunda livre.
+            let portas = match args.iter().find_map(|a| a.strip_prefix("--portas=")) {
+                Some(lista) => match aparelhos(lista) {
+                    Some(portas) => Some(portas),
+                    None => {
+                        eprintln!(
+                            "erro: --portas espera nomes separados por vírgula, entre \
+                             'controle', 'zpad', 'teclado', 'boomerang' e 'nenhum'"
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                },
+                None => None,
+            };
+            report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial, z_wheel, escala, melhorias, perfil, boomerang, portas))
         }
         // Sem argumento nenhum, o que se quer é o emulador, não a ajuda.
         None => launch(),
@@ -371,7 +481,7 @@ fn main() -> ExitCode {
                              [--sem-rede] [--servidor=MAQUINA[:PORTA]] [--ponte]
                              [--portas=controle|teclado|nenhum,...] [--teclas=ms:nome,...]"
             );
-            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N] [--msaa=N] [--aniso=N] [--perfil[=MS]] [--boomerang] [--movimento=ms:x:y:z,...] [--wiimote] [--proporcao=16:9]  (a sessão da janela, sem janela)");
+            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N] [--msaa=N] [--aniso=N] [--perfil[=MS]] [--boomerang] [--movimento=ms:x:y:z,...] [--wiimote] [--proporcao=16:9] [--portas=controle,controle]  (a sessão da janela, sem janela)");
             eprintln!("     zeebx bench <arquivo.mod|zip> [--seconds=N] [--keys=ms:tecla,...] [--dump=QUADRO.bmp] [--teclas=ms:nome,...] [--instalados=0xCLSID[:id],...] [--dump-surfaces=DIR]  (Dynarmic, sem janela)");
             ExitCode::FAILURE
         }
@@ -1166,6 +1276,7 @@ fn sessao_sem_janela(
     melhorias: (usize, usize),
     perfil: Option<u32>,
     boomerang: Option<Vec<(u32, [f32; 3])>>,
+    portas_pedidas: Option<[Option<bindings::Aparelho>; input::PORTAS]>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let serial = serial.map(std::path::Path::new);
     let settings = ui::settings::Settings::load();
@@ -1179,9 +1290,10 @@ fn sessao_sem_janela(
         .any(|a| a == "--wiimote")
         .then(input::wiimote::Wiimotes::inicia);
     let boomerang = boomerang.or(wiimote.as_ref().map(|_| Vec::new()));
-    let portas = match boomerang {
-        Some(_) => [Some(bindings::Aparelho::Boomerang), None],
-        None => PORTAS_PADRAO,
+    let portas = match (portas_pedidas, &boomerang) {
+        (Some(portas), _) => portas,
+        (None, Some(_)) => [Some(bindings::Aparelho::Boomerang), None],
+        (None, None) => PORTAS_PADRAO,
     };
     let mut session = session::Session::start_with(
         std::path::Path::new(path),

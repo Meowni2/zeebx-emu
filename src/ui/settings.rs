@@ -164,6 +164,12 @@ pub struct Graphics {
     pub anisotropico: u8,
     /// **Experimental.** A proporção em que o 3D na placa é renderizado.
     pub proporcao: Proporcao,
+    /// Deixar a névoa do jogo valer.
+    ///
+    /// Vale nos dois rasterizadores. No console a névoa costuma esconder o que a distância de
+    /// desenho não alcançava, e aqui a cena chega inteira — quem prefere ver longe desliga. Fica
+    /// **ligada** por omissão: o jogo pediu a névoa, e em muitos ela é o efeito, não o remendo.
+    pub neblina: bool,
 }
 
 /// A proporção do 3D renderizado na placa. Fora do nativo, a cena em perspectiva ganha lados em
@@ -220,6 +226,7 @@ impl Default for Graphics {
             antialias: 1,
             anisotropico: 1,
             proporcao: Proporcao::Nativa,
+            neblina: true,
         }
     }
 }

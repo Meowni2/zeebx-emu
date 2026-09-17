@@ -13,6 +13,7 @@ Contado nos pacotes dos sessenta e três títulos:
 | RIFF/WAVE | efeito sonoro, em 14 jogos — sempre tocou |
 | **MP3** | a música de 9 jogos: Quake, Quake 2, Galaxy on Fire, Rally Master Pro, Powerboat Challenge, Action Hero 3D, Need For Speed, zeetris e a Z-Wheel |
 | **MIDI** | a música dos ports de arcade: Double Dragon, Bad Dudes, Caveman Ninja, Dark Seal, Heavy Barrel, Karnov's Revenge, Magical Drop 3, Spin Master, Street Hoop, Super BurgerTime e Wizard Fire |
+| **PCM gerado pelo jogo** | os ports de arcade da Data East de novo: o som da placa emulada sai por um `ISource`, ver abaixo |
 
 O levantamento é de leitura dos pacotes, não de suposição: os ports de arcade trazem **um** `.wav`
 cada — o efeito — e a música deles chega pelo `IMedia` como MIDI, o que o relatório dizia numa
@@ -258,6 +259,29 @@ Dois cuidados que não são detalhe:
 
 Medido no Double Dragon: a linha `som recusado (audio/mid)` saiu do relatório, e dez segundos de
 jogo saíram de silêncio para **74,7% de amostras não nulas**, com pico de 0,807.
+
+## O som que o jogo gera enquanto toca
+
+Os ports de arcade da Data East não entregam um arquivo: eles emulam o chip de som da placa e
+produzem as amostras quadro a quadro. A entrega é um `AEEMediaDataEx` com `clsData = MMD_ISOURCE`
+(`0x01001012`), `bRaw` ligado, um `ISource` que o próprio jogo implementa e um `AEEMediaWaveSpec`
+com o formato — 11025 Hz, mono, 16 bits com sinal, nos que foram medidos.
+
+Enquanto só sabíamos ler memória e arquivo, a entrega era recusada e o log do jogo dizia
+`Failed to SetMediaDataEx!!!!`: **nenhum** dos onze ports tinha som. Agora a entrega é
+reconhecida, e o `Play` abre uma voz de fluxo no misturador.
+
+**Quem marca o ritmo é o relógio virtual.** A cada volta do laço o emulador calcula quantos
+quadros o relógio já deve, com um décimo de segundo de adiantamento para a placa não esvaziar
+entre duas voltas, e chama o `ISource::Read` do jogo até juntar isso — no máximo algumas leituras
+por volta, porque um `Read` que devolve menos do que foi pedido é o jogo sem amostras prontas. É a
+mesma escolha do resto do som: sem placa nenhuma o emulador continua pedindo, e o jogo, que emula
+o chip de som dentro do `Read`, anda do mesmo jeito.
+
+A voz de fluxo vive em `audio/mod.rs`, ao lado das vozes de som pronto. Ela reamostra para a taxa
+da placa interpolando entre dois quadros, guarda meio segundo no máximo — se o jogo entrega mais
+rápido do que a placa consome, o excesso mais antigo sai em vez de o atraso crescer — e, faltando
+amostra, segura o último valor em vez de estalar para o zero.
 
 ## O que falta
 

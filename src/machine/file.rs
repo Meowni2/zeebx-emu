@@ -241,11 +241,26 @@ impl<C: CpuBackend> Machine<C> {
                 SUCCESS
             }
             // int32 Read(IFile *, void *pBuffer, uint32 dwCount)
+            // uint32 Read(IFile *, void *pBuffer, uint32 dwCount)
+            //
+            // **Uma leitura curta não é o fim do arquivo.** O `read` do Rust pode devolver menos
+            // do que se pediu sem que nada tenha acabado, e o `IFILE_Read` do BREW entrega o que
+            // foi pedido enquanto houver arquivo. Insistindo só até o fim de verdade, o pacote do
+            // Iron Sight — 16 MB lidos em pedaços grandes — para de chegar cortado.
             "Read" => {
                 let count = a2 as usize;
                 let mut buffer = vec![0u8; count];
                 let read = match self.open_files.get_mut(&this) {
-                    Some(open) => std::io::Read::read(&mut open.file, &mut buffer).unwrap_or(0),
+                    Some(open) => {
+                        let mut lidos = 0;
+                        while lidos < count {
+                            match std::io::Read::read(&mut open.file, &mut buffer[lidos..]) {
+                                Ok(0) | Err(_) => break,
+                                Ok(n) => lidos += n,
+                            }
+                        }
+                        lidos
+                    }
                     None => 0,
                 };
                 if read > 0 {

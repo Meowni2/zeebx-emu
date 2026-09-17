@@ -104,6 +104,18 @@ Um `Content-Length: 0` não é falha: é o servidor dizendo "nada a sincronizar"
 aviso de fim de fluxo mesmo assim, e sem ele fica esperando. E o fim de fluxo vem **depois** da
 entrega do corpo — invertendo a ordem, o jogo pula o consumo.
 
+### O `SourceFromMemory` também é o que o nome diz
+
+A ponte entra pelo `ISourceUtil::SourceFromMemory` porque é ali que o corpo do POST do Zeeboids
+existe inteiro e em claro. Mas o método tem um contrato próprio, e ele vale para todo mundo:
+embrulhar um pedaço de memória num `ISource`.
+
+Tratando **toda** chamada como envio, quem não é envio recebia `EFAILED`. O Prey Evil embrulha
+715 KB de dados do próprio pacote aqui, sem rede nenhuma: ficava sem a fonte e desenhava uma tela
+preta por quadro, 717 vezes, enquanto lia zero bytes. Hoje a busca pela URL decide: achou, é
+envio e a ponte segue como antes; não achou, o pedaço de memória vira um `ISource`. Depois da
+mudança ele cria 248 fontes e lê delas — ainda não desenha, que é outro assunto.
+
 ## O servidor de estudo
 
 Fica em `zeeboids-server/`, fora deste repositório e com git próprio, porque não é parte do

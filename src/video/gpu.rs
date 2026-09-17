@@ -26,7 +26,7 @@ const TEXTURE_MAX_ANISOTROPY: u32 = 0x84fe;
 const MAX_TEXTURE_MAX_ANISOTROPY: u32 = 0x84ff;
 
 /// Quantos `f32` cada vértice ocupa no buffer: posição, cor e coordenada de textura.
-const FLOATS_POR_VERTICE: usize = 4 + 4 + 2;
+const FLOATS_POR_VERTICE: usize = 4 + 4 + 2 + 1;
 
 /// O que a placa precisa saber de uma textura do jogo, além dos pixels que já estão nela.
 struct Textura {
@@ -49,6 +49,9 @@ struct Estado {
     mascara_profundidade: bool,
     /// O `glDepthRange`, `(perto, longe)`.
     faixa_profundidade: (f32, f32),
+    /// A névoa no momento do desenho. O fator por vértice vem da etapa de vértice; aqui ficam
+    /// só o "está ligada" e a cor, que o shader de fragmento lê.
+    neblina: crate::video::rasterizer::Neblina,
     func_profundidade: u32,
     mistura: bool,
     mistura_src: u32,
@@ -74,6 +77,9 @@ struct Estado {
     /// Uma viewport interna já contada do topo, que não passa pela conversão — a do
     /// [`GpuState::import_rgb565_changes`]. Ver [`GpuState::viewport_do_topo`].
     viewport_do_topo_fixa: Option<(i32, i32, i32, i32)>,
+    /// O `glScissor` como o jogo o passou, e se o `GL_SCISSOR_TEST` está ligado.
+    tesoura: (i32, i32, i32, i32),
+    tesoura_ligada: bool,
     limpa_cor: [f32; 4],
     limpa_profundidade: f32,
     limpa_stencil: i32,
@@ -85,6 +91,7 @@ impl Default for Estado {
             teste_profundidade: false,
             mascara_profundidade: true,
             faixa_profundidade: (0.0, 1.0),
+            neblina: crate::video::rasterizer::Neblina::default(),
             func_profundidade: gles::GL_LESS,
             mistura: false,
             mistura_src: gles::GL_ONE,
@@ -107,6 +114,8 @@ impl Default for Estado {
             texturando: false,
             viewport: (0, 0, 0, 0),
             viewport_do_topo_fixa: None,
+            tesoura: (0, 0, 0, 0),
+            tesoura_ligada: false,
             limpa_cor: [0.0, 0.0, 0.0, 1.0],
             limpa_profundidade: 1.0,
             limpa_stencil: 0,
@@ -220,6 +229,7 @@ impl GpuState {
             // aparecia, porque ele põe a sua própria.
             fill: Estado {
                 viewport: (0, 0, largura as i32, altura as i32),
+                tesoura: (0, 0, largura as i32, altura as i32),
                 ..Estado::default()
             },
             quadro: None,
@@ -441,14 +451,15 @@ impl GpuState {
         // mesma razão (em `draw`): o que estava na tela cai no mesmo pixel de antes, deslocado
         // para o centro, e o que ficava fora do recorte aparece nos lados. HUD e 2D, em
         // ortográfica, só se deslocam.
-        let (x, w) = match (self.em_perspectiva, extra > 0) {
+        let superficie = self.estado.surface().0 as i32;
+        let para_o_anexo = |x: i32, w: i32| match (self.em_perspectiva, extra > 0) {
             (true, true) => {
-                let sw = self.estado.surface().0 as i32;
-                let largura = w * (sw + 2 * extra) / sw.max(1);
+                let largura = w * (superficie + 2 * extra) / superficie.max(1);
                 (extra + x + w / 2 - largura / 2, largura)
             }
             _ => (x + extra, w),
         };
+        let (x, w) = para_o_anexo(x, w);
         let gl = &self.gl;
         let e = &self.fill;
         unsafe {
@@ -463,6 +474,19 @@ impl GpuState {
             // É core desde o OpenGL 3.2, que é o perfil pedido. Na queda para GLES 3.0 ele não
             // existe e a chamada não tem efeito: ali o plano distante volta a recortar.
             gl.enable(glow::DEPTH_CLAMP);
+            // O `glScissor` do jogo vem em pixels do console, com o `y` de baixo para cima —
+            // a mesma convenção da viewport —, e o anexo é `escala` vezes maior.
+            liga(gl, glow::SCISSOR_TEST, e.tesoura_ligada);
+            if e.tesoura_ligada {
+                let (sx, sy, sw, sh) = e.tesoura;
+                // **A tesoura passa pela mesma conversão da viewport.** Ela vem em pixels do
+                // console, e na proporção larga o anexo é mais largo: sem converter, um
+                // `glScissor` na tela inteira — que é o que o Resident Evil 4 e o Crash Nitro
+                // Kart ligam — cortava tudo além dos 640 do console e os lados novos ficavam
+                // com a cor de fundo do anexo.
+                let (sx, sw) = para_o_anexo(sx, sw);
+                gl.scissor(sx * n, sy * n, sw.max(0) * n, sh.max(0) * n);
+            }
             liga(gl, glow::DEPTH_TEST, e.teste_profundidade);
             gl.depth_func(e.func_profundidade);
             gl.depth_mask(e.mascara_profundidade);
@@ -516,7 +540,9 @@ impl GpuState {
                 glow::DYNAMIC_DRAW,
             );
             let passo = (FLOATS_POR_VERTICE * 4) as i32;
-            for (indice, tamanho, deslocamento) in [(0u32, 4i32, 0i32), (1, 4, 16), (2, 2, 32)] {
+            for (indice, tamanho, deslocamento) in
+                [(0u32, 4i32, 0i32), (1, 4, 16), (2, 2, 32), (3, 1, 40)]
+            {
                 gl.enable_vertex_attrib_array(indice);
                 gl.vertex_attrib_pointer_f32(
                     indice,
@@ -543,6 +569,14 @@ impl GpuState {
             );
             uniforme_f32(gl, self.programa, "ref_alfa", self.fill.ref_alfa);
             uniforme_f32(gl, self.programa, "virar", virar);
+            let neblina = self.fill.neblina;
+            uniforme_i32(
+                gl,
+                self.programa,
+                "com_neblina",
+                i32::from(neblina.ligada && neblina.permitida),
+            );
+            uniforme_vec3(gl, self.programa, "cor_neblina", neblina.cor);
             gl.draw_arrays(modo, 0, quantos as i32);
             gl.bind_vertex_array(None);
             gl.use_program(None);
@@ -553,9 +587,7 @@ impl GpuState {
 
     /// Empilha um vértice no buffer de envio.
     fn poe(&mut self, v: &Vertex) {
-        self.vertices.extend_from_slice(&v.position);
-        self.vertices.extend_from_slice(&v.color);
-        self.vertices.extend_from_slice(&v.uv);
+        poe_em(&mut self.vertices, v);
     }
 
     /// Deixa ligado, para leitura, um framebuffer com o quadro no tamanho do console.
@@ -804,6 +836,26 @@ fn uniforme_f32(gl: &glow::Context, programa: glow::Program, nome: &str, valor: 
     }
 }
 
+/// Escreve um vértice no buffer da placa, no layout que [`FLOATS_POR_VERTICE`] declara.
+///
+/// **É o único lugar que conhece esse layout.** O fator da névoa vem pronto da etapa de
+/// vértice, que é a mesma dos dois rasterizadores; aqui ele é só mais um atributo a interpolar.
+fn poe_em(destino: &mut Vec<f32>, v: &Vertex) {
+    destino.extend_from_slice(&v.position);
+    destino.extend_from_slice(&v.color);
+    destino.extend_from_slice(&v.uv);
+    destino.push(v.fog);
+}
+
+/// Um uniforme de três componentes, para a cor da névoa.
+fn uniforme_vec3(gl: &glow::Context, programa: glow::Program, nome: &str, valor: [f32; 4]) {
+    unsafe {
+        if let Some(onde) = gl.get_uniform_location(programa, nome) {
+            gl.uniform_3_f32(Some(&onde), valor[0], valor[1], valor[2]);
+        }
+    }
+}
+
 /// Os bytes de um vetor de `f32`, para o `buffer_data`.
 fn bytes_de_f32(dados: &[f32]) -> &[u8] {
     // Um `f32` não tem invariante de bits, e o alinhamento de quatro serve para um de um.
@@ -848,12 +900,15 @@ const VERTICE: &str = r#"
 layout(location = 0) in vec4 pos;
 layout(location = 1) in vec4 cor;
 layout(location = 2) in vec2 uv;
+layout(location = 3) in float fog;
 uniform float virar;
 out vec4 vcor;
 out vec2 vuv;
+out float vfog;
 void main() {
     vcor = cor;
     vuv = uv;
+    vfog = fog;
     gl_Position = vec4(pos.x, pos.y * virar, pos.z, pos.w);
 }
 "#;
@@ -865,7 +920,10 @@ void main() {
 const FRAGMENTO: &str = r#"
 in vec4 vcor;
 in vec2 vuv;
+in float vfog;
 uniform sampler2D amostra;
+uniform int com_neblina;
+uniform vec3 cor_neblina;
 uniform int texturando;
 uniform int env;
 uniform int func_alfa;
@@ -887,6 +945,11 @@ void main() {
     vec4 cor = vcor;
     if (texturando == 1) {
         cor = combina(cor, texture(amostra, vuv));
+    }
+    // A névoa entra depois da textura e antes do teste de alfa, e mexe só no RGB — a mesma
+    // ordem do rasterizador de software.
+    if (com_neblina == 1) {
+        cor = vec4(mix(cor_neblina, cor.rgb, clamp(vfog, 0.0, 1.0)), cor.a);
     }
     bool passa;
     if      (func_alfa == 0) { passa = false; }
@@ -980,6 +1043,10 @@ impl Rasterizador for GpuState {
         self.estado.set_viewport(x, y, width, height);
         self.fill.viewport = (x, y, width, height);
     }
+    fn set_scissor(&mut self, x: i32, y: i32, width: i32, height: i32) {
+        self.estado.set_scissor(x, y, width, height);
+        self.fill.tesoura = (x, y, width, height);
+    }
     fn set_surface(&mut self, width: usize, height: usize) {
         self.estado.set_surface(width, height);
     }
@@ -1055,9 +1122,14 @@ impl Rasterizador for GpuState {
             gles::GL_ALPHA_TEST => self.fill.teste_alfa = on,
             gles::GL_CULL_FACE => self.fill.descarte = on,
             gles::GL_STENCIL_TEST => self.fill.teste_stencil = on,
+            gles::GL_SCISSOR_TEST => {
+                self.fill.tesoura_ligada = on;
+                self.estado.set_scissor_test(on);
+            }
             // Ligar e desligar textura é por unidade, e só a base desenha. O Resident Evil 4
             // desliga a unidade 1 no fim de cada bloco.
             gles::GL_TEXTURE_2D if self.estado.base_active_unit() => self.fill.texturando = on,
+            gles::GL_FOG => self.fill.neblina = self.estado.neblina(),
             _ => {}
         }
     }
@@ -1099,6 +1171,14 @@ impl Rasterizador for GpuState {
     fn set_depth_range(&mut self, perto: f32, longe: f32) {
         self.estado.set_depth_range(perto, longe);
         self.fill.faixa_profundidade = (perto.clamp(0.0, 1.0), longe.clamp(0.0, 1.0));
+    }
+    fn set_fog(&mut self, pname: u32, valores: [f32; 4]) {
+        self.estado.set_fog(pname, valores);
+        self.fill.neblina = self.estado.neblina();
+    }
+    fn define_neblina(&mut self, permitida: bool) {
+        self.estado.define_neblina(permitida);
+        self.fill.neblina = self.estado.neblina();
     }
     fn set_color_mask(&mut self, mask: [bool; 4]) {
         self.estado.set_color_mask(mask);
@@ -1311,9 +1391,17 @@ impl Rasterizador for GpuState {
         destino.clear();
         for v in self.estado.transformados() {
             let [px, py, pz, pw] = v.position;
-            destino.extend_from_slice(&[px * k, py, pz, pw]);
-            destino.extend_from_slice(&v.color);
-            destino.extend_from_slice(&v.uv);
+            // O layout do vértice está num lugar só, o [`GpuState::poe`]: repetido aqui, ele
+            // já saiu de sincronia uma vez — um atributo novo lá e este laço continuava
+            // escrevendo o tamanho antigo, o que desalinha o buffer inteiro e a placa para de
+            // desenhar.
+            poe_em(
+                &mut destino,
+                &Vertex {
+                    position: [px * k, py, pz, pw],
+                    ..*v
+                },
+            );
         }
         self.vertices = destino;
         self.em_perspectiva = perspectiva;
@@ -1356,6 +1444,7 @@ impl Rasterizador for GpuState {
         for ([sx, sy], uv) in cantos {
             let v = Vertex {
                 normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
                 position: [
                     ((sx - vx as f32) / vw as f32) * 2.0 - 1.0,
                     1.0 - ((sy - vy as f32) / vh as f32) * 2.0,
@@ -1376,16 +1465,27 @@ impl Rasterizador for GpuState {
         self.fill = guarda;
     }
 
+    /// **O quadro da placa está guardado com a linha 0 no topo**, porque o Y é virado no shader
+    /// de vértice — ver [`VERTICE`]. O `glReadPixels` do jogo, porém, conta o `y` de baixo e
+    /// espera a primeira linha do resultado sendo a de baixo, que é o que o rasterizador de
+    /// software entrega. Ler cru devolvia a imagem **de cabeça para baixo**: era a foto do
+    /// Zeeboids salva invertida, e com ela o rosto do boneco de ponta-cabeça em todo jogo que o
+    /// usa depois.
+    ///
+    /// Então a faixa pedida é convertida para a linha correspondente do framebuffer e o
+    /// resultado sai espelhado de volta.
     fn read_rect(&mut self, x: i32, y: i32, width: usize, height: usize) -> Vec<[u8; 4]> {
         if width == 0 || height == 0 {
             return Vec::new();
         }
         self.liga_para_leitura();
+        let altura_da_superficie = self.surface().1 as i32;
+        let de_baixo = altura_da_superficie - y - height as i32;
         let mut bytes = vec![0u8; width * height * 4];
         unsafe {
             self.gl.read_pixels(
                 x,
-                y,
+                de_baixo,
                 width as i32,
                 height as i32,
                 glow::RGBA,
@@ -1394,10 +1494,11 @@ impl Rasterizador for GpuState {
             );
         }
         self.devolve_o_contexto();
-        bytes
-            .chunks_exact(4)
-            .map(|p| [p[0], p[1], p[2], p[3]])
-            .collect()
+        let mut saida = Vec::with_capacity(width * height);
+        for linha in bytes.chunks_exact(width * 4).rev() {
+            saida.extend(linha.chunks_exact(4).map(|p| [p[0], p[1], p[2], p[3]]));
+        }
+        saida
     }
 
     fn frame_rgb565(&mut self, width: usize, height: usize, out: &mut Vec<u8>) {
@@ -1529,6 +1630,7 @@ impl Rasterizador for GpuState {
                 color: [1.0; 4],
                 uv,
                 normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
             });
         }
         let guarda = self.fill.clone();
@@ -1720,6 +1822,7 @@ mod tests {
                 color: [1.0, 0.0, 0.0, 1.0],
                 uv: [0.0, 0.0],
                 normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
             };
             r.draw(
                 gles::GL_TRIANGLES,
@@ -1743,6 +1846,142 @@ mod tests {
         assert_eq!(
             baixo_placa, baixo_software,
             "canto de baixo: placa {baixo_placa:?} contra software {baixo_software:?}"
+        );
+    }
+
+    /// O `glReadPixels` conta o `y` de baixo, e os dois rasterizadores têm de concordar.
+    ///
+    /// A placa guarda o quadro com a linha 0 no topo, porque o Y é virado no shader; o software
+    /// guarda igual, mas converte na leitura. Ler cru da placa devolvia a imagem de cabeça para
+    /// baixo — era a foto do Zeeboids salva invertida, e com ela o rosto do boneco de
+    /// ponta-cabeça em todo jogo que o usa depois.
+    #[test]
+    fn a_leitura_de_pixels_tem_a_mesma_orientacao_nos_dois_rasterizadores() {
+        let (largura, altura) = (16, 16);
+        let Some((mut gpu, mut sw)) = par(largura, altura) else {
+            return;
+        };
+        // Metade de cima vermelha: um quadro que não é simétrico na vertical.
+        let cena = |r: &mut dyn Rasterizador| {
+            r.set_viewport(0, 0, largura as i32, altura as i32);
+            r.set_clear_color([0.0, 0.0, 1.0, 1.0]);
+            r.clear(gles::GL_COLOR_BUFFER_BIT);
+            let canto = |x: f32, y: f32| Vertex {
+                position: [x, y, 0.0, 1.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+                uv: [0.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
+            };
+            r.draw(
+                gles::GL_TRIANGLES,
+                &[canto(-1.0, 1.0), canto(-1.0, 0.0), canto(1.0, 1.0)],
+            );
+            r.draw(
+                gles::GL_TRIANGLES,
+                &[canto(1.0, 1.0), canto(-1.0, 0.0), canto(1.0, 0.0)],
+            );
+        };
+        cena(&mut gpu);
+        cena(&mut sw);
+        let da_placa = gpu.read_rect(0, 0, largura, altura);
+        let do_software = sw.read_rect(0, 0, largura, altura);
+        // A primeira linha do resultado é a de **baixo** da tela, que aqui é azul.
+        assert_eq!(
+            do_software[largura + 1][2], 255,
+            "no software a primeira linha lida devia ser a de baixo, azul"
+        );
+        assert_eq!(
+            da_placa[largura + 1],
+            do_software[largura + 1],
+            "linha de baixo: placa {:?} contra software {:?}",
+            da_placa[largura + 1],
+            do_software[largura + 1]
+        );
+        let alto = (altura - 2) * largura + 1;
+        assert_eq!(
+            da_placa[alto], do_software[alto],
+            "linha de cima: placa {:?} contra software {:?}",
+            da_placa[alto], do_software[alto]
+        );
+    }
+
+    /// A névoa tinge o fragmento igual nos dois rasterizadores, e some quando é desligada.
+    ///
+    /// O fator sai da distância em coordenadas de olho e vem da etapa de vértice, que é comum
+    /// aos dois; o que se compara aqui é o que cada um faz com ele no fragmento.
+    #[test]
+    fn a_nevoa_tinge_igual_nos_dois_rasterizadores() {
+        let (largura, altura) = (16, 16);
+        let Some((mut gpu, mut sw)) = par(largura, altura) else {
+            return;
+        };
+        // Um quadrado vermelho a dez unidades do olho, com névoa azul de 0 a 20: metade do
+        // caminho, então metade da cor de cada um.
+        let cena = |r: &mut dyn Rasterizador| {
+            r.set_viewport(0, 0, largura as i32, altura as i32);
+            r.set_clear_color([0.0, 0.0, 0.0, 1.0]);
+            r.clear(gles::GL_COLOR_BUFFER_BIT);
+            // Uma ortográfica de 1 a 100 em `z`, para o quadrado a dez unidades do olho caber
+            // no recorte sem mexer em `x` e `y`.
+            r.set_matrix_mode(gles::GL_PROJECTION);
+            r.load_identity();
+            let (perto, longe) = (1.0f32, 100.0f32);
+            let mut orto = crate::video::rasterizer::IDENTITY;
+            orto[10] = -2.0 / (longe - perto);
+            orto[14] = -(longe + perto) / (longe - perto);
+            r.mult_matrix(orto);
+            r.set_matrix_mode(gles::GL_MODELVIEW);
+            r.load_identity();
+            r.mult_matrix(crate::video::rasterizer::translation(0.0, 0.0, -10.0));
+            r.set_fog(gles::GL_FOG_MODE, [gles::GL_LINEAR as f32, 0.0, 0.0, 0.0]);
+            r.set_fog(gles::GL_FOG_START, [0.0; 4]);
+            r.set_fog(gles::GL_FOG_END, [20.0, 0.0, 0.0, 0.0]);
+            r.set_fog(gles::GL_FOG_COLOR, [0.0, 0.0, 1.0, 1.0]);
+            let canto = |x: f32, y: f32| Vertex {
+                position: [x, y, 0.0, 1.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+                uv: [0.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
+            };
+            // Em espaço de recorte a projeção é a identidade, então o `z` do olho é o da
+            // translação: dez unidades, metade do caminho até o fim da névoa.
+            r.draw(
+                gles::GL_TRIANGLES,
+                &[canto(-1.0, 1.0), canto(-1.0, -1.0), canto(1.0, 1.0)],
+            );
+        };
+        let com = |r: &mut dyn Rasterizador| {
+            r.set_capability(gles::GL_FOG, true);
+            cena(r);
+        };
+        let (a, b) = ambos(&mut gpu, &mut sw, largura, altura, com);
+        let (placa, software) = (pixel(&a, largura, 1, 1), pixel(&b, largura, 1, 1));
+        assert!(
+            software.0 > 10 && software.0 < 24 && software.2 > 5,
+            "o software devia misturar vermelho e azul, e deu {software:?}"
+        );
+        assert!(
+            placa.0.abs_diff(software.0) <= 1 && placa.2.abs_diff(software.2) <= 1,
+            "com névoa: placa {placa:?} contra software {software:?}"
+        );
+        // Desligada por quem joga, a cor volta a ser a do jogo nos dois.
+        let sem = |r: &mut dyn Rasterizador| {
+            r.define_neblina(false);
+            r.set_capability(gles::GL_FOG, true);
+            cena(r);
+        };
+        let (a, b) = ambos(&mut gpu, &mut sw, largura, altura, sem);
+        assert_eq!(
+            pixel(&b, largura, 1, 1),
+            (31, 0, 0),
+            "sem névoa o software devia deixar o vermelho do jogo"
+        );
+        assert_eq!(
+            pixel(&a, largura, 1, 1),
+            pixel(&b, largura, 1, 1),
+            "sem névoa os dois têm de voltar a concordar"
         );
     }
 
@@ -1771,6 +2010,7 @@ mod tests {
                 color: [1.0, 0.0, 0.0, 1.0],
                 uv: [0.0, 0.0],
                 normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
             };
             r.draw(
                 gles::GL_TRIANGLES,
@@ -1818,6 +2058,7 @@ mod tests {
             color: [1.0, 0.0, 0.0, 1.0],
             uv: [0.0, 0.0],
             normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
         };
         gpu.draw(
             gles::GL_TRIANGLES,
@@ -1833,6 +2074,66 @@ mod tests {
             r > 0 && b > 0
         });
         assert!(misturado, "algum pixel da diagonal devia misturar vermelho e azul");
+    }
+
+    /// Na proporção larga, a tesoura do jogo não pode cortar os lados novos.
+    ///
+    /// O `glScissor` chega em pixels do console, e o anexo é mais largo: sem a mesma conversão
+    /// que a viewport recebe, uma tesoura na tela inteira — que é o que o Resident Evil 4 e o
+    /// Crash Nitro Kart ligam em jogo — cortava tudo além dos 640 do console, e os lados
+    /// ficavam com a cor de fundo do anexo.
+    #[test]
+    fn na_proporcao_larga_a_tesoura_do_jogo_nao_come_os_lados() {
+        let (largura, altura) = (64, 48);
+        let Ok(mut gpu) = GpuState::novo(largura, altura, None) else {
+            println!("sem placa nesta máquina");
+            return;
+        };
+        gpu.define_proporcao(Some(16.0 / 9.0));
+        gpu.set_viewport(0, 0, largura as i32, altura as i32);
+        // Uma perspectiva qualquer: é ela que faz o lote ganhar os lados.
+        gpu.set_matrix_mode(gles::GL_PROJECTION);
+        gpu.load_identity();
+        let mut perspectiva = crate::video::rasterizer::IDENTITY;
+        perspectiva[11] = -1.0;
+        perspectiva[15] = 0.0;
+        perspectiva[10] = -1.0;
+        perspectiva[14] = -2.0;
+        gpu.mult_matrix(perspectiva);
+        gpu.set_matrix_mode(gles::GL_MODELVIEW);
+        gpu.load_identity();
+        // A tesoura da tela inteira, em pixels do console.
+        gpu.set_scissor(0, 0, largura as i32, altura as i32);
+        gpu.set_capability(gles::GL_SCISSOR_TEST, true);
+        gpu.set_clear_color([0.0, 0.0, 0.0, 1.0]);
+        gpu.clear(gles::GL_COLOR_BUFFER_BIT);
+        // Um quadrado bem maior que a tela, para cobrir também os lados novos.
+        let canto = |x: f32, y: f32| Vertex {
+            position: [x, y, -1.0, 1.0],
+            color: [0.0, 1.0, 0.0, 1.0],
+            uv: [0.0, 0.0],
+            normal: [0.0, 0.0, 1.0],
+            fog: 1.0,
+        };
+        for tri in [
+            [canto(-4.0, 4.0), canto(-4.0, -4.0), canto(4.0, 4.0)],
+            [canto(4.0, 4.0), canto(-4.0, -4.0), canto(4.0, -4.0)],
+        ] {
+            gpu.draw(gles::GL_TRIANGLES, &tri);
+        }
+        let (w, h, rgba) = gpu.le_quadro_grande().expect("o quadro largo existe");
+        assert!(w > largura, "a proporção larga devia alargar o anexo");
+        let verde = |x: usize| {
+            let i = ((h / 2) * w + x) * 4;
+            rgba[i + 1]
+        };
+        assert!(verde(w / 2) > 200, "o centro devia estar pintado");
+        assert!(
+            verde(w - 2) > 200,
+            "a borda direita ficou em {} — a tesoura comeu o lado novo",
+            verde(w - 2)
+        );
+        assert!(verde(1) > 200, "a borda esquerda ficou em {}", verde(1));
     }
 
     /// Quem nunca chama `glViewport` tem que desenhar de todo jeito.
@@ -1853,6 +2154,7 @@ mod tests {
                 color: [0.0, 1.0, 0.0, 1.0],
                 uv: [0.0, 0.0],
                 normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
             };
             r.draw(
                 gles::GL_TRIANGLES,
@@ -1896,6 +2198,7 @@ mod tests {
                 color: [0.0, 0.0, 1.0, 1.0],
                 uv: [0.0, 0.0],
                 normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
             };
             r.draw(
                 gles::GL_TRIANGLES,
@@ -1944,6 +2247,7 @@ mod tests {
                         color: [1.0, 1.0, 1.0, 1.0],
                         uv: [0.0, 0.0],
                         normal: [0.0, 0.0, 1.0],
+                fog: 1.0,
                     };
                     // Um triângulo que cobre o centro, nas duas ordens de vértice.
                     let tri = match invertido {

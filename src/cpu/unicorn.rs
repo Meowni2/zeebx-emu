@@ -419,6 +419,13 @@ impl CpuBackend for UnicornCpu {
         self.instructions.get()
     }
 
+    fn em_thumb(&self) -> bool {
+        // Bit 5 do `CPSR`, o `T`.
+        self.uc
+            .reg_read(RegisterARM::CPSR)
+            .is_ok_and(|cpsr| cpsr & (1 << 5) != 0)
+    }
+
     fn watch_dirty(&mut self, id: u32, base: u32, len: u32) -> Result<(), CpuError> {
         self.unwatch_dirty(id);
         // Começa sujo: desta faixa ainda não vimos nada.

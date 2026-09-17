@@ -82,10 +82,17 @@ pub const BUTTONS: usize = 18;
 /// aparece duas vezes — mas é o que o arquivo do console diz, e é o que os jogos viram quando
 /// foram feitos. Corrigir aqui seria inventar um controle que não existiu.
 pub const BUTTON_UIDS: [u32; BUTTONS] = [
-    0x0106_c40b, // Button_2
-    0x0106_c408, // Right_Shoulder_Upper
+    // **Os quatro botões de face vêm primeiro, na ordem 1, 2, 3, 4.** Quem decidiu isto foi o
+    // jogo: os onze ports de arcade da Data East não esperam evento de botão, eles varrem
+    // `GetButtonInfo` de 0 a 15 a cada quadro e guardam o estado **por índice** (o laço do Bad
+    // Dudes está em `0x1f2a8` no módulo dele). Para quem lê assim, o UID não importa — importa
+    // a posição. Enquanto o `Button_2` abria a lista e o `Right_Shoulder_Upper` vinha logo
+    // atrás, o botão 2 do controle chegava ao arcade como o gatilho direito e o 4 como o 3,
+    // enquanto o nosso `b2` e o nosso `b3`, nas posições 16 e 17, não chegavam a ser lidos.
+    0x0106_c40b, // Button_1 do Z-Pad (o arquivo do console o rotula `Button_2` — ver abaixo)
+    0x0106_c40a, // Button_2
+    0x0106_c40c, // Button_3
     0x0106_c40d, // Button_4
-    0x0106_c4d0, // LeftThumb_X
     0x0106_c408, // Right_Shoulder_Upper
     0x0106_c407, // Left_Shoulder_Lower
     0x0106_c406, // Left_Shoulder_Upper
@@ -102,12 +109,12 @@ pub const BUTTON_UIDS: [u32; BUTTONS] = [
     0x0106_c400, // DPad_Down
     0x0106_c3ff, // DPad_Left
     0x0106_c401, // DPad_Right
-    // O `Button_1` e o `Button_3` também faltam na lista do console, que traz o `Button_2` e o
-    // `Button_4` mas põe um UID de eixo no lugar de um deles. A tela de ajuda do próprio Quake
-    // nomeia os quatro — "aperte 1 para pular", "aperte 3 para ativar mira" —, então eles
-    // existem no controle.
-    0x0106_c40a, // Button_1
-    0x0106_c40c, // Button_3
+    // O que sobra fica **depois** da faixa que os ports varrem. O `lx` guarda o UID de eixo que
+    // o arquivo do console deixou no meio da lista de botões, e o `zrb` é a segunda aparição do
+    // `Right_Shoulder_Upper` no mesmo arquivo: nenhum dos dois é botão do controle, e deixá-los
+    // na frente custava duas posições das dezesseis que o arcade lê.
+    0x0106_c4d0, // LeftThumb_X
+    0x0106_c408, // Right_Shoulder_Upper, de novo
 ];
 
 /// Índices dos quatro sentidos do direcional em [`BUTTON_UIDS`], na ordem cima, baixo,
@@ -127,10 +134,11 @@ pub const DPAD: [usize; 4] = [12, 13, 14, 15];
 /// `b1` no `0x0106c40a`, o botão sul chegava aos jogos como **2** e o leste como **1**. Como o
 /// sul é o 1 impresso no Z-Pad, o UID do botão 1 é o `0x0106c40b`.
 ///
-/// Os nomes `b3` e `b4` seguem onde estavam: não há medida deles ainda.
+/// Os UIDs de `b2`, `b3` e `b4` seguem onde estavam: não há medida deles ainda. O que foi
+/// medido é a **ordem**, e ela vale para quem varre a lista por índice — ver [`BUTTON_UIDS`].
 pub const BUTTON_NAMES: [&str; BUTTONS] = [
-    "b1", "zr", "b4", "lx", "zrb", "l2", "zl", "r2", "rthumb", "back", "lthumb", "start", "up",
-    "down", "left", "right", "b2", "b3",
+    "b1", "b2", "b3", "b4", "zr", "l2", "zl", "r2", "rthumb", "back", "lthumb", "start", "up",
+    "down", "left", "right", "lx", "zrb",
 ];
 
 /// UID de cada eixo: `X`, `Y`, `Z` e `RZ`.
@@ -560,8 +568,12 @@ mod tests {
         // E o UID de eixo não pode ficar também num botão que dispara: seria o mesmo número
         // chegando ao jogo como duas coisas. O `lx` do arquivo é um botão que não existe no
         // aparelho e nunca é apertado — mas o teste registra a sobreposição de propósito.
-        assert_eq!(BUTTON_UIDS[3], AXIS_UIDS[0], "a troca do arquivo é espelhada");
-        assert_eq!(BUTTON_NAMES[3], "lx");
+        let lx = BUTTON_NAMES.iter().position(|&n| n == "lx").expect("o lx está na lista");
+        assert_eq!(BUTTON_UIDS[lx], AXIS_UIDS[0], "a troca do arquivo é espelhada");
+        // E ele fica **fora** das dezesseis primeiras posições, que são as que os ports de
+        // arcade varrem: um botão que não existe no aparelho não pode comer a vaga de um que
+        // existe.
+        assert!(lx >= 16, "o lx não ocupa vaga na faixa que o arcade lê");
     }
 
     #[test]

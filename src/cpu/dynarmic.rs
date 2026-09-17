@@ -471,6 +471,10 @@ impl CpuBackend for DynarmicCpu {
         self.jit().map_or(0, |jit| jit.instrucoes.get())
     }
 
+    fn em_thumb(&self) -> bool {
+        self.jit().is_ok_and(|jit| jit.get_cpsr() & CPSR_THUMB != 0)
+    }
+
     /// A vigia de escrita, como a do Unicorn: só escrita **do guest** liga o sinalizador.
     ///
     /// Sem ela o contrato padrão responde "sempre sujo", e cada chamada que desenha importava

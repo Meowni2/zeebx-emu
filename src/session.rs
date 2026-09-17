@@ -630,8 +630,10 @@ impl Session {
                 "o jogo chamou {}, que ainda não existe aqui (de {caller:#010x})",
                 crate::brew::aee::describe(*addr)
             ),
-            Outcome::Fault { addr, pc, .. } => {
-                format!("acesso inválido a {addr:#010x}, em {pc:#010x}")
+            // O `lr` entra junto: num salto para o endereço zero o `pc` não diz nada, e quem
+            // chamou é a única pista de qual ponteiro estava vazio.
+            Outcome::Fault { addr, pc, lr } => {
+                format!("acesso inválido a {addr:#010x}, em {pc:#010x} (de {lr:#010x})")
             }
             Outcome::Exception { pc } => format!("exceção do núcleo ARM em {pc:#010x}"),
             Outcome::Budget => "o jogo passou do orçamento de instruções".to_string(),
@@ -697,6 +699,11 @@ impl Session {
     /// Antialias (amostras por pixel) e filtro anisotrópico do 3D na placa; valem na hora.
     pub fn define_melhorias(&mut self, amostras: usize, anisotropico: usize) {
         self.machine.define_melhorias(amostras, anisotropico);
+    }
+
+    /// Se a névoa do jogo vale; vale na hora.
+    pub fn define_neblina(&mut self, permitida: bool) {
+        self.machine.define_neblina(permitida);
     }
 
     /// Muda a resolução interna do 3D; vale a partir do próximo quadro.

@@ -49,6 +49,14 @@ região de superfícies não recicla e um jogo que decodifique centenas de image
 A lição é a mesma de outras vezes: **o que um jogo lê de uma struct nossa vale tanto quanto o
 que devolvemos de uma chamada.** Aqui nenhuma chamada falhou, e o relatório saiu limpo.
 
+**E a anotação de capacidade tem de morrer junto com o buffer.** Ao desenhar numa superfície do
+jogo montamos um `IBitmap` nosso como origem e o descartamos em seguida. O descarte tirava o
+buffer da anotação, mas deixava a capacidade para trás; o bitmap seguinte a nascer naquele
+endereço lia a sobra, concluía que o buffer dele já cabia e publicava um `IDIB` com `pBmp`
+**nulo**. Quem lesse os pixels por ali recebia zero: o `BltIn` do Bejeweled Twist monta a tabela
+de linhas a partir do `pBmp`. Hoje a origem temporária é devolvida pelo `solta_dib`, que solta as
+duas coisas.
+
 **O buffer reaproveitado ainda tem os pixels do morto.** Reescrever só o cabeçalho deixa no
 buffer a imagem do objeto anterior, e o bitmap novo só tem os pixels certos do nosso lado. No
 Unicorn isso não aparecia: a vigia de escrita dizia "o jogo não mexeu aqui", a importação não
@@ -97,6 +105,19 @@ inteira de cada uma dessas chamadas:
 | depois de dispensar a cópia nos ajustes de estado | 20 s virtuais em 26 s reais |
 
 Duas mudanças, mesmas 59 milhões de instruções.
+
+### O BMP comprimido em RLE
+
+O decodificador de BMP recusava tudo que viesse comprimido, e essa recusa custava um jogo: o
+**Disney All Star Cards** guarda quase todas as imagens dele em `BI_RLE8` e `BI_RLE4`. Sem elas o
+jogo mostrava o mapa com um retângulo vazio no lugar da arte e, logo depois, ficava sem nada para
+fazer — a sessão terminava sozinha.
+
+O esquema é o do Windows: um par `(contagem, valor)` repete o valor; contagem zero abre uma fuga —
+`0` fim de linha, `1` fim da imagem, `2` um salto `(dx, dy)` e, de `3` para cima, uma sequência
+literal, sempre terminada em fronteira de palavra. No `RLE4` cada byte traz dois pixels, alternando
+o nibble alto e o baixo. O que a imagem não cobrir fica no índice zero da paleta, como o Windows
+faz.
 
 ### O recorte não é acabamento
 
@@ -148,8 +169,41 @@ bitmap: o slot 4 caía no `NativeToRGB`.
 A matriz é `{A, B, C, D}` em 8.8 aplicada em volta do centro do retângulo de origem, com `(x, y)`
 no canto que ele teria sem transformação. O Zenonia passa `x = 160`, `y = 120`, canvas 320x240 e
 escala 1,9: o resultado, 608x456, fica centrado na tela 640x480. A amostragem é pelo pixel mais
-próximo, percorrendo o destino para não deixar buracos. O `TransformBltSimple` ainda não existe
-e aparece no relatório se algum jogo o pedir.
+próximo, percorrendo o destino para não deixar buracos.
+
+### O Action Hero 3D: `TransformBltSimple`, o magenta e o pedaço da `IImage`
+
+O jogo parava na primeira apresentação pedindo o `TransformBltSimple`, e passando dele, o menu
+saía coberto de folhas de fonte inteiras sobre fundo magenta. Eram três coisas.
+
+**`TransformBltSimple`.** Mesmos argumentos do `Complex` até `dy`, e no lugar da matriz um
+`uint16 unTransform`: rotação em quartos de volta nos bits 0-1, espelho em X no bit 2 e escala a
+partir do bit 3. O jogo passa `unTransform = 8` com o mesmo `x = 160`, `y = 120` e canvas 320x240
+do Zenonia — o quadro dobrado centrado na tela —, então `8` é a escala 2x. A matriz sai das flags e
+o desenho é o do `Complex`. Escalas além de 1x e 2x ainda não foram vistas e ficam anotadas nas
+suposições.
+
+**A cor transparente padrão é o magenta.** O jogo desenha as palavras prontas de um atlas de
+fundo magenta com `BitBlt(..., AEE_RO_TRANSPARENT)` sem nunca chamar `SetTransparencyColor`. É o
+`RGB_MASK_COLOR` do BREW. Um bitmap sem cor pedida agora usa `0xF81F` no blit transparente e
+anuncia esse valor no `ncTransparent` do `IDIB`. O `FillRect` continua comparando com zero, que é
+o que o Bejeweled Twist precisa.
+
+**`IPARM_SIZE`, `IPARM_OFFSET` e `IPARM_ROP`.** O texto dinâmico vem de uma `IImage` sobre o BMP
+de 201x37 do `font.bar`, três linhas de 12 pixels. Cada letra é `SetParm(0, cx, 12)`,
+`SetParm(1, x, 0|12|24)` e `Draw(x, y)`, e a imagem é preparada com `SetParm(3, 7)`. Os números
+saíram desse uso — `SIZE` 0, `OFFSET` 1, `ROP` 3, vizinhos do `CXFRAME` 2 e do `NFRAMES` 4 que já
+conhecíamos. Ignorados, cada letra punha a folha inteira na tela; agora o `Draw` lê só o pedaço, e
+com o `ROP` transparente pula o magenta.
+
+**O passo das linhas do `IDIB` é alinhado em 4 bytes.** Depois disso o logo da tela de título e
+os retratos da história ainda saíam cortados. O jogo copia essas imagens pixel a pixel pelo
+`pBmp`, e o laço dele anda de uma linha para a outra com `cx + 1` pixels quando `cx` é ímpar
+(`tst cx, #1` antes do laço). O logo tem 149 de largura e os retratos 179, e o nosso buffer
+guardava as linhas coladas, com `cx * 2` bytes: cada linha lida escorregava um pixel. Agora o
+`nPitch` e o buffer usam a largura em bytes arredondada para múltiplo de 4, com um pixel de
+enchimento no fim da linha de largura ímpar. Em largura par o passo continua `cx * 2`, então os
+jogos que já funcionavam leem o mesmo buffer de antes.
 
 ## O recorte
 

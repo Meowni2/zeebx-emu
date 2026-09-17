@@ -112,8 +112,20 @@ lá. A chamada nem sai da CPU.
 
 ## Heap e objetos
 
-`brew/heap.rs` é um alocador simples com lista de livres e reuso por tamanho exato. Não compacta:
-os jogos alocam blocos grandes e poucos, e a fragmentação nunca apareceu como problema.
+`brew/heap.rs` é um alocador simples: primeiro ajuste na lista de livres e, quando nada serve, um
+ponteiro que avança. A contabilidade fica toda no host — nenhum cabeçalho é escrito na memória do
+jogo.
+
+**O bloco devolvido se funde com os vizinhos livres, e isso não é refinamento.** Sem fundir, cada
+`FREE` vira um buraco isolado e a fragmentação aparece rápido numa sessão longa: o Treino Cerebral
+troca de tela centenas de vezes, nenhum dos pedaços volta a formar região grande, e o mega que a
+fase seguinte pede não acha onde caber com o ponteiro já em 64 MB. O jogo não confere o nulo que o
+`MALLOC` devolve e morre chamando um método em zero. Com a fusão, a mesma partida fica em **um**
+mega de uso em vez de sessenta e seis. O bloco que encosta no topo não vai para a lista: o ponteiro
+recua e ele volta a ser espaço novo.
+
+Por isso o `used()` não é "onde o ponteiro chegou": o que está na lista de livres já voltou, e
+contá-lo faria o `GetRAMFree` mentir para quem pergunta antes de alocar.
 
 `brew/objects.rs` entrega endereços dentro da região de objetos, cada um começando com o ponteiro de
 vtable — que é o que um objeto COM é. Ele mantém **contagem de referências**, e é ela que decide

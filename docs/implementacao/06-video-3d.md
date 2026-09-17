@@ -84,6 +84,80 @@ Os blocos ATITC são 4×4 texels, como o DXT1: duas cores e dois bits de índice
 diferença está no bit mais alto da primeira cor, que escolhe entre interpolar as quatro cores da
 paleta ou reservar a primeira para o preto.
 
+### O PNG do decodificador chega à textura no formato dele
+
+Muitos jogos montam as texturas a partir do `IImageDecoder` de PNG: pegam o bitmap, leem os
+campos do `IDIB` e copiam `pBmp` para um `glTexImage2D`. O **Alien Breaker Deluxe** mostra o
+contrato na desmontagem: com `nDepth` 8 ele usa a paleta; fora isso copia `nDepth / 8` bytes por
+pixel e escolhe `GL_RGB` para 3 e `GL_RGBA` para os outros. O nosso bitmap anunciava RGB565, 16
+bits, e o jogo copiava dois bytes por pixel achando que eram quatro: os logos saíam brancos.
+
+O bitmap do decodificador agora publica o `IDIB` no formato do próprio PNG — 32 bits em RGBA
+quando a imagem tem alfa, 24 em RGB quando não tem, linhas contíguas e 8 bits por canal. A cópia
+em RGB565 continua no mapa de superfícies para os nossos blits, e esse buffer fica fora da
+sincronização. O mesmo erro era o "imagens lotadas de glitch" do **Heavy Weapon**, que agora mostra
+o mapa da missão, e as imagens erradas do **Tork and Kral**.
+
+### A cor corrente é limitada a [0, 1]
+
+O OpenGL ES 1.1 limita a cor de `glColor4f`/`glColor4x` a [0, 1] no momento em que ela é
+definida. O Alien Breaker Deluxe pinta com `glColor4f(255, 255, 255, a)` — é o valor de byte num
+parâmetro de ponto flutuante —, e no console isso é branco puro, que deixa a textura intacta.
+Guardando 255, o nosso modulador multiplicava a textura por 255, e o título e os menus saíam
+estourados para o branco, com só as bordas escuras aparecendo.
+
+### O `glScissor` recorta de verdade
+
+Era aceito e ignorado, com a justificativa de que desenhar demais é o erro menos visível. Não é,
+quando o jogo **conta** com o recorte: o Peggle desenha a folha de fontes inteira e aperta a
+tesoura em volta de uma letra, o mesmo truque que o Pac-Mania faz com o recorte do `IDisplay`.
+Ignorado, cada letra punha a folha inteira na tela — o menu e a mesa do jogo saíam cobertos de
+alfabetos.
+
+Nos dois motores o retângulo entra junto com a viewport, e com a mesma convenção: o `y` do
+`glScissor` conta de baixo para cima, e a nossa superfície conta do topo. No rasterizador de
+software ele aperta a caixa de cada triângulo, e por isso não custa nada por pixel; na placa é o
+`glScissor` dela, multiplicado pela escala do anexo.
+
+**E ele passa pela mesma conversão da viewport na proporção larga.** A tesoura chega em pixels do
+console; o anexo é mais largo. Enquanto ela ia crua, uma tesoura na tela inteira — que é o que o
+Resident Evil 4 e o Crash Nitro Kart ligam em jogo — cortava tudo além dos 640 do console, e os
+lados que a proporção larga acabara de abrir ficavam com a cor de fundo do anexo. Quem não usa
+tesoura, como o Raging Thunder 2, nunca viu a faixa.
+
+## Névoa
+
+O `glFog*` era atendido em silêncio e o `GL_FOG`, ignorado. O Resident Evil 4 pede névoa linear
+de dez a setecentas e oitenta unidades para separar o que está perto do que está longe, e sem ela
+a cena saía toda com o mesmo brilho.
+
+O fator sai da **distância em coordenadas de olho** — `|z|`, como o OpenGL permite em vez do
+comprimento do vetor, e é o que toda implementação de função fixa faz. Ele é calculado na etapa de
+vértice, que é comum aos dois rasterizadores, e viaja no `Vertex` como os outros atributos; no
+fragmento entra **depois da textura e antes do teste de alfa**, mexendo só no RGB, que é a ordem
+do OpenGL ES 1.1. Na placa é mais um atributo do vértice, e quem mistura é o shader.
+
+Nas formas `x` o `GL_FOG_MODE` vem **inteiro**, não em ponto fixo: é uma enumeração, e convertê-la
+como escala daria `0x2601/65536`, que não é modo nenhum.
+
+**A chave dos ajustes gráficos é de quem joga, não do jogo.** No console a névoa costuma esconder
+o que a distância de desenho não alcançava, e aqui a cena chega inteira; quem prefere ver longe
+desliga. Fica ligada por omissão — o jogo pediu a névoa, e em muitos ela é o efeito, não o
+remendo.
+
+## O `glReadPixels` e o lado de cima
+
+O Zeeboids desenha o boneco e **lê o quadro de volta** para montar a foto do perfil. A origem do
+`glReadPixels` é o canto inferior esquerdo, e a primeira linha do resultado é a de baixo da tela;
+as nossas superfícies contam do topo, então a leitura inverte a linha.
+
+Isso vale para os dois motores, e é fácil de errar na placa: lá o quadro **também** está guardado
+com a linha 0 no topo, porque o Y é virado no shader de vértice — é o que faz a leitura da tela
+não precisar de espelho na CPU. Quem ler direto do `glReadPixels` da placa recebe, portanto, a
+imagem já na convenção da superfície, que é a errada para o jogo. Lida crua, a foto do Zeeboids
+saía de cabeça para baixo, e com ela o rosto do boneco em todo jogo que o usa depois. Tem teste
+comparando a orientação nos dois rasterizadores.
+
 ## `GL_OES_draw_texture`
 
 O blit de tela: um retângulo desenhado **em coordenadas de janela**, sem passar pelas matrizes.

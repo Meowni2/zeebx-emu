@@ -118,12 +118,52 @@ impl<C: CpuBackend> Machine<C> {
         if addr == 0 {
             return Ok(0);
         }
+        self.publica_dib_do_png(addr, &fed)?;
         let transparent = self.transparency.contains_key(&addr);
         if let Some(state) = self.decoders.get_mut(&decoder) {
             state.bitmap = Some(addr);
             state.transparent = transparent;
         }
         Ok(addr)
+    }
+
+    /// Publica o `IDIB` de um bitmap do decodificador no formato do PNG: 24 bits por pixel em
+    /// RGB, ou 32 em RGBA quando a imagem tem alfa, linhas contíguas e sem enchimento.
+    ///
+    /// É o que o decodificador do BREW entrega, e o Alien Breaker Deluxe prova pelo uso: ele lê o
+    /// `nDepth`, trata 8 bits como paleta e, fora isso, copia `nDepth / 8` bytes por pixel direto
+    /// para uma textura `GL_RGB` (3) ou `GL_RGBA`. Com o nosso RGB565 ele copiava dois bytes por
+    /// pixel achando que eram quatro, e os logos saíam como quadrados brancos.
+    ///
+    /// A nossa cópia em RGB565 continua no mapa de superfícies para os blits; este buffer não
+    /// entra na sincronização.
+    pub(super) fn publica_dib_do_png(&mut self, bitmap: u32, png: &[u8]) -> Result<(), CpuError> {
+        let Some((largura, altura, canais, bytes)) = decode_png_bytes(png) else {
+            return Ok(());
+        };
+        // Um buffer publicado antes por outro caminho não serve mais: o formato é outro.
+        self.solta_dib(bitmap);
+        let Some((buffer, capacidade)) = self.reserva_superficie(bytes.len() as u32) else {
+            return Ok(());
+        };
+        self.cpu.write_mem(buffer, &bytes)?;
+        self.dib_do_decodificador.insert(bitmap, (buffer, capacidade));
+        let passo = largura as usize * canais;
+        let (profundidade, esquema) = match canais {
+            4 => (32u8, 0u8),
+            _ => (24u8, IDIB_COLORSCHEME_888),
+        };
+        self.cpu.write_u32(bitmap + 4, 0)?; // pPaletteMap
+        self.cpu.write_u32(bitmap + 8, buffer)?; // pBmp
+        self.cpu.write_u32(bitmap + 12, 0)?; // pRGB
+        self.cpu.write_u32(bitmap + 16, 0)?; // ncTransparent
+        self.cpu.write_mem(bitmap + 20, &(largura as u16).to_le_bytes())?;
+        self.cpu.write_mem(bitmap + 22, &(altura as u16).to_le_bytes())?;
+        self.cpu.write_mem(bitmap + 24, &(passo as i16).to_le_bytes())?;
+        self.cpu.write_mem(bitmap + 26, &0u16.to_le_bytes())?; // cntRGB
+        self.cpu.write_mem(bitmap + 28, &[profundidade, esquema])?;
+        self.cpu.write_mem(bitmap + 30, &[0u8; 6])?;
+        Ok(())
     }
 
     /// Um `IBitmap` com a imagem já decodificada dentro.
@@ -257,6 +297,7 @@ impl<C: CpuBackend> Machine<C> {
                 if remaining == 0 {
                     self.images.remove(&this);
                     self.image_bitmaps.remove(&this);
+                    self.recortes_de_imagem.remove(&this);
                 }
                 remaining
             }
@@ -384,6 +425,19 @@ impl<C: CpuBackend> Machine<C> {
         p2: u32,
     ) -> Result<(), CpuError> {
         match parm {
+            IPARM_SIZE => {
+                self.recortes_de_imagem.entry(image).or_default().tamanho =
+                    Some((p1 as i32, p2 as i32));
+            }
+            IPARM_OFFSET => {
+                let recorte = self.recortes_de_imagem.entry(image).or_default();
+                recorte.x = p1 as i32;
+                recorte.y = p2 as i32;
+            }
+            IPARM_ROP => {
+                self.recortes_de_imagem.entry(image).or_default().transparente =
+                    p1 == AEE_RO_TRANSPARENT;
+            }
             IPARM_CXFRAME => {
                 if let Some(info) = self.images.get_mut(&image) {
                     std::rc::Rc::make_mut(info).frame_width = p1 as u16;
@@ -470,6 +524,7 @@ impl<C: CpuBackend> Machine<C> {
             return Ok(());
         }
         let clip = self.clip;
+        let recorte = self.recortes_de_imagem.get(&image).copied().unwrap_or_default();
         // **A imagem não é copiada para ser lida.** Ler o mapa de imagens e escrever no de
         // superfícies são campos diferentes do `self`, e separá-los aqui é o que deixa o
         // empréstimo passar sem cópia.
@@ -496,8 +551,15 @@ impl<C: CpuBackend> Machine<C> {
         // apareça. Percorrer a imagem toda e conferir pixel a pixel eram 3,9 bilhões de pixels
         // lidos em quatro segundos virtuais para pôr na tela algumas centenas de milhares — e
         // ainda punha na tela o que o jogo mandou esconder.
-        let (mut first_column, mut last_column) = (0, frame_width as i32);
-        let (mut first_row, mut last_row) = (0, info.height as i32);
+        //
+        // O pedaço pedido por `IPARM_OFFSET` e `IPARM_SIZE` entra antes de tudo: `(column, row)`
+        // continua sendo a posição **na tela** a partir de `(x, y)`, e o pixel lido é deslocado
+        // pelo canto do pedaço.
+        let (recorte_x, recorte_y) = (recorte.x.max(0), recorte.y.max(0));
+        let (largura, altura) = recorte.tamanho.unwrap_or((i32::MAX, i32::MAX));
+        let (mut first_column, mut last_column) =
+            (0, largura.min(frame_width as i32 - recorte_x));
+        let (mut first_row, mut last_row) = (0, altura.min(info.height as i32 - recorte_y));
         if let Some(clip) = clip {
             first_column = first_column.max(clip.x as i32 - x);
             last_column = last_column.min(clip.x as i32 + clip.width as i32 - x);
@@ -512,10 +574,15 @@ impl<C: CpuBackend> Machine<C> {
 
         for row in first_row..last_row {
             for column in first_column..last_column {
-                let source = (row as u32 * info.width + column as u32 + offset) as usize;
+                let source = ((row + recorte_y) as u32 * info.width
+                    + (column + recorte_x) as u32
+                    + offset) as usize;
                 let Some(&pixel) = info.pixels.get(source) else {
                     continue;
                 };
+                if recorte.transparente && pixel == TRANSPARENT_KEY {
+                    continue;
+                }
                 match info.alfa.get(source).copied() {
                     Some(0) => {}
                     Some(u8::MAX) => surface.set_pixel_native(x + column, y + row, pixel),

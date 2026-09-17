@@ -176,10 +176,19 @@ impl<C: CpuBackend> Machine<C> {
             // No firmware ele registra o par guardado pelo `SetHandler` e enfileira o trabalho
             // no objeto interno. Aqui fazemos o trabalho na hora: `r1` e `r2` são o corpo e o
             // tamanho, e a resposta volta no ponteiro de saída.
+            //
+            // **Quando não é envio, é o que o nome diz.** O Prey Evil embrulha 715 KB de dados
+            // do próprio pacote aqui, sem rede nenhuma: tratar toda chamada como POST devolvia
+            // `EFAILED`, ele ficava sem a fonte de dados e desenhava uma tela preta por
+            // quadro. Sem URL no objeto de quem chamou, o pedaço de memória vira um `ISource`,
+            // que é o contrato do método.
             "SourceFromMemory" => {
                 let (corpo, tamanho) = (self.cpu.read_reg(Reg::R1), self.cpu.read_reg(Reg::R2));
                 let saida = self.stack_arg(1)?;
-                self.send_request(corpo, tamanho, saida)?
+                match self.send_request(corpo, tamanho, saida)? {
+                    Some(resultado) => resultado,
+                    None => self.source_from_memory(corpo, tamanho, saida)?,
+                }
             }
             _ => SUCCESS,
         };
@@ -197,12 +206,34 @@ impl<C: CpuBackend> Machine<C> {
     ///
     /// O `r4` é do chamador — em ARM ele é preservado pela função chamada, então na fronteira da
     /// chamada ainda guarda o objeto de quem chamou.
-    pub(super) fn send_request(
+    /// Embrulha um pedaço da memória do jogo num `ISource`, que é o contrato do
+    /// `SourceFromMemory`.
+    pub(super) fn source_from_memory(
         &mut self,
         corpo: u32,
         tamanho: u32,
         saida: u32,
     ) -> Result<u32, CpuError> {
+        let bytes = self.read_bytes(corpo, tamanho)?;
+        let fonte = self.new_object(Interface::Source)?;
+        if fonte == 0 {
+            return Ok(ENOMEMORY);
+        }
+        self.sources.insert(fonte, bytes);
+        if saida != 0 {
+            self.cpu.write_u32(saida, fonte)?;
+        }
+        Ok(SUCCESS)
+    }
+
+    /// `None` quando o corpo não é um envio — ou seja, quando não há URL no objeto de quem
+    /// chamou.
+    pub(super) fn send_request(
+        &mut self,
+        corpo: u32,
+        tamanho: u32,
+        saida: u32,
+    ) -> Result<Option<u32>, CpuError> {
         let objeto = self.cpu.read_reg(Reg::R4);
         let mut achado = None;
         for i in 0..MAX_CAMPOS_DO_OBJETO {
@@ -219,16 +250,14 @@ impl<C: CpuBackend> Machine<C> {
             }
         }
         let Some((url, base)) = achado else {
-            self.assumptions
-                .insert("um envio foi recusado: não achei a URL no objeto de quem chamou");
-            return Ok(EFAILED);
+            return Ok(None);
         };
 
         let dados = self.read_bytes(corpo, tamanho.min(MAX_CORPO_ENVIADO))?;
         if !self.network {
             self.web_requests
                 .insert(format!("{url} ({tamanho} bytes, rede desligada)"));
-            return Ok(EFAILED);
+            return Ok(Some(EFAILED));
         }
         // A área de saída ainda não tem formato conhecido: o que o console punha ali se descobre
         // vendo o jogo ler. Guardamos a resposta e deixamos o ponteiro como está, em vez de
@@ -258,7 +287,7 @@ impl<C: CpuBackend> Machine<C> {
         // O emulador já tem a fronteira certa para isso — a mesma dos sinais, que roda fora do
         // despacho, quando o guest não está dentro de nada. A resposta espera na fila até lá.
         self.pending_response = Some((objeto, base, estado));
-        Ok(resultado)
+        Ok(Some(resultado))
     }
 
     /// Deposita a resposta e avisa o estado, fora do despacho.

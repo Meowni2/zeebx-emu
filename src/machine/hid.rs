@@ -90,8 +90,13 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 SUCCESS
             }
-            // GetDeviceInfo(AEEHIDDeviceInfo *pInfo): { int type; uint16 pid; uint16 vid;
+            // GetDeviceInfo(AEEHIDDeviceInfo *pInfo): { AEEUID type; uint16 pid; uint16 vid;
             // boolean bluetooth }. Em IHID a struct vem no segundo argumento.
+            //
+            // O `type` é o **UID do tipo de dispositivo**, o mesmo que o jogo passa ao
+            // `GetConnectedDevices`, e não um número pequeno. O Bad Dudes vs. DragonNinja
+            // compara o campo com `0x0106c3fd` antes de criar o aparelho: com o `1` que
+            // respondíamos ele nunca chamava o `CreateDevice`, e o menu não via botão nenhum.
             "GetDeviceInfo" => {
                 let out = if iface == Interface::Hid { a2 } else { a1 };
                 // No `IHID` o identificador da porta vem em `r1`; no `IHIDDevice` é o próprio
@@ -101,8 +106,8 @@ impl<C: CpuBackend> Machine<C> {
                     false => self.porta_do(this),
                 };
                 let tipo = match self.portas[porta] {
-                    Some(crate::input::bindings::Aparelho::Teclado) => HID_TYPE_KEYBOARD,
-                    _ => HID_TYPE_GAMEPAD,
+                    Some(crate::input::bindings::Aparelho::Teclado) => UID_KEYBOARD_DEVICE,
+                    _ => UID_JOYSTICK_DEVICE,
                 };
                 let (vendedor, produto) = match self.portas[porta] {
                     Some(crate::input::bindings::Aparelho::Boomerang) => {
@@ -225,13 +230,20 @@ impl<C: CpuBackend> Machine<C> {
                 SUCCESS
             }
             // GetNextConnectEvent(int *pnDevHandle, int *pnStatus, boolean *pbDropped).
+            // GetNextConnectEvent(uint32 *pdwHandle, boolean *pbConnected, uint32 *pdwTimestamp)
+            //
+            // **A fila está sempre vazia, e vazia responde `EFAILED`** — é o "não há mais evento"
+            // do BREW, o mesmo do `GetNextButtonEvent`. Respondendo sucesso com os campos
+            // zerados, o jogo entendia que havia um evento de conexão a cada pergunta: os Zeebo
+            // Extreme ficavam em `GetNextConnectEvent` e `GetDeviceInfo` para sempre, sem armar
+            // timer nem desenhar, e a sessão terminava por falta do que fazer.
             "GetNextConnectEvent" => {
                 for out in [a1, a2, a3] {
                     if out != 0 {
                         self.cpu.write_u32(out, 0)?;
                     }
                 }
-                SUCCESS
+                EFAILED
             }
             // Os `RegisterFor*` recebem um `ISignal` que devemos disparar quando houver evento.
             // Guardamos qual é; disparar de fato depende de ligar a entrada do host.
@@ -240,7 +252,17 @@ impl<C: CpuBackend> Machine<C> {
             | "RegisterForButtonEvent"
             | "RegisterForPositionChange" => {
                 if a1 != 0 {
-                    self.input_signals.insert(name, a1);
+                    self.input_signals.insert((name, self.porta_do(this)), a1);
+                }
+                // **O registro de posição já vale um aviso.** No console o controle está
+                // conectado e parado quando o jogo registra, e o driver entrega logo a
+                // primeira posição; o jogo usa esse aviso para perguntar a faixa dos eixos
+                // (`GetMinPositionInfo`, `GetMaxPositionInfo`) e onde eles estão. Enquanto o
+                // aviso só saía no primeiro movimento, quem nunca encostasse no analógico
+                // jogava com os eixos sem calibrar — o Ridge Racer chega ao título e não
+                // pergunta nada antes disso.
+                if name == "RegisterForPositionChange" {
+                    self.raise_input_signal(name, self.porta_do(this));
                 }
                 SUCCESS
             }
@@ -349,7 +371,7 @@ impl<C: CpuBackend> Machine<C> {
         }
 
         if !changes.is_empty() {
-            self.raise_input_signal("RegisterForButtonEvent");
+            self.raise_input_signal("RegisterForButtonEvent", porta);
         }
         // **O retorno ao centro também é mudança de posição.** Soltar o manche precisa acordar
         // o callback como empurrá-lo: quem lê o eixo só de dentro do callback — e é como um
@@ -358,7 +380,7 @@ impl<C: CpuBackend> Machine<C> {
         // navegação dobrada que isto parecia causar era outra coisa, e está resolvida em
         // [`Machine::raise_input_signal`].
         if moved {
-            self.raise_input_signal("RegisterForPositionChange");
+            self.raise_input_signal("RegisterForPositionChange", porta);
         }
     }
 
@@ -381,8 +403,10 @@ impl<C: CpuBackend> Machine<C> {
             return;
         }
         self.ultimo_relatorio_boomerang_us = agora;
-        if (0..input::PORTAS).any(|porta| self.e_boomerang(porta)) {
-            self.raise_input_signal("RegisterForPositionChange");
+        for porta in 0..input::PORTAS {
+            if self.e_boomerang(porta) {
+                self.raise_input_signal("RegisterForPositionChange", porta);
+            }
         }
     }
 
@@ -630,8 +654,11 @@ impl<C: CpuBackend> Machine<C> {
     }
 
     /// Dispara o sinal registrado num dos `RegisterFor*` do `IHIDDevice`.
-    pub(super) fn raise_input_signal(&mut self, register: &'static str) {
-        let Some(&signal) = self.input_signals.get(register) else {
+    /// O `porta` é parte da chave porque o registro é feito **no objeto do aparelho**, um por
+    /// controle: com dois ligados, guardar só pelo nome do registro fazia o segundo apagar o
+    /// primeiro e todo evento acordar o callback do controle dois.
+    pub(super) fn raise_input_signal(&mut self, register: &'static str, porta: usize) {
+        let Some(&signal) = self.input_signals.get(&(register, porta)) else {
             return;
         };
         if let Some(&callback) = self.signals.get(&signal) {

@@ -263,8 +263,11 @@ impl<C: CpuBackend> Machine<C> {
             }
             // `ClearDepth` já recebe a profundidade em `[0, 1]`, que é a faixa do buffer.
             "ClearDepthx" | "ClearDepthf" => self.gl.set_clear_depth(number(a[0]).clamp(0.0, 1.0)),
+            // O OpenGL ES 1.1 limita a cor corrente a [0, 1] quando ela é definida. O Alien Breaker
+            // Deluxe pinta com `glColor4f(255, 255, 255, a)`: sem o limite, a textura era
+            // multiplicada por 255 e o título e os menus estouravam para o branco.
             "Color4x" | "Color4f" => {
-                let c = std::array::from_fn(|i| number(a[i]));
+                let c = std::array::from_fn(|i| number(a[i]).clamp(0.0, 1.0));
                 self.gl.set_color(c);
             }
             "Color4ub" => {
@@ -384,6 +387,23 @@ impl<C: CpuBackend> Machine<C> {
                 let valor = escalar(a[1], name.ends_with('x'));
                 self.gl.set_light_model(a[0], [valor, 0.0, 0.0, 0.0]);
             }
+            // A névoa. O `GL_FOG_MODE` chega como número — `GL_LINEAR`, `GL_EXP` ou `GL_EXP2`
+            // —, e nas formas `x` ele vem **inteiro**, não em ponto fixo: é uma enumeração, e
+            // convertê-la como escala daria `0x2601/65536`, que não é modo nenhum.
+            "Fogxv" | "Fogfv" => {
+                let valores = match a[0] == gles::GL_FOG_MODE {
+                    true => [self.cpu.read_u32(a[1])? as f32, 0.0, 0.0, 0.0],
+                    false => self.le_parametro(a[0], a[1], name.ends_with("xv"))?,
+                };
+                self.gl.set_fog(a[0], valores);
+            }
+            "Fogx" | "Fogf" => {
+                let valor = match a[0] == gles::GL_FOG_MODE {
+                    true => a[1] as f32,
+                    false => escalar(a[1], name.ends_with('x')),
+                };
+                self.gl.set_fog(a[0], [valor, 0.0, 0.0, 0.0]);
+            }
             "ShadeModel" => self.gl.set_shade_model(a[0]),
             "Normal3x" | "Normal3f" => {
                 let fixo = name.ends_with('x');
@@ -489,6 +509,14 @@ impl<C: CpuBackend> Machine<C> {
             // É como o jogo faz a foto do boneco: desenha e lê o quadro de volta. Enquanto isto
             // não existia, ele lia o que estivesse no buffer dele — daí a imagem embaralhada.
             "ReadPixels" => self.gles_read_pixels(&a)?,
+            // glScissor(x, y, width, height) — o retângulo fora do qual nada é desenhado, com o
+            // `y` de baixo para cima, como a viewport.
+            //
+            // O Peggle desenha a folha de fontes inteira e aperta a tesoura para aparecer uma
+            // letra só. Ignorada, a folha inteira ia para a tela por cima do jogo.
+            "Scissor" => self
+                .gl
+                .set_scissor(a[0] as i32, a[1] as i32, a[2] as i32, a[3] as i32),
             // glColorMask(r, g, b, a) — booleanos, um por canal.
             "ColorMask" => self.gl.set_color_mask(std::array::from_fn(|i| a[i] != 0)),
             outro => {
@@ -693,6 +721,9 @@ impl<C: CpuBackend> Machine<C> {
                 normal: normais
                     .as_ref()
                     .map_or(self.gl_normal_atual, |n| [n[i][0], n[i][1], n[i][2]]),
+                // Quem calcula o fator da névoa é a etapa de vértice, que é onde a distância em
+                // coordenadas de olho existe.
+                fog: 1.0,
             })
             .collect();
         self.gl.draw(mode, &vertices);
@@ -741,7 +772,7 @@ impl<C: CpuBackend> Machine<C> {
     /// `stride` do último elemento fora dela — o que valia antes continua valendo.
     /// Que nome está ligado num alvo de buffer. `None` quando é zero — que não é buffer
     /// nenhum, e sim "os ponteiros são endereços da memória do jogo".
-    fn buffer_ligado(&self, alvo: u32) -> Option<u32> {
+    pub(super) fn buffer_ligado(&self, alvo: u32) -> Option<u32> {
         let nome = match alvo {
             gles::GL_ARRAY_BUFFER => self.gl_array_buffer,
             gles::GL_ELEMENT_ARRAY_BUFFER => self.gl_element_buffer,
@@ -952,6 +983,12 @@ impl<C: CpuBackend> Machine<C> {
     pub fn define_melhorias(&mut self, amostras: usize, anisotropico: usize) {
         self.gl.define_antialias(amostras);
         self.gl.define_anisotropico(anisotropico);
+    }
+
+    /// Se a névoa do jogo vale. Escolha de quem joga, não do jogo — ver
+    /// [`rasterizer::Rasterizador::define_neblina`].
+    pub fn define_neblina(&mut self, permitida: bool) {
+        self.gl.define_neblina(permitida);
     }
 }
 

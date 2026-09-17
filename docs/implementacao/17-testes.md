@@ -93,6 +93,38 @@ Quem não cria applet aparece na hora, sem gastar os seis segundos virtuais que 
 O teste não para no primeiro erro: ele anota cada um e segue, e só falha no fim com a lista
 inteira. Numa varredura o que se quer ver é o placar, não a primeira desistência.
 
+### O placar, para conferir um ajuste
+
+```bash
+ZEEBX_ROM=roms cargo test --release placar -- --nocapture
+```
+
+Cada ROM roda poucos segundos virtuais e vira uma linha de tabela: estado, tempo virtual
+cumprido, desenho e o motivo de quem parou. É o teste de ida e volta rápida depois de mexer no
+emulador — a pergunta é "quem continua abrindo", não o relatório de cada jogo.
+
+```
+| Jogo | Estado | Tempo virtual | Desenho | Velocidade | Motivo |
+|---|---|---|---|---|---|
+| Disney All Star Cards | roda | 2500 ms | 382200 pixel(s) | 905% |  |
+| Bejeweled Twist | quebrou no laço de quadros | 11 ms | tela preta | 24% | acesso inválido a 0x00000024 |
+| Zeeboids | roda | 3148 ms | 41 quadro(s) | 80% |  |
+```
+
+A coluna de desenho conta o que houver: quadro apresentado quando o jogo apresenta, escritas na
+tela quando ele desenha em 2D sem apresentar, e "tela preta" quando não houve nem uma coisa nem
+outra — que é o sintoma que não aparece no estado.
+
+| Variável | O que faz |
+|---|---|
+| `ZEEBX_PLACAR_MS` | tempo **virtual** por ROM, em ms (padrão 5000) |
+| `ZEEBX_PLACAR_TETO` | teto de tempo **real** por ROM, em segundos (padrão 30) |
+| `ZEEBX_PLACAR_SAIDA` | arquivo onde gravar a tabela |
+
+**Este teste não falha por jogo quebrado.** A biblioteca tem jogos sabidamente incompatíveis, e
+falhar neles apagaria a tabela, que é o que interessa. Quem cobra regressão é a linha de base,
+abaixo.
+
 ### A execução, com linha de base
 
 ```bash

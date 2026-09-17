@@ -73,10 +73,69 @@ impl Voice {
     }
 }
 
+/// Uma voz que o jogo alimenta aos poucos: amostras chegam enquanto ela toca.
+///
+/// É o som dos ports de arcade da Data East, que geram o áudio do emulador deles quadro a quadro e
+/// o entregam por um `ISource`. Não há fim conhecido nem duração: o que falta vira silêncio até a
+/// próxima remessa.
+#[derive(Debug)]
+struct Stream {
+    /// Amostras intercaladas por canal, ainda não tocadas.
+    samples: std::collections::VecDeque<f32>,
+    channels: usize,
+    /// Quanto avançar no fluxo por quadro da placa.
+    step: f64,
+    /// Onde a placa está entre `previous` e `current`, de 0 a 1.
+    fraction: f64,
+    previous: [f32; 2],
+    current: [f32; 2],
+    volume: f32,
+    paused: bool,
+    /// O máximo de amostras guardadas: se o jogo entrega mais rápido do que a placa toca, as mais
+    /// antigas saem, em vez de o atraso crescer sem fim.
+    capacity: usize,
+}
+
+impl Stream {
+    /// Avança um quadro da placa e devolve o quadro estéreo daquele instante.
+    fn next_frame(&mut self) -> [f32; 2] {
+        self.fraction += self.step;
+        while self.fraction >= 1.0 {
+            self.fraction -= 1.0;
+            self.previous = self.current;
+            if self.samples.len() < self.channels {
+                // Faltou amostra: segura o último valor em vez de estalar para o zero, e não
+                // acumula atraso.
+                self.fraction = 0.0;
+                break;
+            }
+            let left = self.samples.pop_front().unwrap_or(0.0);
+            let right = match self.channels {
+                1 => left,
+                _ => {
+                    let right = self.samples.pop_front().unwrap_or(0.0);
+                    for _ in 2..self.channels {
+                        self.samples.pop_front();
+                    }
+                    right
+                }
+            };
+            self.current = [left, right];
+        }
+        let f = self.fraction as f32;
+        [
+            self.previous[0] + (self.current[0] - self.previous[0]) * f,
+            self.previous[1] + (self.current[1] - self.previous[1]) * f,
+        ]
+    }
+}
+
 #[derive(Debug, Default)]
 struct State {
     /// As vozes, indexadas pelo objeto `IMedia` do guest que as criou.
     voices: std::collections::HashMap<u32, Voice>,
+    /// As vozes alimentadas aos poucos, pelo mesmo índice.
+    streams: std::collections::HashMap<u32, Stream>,
     /// Volume geral, de 0 a 1.
     master: f32,
     muted: bool,
@@ -126,9 +185,49 @@ impl Mixer {
         );
     }
 
+    /// Abre na voz `id` um fluxo de `rate` Hz e `channels` canais, vazio.
+    pub fn open_stream(&self, id: u32, rate: u32, channels: u16, volume: f32) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let channels = usize::from(channels.max(1));
+        let step = f64::from(rate) / f64::from(state.rate.max(1));
+        state.voices.remove(&id);
+        state.streams.insert(
+            id,
+            Stream {
+                samples: std::collections::VecDeque::with_capacity(rate as usize * channels),
+                channels,
+                step,
+                fraction: 0.0,
+                previous: [0.0; 2],
+                current: [0.0; 2],
+                volume: volume.clamp(0.0, 1.0),
+                paused: false,
+                // Meio segundo de folga.
+                capacity: rate as usize * channels / 2,
+            },
+        );
+    }
+
+    /// Entrega amostras intercaladas ao fluxo da voz `id`.
+    pub fn feed_stream(&self, id: u32, samples: &[f32]) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let Some(stream) = state.streams.get_mut(&id) else {
+            return;
+        };
+        stream.samples.extend(samples.iter().copied());
+        let excess = stream.samples.len().saturating_sub(stream.capacity);
+        let excess = excess - excess % stream.channels;
+        stream.samples.drain(..excess);
+    }
+
     pub fn stop(&self, id: u32) {
         if let Ok(mut state) = self.state.lock() {
             state.voices.remove(&id);
+            state.streams.remove(&id);
         }
     }
 
@@ -137,6 +236,9 @@ impl Mixer {
             if let Some(voice) = state.voices.get_mut(&id) {
                 voice.paused = paused;
             }
+            if let Some(stream) = state.streams.get_mut(&id) {
+                stream.paused = paused;
+            }
         }
     }
 
@@ -144,6 +246,9 @@ impl Mixer {
         if let Ok(mut state) = self.state.lock() {
             if let Some(voice) = state.voices.get_mut(&id) {
                 voice.volume = volume.clamp(0.0, 1.0);
+            }
+            if let Some(stream) = state.streams.get_mut(&id) {
+                stream.volume = volume.clamp(0.0, 1.0);
             }
         }
     }
@@ -157,7 +262,7 @@ impl Mixer {
     pub fn is_playing(&self, id: u32) -> bool {
         self.state
             .lock()
-            .map(|state| state.voices.contains_key(&id))
+            .map(|state| state.voices.contains_key(&id) || state.streams.contains_key(&id))
             .unwrap_or(false)
     }
 
@@ -203,6 +308,13 @@ impl Mixer {
                 }
             }
             state.voices.retain(|_, voice| !voice.done);
+            for stream in state.streams.values_mut() {
+                if !stream.paused {
+                    for _ in 0..out.len() / channels.max(1) {
+                        stream.next_frame();
+                    }
+                }
+            }
             return;
         }
         for voice in state.voices.values_mut() {
@@ -218,6 +330,18 @@ impl Mixer {
                     *slot += voice.sample(channel) * gain;
                 }
                 voice.advance();
+            }
+        }
+        for stream in state.streams.values_mut() {
+            if stream.paused {
+                continue;
+            }
+            let gain = stream.volume * master;
+            for frame in out.chunks_mut(channels.max(1)) {
+                let stereo = stream.next_frame();
+                for (channel, slot) in frame.iter_mut().enumerate() {
+                    *slot += stereo[channel.min(1)] * gain;
+                }
             }
         }
         // Somar vozes estoura a faixa; cortar é o que uma placa faria de qualquer forma, e é
@@ -444,6 +568,23 @@ mod tests {
             (900..=1100).contains(&crossings),
             "esperava perto de 1000 passagens por zero, deu {crossings}"
         );
+    }
+
+    #[test]
+    fn o_fluxo_toca_o_que_o_jogo_entrega_e_segura_o_ultimo_valor_quando_falta() {
+        // Um fluxo de 8000 Hz numa placa de 8000: quadro entregue é quadro tocado.
+        let mixer = mixer(8000);
+        mixer.open_stream(7, 8000, 1, 1.0);
+        mixer.feed_stream(7, &[0.5, -0.5, 0.25]);
+        let mut out = [0.0f32; 8];
+        mixer.fill(&mut out, 2);
+        // Os dois canais recebem o mesmo. O fluxo parte do silêncio: a primeira amostra entregue
+        // sai no quadro seguinte, e o que falta segura o último valor em vez de estalar.
+        assert_eq!(out[0], out[1]);
+        assert_eq!(&out[..8], &[0.0, 0.0, 0.5, 0.5, -0.5, -0.5, 0.25, 0.25]);
+        assert!(mixer.is_playing(7));
+        mixer.stop(7);
+        assert!(!mixer.is_playing(7));
     }
 
     #[test]

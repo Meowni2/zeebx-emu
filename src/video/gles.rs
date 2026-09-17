@@ -172,6 +172,19 @@ pub const GL_TEXTURE: u32 = 0x1702;
 /// Os nomes e valores são os do `GLES/gl.h` do OpenGL ES 1.1. Só entram aqui os que o
 /// pipeline usa; `GL_LIGHT0` é a base de uma faixa de oito.
 pub const GL_STENCIL_TEST: u32 = 0x0b90;
+
+/// A névoa de função fixa, do `GLES/gl.h` do OpenGL ES 1.1.
+///
+/// O `GL_FOG_MODE` escolhe entre as três curvas — linear entre `START` e `END`, ou exponencial
+/// na `DENSITY` —, e a cor é para onde o fragmento vai quando a névoa é total.
+pub const GL_FOG: u32 = 0x0b60;
+pub const GL_FOG_DENSITY: u32 = 0x0b62;
+pub const GL_FOG_START: u32 = 0x0b63;
+pub const GL_FOG_END: u32 = 0x0b64;
+pub const GL_FOG_MODE: u32 = 0x0b65;
+pub const GL_FOG_COLOR: u32 = 0x0b66;
+pub const GL_EXP: u32 = 0x0800;
+pub const GL_EXP2: u32 = 0x0801;
 pub const GL_LIGHTING: u32 = 0x0b50;
 pub const GL_LIGHT_MODEL_AMBIENT: u32 = 0x0b53;
 pub const GL_COLOR_MATERIAL: u32 = 0x0b57;

@@ -181,10 +181,100 @@ fn canal(pixel: u32, mask: u32) -> u8 {
     (valor * 255 / maximo) as u8
 }
 
-/// Decodifica o BMP sem compressão que os `.mif` guardam.
+/// Desempacota as linhas de um BMP `BI_RLE8` ou `BI_RLE4`, devolvendo um índice de paleta por
+/// pixel, na ordem em que o arquivo guarda as linhas.
 ///
-/// Cobre 1, 4, 8, 16, 24 e 32 bits por pixel. Formatos comprimidos ficam de fora de propósito: as
-/// ROMs não os usam, e adivinhar o que não se pode testar não ajuda ninguém. As máscaras do
+/// O esquema é o do Windows: um par `(contagem, valor)` repete o valor; contagem zero abre uma
+/// fuga — `0` fim de linha, `1` fim da imagem, `2` um salto `(dx, dy)`, e de `3` para cima uma
+/// sequência literal, sempre terminada em fronteira de palavra. No `RLE4` cada valor traz dois
+/// pixels, o alto e o baixo, alternando.
+///
+/// O que a imagem não cobrir fica no índice zero, como o Windows faz.
+fn desempacota_rle(
+    data: &[u8],
+    inicio: usize,
+    width: usize,
+    height: usize,
+    depth: usize,
+) -> Result<Vec<u8>, ImageError> {
+    let mut indices = vec![0u8; width * height];
+    let (mut x, mut y) = (0usize, 0usize);
+    let mut at = inicio;
+    let escreve = |x: usize, y: usize, valor: u8, indices: &mut Vec<u8>| {
+        if x < width && y < height {
+            indices[y * width + x] = valor;
+        }
+    };
+    while at + 1 < data.len() {
+        let (contagem, valor) = (data[at] as usize, data[at + 1]);
+        at += 2;
+        if contagem > 0 {
+            for i in 0..contagem {
+                let pixel = match depth {
+                    4 if i % 2 == 1 => valor & 0x0f,
+                    4 => valor >> 4,
+                    _ => valor,
+                };
+                escreve(x + i, y, pixel, &mut indices);
+            }
+            x += contagem;
+            continue;
+        }
+        match valor {
+            // Fim de linha.
+            0 => {
+                x = 0;
+                y += 1;
+            }
+            // Fim da imagem.
+            1 => break,
+            // Salto relativo, em pixels.
+            2 => {
+                if at + 1 >= data.len() {
+                    break;
+                }
+                x += data[at] as usize;
+                y += data[at + 1] as usize;
+                at += 2;
+            }
+            // Sequência literal de `valor` pixels.
+            n => {
+                let n = n as usize;
+                let bytes = match depth {
+                    4 => n.div_ceil(2),
+                    _ => n,
+                };
+                if at + bytes > data.len() {
+                    break;
+                }
+                for i in 0..n {
+                    let bruto = match depth {
+                        4 => data[at + i / 2],
+                        _ => data[at + i],
+                    };
+                    let pixel = match depth {
+                        4 if i % 2 == 1 => bruto & 0x0f,
+                        4 => bruto >> 4,
+                        _ => bruto,
+                    };
+                    escreve(x + i, y, pixel, &mut indices);
+                }
+                x += n;
+                // A sequência é preenchida até uma fronteira de dois bytes.
+                at += bytes + bytes % 2;
+            }
+        }
+        if y >= height {
+            break;
+        }
+    }
+    Ok(indices)
+}
+
+/// Decodifica o BMP que os `.mif` e os jogos guardam.
+///
+/// Cobre 1, 4, 8, 16, 24 e 32 bits por pixel, e as duas compressões RLE de paleta — o Disney All
+/// Star Cards guarda a maioria das imagens dele em `BI_RLE8` e `BI_RLE4`. As máscaras do
 /// `BI_BITFIELDS` não são compressão, e entram: é como um BMP de 16 bits diz que é 5-6-5.
 fn decode_bmp(data: &[u8]) -> Result<Image, ImageError> {
     let u16_at = |at: usize| -> u16 { u16::from_le_bytes([data[at], data[at + 1]]) };
@@ -210,9 +300,11 @@ fn decode_bmp(data: &[u8]) -> Result<Image, ImageError> {
     // só saem neutros lidos desse jeito.
     let masks = match (compression, depth) {
         (0, _) => [0x7c00, 0x03e0, 0x001f],
+        (1, 8) | (2, 4) => [0, 0, 0],
         (3, 16 | 32) if data.len() >= 66 => [u32_at(54), u32_at(58), u32_at(62)],
         _ => return Err(ImageError::Malformed("bmp comprimido")),
     };
+    let rle = matches!((compression, depth), (1, 8) | (2, 4));
     if compression == 3 && depth == 32 {
         return Err(ImageError::Malformed("bmp comprimido"));
     }
@@ -243,7 +335,11 @@ fn decode_bmp(data: &[u8]) -> Result<Image, ImageError> {
 
     // Cada linha é preenchida até um múltiplo de quatro bytes.
     let stride = (width * depth).div_ceil(8).div_ceil(4) * 4;
-    if data_offset + stride * height > data.len() {
+    let comprimidos = match rle {
+        true => Some(desempacota_rle(data, data_offset, width, height, depth)?),
+        false => None,
+    };
+    if comprimidos.is_none() && data_offset + stride * height > data.len() {
         return Err(ImageError::Malformed("pixels truncados"));
     }
     let color = |index: usize| -> [u8; 3] {
@@ -256,6 +352,14 @@ fn decode_bmp(data: &[u8]) -> Result<Image, ImageError> {
             true => y,
             false => height - 1 - y,
         };
+        if let Some(indices) = &comprimidos {
+            for x in 0..width {
+                let rgb = color(indices[row * width + x] as usize);
+                rgba.extend_from_slice(&rgb);
+                rgba.push(255);
+            }
+            continue;
+        }
         let line = &data[data_offset + row * stride..][..stride];
         for x in 0..width {
             let (rgb, alpha) = match depth {
@@ -320,6 +424,48 @@ mod tests {
         bmp.extend_from_slice(&[0x10, 0, 0, 0]);
         bmp.extend_from_slice(&[0x01, 0, 0, 0]);
         bmp
+    }
+
+    /// Monta um BMP `BI_RLE8` de 4x2 com a paleta e os dados dados.
+    fn bmp_rle8(dados: &[u8]) -> Vec<u8> {
+        let palette: [[u8; 4]; 3] = [[0, 0, 0, 0], [0, 0, 255, 0], [0, 255, 0, 0]]; // preto, vermelho, verde.
+        let data_offset = 54 + palette.len() * 4;
+        let mut bmp = vec![0u8; data_offset];
+        bmp[0..2].copy_from_slice(b"BM");
+        bmp[10..14].copy_from_slice(&(data_offset as u32).to_le_bytes());
+        bmp[14..18].copy_from_slice(&40u32.to_le_bytes());
+        bmp[18..22].copy_from_slice(&4u32.to_le_bytes());
+        bmp[22..26].copy_from_slice(&2u32.to_le_bytes());
+        bmp[26..28].copy_from_slice(&1u16.to_le_bytes());
+        bmp[28..30].copy_from_slice(&8u16.to_le_bytes());
+        bmp[30..34].copy_from_slice(&1u32.to_le_bytes()); // BI_RLE8
+        bmp[46..50].copy_from_slice(&(palette.len() as u32).to_le_bytes());
+        for (i, entry) in palette.iter().enumerate() {
+            bmp[54 + i * 4..54 + i * 4 + 4].copy_from_slice(entry);
+        }
+        bmp.extend_from_slice(dados);
+        bmp
+    }
+
+    #[test]
+    fn o_bmp_comprimido_em_rle8_repete_e_copia() {
+        // Linha de baixo: quatro vermelhos. Linha de cima: dois verdes literais e o resto vazio,
+        // que fica no índice zero — é o que o Windows faz com o que a imagem não cobre.
+        let image = decode(&bmp_rle8(&[
+            4, 1, // quatro vezes o índice 1
+            0, 0, // fim de linha
+            0, 3, 2, 2, 2, 0, // três literais do índice 2, com o enchimento até a palavra
+            0, 1, // fim da imagem
+        ]))
+        .unwrap();
+        assert_eq!((image.width, image.height), (4, 2));
+        // O topo é a última linha guardada: verde, verde, verde, vazio.
+        assert_eq!(&image.rgba[0..4], &[0, 255, 0, 255]);
+        assert_eq!(&image.rgba[8..12], &[0, 255, 0, 255]);
+        assert_eq!(&image.rgba[12..16], &[0, 0, 0, 255], "o que não foi coberto fica no índice 0");
+        // A base é a primeira linha guardada: quatro vermelhos.
+        assert_eq!(&image.rgba[16..20], &[255, 0, 0, 255]);
+        assert_eq!(&image.rgba[28..32], &[255, 0, 0, 255]);
     }
 
     #[test]

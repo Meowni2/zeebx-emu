@@ -91,22 +91,38 @@ impl Gamepads {
     }
 
     /// O nome de cada controle ligado, na ordem em que o sistema os lista.
+    ///
+    /// **Dois controles do mesmo modelo têm o mesmo nome**, e quem escolhe "o segundo" na lista
+    /// precisa de algo que o distinga do primeiro. A partir da segunda aparição o nome ganha um
+    /// ` #2`, ` #3` e por aí. Enquanto o nome era só o do modelo, marcar o segundo controle na
+    /// porta 2 guardava a mesma string da porta 1 — e a prévia, que procura o controle por
+    /// nome, encontrava sempre o primeiro: a porta 2 respondia ao controle 1.
+    ///
+    /// Continua sendo nome, e não índice: o índice do sistema muda quando alguém desliga um
+    /// controle, e a configuração salva ontem tem de valer hoje.
     pub fn names(&self) -> Vec<String> {
         let Some(gilrs) = &self.gilrs else {
             return Vec::new();
         };
-        gilrs
-            .gamepads()
-            .map(|(_, pad)| pad.name().to_string())
-            .collect()
+        numera(gilrs.gamepads().map(|(_, pad)| pad.name().to_string()))
     }
 
-    /// O controle de nome `device`, ou o primeiro ligado se `device` for `None`.
-    fn find(&self, device: Option<&str>) -> Option<gilrs::Gamepad<'_>> {
+    /// O controle de nome `device`; sem nome, o que está na vez da porta.
+    ///
+    /// O nome procurado é o da lista do [`Self::names`], com a numeração das repetições.
+    ///
+    /// **Sem nome escolhido, a porta pega o controle da posição dela**: o primeiro para a porta
+    /// um, o segundo para a porta dois. Enquanto toda porta sem escolha pegava o primeiro
+    /// controle, ligar a porta dois só para jogar com dois duplicava o controle um nas duas — e
+    /// o jogo que pede "jogador 2, aperte um botão" nunca via um segundo jogador de verdade.
+    fn find(&self, device: Option<&str>, porta: usize) -> Option<gilrs::Gamepad<'_>> {
         let gilrs = self.gilrs.as_ref()?;
         match device {
-            Some(name) => gilrs.gamepads().find(|(_, pad)| pad.name() == name),
-            None => gilrs.gamepads().next(),
+            Some(name) => {
+                let qual = self.names().iter().position(|n| n == name)?;
+                gilrs.gamepads().nth(qual)
+            }
+            None => gilrs.gamepads().nth(porta),
         }
         .map(|(_, pad)| pad)
     }
@@ -114,8 +130,8 @@ impl Gamepads {
     /// Se a origem está acionada no controle do jogador.
     ///
     /// Origens de teclado não pertencem aqui: quem sabe do teclado é a janela.
-    pub fn is_active(&self, device: Option<&str>, source: &Source) -> bool {
-        let Some(pad) = self.find(device) else {
+    pub fn is_active(&self, device: Option<&str>, porta: usize, source: &Source) -> bool {
+        let Some(pad) = self.find(device, porta) else {
             return false;
         };
         match source {
@@ -135,8 +151,8 @@ impl Gamepads {
 
     /// O curso de um eixo do controle, de -1 a 1. `None` se não há controle ou o eixo é
     /// desconhecido — e aí o mapeamento daquele eixo simplesmente não vale.
-    pub fn value(&self, device: Option<&str>, axis: &str) -> Option<f32> {
-        let pad = self.find(device)?;
+    pub fn value(&self, device: Option<&str>, porta: usize, axis: &str) -> Option<f32> {
+        let pad = self.find(device, porta)?;
         Some(pad.value(axis_by_name(axis)?))
     }
 
@@ -144,8 +160,8 @@ impl Gamepads {
     ///
     /// Os botões vêm antes dos eixos: quem aperta o direcional de cruz de um controle que
     /// também o reporta como eixo quer o botão, que é o mais específico.
-    pub fn first_active(&self, device: Option<&str>) -> Option<Source> {
-        let pad = self.find(device)?;
+    pub fn first_active(&self, device: Option<&str>, porta: usize) -> Option<Source> {
+        let pad = self.find(device, porta)?;
         for (name, button) in BUTTONS {
             if pad.is_pressed(button) {
                 return Some(Source::button(name));
@@ -164,9 +180,35 @@ impl Gamepads {
     }
 }
 
+/// Distingue nomes repetidos acrescentando ` #2`, ` #3` e por aí, na ordem de chegada.
+fn numera(nomes: impl Iterator<Item = String>) -> Vec<String> {
+    let mut vistos: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    nomes
+        .map(|nome| {
+            let quantos = vistos.entry(nome.clone()).or_insert(0);
+            *quantos += 1;
+            match *quantos {
+                1 => nome,
+                n => format!("{nome} #{n}"),
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dois_controles_do_mesmo_modelo_ganham_nomes_diferentes() {
+        // Sem isto, escolher "o segundo" na lista guarda a mesma string do primeiro e a porta 2
+        // acaba respondendo ao controle da porta 1.
+        let nomes = ["Z-Pad", "Z-Pad", "Wii Remote", "Z-Pad"];
+        assert_eq!(
+            numera(nomes.iter().map(|n| n.to_string())),
+            ["Z-Pad", "Z-Pad #2", "Wii Remote", "Z-Pad #3"]
+        );
+    }
 
     #[test]
     fn os_nomes_de_botao_vao_e_voltam() {
@@ -211,7 +253,7 @@ mod tests {
         // Um computador sem controle não pode impedir o emulador de abrir.
         let pads = Gamepads { gilrs: None };
         assert!(pads.names().is_empty());
-        assert!(!pads.is_active(None, &Source::button("South")));
-        assert_eq!(pads.first_active(None), None);
+        assert!(!pads.is_active(None, 0, &Source::button("South")));
+        assert_eq!(pads.first_active(None, 0), None);
     }
 }
