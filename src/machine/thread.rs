@@ -287,7 +287,12 @@ impl<C: CpuBackend> Machine<C> {
         }
         let old_size = self.heap.size_of(ptr).unwrap_or(0);
         let new_ptr = self.malloc(size)?;
-        if new_ptr != 0 && old_size > 0 {
+        // Sem espaço, o bloco antigo fica como estava: é o que o `realloc` promete, e o jogo
+        // que confere o nulo ainda tem os dados dele.
+        if new_ptr == 0 {
+            return Ok(0);
+        }
+        if old_size > 0 {
             self.copy_guest(new_ptr, ptr, old_size.min(size))?;
         }
         self.heap.free(ptr);
