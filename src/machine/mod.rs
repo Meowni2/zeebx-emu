@@ -1558,6 +1558,8 @@ struct MemStream {
     buffer: u32,
     size: u32,
     position: u32,
+    /// Se o buffer veio pelo `Set` e é do stream liberá-lo. Ver [`Machine::stream_call`].
+    dono: bool,
 }
 
 /// Estado de um objeto `ISound`.
