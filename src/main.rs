@@ -1471,6 +1471,8 @@ fn sessao_sem_janela(
         std::fs::write(path, session.screen().to_bmp())?;
     }
     println!("tempo:     {} ms virtuais", session.clock_ms());
+    let (heap, objetos) = session.memory();
+    println!("heap:      {heap} bytes em uso, {objetos} objetos vivos");
     if let (Some((caminho, _)), false) = (&gravacao, gravado.is_empty()) {
         std::fs::write(caminho, audio::to_wav(&gravado, RECORD_RATE))?;
         let pico = gravado.iter().fold(0.0f32, |m, s| m.max(s.abs()));
