@@ -127,6 +127,16 @@ recua e ele volta a ser espaço novo.
 Por isso o `used()` não é "onde o ponteiro chegou": o que está na lista de livres já voltou, e
 contá-lo faria o `GetRAMFree` mentir para quem pergunta antes de alocar.
 
+**Há memória que o jogo entrega e não devolve, porque quem devolve é a interface.** O
+`IMEMASTREAM_Set` passa o buffer para o stream, e é o stream que o libera ao ser destruído ou ao
+receber outro. O Action Hero 3D monta bitmaps de 7616 bytes, vários por quadro, põe num stream,
+decodifica numa imagem e solta os dois: com o stream esquecendo o buffer, a fase comia 1,9 MB por
+segundo, e em pouco mais de três minutos o `MALLOC` devolvia nulo e o jogo copiava para o endereço
+zero. O `SetEx` fica de fora, porque ali quem libera é um `pfnFree` do jogo.
+
+No `realloc`, a falta de espaço deixa o bloco antigo intacto e devolve nulo — liberá-lo junto
+tirava do jogo os dados que ele ainda tinha.
+
 `brew/objects.rs` entrega endereços dentro da região de objetos, cada um começando com o ponteiro de
 vtable — que é o que um objeto COM é. Ele mantém **contagem de referências**, e é ela que decide
 quando o estado associado (um bitmap, um arquivo aberto, uma enumeração) pode ser descartado.
