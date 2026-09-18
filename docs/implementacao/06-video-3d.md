@@ -149,6 +149,29 @@ o que a distância de desenho não alcançava, e aqui a cena chega inteira; quem
 desliga. Fica ligada por omissão — o jogo pediu a névoa, e em muitos ela é o efeito, não o
 remendo.
 
+## A distância de desenho dos Zeebo Extreme
+
+O cenário que aparece do nada no Rolima **é decisão do jogo, não recorte nosso.** Medido na
+corrida da primeira pista:
+
+- A projeção é `glFrustumx` com `near = 1` e `far = 500`. Com o plano distante quatro vezes maior,
+  as fotos dos mesmos instantes saem idênticas pixel a pixel: o jogo não manda nada além dos 500.
+- A corrida não lê nada de volta do GL — nenhum `glGet*` —, então a escolha do que desenhar é toda
+  da matemática dele, igual no aparelho.
+- São uns 58 `Draw*` e 3 mil triângulos por quadro, estáveis.
+- O rasterizador de software recorta no plano próximo e resolve o distante pixel a pixel, na
+  profundidade; a placa recorta os dois. Nenhum dos caminhos descarta triângulo inteiro.
+
+O critério está no `pak0.pakz` (um `PACK` de arquivos LZMA, com o índice no fim em entradas de 64
+bytes: 56 de nome, a posição e o tamanho). O `infos/gamecartsinfo1p.txt` divide cada pista em
+segmentos (`models/pista_serra0.xtreme` a `24`, cada um com a sua `.octree`) e diz o último
+waypoint de cada um: o jogo desenha os segmentos em volta de onde o jogador está. Os níveis de
+detalhe declarados ali (`400` perto, `1000` longe) são das malhas dos corredores, três por
+corredor (`pers1_lod1` a `lod3`); a pista não tem uma versão de baixa qualidade separada.
+
+Estender a distância seria um ajuste nosso por cima do jogo — achar e mexer na janela de
+segmentos —, e não correção de fidelidade.
+
 ## O `glReadPixels` e o lado de cima
 
 O Zeeboids desenha o boneco e **lê o quadro de volta** para montar a foto do perfil. A origem do

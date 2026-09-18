@@ -128,6 +128,19 @@ Um `Play` sobre um som que ainda toca **não** avisa. Avisar fazia um ciclo nos 
 novo dentro do tratador: o novo `Play` caía sobre o som que acabara de começar, gerava outro aviso,
 e o som reiniciava a cada quadro — o Zeebo F.C. Super League saía estourado e picotado.
 
+**Um `Play` sobre a música que já toca em laço não a recomeça.** O gerenciador de som dos Zeebo
+Extreme manda tocar a trilha da pista de novo toda vez que um efeito acaba: no Rolima, o efeito
+de 10 KB toca, recebe `Stop`, e o `Play` cai no MP3 de 807 KB que já está em repetição infinita.
+A voz recomeçava do início, e a música reiniciava a cada turbo e a cada derrapagem. Recusar com
+`EBADSTATE` não serve: o jogo entende que a música parou e repete o `Play` a cada quadro. O que
+ele espera é o `START`, que o passa a "tocando"; a voz segue de onde está. A regra vale só para o
+laço infinito (`MM_PARM_PLAY_REPEAT` zero), porque um efeito tocado de novo por cima de si mesmo
+é o que o Zeebo F.C. faz, e ele precisa recomeçar.
+
+**O cache dos sons decodificados tem teto.** Passando de 64, saem os que nenhum `IMedia` usa. Sem
+isso, cada conteúdo novo escrito no buffer de rascunho do Zeebo F.C. ficava decodificado para
+sempre. Uma voz tocando não perde nada: o PCM dela está num `Arc` que o misturador também segura.
+
 O `GetMediaParm` devolve o volume e o mudo guardados (antes, zero: um jogo que lê o volume e grava
 de volta se emudecia), e um `IMedia` liberado para a voz dele no misturador — uma música em
 repetição seguia tocando depois de o objeto sumir.

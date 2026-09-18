@@ -135,7 +135,26 @@ segundo, e em pouco mais de três minutos o `MALLOC` devolvia nulo e o jogo copi
 zero. O `SetEx` fica de fora, porque ali quem libera é um `pfnFree` do jogo.
 
 No `realloc`, a falta de espaço deixa o bloco antigo intacto e devolve nulo — liberá-lo junto
-tirava do jogo os dados que ele ainda tinha.
+tirava do jogo os dados que ele ainda tinha. Tamanho zero é `FREE`: o bloco sai e o ponteiro vira
+nulo, e o `ERR_REALLOC(0, &p)` deixa `p` nulo como o jogo espera.
+
+O que **nós** alocamos no heap do jogo também tem dono. O buffer de linha do `IPeek`, do tamanho
+do arquivo inteiro, sai com o leitor; o `AEEImageInfo` do aviso de imagem é um bloco por imagem,
+reaproveitado e devolvido no `Release`, e não um bloco novo a cada aviso.
+
+**O que só cresce do lado de cá também tem teto.** O log do `DBGPRINTF` agrupa repetições por
+índice e guarda até 2000 linhas diferentes — uma linha com fps ou tempo é nova a cada chamada e
+crescia pela sessão inteira; passando do teto, sai a metade mais antiga. O semihosting guarda até
+256 KB. A fila do `GetNextButtonEvent` guarda 64 eventos por porta: o jogo que lê o controle de
+outro jeito nunca a esvaziava.
+
+**O endereço de um objeto volta a ser usado, e o estado do antigo não pode passar para o novo.**
+O `Release` do `IHash` e das cifras esquece o estado (um hash novo continuava o MD5 do anterior), o
+do aparelho de entrada esquece a porta, o do `ISignal` o tira dos sinais de entrada (o toque
+dispararia o callback do sinal que nasceu no lugar) e o do `IImage` esquece o `Notify`. A cor
+transparente é esquecida quando o objeto **nasce**, e não quando morre: o `Framebuffer` de um
+bitmap ainda é consultado depois do `Release` por quem guardou o endereço sem referência, e mexer
+nisso é outro trabalho.
 
 `brew/objects.rs` entrega endereços dentro da região de objetos, cada um começando com o ponteiro de
 vtable — que é o que um objeto COM é. Ele mantém **contagem de referências**, e é ela que decide
