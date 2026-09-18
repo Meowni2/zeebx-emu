@@ -662,6 +662,7 @@ impl<C: CpuBackend> Machine<C> {
             return Ok(ENOMEMORY);
         };
         self.cpu.write_u32(obj, loader::vtable_addr(iface))?;
+        self.transparency.remove(&obj);
         // Uma coleção nasce vazia e com o cursor no começo. Sem esse registro ela não existiria
         // para os métodos, e um `AtEnd` numa coleção desconhecida responderia "acabou" por
         // acaso — a resposta certa pelo motivo errado.

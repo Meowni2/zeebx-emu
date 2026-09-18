@@ -160,6 +160,7 @@ impl UnicornCpu {
                 }
                 _ => {}
             }
+            super::apara_semihosting(&mut saida.borrow_mut());
             let _ = uc.reg_write(RegisterARM::R0, 0);
         })
         .map_err(uc_err)?;

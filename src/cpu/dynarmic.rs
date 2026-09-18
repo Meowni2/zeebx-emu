@@ -269,6 +269,7 @@ impl Callbacks for Estado {
                 }
                 _ => {}
             }
+            super::apara_semihosting(&mut saida);
             jit.set_reg(0, 0);
         } else if cb.parada.get() == Parada::Nenhuma {
             let pc = unsafe { (*cb.jit.get()).get_pc() };

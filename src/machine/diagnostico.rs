@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// Quantas linhas diferentes do log do jogo ficam guardadas. Ver [`Machine::record_debug`].
+const MAX_LINHAS_DO_JOGO: usize = 2000;
+
 impl<C: CpuBackend> Machine<C> {
     /// Liga o registro de todas as chamadas, na ordem.
     pub fn set_tracing(&mut self, on: bool) {
@@ -186,14 +189,25 @@ impl<C: CpuBackend> Machine<C> {
             // acontecendo. É o uso inteiro da ferramenta.
             let _ = serial.flush();
         }
-        match self
-            .debug_output
-            .iter_mut()
-            .find(|(text, _)| *text == message)
-        {
-            Some((_, count)) => *count += 1,
-            None => self.debug_output.push((message, 1)),
+        if let Some(&indice) = self.debug_indice.get(&message) {
+            self.debug_output[indice].1 += 1;
+            return;
         }
+        // **Com teto.** Uma linha que traz um número que muda — quadro, tempo, fps — é uma
+        // linha nova a cada chamada, e a lista crescia pela sessão inteira. Passando do teto,
+        // a metade mais antiga sai: o que interessa num log é o que aconteceu por último.
+        if self.debug_output.len() >= MAX_LINHAS_DO_JOGO {
+            self.debug_output.drain(..MAX_LINHAS_DO_JOGO / 2);
+            self.debug_indice = self
+                .debug_output
+                .iter()
+                .enumerate()
+                .map(|(indice, (texto, _))| (texto.clone(), indice))
+                .collect();
+        }
+        self.debug_indice
+            .insert(message.clone(), self.debug_output.len());
+        self.debug_output.push((message, 1));
     }
 
     /// Quantas vezes cada método foi chamado, em ordem — o backlog de APIs, medido.

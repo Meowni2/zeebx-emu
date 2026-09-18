@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// Quantos sons decodificados o cache guarda antes de esquecer os que ninguém usa. Ver
+/// [`Machine::descarta_sons_sem_dono`].
+const MAX_SONS_GUARDADOS: usize = 64;
+
 impl<C: CpuBackend> Machine<C> {
     /// `ISound` (`AEECLSID_SOUND` = `0x01001056`), de `inc/AEEISound.h`.
     ///
@@ -387,8 +391,26 @@ impl<C: CpuBackend> Machine<C> {
         if !self.cargas_de_midia.contains_key(&chave) {
             let carga = self.decodifica_som(&bytes);
             self.cargas_de_midia.insert(chave, carga);
+            self.descarta_sons_sem_dono(chave);
         }
         chave
+    }
+
+    /// Esquece os sons decodificados que nenhum `IMedia` usa, passando de
+    /// [`MAX_SONS_GUARDADOS`].
+    ///
+    /// O cache existe para não decodificar de novo o som que o jogo entrega outra vez, mas sem
+    /// teto ele guardava **todo** conteúdo que já passou por um `Play`: o Zeebo F.C. escreve
+    /// efeitos diferentes no mesmo buffer de 500 KB, e cada um virava uma entrada para sempre.
+    /// Uma voz tocando não perde nada: o PCM dela está num `Arc` que o mixer também segura.
+    fn descarta_sons_sem_dono(&mut self, nova: u64) {
+        if self.cargas_de_midia.len() <= MAX_SONS_GUARDADOS {
+            return;
+        }
+        let em_uso: std::collections::HashSet<u64> =
+            self.media.values().map(|state| state.carga).collect();
+        self.cargas_de_midia
+            .retain(|chave, _| *chave == nova || em_uso.contains(chave));
     }
 
     /// Decodifica um som pelo que ele é, e não pelo nome.

@@ -713,10 +713,11 @@ impl<C: CpuBackend> Machine<C> {
             .is_some_and(|&tinha| tinha >= precisa);
         if !cabe {
             // O buffer que não cabe mais volta para a região antes de pedir outro.
-            if let (Some(&antigo), Some(&capacidade)) =
+            // Só com capacidade registrada o buffer é nosso; sem ela, é do jogo.
+            if let (Some(&antigo), Some(_)) =
                 (self.dib_buffers.get(&bitmap), self.dib_capacity.get(&bitmap))
             {
-                self.solta_superficie(antigo, capacidade);
+                self.solta_superficie(antigo);
             }
             let Some((buffer, capacidade)) = self.reserva_superficie(precisa) else {
                 self.dib_buffers.remove(&bitmap);
@@ -787,58 +788,40 @@ impl<C: CpuBackend> Machine<C> {
     /// Só os buffers que **nós** reservamos voltam — os que têm capacidade anotada. O de uma
     /// superfície do jogo (`IDIB` dele) é memória dele.
     pub(super) fn solta_dib(&mut self, bitmap: u32) {
-        if let Some((buffer, capacidade)) = self.dib_do_decodificador.remove(&bitmap) {
-            self.solta_superficie(buffer, capacidade);
+        if let Some((buffer, _)) = self.dib_do_decodificador.remove(&bitmap) {
+            self.solta_superficie(buffer);
         }
-        let Some(capacidade) = self.dib_capacity.remove(&bitmap) else {
+        // Sem capacidade registrada o buffer não é nosso — é a superfície do próprio jogo.
+        if self.dib_capacity.remove(&bitmap).is_none() {
             return;
-        };
+        }
         if let Some(buffer) = self.dib_buffers.remove(&bitmap) {
-            self.solta_superficie(buffer, capacidade);
+            self.solta_superficie(buffer);
         }
         self.dib_herdados.remove(&bitmap);
         self.dib_publicado.remove(&bitmap);
         self.cpu.unwatch_dirty(bitmap);
     }
 
-    /// Guarda um buffer para ser reaproveitado.
+    /// Devolve um buffer à região de superfícies.
     ///
     /// **A região de superfícies não reciclava, e a Z-Wheel a esgotava.** A barra de abas cria um
     /// bitmap por quadro, alternando 440 e 441 de largura, e cada página da lista decodifica
     /// capas novas; medido, os 8 MB acabavam aos 27 s de navegação. Dali em diante o canvas da
     /// caixa de mensagem não tinha pixels, a caixa não abria, e confirmar um jogo derrubava a
     /// Z-Wheel num salto para o endereço zero em vez de lançá-lo.
-    pub(super) fn solta_superficie(&mut self, endereco: u32, capacidade: u32) {
-        if capacidade > 0 && !self.superficies_livres.contains(&(endereco, capacidade)) {
-            self.superficies_livres.push((endereco, capacidade));
-        }
+    ///
+    /// Reciclar só o bloco inteiro também não bastava: sem fundir vizinhos nem dividir blocos,
+    /// buracos pequenos não serviam a pedidos grandes e a região esgotava do mesmo jeito, só
+    /// mais devagar. Por isso ela usa o mesmo [`Heap`] do jogo.
+    pub(super) fn solta_superficie(&mut self, endereco: u32) {
+        self.superficies.free(endereco);
     }
 
-    /// Reserva um buffer, reaproveitando o menor livre que caiba. Devolve endereço e capacidade.
+    /// Reserva um buffer na região de superfícies. Devolve endereço e capacidade.
     pub(super) fn reserva_superficie(&mut self, bytes: u32) -> Option<(u32, u32)> {
-        let melhor = self
-            .superficies_livres
-            .iter()
-            .enumerate()
-            .filter(|(_, livre)| livre.1 >= bytes)
-            .min_by_key(|(_, livre)| livre.1)
-            .map(|(indice, _)| indice);
-        if let Some(indice) = melhor {
-            return Some(self.superficies_livres.swap_remove(indice));
-        }
-        self.surface_alloc(bytes).map(|endereco| (endereco, bytes.div_ceil(4) * 4))
-    }
-
-    /// Reserva espaço na região de superfícies.
-    pub(super) fn surface_alloc(&mut self, bytes: u32) -> Option<u32> {
-        let addr = self.surface_next;
-        let end = loader::SURFACE_BASE + loader::SURFACE_SIZE as u32;
-        if addr.checked_add(bytes)? > end {
-            return None;
-        }
-        // Alinha em 4 bytes para que o jogo possa escrever palavras inteiras.
-        self.surface_next = (addr + bytes).div_ceil(4) * 4;
-        Some(addr)
+        let endereco = self.superficies.alloc(bytes)?;
+        Some((endereco, self.superficies.size_of(endereco).unwrap_or(bytes)))
     }
 
     /// Copia os pixels do host para o buffer que o jogo enxerga.

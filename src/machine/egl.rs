@@ -359,8 +359,13 @@ impl<C: CpuBackend> Machine<C> {
                 let mut bytes = std::mem::take(&mut self.egl_color_bytes);
                 self.gl.frame_rgb565(largura, altura, &mut bytes);
                 if self.egl_color_buffer.1 < bytes.len() {
-                    match self.surface_alloc(bytes.len() as u32) {
-                        Some(onde) => {
+                    // O buffer que ficou pequeno volta para a região antes de pedir outro.
+                    if self.egl_color_buffer.0 != 0 {
+                        self.solta_superficie(self.egl_color_buffer.0);
+                        self.egl_color_buffer = (0, 0);
+                    }
+                    match self.reserva_superficie(bytes.len() as u32) {
+                        Some((onde, _)) => {
                             self.egl_color_buffer = (onde, bytes.len());
                             // A faixa mudou de lugar: o watchpoint acompanha.
                             self.cpu

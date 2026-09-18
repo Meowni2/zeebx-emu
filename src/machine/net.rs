@@ -37,7 +37,10 @@ impl<C: CpuBackend> Machine<C> {
                 let restantes = self.objects.release(this);
                 if restantes == 0 {
                     self.sources.remove(&this);
-                    self.peeks.remove(&this);
+                    // O buffer de linha é nosso, do tamanho da fonte inteira.
+                    if let Some(peek) = self.peeks.remove(&this) {
+                        self.heap.free(peek.buffer);
+                    }
                 }
                 restantes
             }
