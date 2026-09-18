@@ -1,9 +1,10 @@
-# 20 — O Boomerang, e o Wii Remote no lugar dele
+# 20 — O Boomerang, e os controles com sensor no lugar dele
 
 O Boomerang é o controle de movimento do Zeebo: direcional, botões 1 e 2, HOME e acelerômetro,
 sem fio, com um receptor USB. Os jogos da Boomerang Sports (Queimada, Tênis, Vôlei, Peteca), o
 Crash Nitro Kart e os Zeebo Extreme o reconhecem e passam a jogar pelo movimento. Aqui ele é
-emulado, e quem move o controle é um Wii Remote pareado por Bluetooth.
+emulado, e quem o move é o sensor do controle escolhido na porta: um Wii Remote, um Pro
+Controller, um DualShock 4, um DualSense.
 
 Nada disto veio de documentação: o formato do relatório foi lido no código do Zeebo Sports
 Queimada (`dodgeball.mod`) e conferido no Crash Nitro Kart 3D (`cnk2.mod`).
@@ -100,9 +101,9 @@ dispositivo lê o `struct input_event` bruto e uma thread de busca acha controle
 segundo, agrupando botões e acelerômetro pelo dispositivo HID pai. Não precisa de biblioteca
 nem de permissão extra — os nós já têm ACL para o usuário da sessão. Fora do Linux não há leitura.
 
-Os botões somam aos mapeados da porta: direcional no direcional, 1 e A no botão 1, 2 e B no
-botão 2, HOME no HOME. Na lista de controles aparecem "Wii Remote 1" e "Wii Remote 2"; sem escolha,
-o primeiro Wii Remote vai para o primeiro Boomerang.
+Na lista de controles aparecem "Wii Remote 1" e "Wii Remote 2", e os botões dele são origens do
+mapeamento como as de qualquer controle (ver a seção 6). Sem escolha, o primeiro Wii Remote vai
+para o primeiro Boomerang, com os botões somados pelo mapeamento típico.
 
 ### Calibração nas configurações
 
@@ -124,9 +125,60 @@ texto na hora (o nome das telas de calibração do Vôlei só passa pelas funç�
 pré-carga), e o estado da calibração fica num objeto cujo layout muda entre os quatro jogos —
 detectá-los pede leitura de cada um.
 
-## 6. Ferramentas
+## 6. O sensor é do controle escolhido
+
+A porta de Boomerang procurava sempre um Wii Remote. Com um Pro Controller escolhido nela, o
+Boomerang ficava parado: o controle respondia pelos botões e o sensor dele nunca era lido.
+
+Os drivers do Linux põem o sensor num dispositivo irmão do controle, marcado com
+`INPUT_PROP_ACCELEROMETER` (o bit 6 do arquivo `properties`): "Pro Controller (IMU)" ao lado de
+"Pro Controller", no `hid-nintendo`; "… Motion Sensors" no `hid-playstation`. O
+`input/sensores.rs` acha esses nós e os lê como o do Wii Remote. Com giroscópio, a aceleração
+vem em `ABS_X/Y/Z` (e a rotação nos `R`); a escala é o `resolution` do `input_absinfo`, que os
+drivers preenchem em unidades por g (4096 no Pro Controller).
+
+O sensor se liga ao controle pelo nome **do sistema** (`os_name` do gilrs, e não o nome do
+mapeamento, "Nintendo Switch Pro Controller"), pelo par VID/PID e pela ordem entre controles
+iguais. Os controles se seguram na pegada normal, que já é a de volante. O `hid-nintendo` põe o
+comprimento do Pro Controller no Y, como o Wii Remote: com os eixos passando direto, o controle em
+pé, de frente para o jogador, girava a prévia noventa graus para a direita. Os controles da
+Nintendo (VID `057e`) trocam X e Y, e com o sentido do X oposto ao do Wii Remote (`[-y, x, z]`):
+com o Y passando como veio, virar para a esquerda levava o kart para a direita. Os outros passam
+direto até alguém medir.
+
+**O nó do sensor costuma vir sem permissão.** O udev dá acesso ao usuário da sessão (`uaccess`) ao
+que marca como joystick, e o sensor é marcado como acelerômetro: aqui o `event23` do Pro
+Controller tem a ACL e o `event22`, do IMU, não. A prévia do Boomerang e o `zeebx controles` dizem
+quando é isso, com a regra que resolve:
+
+```
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_ACCELEROMETER}=="1", TAG+="uaccess"
+```
+
+A prévia oferece um botão, "Liberar o sensor", que faz isso pelo `pkexec`: a janela de senha do
+sistema aparece uma vez, e um comando só grava `/etc/udev/rules.d/70-zeebx-sensores.rules`,
+recarrega as regras e repassa os dispositivos de entrada por elas (`udevadm trigger
+--action=change`), o que dá a ACL aos sensores já ligados. O número 70 vem antes do
+`73-seat-late.rules`, que é quem aplica o `uaccess`. A leitura de um sensor sem permissão é
+tentada de novo a cada segundo, então ele volta sozinho, sem reconectar o controle. Se o
+`pkexec` falhar (sem agente de senha, senha recusada), a regra aparece para ser criada à mão.
+
+Sem controle escolhido, vale o que valia: o primeiro Wii Remote para o primeiro Boomerang.
+
+### O Wii Remote é um controle mapeável
+
+Os botões dele se somavam aos da porta por uma tabela fixa, e escolhê-lo numa porta deixava o
+mapeamento de teclado — como Z-Pad ele só tinha o direcional e dois botões. Agora os botões são
+origens como as do gilrs (`WiiUp`, `WiiA`, `Wii1`, `WiiPlus`, `WiiHome`…), capturáveis na tela de
+controles, e escolhê-lo traz o mapeamento típico: direcional no direcional, 1 e A no botão 1, 2 e
+B no botão 2, menos e mais nos botões 3 e 4, HOME no HOME. Quem já o tinha escolhido ganha esse
+mapeamento na primeira vez que o emulador abre. A tabela fixa ficou só para o Boomerang sem
+controle escolhido.
+
+## 7. Ferramentas
 
 - `zeebx wiimote [--seconds=N]` mostra o controle ao vivo.
+- `zeebx controles` lista o sensor de cada controle, com a aceleração ou o aviso de permissão.
 - `zeebx sessao <zip> --boomerang` põe um Boomerang na porta 1; `--movimento=ms:x:y:z,...` diz a
   aceleração a partir de cada instante, em g; `--wiimote` usa o Wii Remote conectado.
 - `zeebx run <zip> --portas=boomerang` para rastrear o `IHID` com `--trace=HID`.
