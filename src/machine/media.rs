@@ -490,6 +490,18 @@ impl<C: CpuBackend> Machine<C> {
         if self.fluxos_pcm.contains_key(&this) {
             return self.inicia_fluxo(this);
         }
+        // **Um `Play` sobre a música que já toca em laço não a recomeça.** O gerenciador de som
+        // dos Zeebo Extreme manda tocar a trilha da pista de novo toda vez que um efeito acaba —
+        // o turbo, a derrapagem —, e aqui a voz recomeçava do início: a música reiniciava a cada
+        // efeito. Recusar com `EBADSTATE` também não serve: ele entende que a música parou e
+        // repete o `Play` a cada quadro. O que ele espera é o `START`, que o passa a "tocando"; a
+        // voz segue de onde está. A regra fica restrita ao laço infinito: um efeito tocado de
+        // novo por cima de si mesmo é o que o Zeebo F.C. faz, e ele precisa recomeçar.
+        if self.esta_tocando(this) && self.media.get(&this).is_some_and(|state| state.repeat == 0)
+        {
+            self.notify_media(this, MM_CMD_PLAY, MM_STATUS_START)?;
+            return Ok(SUCCESS);
+        }
         if let Some(state) = self.media.get_mut(&this)
             && state.buffer.1 != 0
         {
