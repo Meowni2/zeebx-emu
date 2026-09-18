@@ -221,7 +221,8 @@ pub fn componentes(pname: u32) -> usize {
         | GL_POSITION
         | GL_EMISSION
         | GL_AMBIENT_AND_DIFFUSE
-        | GL_LIGHT_MODEL_AMBIENT => 4,
+        | GL_LIGHT_MODEL_AMBIENT
+        | GL_FOG_COLOR => 4,
         GL_SPOT_DIRECTION => 3,
         _ => 1,
     }
