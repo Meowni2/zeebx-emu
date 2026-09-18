@@ -229,6 +229,29 @@ fn main() -> ExitCode {
                     }
                 }
             }
+            // O sensor de movimento de cada controle: é o que alimenta o Boomerang da porta, e
+            // um controle com sensor que não mexe o Boomerang costuma ser o nó sem permissão.
+            let sensores = input::sensores::Sensores::inicia();
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            for (i, nome) in nomes.iter().enumerate() {
+                let sensor = pads
+                    .identidade(Some(nome), i)
+                    .and_then(|(so, vendor, product, ordem)| {
+                        sensores.do_controle(&so, vendor, product, ordem)
+                    });
+                match sensor {
+                    Some(s) if s.sem_permissao => {
+                        println!("  sensor de {nome}: {} SEM PERMISSÃO — a regra do udev:", s.nome);
+                        println!("    {}", input::sensores::REGRA_DO_UDEV);
+                    }
+                    Some(s) if s.com_leitura => println!(
+                        "  sensor de {nome}: {}, [{:+.2} {:+.2} {:+.2}] g",
+                        s.nome, s.aceleracao[0], s.aceleracao[1], s.aceleracao[2]
+                    ),
+                    Some(s) => println!("  sensor de {nome}: {}, sem leitura ainda", s.nome),
+                    None => {}
+                }
+            }
             let settings = ui::settings::Settings::load();
             for porta in 0..input::PORTAS {
                 let Some(jogador) = settings.controls.player(porta) else {

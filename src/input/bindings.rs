@@ -291,6 +291,37 @@ impl Player {
         player
     }
 
+    /// O mapeamento típico do Wii Remote, somado ao teclado.
+    ///
+    /// É o que ele fazia antes de ser mapeável — direcional no direcional, 1 e A no botão 1, 2 e B
+    /// no botão 2, HOME no HOME —, com o menos e o mais nos botões 3 e 4 para quem o usa como
+    /// Z-Pad. O resto se muda na tela de controles, como em qualquer controle.
+    pub fn with_wiimote(device: String) -> Self {
+        let mut player = Self::default();
+        player.acrescenta_botoes_do_wiimote();
+        player.device = Some(device);
+        player
+    }
+
+    fn acrescenta_botoes_do_wiimote(&mut self) {
+        let wiimote: [(&str, &str); 11] = [
+            ("up", "WiiUp"),
+            ("down", "WiiDown"),
+            ("left", "WiiLeft"),
+            ("right", "WiiRight"),
+            ("b1", "Wii1"),
+            ("b1", "WiiA"),
+            ("b2", "Wii2"),
+            ("b2", "WiiB"),
+            ("b3", "WiiMinus"),
+            ("b4", "WiiPlus"),
+            ("back", "WiiHome"),
+        ];
+        for (button, source) in wiimote {
+            self.bind(button, Source::button(source));
+        }
+    }
+
     /// Os eixos de um controle moderno nos eixos do console.
     ///
     /// O direcional do Zeebo é reportado como `X` e `Y`, então o manche esquerdo cai neles e o
@@ -462,6 +493,7 @@ impl Controls {
             player.adopt_axes();
             player.migrate_axis_convention();
             player.migra_aparelho_do_controle();
+            player.migra_botoes_do_wiimote();
         }
         while self.players.len() < crate::input::PORTAS {
             self.players.push(Player {
@@ -481,15 +513,27 @@ impl Player {
     /// jogar com dois continuava com um joystick só na conta do jogo, e a opção de dois
     /// jogadores ficava apagada.
     ///
-    /// O Wii Remote é a exceção que fica: ele não passa pelo gilrs e os botões dele se somam
-    /// aos das teclas na própria porta, então ali o mapeamento de teclado é o certo.
+    /// Vale também para o Wii Remote, desde que ele é um controle mapeável como os outros.
     fn migra_aparelho_do_controle(&mut self) {
+        if self.aparelho == Aparelho::Teclado && self.device.is_some() {
+            self.aparelho = Aparelho::Controle;
+        }
+    }
+
+    /// Quem escolheu um Wii Remote antes de ele ser mapeável continua com os botões dele.
+    ///
+    /// Os botões do Wii Remote se somavam por conta própria aos do teclado da porta, e o
+    /// mapeamento salvo não tinha nenhum. Sem isto, a atualização deixaria o controle mudo.
+    fn migra_botoes_do_wiimote(&mut self) {
         let wiimote = self
             .device
             .as_deref()
             .is_some_and(|nome| crate::input::wiimote::Wiimotes::indice_do_nome(nome).is_some());
-        if self.aparelho == Aparelho::Teclado && self.device.is_some() && !wiimote {
-            self.aparelho = Aparelho::Controle;
+        let tem_botao_do_wiimote = self.buttons.values().flatten().any(|source| {
+            matches!(source, Source::Button { name } if name.starts_with("Wii"))
+        });
+        if wiimote && !tem_botao_do_wiimote {
+            self.acrescenta_botoes_do_wiimote();
         }
     }
 }
@@ -793,5 +837,46 @@ mod tests {
         assert!(controls.players[0].ligada);
         assert_eq!(controls.players.len(), crate::input::PORTAS);
         assert!(!controls.players[1].ligada);
+    }
+
+    #[test]
+    fn o_wii_remote_e_um_controle_mapeavel() {
+        // Como Z-Pad ele precisa responder pelos botões dele, no mapeamento da porta, e a porta
+        // deixa de ser de teclado para o console.
+        let mut controls = Controls {
+            players: vec![Player {
+                aparelho: Aparelho::Teclado,
+                ..Player::with_wiimote("Wii Remote 1".into())
+            }],
+        };
+        controls.adopt();
+        let jogador = &controls.players[0];
+        assert_eq!(jogador.aparelho, Aparelho::Controle);
+        assert!(jogador.buttons["b1"].contains(&Source::button("Wii1")));
+        assert!(jogador.buttons["back"].contains(&Source::button("WiiHome")));
+        // O teclado continua valendo junto.
+        assert!(jogador.buttons["b1"].contains(&Source::key("Z")));
+    }
+
+    #[test]
+    fn quem_ja_tinha_um_wii_remote_continua_com_os_botoes_dele() {
+        // Antes os botões se somavam sozinhos e o mapeamento salvo só tinha teclado.
+        let mut controls = Controls {
+            players: vec![Player {
+                device: Some("Wii Remote 1".into()),
+                ..Player::default()
+            }],
+        };
+        controls.adopt();
+        assert!(controls.players[0].buttons["up"].contains(&Source::button("WiiUp")));
+        // E quem já mapeou à mão não ganha nada a mais.
+        let mut mapeado = Player {
+            device: Some("Wii Remote 1".into()),
+            ..Player::default()
+        };
+        mapeado.bind("b1", Source::button("WiiB"));
+        let mut controls = Controls { players: vec![mapeado] };
+        controls.adopt();
+        assert!(!controls.players[0].buttons["up"].contains(&Source::button("WiiUp")));
     }
 }

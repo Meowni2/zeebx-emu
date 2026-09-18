@@ -8,6 +8,7 @@
 pub mod bindings;
 pub mod gamepads;
 pub mod padview;
+pub mod sensores;
 pub mod wiimote;
 
 /// Quantas portas de entrada o console tem.

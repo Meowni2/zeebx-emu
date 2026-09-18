@@ -4977,6 +4977,7 @@ dependencies = [
  "flate2",
  "gilrs",
  "glutin",
+ "libc",
  "minifb",
  "png",
  "raw-window-handle",

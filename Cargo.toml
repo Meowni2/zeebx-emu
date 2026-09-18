@@ -55,6 +55,11 @@ symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
 discord-rich-presence = "1.1"
 ureq = "3"
 
+# O `ioctl` que lê a escala dos sensores de movimento em `/dev/input`. Já vinha na árvore por
+# várias dependências, então não acrescenta build nenhuma.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 # O ícone dentro do `.exe` do Windows: é o que o Explorer e a barra de tarefas mostram.
 [build-dependencies]
 winresource = "0.1"
