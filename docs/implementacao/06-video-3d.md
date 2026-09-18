@@ -140,6 +140,10 @@ do OpenGL ES 1.1. Na placa é mais um atributo do vértice, e quem mistura é o 
 Nas formas `x` o `GL_FOG_MODE` vem **inteiro**, não em ponto fixo: é uma enumeração, e convertê-la
 como escala daria `0x2601/65536`, que não é modo nenhum.
 
+O `GL_FOG_COLOR` tem **quatro** componentes e precisa estar no `gles::componentes`: fora dali o
+`glFogxv` lia só o primeiro, e a névoa bege do Resident Evil 4 chegava com verde e azul zerados —
+vermelha.
+
 **A chave dos ajustes gráficos é de quem joga, não do jogo.** No console a névoa costuma esconder
 o que a distância de desenho não alcançava, e aqui a cena chega inteira; quem prefere ver longe
 desliga. Fica ligada por omissão — o jogo pediu a névoa, e em muitos ela é o efeito, não o
