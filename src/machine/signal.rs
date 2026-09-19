@@ -165,6 +165,9 @@ impl<C: CpuBackend> Machine<C> {
                 let remaining = self.objects.release(this);
                 if remaining == 0 {
                     self.signals.remove(&this);
+                    // Um sinal solto não pode continuar registrado para a entrada: o endereço
+                    // volta como outro sinal, e o toque dispararia o callback dele.
+                    self.input_signals.retain(|_, sinal| *sinal != this);
                 }
                 remaining
             }

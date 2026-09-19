@@ -27,7 +27,16 @@ impl<C: CpuBackend> Machine<C> {
         let this = self.cpu.read_reg(Reg::R0);
         let result = match name {
             "AddRef" => self.objects.add_ref(this),
-            "Release" => self.objects.release(this),
+            "Release" => {
+                let restantes = self.objects.release(this);
+                // O endereço volta a ser de outro objeto: um hash novo ali continuaria o MD5
+                // deste.
+                if restantes == 0 {
+                    self.hashes.remove(&this);
+                    self.ciphers.remove(&this);
+                }
+                restantes
+            }
             "QueryInterface" => {
                 let out = self.cpu.read_reg(Reg::R2);
                 if out != 0 {

@@ -25,7 +25,13 @@ impl<C: CpuBackend> Machine<C> {
         let result = match name {
             // `IHID` herda de `IQI`, então AddRef e Release ficam nos mesmos slots 0 e 1.
             "AddRef" => self.objects.add_ref(this),
-            "Release" => self.objects.release(this),
+            "Release" => {
+                let restantes = self.objects.release(this);
+                if restantes == 0 {
+                    self.portas_de_aparelho.remove(&this);
+                }
+                restantes
+            }
             // QueryInterface: devolvemos o próprio objeto, já que cada objeto nosso tem uma
             // interface só.
             "QueryInterface" => {
@@ -362,6 +368,12 @@ impl<C: CpuBackend> Machine<C> {
         let moved = pad.axes != self.pads[porta].axes;
         self.pads[porta] = pad;
         self.pad_events[porta].extend(changes.iter().copied());
+        // Só o `GetNextButtonEvent` esvazia esta fila, e o jogo que lê o controle por
+        // `GetState` ou por `EVT_KEY` nunca o chama: ela crescia a cada toque pela sessão
+        // inteira. Os mais antigos saem primeiro, que é o que uma fila de hardware faz ao
+        // transbordar.
+        let excesso = self.pad_events[porta].len().saturating_sub(PAD_EVENTS_MAX);
+        self.pad_events[porta].drain(..excesso);
         let agora = self.elapsed_ms();
         for &(index, down) in &changes {
             if self.pad_log.len() == PAD_LOG_MAX {

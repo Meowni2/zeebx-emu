@@ -154,7 +154,14 @@ ganham nada, porque a imagem já sai pronta em 640×480.
 **renderiza** a cena em perspectiva mais larga, como o hack de widescreen do Dolphin.
 
 - **O anexo ganha colunas dos lados** (`GpuState::extra`, 106 por lado em 16:9 com 480 linhas),
-  só quando a superfície ocupa o quadro inteiro — um pbuffer menor não tem lados para abrir.
+  só quando a superfície vai à tela inteira — um pbuffer menor não tem lados para abrir.
+- **A superfície esticada também abre.** O Quake desenha em 320×400 e declara isso pelo
+  `EGL_QUALCOMM_surface_scale`, que o aparelho amplia até 640×480. O `GlState` guarda essa
+  diferença (`superficie_esticada`, ligada pelo `SetSurfaceScale` e desligada por um pbuffer), as
+  colunas a mais são contadas em pixels da superfície (53 por lado em 16:9) e a proporção entregue à
+  janela é a da tela. Antes, a superfície menor que o quadro não abria nada, e com a resolução
+  interna acima de 1 o quadro ia à janela na proporção da superfície — 0,8, estreito e menor, nos
+  dois modos.
 - **Perspectiva abre, o resto se desloca.** Um lote com projeção em perspectiva
   (`GlState::projecao_em_perspectiva`: `p[11] ≠ 0` e `p[15] = 0`) tem o `x` de recorte
   multiplicado por `k = 640 / (640 + 2·extra)` e a viewport alargada na razão inversa, em torno do
@@ -198,6 +205,35 @@ segundo virtual a 100% e a 200% de CPU — o jogo já bate no teto do retraço d
 deixava lento no aparelho era a GPU, que aqui não é emulada. Uma opção de CPU mais rápida foi
 experimentada e retirada por não mudar nada. O que limita a fluidez no emulador é o host conseguir
 manter a velocidade real (50 s virtuais em ~44 s reais no `sessao`, sem janela).
+
+## Desempenho: o Quake em câmera lenta
+
+O Quake executa 132 milhões de instruções por segundo virtual, um quarto da CPU do console, e faz
+umas 370 draw calls por quadro: um `glDrawArrays` em leque para cada face. Medido com amostras de
+pilha pelo `gdb` na fase, metade do tempo era o JIT, um terço mandar desenho à placa e um sexto ler
+o quadro de volta. Sem janela o jogo ficava em 0,88× do console, e três coisas mudaram:
+
+- **Anel de vértices.** Cada desenho redefinia o buffer (`buffer_data`) e os ponteiros de
+  atributo, 4 µs por chamada. Agora o buffer é um anel (`GpuState::anel`): o desenho grava na faixa
+  seguinte com `buffer_sub_data` e desenha a partir dela pelo `first`; os ponteiros ficam no VAO.
+- **Lotes.** Desenhos seguidos com o mesmo `fill` e a mesma perspectiva viram triângulos soltos
+  num lote (`GpuState::lote`) que vai à placa numa chamada só. Leque e faixa são desmontados na
+  ordem do OpenGL, o que mantém a orientação e o descarte por face. O lote é descarregado com o
+  estado em que foi juntado sempre que o `fill` muda e antes de tudo que mexe na placa fora do
+  desenho — limpar, subir ou apagar textura, mudar parâmetro de textura, ler o quadro, trocar
+  destino, escala, proporção ou superfície.
+- **Uniformes em cache.** A posição de cada uniforme é procurada uma vez e o valor só é reenviado
+  quando muda (`Uniformes`). Rende perto de um microssegundo por desenho.
+
+Com isso o Quake foi a 1,25× sem janela, com a mesma imagem — conferido também no Dragon Vs
+Chicken e no 16:9.
+
+**E a janela rodava um quadro do jogo por quadro dela.** O `Session::step` voltava no primeiro
+`eglSwapBuffers`, e com a janela abaixo de 60 quadros por segundo o jogo andava na mesma proporção:
+liso, sem engasgo, em câmera lenta. Atrasado mais de um quadro em relação ao relógio do mundo, ele
+agora roda até quatro quadros por volta e só o último vai à tela. Atraso acima de 250 ms é perdoado
+em vez de recuperado — pausa, carregamento e janela arrastada param o relógio virtual, e correr
+atrás disso depois faria o jogo disparar.
 
 ## Desempenho: a corrida do Need for Speed abaixo da velocidade do console
 

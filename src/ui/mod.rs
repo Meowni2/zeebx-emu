@@ -208,12 +208,17 @@ pub struct App {
     /// A escolha e a animação da biblioteca.
     vitrine: vitrine::Vitrine,
     teclado_apertado: HashSet<egui::Key>,
-    /// Os Wii Remotes, que alimentam as portas com Boomerang.
+    /// Os Wii Remotes: controles mapeáveis como os outros, com o acelerômetro deles.
     wiimotes: crate::input::wiimote::Wiimotes,
+    /// Os sensores de movimento dos outros controles, que alimentam o Boomerang da porta.
+    sensores: crate::input::sensores::Sensores,
     /// A imagem do Boomerang na prévia dos controles.
     boomerang_textura: Option<egui::TextureHandle>,
     /// A calibração do movimento em andamento: a porta e as leituras juntadas até agora.
     calibrando: Option<(usize, Vec<[f32; 3]>)>,
+    /// O pedido de permissão para os sensores de movimento, que corre numa thread enquanto a
+    /// janela de senha do sistema está aberta.
+    liberacao_dos_sensores: std::sync::Arc<std::sync::Mutex<LiberacaoDosSensores>>,
     /// A última calibração foi recusada por não estar de face para cima.
     calibracao_recusada: bool,
     /// O aviso de calibração aberto na janela do jogo, e as calibrações da sessão já vistas.
@@ -334,8 +339,10 @@ impl App {
             vitrine: Default::default(),
             teclado_apertado: HashSet::new(),
             wiimotes: crate::input::wiimote::Wiimotes::inicia(),
+            sensores: crate::input::sensores::Sensores::inicia(),
             boomerang_textura: None,
             calibrando: None,
+            liberacao_dos_sensores: Default::default(),
             calibracao_recusada: false,
             aviso_calibracao: None,
             calibracoes_vistas: (0, 0),
@@ -760,6 +767,7 @@ impl App {
                     self.play(caminho);
                 }
             }
+            self.campo_da_busca(ui);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(self.catalog.get("nav.settings")).clicked() {
                     self.settings_open = true;
@@ -790,6 +798,46 @@ impl App {
                     self.sync_unlocked = None;
                 }
             });
+        }
+    }
+
+    /// A busca da biblioteca. Ctrl+F leva o foco a ela e Esc a limpa; o Enter joga o jogo
+    /// escolhido, que é o primeiro resultado enquanto ninguém mexe na escolha.
+    fn campo_da_busca(&mut self, ui: &mut egui::Ui) {
+        let campo = egui::TextEdit::singleline(&mut self.vitrine.busca)
+            .hint_text(self.catalog.get("nav.search"))
+            .desired_width(220.0);
+        let resposta = ui
+            .add(campo)
+            .on_hover_text(self.catalog.get("nav.search.hint"));
+        self.vitrine.campo_da_busca = Some(resposta.id);
+        let mut mudou = resposta.changed();
+        let (atalho, esc) = ui.input(|i| {
+            (
+                i.modifiers.command && i.key_pressed(egui::Key::F),
+                i.key_pressed(egui::Key::Escape),
+            )
+        });
+        if atalho {
+            resposta.request_focus();
+        }
+        // O Esc tira o foco do campo sozinho; aqui ele também apaga o que estava escrito.
+        if esc && (resposta.has_focus() || resposta.lost_focus()) && !self.vitrine.busca.is_empty()
+        {
+            self.vitrine.busca.clear();
+            mudou = true;
+        }
+        if !self.vitrine.busca.is_empty()
+            && ui
+                .small_button("✕")
+                .on_hover_text(self.catalog.get("nav.search.clear"))
+                .clicked()
+        {
+            self.vitrine.busca.clear();
+            mudou = true;
+        }
+        if mudou {
+            self.vitrine.busca_mudou();
         }
     }
 
@@ -1070,7 +1118,8 @@ impl App {
         ui.ctx().request_repaint();
         let porta = self.porta_editada;
         let pad = self.pad_of(ui.ctx(), porta);
-        let wiimote = self.wiimote_da_porta(porta);
+        let sensor = self.sensor_da_porta(porta);
+        let com_leitura = sensor.aceleracao().is_some();
         let [x, y, z] = self.movimento_da_porta(porta);
         // A calibração em andamento junta leituras paradas e fecha na média.
         let bruto_agora = self.movimento_bruto_da_porta(porta);
@@ -1121,19 +1170,19 @@ impl App {
                 .into_iter()
                 .filter(|nome| Pad::button_by_name(nome).is_some_and(|i| pad.is_down(i)))
                 .collect();
-            let estado = match wiimote {
-                Some(w) if w.com_acelerometro => self.tr("controls.boomerang.wiimote"),
-                Some(_) => self.tr("controls.boomerang.wiimote_no_accel"),
-                None => self.tr("controls.boomerang.no_wiimote"),
-            };
-            ui.label(estado);
+            ui.label(self.descreve_sensor(&sensor));
+            // O caso mais comum de um controle com sensor que não mexe o Boomerang: o nó do
+            // sensor sem permissão. Um clique grava a regra que resolve, pedindo a senha.
+            if matches!(&sensor, SensorDaPorta::Controle(s) if s.sem_permissao) {
+                self.oferece_liberar_sensores(ui);
+            }
             ui.monospace(format!(
                 "x {x:+.2}  y {y:+.2}  z {z:+.2} g   {}  {}",
                 format!("⟲ {:+.0}°", volante.to_degrees()),
                 nomes.join(" ")
             ));
             ui.horizontal(|ui| {
-                ui.add_enabled_ui(wiimote.is_some_and(|w| w.com_acelerometro) && !calibrando, |ui| {
+                ui.add_enabled_ui(com_leitura && !calibrando, |ui| {
                     calibrar = ui.button(self.catalog.get("controls.boomerang.calibrate")).clicked();
                 });
                 restaurar = ui.button(self.catalog.get("controls.boomerang.calibrate_reset")).clicked();
@@ -1208,9 +1257,7 @@ impl App {
             self.aviso_calibracao = Some(AvisoDeCalibracao::novo(agora));
         }
         let movimento = self.movimento_da_porta(porta);
-        let com_wiimote = self
-            .wiimote_da_porta(porta)
-            .is_some_and(|wiimote| wiimote.com_acelerometro);
+        let com_sensor = self.movimento_bruto_da_porta(porta).is_some();
         let Some(aviso) = &mut self.aviso_calibracao else {
             return;
         };
@@ -1234,9 +1281,9 @@ impl App {
             true => self.tr("calibration.toast.done"),
             false => self.tr("calibration.toast.title"),
         };
-        let estado = match (com_wiimote, parado, concluido) {
+        let estado = match (com_sensor, parado, concluido) {
             (_, _, true) => String::new(),
-            (false, _, _) => self.tr("controls.boomerang.no_wiimote"),
+            (false, _, _) => self.descreve_sensor(&self.sensor_da_porta(porta)),
             (true, true, _) => self.tr("calibration.toast.still"),
             (true, false, _) => self.tr("calibration.toast.moving"),
         };
@@ -1391,13 +1438,10 @@ impl App {
                 let atual = self.settings.controls.player_mut(self.porta_editada);
                 let (ligada, aparelho) = (atual.ligada, atual.aparelho);
                 *atual = match device {
-                    // O Wii Remote não passa pelo gilrs: os botões dele se somam aos das teclas
-                    // na própria porta, então o mapeamento de teclado fica.
+                    // O Wii Remote não passa pelo gilrs, mas é um controle como os outros: o
+                    // mapeamento típico dele vem junto, e muda-se na tela como qualquer outro.
                     Some(name) if crate::input::wiimote::Wiimotes::indice_do_nome(&name).is_some() => {
-                        crate::input::bindings::Player {
-                            device: Some(name),
-                            ..Default::default()
-                        }
+                        crate::input::bindings::Player::with_wiimote(name)
                     }
                     Some(name) => crate::input::bindings::Player::with_gamepad(name),
                     None => crate::input::bindings::Player::default(),
@@ -1614,7 +1658,11 @@ impl App {
                     .controls
                     .player(self.porta_editada)
                     .and_then(|player| player.device.clone());
-                self.gamepads.first_active(device.as_deref(), self.porta_editada)
+                // O Wii Remote escolhido responde pelos botões dele; os outros, pelo gilrs.
+                match self.wiimote_da_porta(self.porta_editada) {
+                    Some(wiimote) if device.is_some() => wiimote.primeira_fonte(),
+                    _ => self.gamepads.first_active(device.as_deref(), self.porta_editada),
+                }
             }
         };
         let Some(source) = source else {
@@ -2308,13 +2356,21 @@ impl App {
                 .collect()
         });
         let gamepads = &self.gamepads;
+        // O Wii Remote não passa pelo gilrs: os botões dele são origens próprias (`WiiA`,
+        // `Wii1`…), lidas do estado que a thread dele mantém.
+        let wiimote = self.wiimote_da_porta(porta);
         let mut pad = player.pad(
-            |source| pressed.contains(source) || gamepads.is_active(device.as_deref(), porta, source),
+            |source| {
+                pressed.contains(source)
+                    || gamepads.is_active(device.as_deref(), porta, source)
+                    || wiimote.is_some_and(|w| w.fonte_acionada(source))
+            },
             |axis| gamepads.value(device.as_deref(), porta, axis),
         );
-        // O Wii Remote da porta soma os botões dele aos mapeados: o direcional no direcional,
-        // 1 e A no botão 1, 2 e B no botão 2 e o HOME no HOME.
-        if let Some(wiimote) = self.wiimote_da_porta(porta) {
+        // O Boomerang sem controle escolhido pega o Wii Remote da vez, e aí o mapeamento da
+        // porta é o de teclado, sem nenhum botão dele: os botões se somam por esta tabela, que é
+        // o mapeamento padrão do Wii Remote.
+        if let (None, Some(wiimote)) = (&device, wiimote) {
             const DO_WIIMOTE: [(&str, &str); 9] = [
                 ("up", "up"),
                 ("down", "down"),
@@ -2337,14 +2393,15 @@ impl App {
         pad
     }
 
-    /// O Wii Remote que alimenta uma porta com Boomerang: o escolhido na lista de controles, ou,
-    /// sem escolha, o primeiro controle para o primeiro Boomerang e o segundo para o segundo.
+    /// O Wii Remote de uma porta: o escolhido na lista de controles, ou, numa porta de
+    /// Boomerang sem controle escolhido, o primeiro Wii Remote para o primeiro Boomerang e o
+    /// segundo para o segundo. Com outro controle escolhido, nenhum.
     fn wiimote_da_porta(&self, porta: usize) -> Option<crate::input::wiimote::EstadoWiimote> {
         use crate::input::bindings::Aparelho;
         use crate::input::wiimote::Wiimotes;
         let jogador = self.settings.controls.player(porta)?;
-        if let Some(indice) = jogador.device.as_deref().and_then(Wiimotes::indice_do_nome) {
-            return self.wiimotes.estado(indice);
+        if let Some(escolhido) = jogador.device.as_deref() {
+            return self.wiimotes.estado(Wiimotes::indice_do_nome(escolhido)?);
         }
         if jogador.aparelho != Aparelho::Boomerang {
             return None;
@@ -2360,7 +2417,106 @@ impl App {
         self.wiimotes.estado(ordem)
     }
 
-    /// A aceleração que o Boomerang de uma porta sente. Sem Wii Remote, parado de face para cima.
+    /// O botão que libera os sensores de movimento, e o que aconteceu da última vez.
+    ///
+    /// Se o pedido falhar — sem `pkexec`, sem agente de senha, senha recusada —, a regra aparece
+    /// para ser criada à mão.
+    fn oferece_liberar_sensores(&self, ui: &mut egui::Ui) {
+        use crate::input::sensores;
+        let estado = self
+            .liberacao_dos_sensores
+            .lock()
+            .map(|e| e.clone())
+            .unwrap_or(LiberacaoDosSensores::Parada);
+        match &estado {
+            LiberacaoDosSensores::Pedindo => {
+                ui.weak(self.tr("controls.boomerang.unlock_waiting"));
+            }
+            _ => {
+                if ui.button(self.tr("controls.boomerang.unlock")).clicked() {
+                    if let Ok(mut e) = self.liberacao_dos_sensores.lock() {
+                        *e = LiberacaoDosSensores::Pedindo;
+                    }
+                    let liberacao = self.liberacao_dos_sensores.clone();
+                    let _ = std::thread::Builder::new()
+                        .name("libera-sensores".into())
+                        .spawn(move || {
+                            let resultado = match sensores::libera_sensores() {
+                                Ok(()) => LiberacaoDosSensores::Feita,
+                                Err(erro) => LiberacaoDosSensores::Falhou(erro),
+                            };
+                            if let Ok(mut e) = liberacao.lock() {
+                                *e = resultado;
+                            }
+                        });
+                }
+                ui.weak(self.tr("controls.boomerang.unlock_hint"));
+            }
+        }
+        match estado {
+            // A regra entrou, e a leitura volta na próxima tentativa, dentro de um segundo.
+            LiberacaoDosSensores::Feita => {
+                ui.weak(self.tr("controls.boomerang.unlock_done"));
+            }
+            LiberacaoDosSensores::Falhou(erro) => {
+                ui.colored_label(
+                    ui.visuals().warn_fg_color,
+                    self.tr("controls.boomerang.unlock_failed")
+                        .replace("{erro}", &erro)
+                        .replace("{arquivo}", sensores::ARQUIVO_DA_REGRA),
+                );
+                ui.add(
+                    egui::TextEdit::singleline(&mut sensores::REGRA_DO_UDEV.to_string())
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(f32::INFINITY),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    /// Em uma linha, de onde vem o movimento do Boomerang e se ele está chegando.
+    fn descreve_sensor(&self, sensor: &SensorDaPorta) -> String {
+        let (chave, nome) = match sensor {
+            SensorDaPorta::Wiimote(w) if w.com_acelerometro => ("controls.boomerang.sensor", "Wii Remote"),
+            SensorDaPorta::Wiimote(_) => ("controls.boomerang.sensor_waiting", "Wii Remote"),
+            SensorDaPorta::Controle(s) if s.sem_permissao => ("controls.boomerang.sensor_denied", s.nome.as_str()),
+            SensorDaPorta::Controle(s) if s.com_leitura => ("controls.boomerang.sensor", s.nome.as_str()),
+            SensorDaPorta::Controle(s) => ("controls.boomerang.sensor_waiting", s.nome.as_str()),
+            SensorDaPorta::SemSensor(nome) => ("controls.boomerang.no_sensor", nome.as_str()),
+            SensorDaPorta::Nenhum => ("controls.boomerang.no_device", ""),
+        };
+        self.tr(chave).replace("{nome}", nome)
+    }
+
+    /// O sensor de movimento que alimenta o Boomerang de uma porta.
+    ///
+    /// **É o do controle escolhido na porta**, seja ele qual for: um Wii Remote, um Pro
+    /// Controller, um DualShock. Antes, uma porta de Boomerang procurava sempre um Wii Remote, e
+    /// quem escolhia outro controle com sensor via o Boomerang parado. Sem controle escolhido,
+    /// vale o Wii Remote da vez — o primeiro para o primeiro Boomerang.
+    fn sensor_da_porta(&self, porta: usize) -> SensorDaPorta {
+        use crate::input::wiimote::Wiimotes;
+        let Some(jogador) = self.settings.controls.player(porta) else {
+            return SensorDaPorta::Nenhum;
+        };
+        let escolhido = jogador.device.as_deref();
+        if escolhido.is_none_or(|nome| Wiimotes::indice_do_nome(nome).is_some()) {
+            return match self.wiimote_da_porta(porta) {
+                Some(wiimote) => SensorDaPorta::Wiimote(wiimote),
+                None => SensorDaPorta::Nenhum,
+            };
+        }
+        let Some((nome, vendor, product, ordem)) = self.gamepads.identidade(escolhido, porta) else {
+            return SensorDaPorta::Nenhum;
+        };
+        match self.sensores.do_controle(&nome, vendor, product, ordem) {
+            Some(sensor) => SensorDaPorta::Controle(sensor),
+            None => SensorDaPorta::SemSensor(escolhido.unwrap_or(&nome).to_string()),
+        }
+    }
+
+    /// A aceleração que o Boomerang de uma porta sente. Sem sensor, parado de face para cima.
     ///
     /// **O comprimento do Boomerang é o X dele; o do Wii Remote é o Y.** O Crash Nitro Kart manda
     /// segurar o Boomerang deitado, com as duas mãos e a face para o jogador, e virar como um
@@ -2370,8 +2526,15 @@ impl App {
     ///
     /// O sentido do X foi acertado na mão, no Crash Nitro Kart: com o X do Boomerang oposto ao Y
     /// do Wii Remote, virar o volante para a direita levava o kart para a esquerda.
+    ///
+    /// Os controles da Nintendo também trocam X e Y. O `hid-nintendo` reporta o comprimento do
+    /// Pro Controller no Y: em pé, de frente para o jogador, a gravidade caía no X do Boomerang, e
+    /// a prévia girava noventa graus para a direita. E o sentido é o oposto do Wii Remote: com o
+    /// Y passando como veio, virar para a esquerda levava o kart para a direita. Os outros
+    /// controles passam direto até alguém medir.
     fn movimento_da_porta(&self, porta: usize) -> [f32; 3] {
-        let Some(bruto) = self.movimento_bruto_da_porta(porta) else {
+        let sensor = self.sensor_da_porta(porta);
+        let Some(bruto) = sensor.aceleracao() else {
             return [0.0, 0.0, 1.0];
         };
         let [x, y, z] = self
@@ -2379,14 +2542,16 @@ impl App {
             .controls
             .player(porta)
             .map_or(bruto, |jogador| jogador.calibracao_movimento.aplica(bruto));
-        [y, x, z]
+        match sensor {
+            SensorDaPorta::Wiimote(_) => [y, x, z],
+            SensorDaPorta::Controle(s) if s.vendor == VENDOR_NINTENDO => [-y, x, z],
+            _ => [x, y, z],
+        }
     }
 
-    /// A aceleração que o Wii Remote da porta mede, sem calibração.
+    /// A aceleração que o sensor da porta mede, sem calibração.
     fn movimento_bruto_da_porta(&self, porta: usize) -> Option<[f32; 3]> {
-        self.wiimote_da_porta(porta)
-            .filter(|wiimote| wiimote.com_acelerometro)
-            .map(|wiimote| wiimote.aceleracao)
+        self.sensor_da_porta(porta).aceleracao()
     }
 
     /// Combina as fontes antes de emitir transições: uma seta física pode estar
@@ -3242,4 +3407,38 @@ fn desenhar_linha_do_tempo(ui: &mut egui::Ui, historia: &[(u32, u32)]) {
             .collect();
         pintor.add(egui::Shape::line(linha, egui::Stroke::new(1.0_f32, cor)));
     }
+}
+
+/// O VID da Nintendo, cujos controles têm o comprimento no Y. Ver [`App::movimento_da_porta`].
+const VENDOR_NINTENDO: u16 = 0x057e;
+
+/// De onde vem o movimento do Boomerang de uma porta. Ver [`App::sensor_da_porta`].
+enum SensorDaPorta {
+    Wiimote(crate::input::wiimote::EstadoWiimote),
+    Controle(crate::input::sensores::EstadoDoSensor),
+    /// Um controle escolhido que não tem sensor de movimento, pelo nome da lista.
+    SemSensor(String),
+    Nenhum,
+}
+
+impl SensorDaPorta {
+    /// A aceleração medida, quando o sensor já mandou alguma.
+    fn aceleracao(&self) -> Option<[f32; 3]> {
+        match self {
+            Self::Wiimote(wiimote) if wiimote.com_acelerometro => Some(wiimote.aceleracao),
+            Self::Controle(sensor) if sensor.com_leitura => Some(sensor.aceleracao),
+            _ => None,
+        }
+    }
+}
+
+/// O pedido de permissão para os sensores. Ver [`App::oferece_liberar_sensores`].
+#[derive(Debug, Clone, Default)]
+enum LiberacaoDosSensores {
+    #[default]
+    Parada,
+    /// A janela de senha do sistema está aberta.
+    Pedindo,
+    Feita,
+    Falhou(String),
 }

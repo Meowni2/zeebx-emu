@@ -139,6 +139,12 @@ chegavam a ser lidos. Por isso os quatro botões de face abrem a lista, na ordem
 que não é botão do aparelho (o `LeftThumb_X` que o arquivo do console deixou no meio, e a segunda
 aparição do `Right_Shoulder_Upper`) foi para o fim, fora da faixa que o arcade varre.
 
+O direcional segue a mesma lógica: **fica na ordem dos UIDs, cima, esquerda, baixo, direita**
+(posições 12 a 15). O `GamepadMgr` das amostras do SDK lê o `id` do `GetNextButtonEvent`, que é a
+posição na lista, e guarda o estado num vetor indexado por ela (`0x16b68` no Dragon Vs Chicken).
+Na ordem cima, baixo, esquerda, direita, a demo andava para baixo com a esquerda e vice-versa. O
+Tênis, o Rolima e o Bad Dudes não usam esse laço.
+
 `Z` e `RZ` não tinham nada os alimentando até o manche direito ser ligado neles. **O sentido
 desses dois é suposição**: o arquivo nomeia os eixos sem dizer o sentido, então seguimos a mesma
 convenção do par esquerdo, e a tela de configuração tem uma caixa "Inverter".

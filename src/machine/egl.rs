@@ -104,10 +104,28 @@ impl<C: CpuBackend> Machine<C> {
                 let name = self.cpu.read_cstring(a[0], MAX_STRING);
                 // A busca cobre a tabela inteira, e não só os slots da vtable real: as funções
                 // de extensão ficam no fim dela e é só por aqui que o jogo chega a elas.
-                let slot = name.strip_prefix("gl").and_then(|method| {
-                    (0..crate::brew::aee_slots::GLES.len() as u32)
-                        .find(|&s| Interface::Gles.method(s) == Some(method))
-                });
+                // **Um nome `gl*` também procura na tabela antiga, a `IGL`**, pelo mesmo motivo
+                // do `egl*` logo abaixo: o que se devolve é uma função C, sem `this`. Entregar o
+                // slot da `IGLES11` fazia a função ler os argumentos deslocados de um — o
+                // `glGenBuffers(1, &nome)` do motor QX tomava o ponteiro pela contagem e escrevia
+                // fora da memória. As funções que o `AEEGL.h` não tem ficam no fim da tabela.
+                let procura = |nome: &str| {
+                    (0..crate::brew::aee_slots::GL_LEGACY.len() as u32)
+                        .find(|&s| Interface::GlLegacy.method(s) == Some(nome))
+                };
+                // **O nome da extensão cai na função do núcleo.** O `vertex_buffer_object` é
+                // núcleo no OpenGL ES 1.1, e anunciamos o `ARB` porque é o nome que os jogos
+                // procuram na lista; quem o acha pede as funções com o sufixo. O motor QX do
+                // SDK (o Dragon Vs Chicken) pede `glBindBufferARB` e as outras cinco, e com o
+                // ponteiro nulo os personagens, que ele desenha por buffer, não apareciam.
+                let slot = name.starts_with("gl").then(|| {
+                    procura(&name).or_else(|| {
+                        ["ARB", "OES"]
+                            .iter()
+                            .find_map(|sufixo| name.strip_suffix(sufixo))
+                            .and_then(procura)
+                    })
+                }).flatten();
                 // Um nome `egl*` procura na tabela **antiga**, a `IEGL` de `AEEGL.h`, e não na
                 // `IEGL11` que o jogo usa pela vtable. Não é escolha de gosto: o que o
                 // `eglGetProcAddress` devolve é uma função C, sem `this` no primeiro argumento,
@@ -121,7 +139,7 @@ impl<C: CpuBackend> Machine<C> {
                     })
                     .flatten();
                 match (slot, egl) {
-                    (Some(slot), _) => (1, aee::encode(Interface::Gles, slot)),
+                    (Some(slot), _) => (1, aee::encode(Interface::GlLegacy, slot)),
                     (_, Some(slot)) => (1, aee::encode(Interface::EglLegacy, slot)),
                     _ => {
                         self.bad_pointers
@@ -271,7 +289,7 @@ impl<C: CpuBackend> Machine<C> {
                     let altura = self.cpu.read_u32(origem + 12)? as i32;
                     if largura > 0 && altura > 0 {
                         self.scale_source = Some((largura, altura));
-                        self.gl.set_surface(largura as usize, altura as usize);
+                        self.gl.set_surface_esticada(largura as usize, altura as usize);
                     }
                 }
                 (4, gles::EGL_TRUE)
@@ -359,8 +377,13 @@ impl<C: CpuBackend> Machine<C> {
                 let mut bytes = std::mem::take(&mut self.egl_color_bytes);
                 self.gl.frame_rgb565(largura, altura, &mut bytes);
                 if self.egl_color_buffer.1 < bytes.len() {
-                    match self.surface_alloc(bytes.len() as u32) {
-                        Some(onde) => {
+                    // O buffer que ficou pequeno volta para a região antes de pedir outro.
+                    if self.egl_color_buffer.0 != 0 {
+                        self.solta_superficie(self.egl_color_buffer.0);
+                        self.egl_color_buffer = (0, 0);
+                    }
+                    match self.reserva_superficie(bytes.len() as u32) {
+                        Some((onde, _)) => {
                             self.egl_color_buffer = (onde, bytes.len());
                             // A faixa mudou de lugar: o watchpoint acompanha.
                             self.cpu

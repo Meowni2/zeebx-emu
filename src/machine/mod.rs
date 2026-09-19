@@ -627,6 +627,8 @@ const MAX_CORPO_ENVIADO: u32 = 1 << 16;
 /// um registro vira um roteiro de `--keys` completo, e uma sessão de teste do usuário rende
 /// quantas repetições eu precisar aqui.
 const PAD_LOG_MAX: usize = 400;
+/// Quantos eventos de botão esperam o `GetNextButtonEvent`, por porta.
+const PAD_EVENTS_MAX: usize = 64;
 /// Quantas linhas do [`Machine::media_log`] ficam guardadas.
 const MEDIA_LOG_MAX: usize = 600;
 
@@ -1558,6 +1560,8 @@ struct MemStream {
     buffer: u32,
     size: u32,
     position: u32,
+    /// Se o buffer veio pelo `Set` e é do stream liberá-lo. Ver [`Machine::stream_call`].
+    dono: bool,
 }
 
 /// Estado de um objeto `ISound`.
@@ -1932,6 +1936,19 @@ struct ArrayPointer {
     buffer: u32,
 }
 
+impl ArrayPointer {
+    /// Se o vetor está ligado e aponta para algum lugar.
+    ///
+    /// **Endereço zero só é "nenhum vetor" sem buffer ligado.** Com um buffer, o ponteiro é um
+    /// deslocamento dentro dele, e zero é o deslocamento mais comum: o motor QX do SDK dá
+    /// `glVertexPointer(3, GL_FIXED, 0, 0)` para toda malha. Conferir só o endereço descartava
+    /// todo desenho por buffer com os vértices no começo — o cenário e os personagens do Dragon
+    /// Vs Chicken sumiam inteiros.
+    fn em_uso(&self) -> bool {
+        self.enabled && (self.address != 0 || self.buffer != 0)
+    }
+}
+
 /// Adapta os registradores e a pilha do guest ao formatador de `printf`.
 struct GuestArgs<'a, C: CpuBackend> {
     words: Vec<u32>,
@@ -2091,6 +2108,8 @@ pub struct Machine<C: CpuBackend> {
     /// O que o jogo escreveu via `DBGPRINTF`, na ordem em que apareceu e com quantas vezes
     /// cada mensagem se repetiu — um laço pode gerar milhares de linhas idênticas.
     debug_output: Vec<(String, u64)>,
+    /// Onde cada linha está em `debug_output`, para agrupar sem varrer a lista a cada chamada.
+    debug_indice: HashMap<String, usize>,
     /// Superfícies de desenho, indexadas pelo ponteiro do `IBitmap` no guest.
     bitmaps: HashMap<u32, Framebuffer>,
     /// `r0..r11` no momento da última falha de memória, para o relatório.
@@ -2159,6 +2178,8 @@ pub struct Machine<C: CpuBackend> {
     profiling_api: bool,
     /// Callback de `IIMAGE_Notify`, por objeto.
     image_notify: HashMap<u32, Callback>,
+    /// O `AEEImageInfo` que o `PFNIMAGEINFO` de cada imagem recebe, no heap do jogo.
+    image_info: HashMap<u32, u32>,
     /// O retângulo e a operação que o `IIMAGE_SetParm` deixou para os próximos `Draw`.
     recortes_de_imagem: HashMap<u32, RecorteDeImagem>,
     /// Blocos de memória apresentados como stream.
@@ -2303,6 +2324,8 @@ pub struct Machine<C: CpuBackend> {
     gl_vertices: ArrayPointer,
     gl_colors: ArrayPointer,
     gl_texcoords: ArrayPointer,
+    /// O vetor de coordenadas da unidade de textura 1.
+    gl_texcoords1: ArrayPointer,
     /// O vetor de normais do `glNormalPointer`. Sempre três componentes — a função nem recebe
     /// tamanho.
     gl_normals: ArrayPointer,
@@ -2366,13 +2389,11 @@ pub struct Machine<C: CpuBackend> {
     /// na memória do jogo, mudadas ou não. O Pac-Mania faz 168 mil `IIMAGE_Draw` em cinco
     /// segundos virtuais: 95% do tempo de API — 30 segundos de relógio — era essa cópia.
     dib_publicado: HashMap<u32, u64>,
-    /// Próximo endereço livre na região de superfícies.
-    surface_next: u32,
+    /// A região de superfícies, com o mesmo alocador do heap do jogo. Ver
+    /// [`Machine::reserva_superficie`].
+    superficies: Heap,
     /// Widgets cujo tratador está recebendo um aviso agora. Ver [`Machine::avisa_widget`].
     widgets_avisando: std::collections::HashSet<u32>,
-    /// Buffers de superfície devolvidos, como `(endereço, capacidade)`. Ver
-    /// [`Machine::solta_superficie`].
-    superficies_livres: Vec<(u32, u32)>,
     /// Cor tratada como transparente em cada superfície.
     transparency: HashMap<u32, u16>,
     /// O bitmap de destino de cada `ITransform` que o jogo pediu por `QueryInterface`.
@@ -2631,6 +2652,7 @@ impl<C: CpuBackend> Machine<C> {
             tracing: false,
             trace_filter: None,
             debug_output: Vec::new(),
+            debug_indice: HashMap::new(),
             bitmaps: HashMap::new(),
             fault_regs: [0; 12],
             fault_stack: Vec::new(),
@@ -2667,6 +2689,7 @@ impl<C: CpuBackend> Machine<C> {
             api_time: HashMap::new(),
             profiling_api: false,
             image_notify: HashMap::new(),
+            image_info: HashMap::new(),
             recortes_de_imagem: HashMap::new(),
             parametros_de_colecao: HashMap::new(),
             vetores: HashMap::new(),
@@ -2732,6 +2755,7 @@ impl<C: CpuBackend> Machine<C> {
             gl_vertices: ArrayPointer::default(),
             gl_colors: ArrayPointer::default(),
             gl_texcoords: ArrayPointer::default(),
+            gl_texcoords1: ArrayPointer::default(),
             gl_normals: ArrayPointer::default(),
             gl_buffers: HashMap::new(),
             gl_array_buffer: 0,
@@ -2748,8 +2772,7 @@ impl<C: CpuBackend> Machine<C> {
             dib_herdados: HashSet::new(),
             dib_do_decodificador: HashMap::new(),
             dib_publicado: HashMap::new(),
-            surface_next: loader::SURFACE_BASE,
-            superficies_livres: Vec::new(),
+            superficies: Heap::new(loader::SURFACE_BASE, loader::SURFACE_SIZE),
             widgets_avisando: std::collections::HashSet::new(),
             transparency: HashMap::new(),
             transformacoes: HashMap::new(),
@@ -3520,6 +3543,8 @@ impl<C: CpuBackend> Machine<C> {
         if self.dib_buffers.contains_key(&addr) {
             self.dib_herdados.insert(addr);
         }
+        // A cor transparente é do bitmap que morreu aqui, não do objeto que nasce.
+        self.transparency.remove(&addr);
         self.cpu.write_u32(addr, loader::vtable_addr(iface))?;
         Ok(addr)
     }

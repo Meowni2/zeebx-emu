@@ -30,6 +30,18 @@ const SPEED_WINDOW_MS: u64 = 500;
 /// Quantas amostras o gráfico guarda. A meio segundo cada, é um minuto de história.
 const HISTORY: usize = 120;
 
+/// Quantos quadros do jogo uma volta da janela pode rodar para alcançar o relógio do mundo.
+/// Ver [`Session::step`].
+const QUADROS_POR_VOLTA: u32 = 4;
+
+/// O atraso a partir do qual o jogo recupera quadros: um quadro de 60 Hz.
+const ATRASO_PARA_RECUPERAR_MS: u64 = 17;
+
+/// O maior atraso que o jogo recupera. Além dele o atraso é perdoado, e não corrido atrás: uma
+/// pausa, um carregamento ou a janela arrastada param o relógio virtual enquanto o real anda, e
+/// recuperar tudo depois faria o jogo disparar.
+const ATRASO_MAXIMO_MS: u64 = 250;
+
 /// Por que um jogo não conseguiu começar.
 #[derive(Debug)]
 pub enum StartError {
@@ -259,18 +271,49 @@ impl Session {
         }
         self.sample_speed();
         let deadline = Instant::now() + budget;
-        let before = self.machine.gl_swaps();
+        let mut before = self.machine.gl_swaps();
+        let mut quadros = 0;
         loop {
             if speed_limit && self.ahead_ms() > 0 {
                 return Step::Ahead;
             }
             match self.advance_once() {
                 Some(step) => return step,
-                None if self.machine.gl_swaps() != before => return Step::Presented,
+                None if self.machine.gl_swaps() != before => {
+                    // **Um quadro por volta da janela era o teto do jogo.** Com a janela abaixo de
+                    // 60 quadros por segundo — a emulação e a interface somadas passando do
+                    // retraço —, o jogo andava na mesma proporção, liso e lento: o Quake rodava
+                    // em câmera lenta sem engasgar. Atrasado, ele roda mais quadros nesta volta, e
+                    // só o último vai para a tela.
+                    quadros += 1;
+                    let recupera = speed_limit
+                        && quadros < QUADROS_POR_VOLTA
+                        && Instant::now() < deadline
+                        && self.atraso_ms() > ATRASO_PARA_RECUPERAR_MS;
+                    if !recupera {
+                        return Step::Presented;
+                    }
+                    before = self.machine.gl_swaps();
+                }
                 None if Instant::now() >= deadline => return Step::Running,
                 None => {}
             }
         }
+    }
+
+    /// Quantos milissegundos o jogo está atrasado em relação ao relógio do mundo.
+    ///
+    /// Um atraso maior que [`ATRASO_MAXIMO_MS`] é perdoado aqui mesmo: o começo da medição anda
+    /// para a frente até sobrar só o máximo.
+    fn atraso_ms(&mut self) -> u64 {
+        let jogo = u64::from(self.machine.clock_ms()).saturating_sub(self.clock_base);
+        let real = self.started.elapsed().as_millis() as u64;
+        let atraso = real.saturating_sub(jogo);
+        if atraso > ATRASO_MAXIMO_MS {
+            self.started += Duration::from_millis(atraso - ATRASO_MAXIMO_MS);
+            return ATRASO_MAXIMO_MS;
+        }
+        atraso
     }
 
     /// A partida do jogo: o `EVT_APP_START` entregue ao applet, **uma vez**.

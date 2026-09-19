@@ -114,7 +114,7 @@ mod tests {
     fn os_limites_do_opengl_nao_sao_zero() {
         // Responder zero para o tamanho máximo de textura diz ao jogo que nenhuma cabe.
         assert_eq!(integer(GL_MAX_TEXTURE_SIZE, 640, 480), Some(&[1024][..]));
-        assert_eq!(integer(GL_MAX_TEXTURE_UNITS, 640, 480), Some(&[1][..]));
+        assert_eq!(integer(GL_MAX_TEXTURE_UNITS, 640, 480), Some(&[2][..]));
         assert_eq!(integer(GL_DEPTH_BITS, 640, 480), Some(&[16][..]));
         assert_eq!(integer(GL_GREEN_BITS, 640, 480), Some(&[6][..]));
         assert_eq!(
@@ -221,7 +221,8 @@ pub fn componentes(pname: u32) -> usize {
         | GL_POSITION
         | GL_EMISSION
         | GL_AMBIENT_AND_DIFFUSE
-        | GL_LIGHT_MODEL_AMBIENT => 4,
+        | GL_LIGHT_MODEL_AMBIENT
+        | GL_FOG_COLOR => 4,
         GL_SPOT_DIRECTION => 3,
         _ => 1,
     }
@@ -321,6 +322,32 @@ pub const GL_INVERT: u32 = 0x150a;
 pub const GL_STENCIL_BUFFER_BIT: u32 = 0x0400;
 pub const GL_ADD: u32 = 0x0104;
 
+/// O `GL_COMBINE` do `glTexEnv`, do `GLES/gl.h` do OpenGL ES 1.1: a cor do fragmento sai de uma
+/// função (`COMBINE_RGB`/`COMBINE_ALPHA`) sobre até três fontes, cada uma com o seu operando.
+pub const GL_TEXTURE_ENV: u32 = 0x2300;
+pub const GL_TEXTURE_ENV_COLOR: u32 = 0x2201;
+pub const GL_COMBINE: u32 = 0x8570;
+pub const GL_COMBINE_RGB: u32 = 0x8571;
+pub const GL_COMBINE_ALPHA: u32 = 0x8572;
+pub const GL_RGB_SCALE: u32 = 0x8573;
+pub const GL_ALPHA_SCALE: u32 = 0x0d1c;
+pub const GL_ADD_SIGNED: u32 = 0x8574;
+pub const GL_INTERPOLATE: u32 = 0x8575;
+pub const GL_SUBTRACT: u32 = 0x84e7;
+pub const GL_DOT3_RGB: u32 = 0x86ae;
+pub const GL_DOT3_RGBA: u32 = 0x86af;
+pub const GL_CONSTANT: u32 = 0x8576;
+pub const GL_PRIMARY_COLOR: u32 = 0x8577;
+pub const GL_PREVIOUS: u32 = 0x8578;
+/// `GL_SRC0_RGB`; as fontes 1 e 2 são os dois seguintes.
+pub const GL_SRC0_RGB: u32 = 0x8580;
+/// `GL_SRC0_ALPHA`; as fontes 1 e 2 são os dois seguintes.
+pub const GL_SRC0_ALPHA: u32 = 0x8588;
+/// `GL_OPERAND0_RGB`; os operandos 1 e 2 são os dois seguintes.
+pub const GL_OPERAND0_RGB: u32 = 0x8590;
+/// `GL_OPERAND0_ALPHA`; os operandos 1 e 2 são os dois seguintes.
+pub const GL_OPERAND0_ALPHA: u32 = 0x8598;
+
 /// Limites e capacidades que `glGetIntegerv` responde, de `gl.h`.
 pub const GL_MAX_LIGHTS: u32 = 0x0d31;
 pub const GL_MAX_TEXTURE_SIZE: u32 = 0x0d33;
@@ -350,7 +377,7 @@ pub const MAX_TEXTURE_SIZE: i32 = 1024;
 /// que fazíamos — diz ao jogo que a maior textura possível tem lado zero.
 pub fn integer(name: u32, width: i32, height: i32) -> Option<&'static [i32]> {
     // As listas precisam de tempo de vida estático, e todas são constantes.
-    const ONE: [i32; 1] = [1];
+    const TWO: [i32; 1] = [2];
     const EIGHT: [i32; 1] = [8];
     const SIXTEEN: [i32; 1] = [16];
     const ZERO: [i32; 1] = [0];
@@ -361,7 +388,8 @@ pub fn integer(name: u32, width: i32, height: i32) -> Option<&'static [i32]> {
     const MAX_ELEMENTS: [i32; 1] = [65_535];
     Some(match name {
         GL_MAX_TEXTURE_SIZE => &MAX_TEXTURE,
-        GL_MAX_TEXTURE_UNITS => &ONE,
+        // Duas, como a Adreno 130 e o mínimo do OpenGL ES 1.1. Ver `UnidadeDeTextura`.
+        GL_MAX_TEXTURE_UNITS => &TWO,
         GL_MAX_LIGHTS => &EIGHT,
         GL_MAX_MODELVIEW_STACK_DEPTH
         | GL_MAX_PROJECTION_STACK_DEPTH

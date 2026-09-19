@@ -1,6 +1,6 @@
 [package]
 name = "zeebx"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 # GPLv2 porque o unicorn-engine é GPLv2 e vai compilado dentro do binário. Ver LICENSE.
 authors = ["ZeebxTeam"]
@@ -54,6 +54,11 @@ zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }
 symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
 discord-rich-presence = "1.1"
 ureq = "3"
+
+# O `ioctl` que lê a escala dos sensores de movimento em `/dev/input`. Já vinha na árvore por
+# várias dependências, então não acrescenta build nenhuma.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 
 # O ícone dentro do `.exe` do Windows: é o que o Explorer e a barra de tarefas mostram.
 [build-dependencies]

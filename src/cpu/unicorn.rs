@@ -105,9 +105,11 @@ impl UnicornCpu {
         uc.ctl_set_cpu_model(ArmCpuModel::Model_1176 as i32)
             .map_err(uc_err)?;
         // Guarda o endereço acessado quando o guest toca memória fora do mapa. Sem isso só
-        // teríamos o PC, que diz onde está a instrução, não o que ela tentou acessar.
+        // teríamos o PC, que diz onde está a instrução, não o que ela tentou acessar. Vale
+        // também para o que está mapeado sem a permissão: executar a página nula ou escrever
+        // numa região só de leitura.
         uc.add_mem_hook(
-            HookType::MEM_UNMAPPED,
+            HookType::MEM_UNMAPPED | HookType::MEM_PROT,
             0,
             u64::MAX,
             |uc, _type, address, _size, _value| {
@@ -160,6 +162,7 @@ impl UnicornCpu {
                 }
                 _ => {}
             }
+            super::apara_semihosting(&mut saida.borrow_mut());
             let _ = uc.reg_write(RegisterARM::R0, 0);
         })
         .map_err(uc_err)?;
@@ -383,10 +386,10 @@ impl CpuBackend for UnicornCpu {
             let len = region.bytes.len() as u64;
             // O unicorn só mapeia em múltiplos de página; arredondamos para cima.
             let size = len.div_ceil(PAGE) * PAGE;
-            let prot = if region.writable {
-                Prot::ALL
-            } else {
-                Prot::READ | Prot::EXEC
+            let prot = match (region.writable, region.executavel) {
+                (true, _) => Prot::ALL,
+                (false, true) => Prot::READ | Prot::EXEC,
+                (false, false) => Prot::READ,
             };
             self.uc.mem_map(base, size, prot).map_err(uc_err)?;
             if !region.bytes.is_empty() {
@@ -536,12 +539,14 @@ impl CpuBackend for UnicornCpu {
             // Sem erro significa que alguém chamou `emu_stop`, e o único que chama é o hook
             // de bloco ao ver o orçamento estourar.
             Ok(()) => Ok(StopReason::Budget),
-            Err(uc_error::FETCH_UNMAPPED) => {
+            Err(uc_error::FETCH_UNMAPPED) | Err(uc_error::FETCH_PROT) => {
                 // O endereço buscado é o que interessa; o PC pode ter ficado na instrução anterior.
                 let target = self.uc.get_data().last_fault.unwrap_or(stopped_at);
                 Ok(classify_fetch(target))
             }
-            Err(uc_error::READ_UNMAPPED) | Err(uc_error::WRITE_UNMAPPED) => {
+            Err(uc_error::READ_UNMAPPED)
+            | Err(uc_error::WRITE_UNMAPPED)
+            | Err(uc_error::WRITE_PROT) => {
                 Ok(StopReason::MemoryFault {
                     addr: self.uc.get_data().last_fault.unwrap_or(stopped_at),
                     pc: self.uc.get_data().last_fault_pc.unwrap_or(stopped_at),

@@ -215,6 +215,24 @@ impl std::error::Error for CpuError {}
 pub mod dynarmic;
 pub mod unicorn;
 
+/// Quanto do log por semihosting fica guardado, em bytes.
+const MAX_SEMIHOSTING: usize = 256 * 1024;
+
+/// Mantém o log por semihosting dentro de [`MAX_SEMIHOSTING`], jogando fora a metade mais antiga.
+///
+/// Era uma `String` que só crescia: o Peggle e o Zuma escrevem por ali a sessão inteira, e o
+/// relatório clona o texto todo a cada quadro em que a janela de log está aberta.
+pub(crate) fn apara_semihosting(texto: &mut String) {
+    if texto.len() <= MAX_SEMIHOSTING {
+        return;
+    }
+    let mut corte = texto.len() - MAX_SEMIHOSTING / 2;
+    while !texto.is_char_boundary(corte) {
+        corte += 1;
+    }
+    texto.drain(..corte);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,3 +253,4 @@ mod tests {
         assert_eq!(latin1_encode(&latin1_decode(&bytes)), bytes);
     }
 }
+

@@ -335,18 +335,55 @@ impl<C: CpuBackend> Machine<C> {
                 let [x, y, z, width, height] = values;
                 self.gl.draw_texture(x, y, z, width, height);
             }
-            "TexEnvx" | "TexEnvi" | "TexEnvf" => {
-                if a[1] == gles::GL_TEXTURE_ENV_MODE {
-                    // O modo é um enum, mesmo quando chega pela variante de ponto fixo.
-                    self.gl.set_texture_env(a[2]);
+            // O modo e os parâmetros do `GL_COMBINE` são enums, e chegam inteiros mesmo pela
+            // variante de ponto fixo ou de `float`; só as escalas são número. Ver `TexEnv`.
+            "TexEnvx" | "TexEnvi" | "TexEnvf" if a[0] == gles::GL_TEXTURE_ENV => {
+                let numero = match name {
+                    "TexEnvx" => gles::fixed(a[2]),
+                    "TexEnvf" => f32::from_bits(a[2]),
+                    _ => a[2] as i32 as f32,
+                };
+                let enumeracao = match name {
+                    "TexEnvf" => f32::from_bits(a[2]) as u32,
+                    _ => a[2],
+                };
+                match a[1] {
+                    gles::GL_TEXTURE_ENV_MODE => self.gl.set_texture_env(enumeracao),
+                    pname => self.gl.set_texture_env_param(pname, enumeracao, numero),
                 }
             }
-            "TexEnvxv" | "TexEnviv" | "TexEnvfv" => {
-                if a[1] == gles::GL_TEXTURE_ENV_MODE {
-                    let value = self.cpu.read_u32(a[2])?;
-                    self.gl.set_texture_env(value);
+            "TexEnvxv" | "TexEnviv" | "TexEnvfv" if a[0] == gles::GL_TEXTURE_ENV => {
+                match a[1] {
+                    gles::GL_TEXTURE_ENV_COLOR => {
+                        let mut cor = [0.0f32; 4];
+                        for (i, canal) in cor.iter_mut().enumerate() {
+                            let bruto = self.cpu.read_u32(a[2] + i as u32 * 4)?;
+                            *canal = match name {
+                                "TexEnvxv" => gles::fixed(bruto),
+                                "TexEnvfv" => f32::from_bits(bruto),
+                                // Inteiros vão de 0 ao maior positivo, como toda cor inteira.
+                                _ => (bruto as i32 as f32 / i32::MAX as f32).max(0.0),
+                            };
+                        }
+                        self.gl.set_texture_env_color(cor);
+                    }
+                    gles::GL_TEXTURE_ENV_MODE => {
+                        let value = self.cpu.read_u32(a[2])?;
+                        self.gl.set_texture_env(value);
+                    }
+                    pname => {
+                        let bruto = self.cpu.read_u32(a[2])?;
+                        let (enumeracao, numero) = match name {
+                            "TexEnvxv" => (bruto, gles::fixed(bruto)),
+                            "TexEnvfv" => (f32::from_bits(bruto) as u32, f32::from_bits(bruto)),
+                            _ => (bruto, bruto as i32 as f32),
+                        };
+                        self.gl.set_texture_env_param(pname, enumeracao, numero);
+                    }
                 }
             }
+            // O ambiente de ponto (`GL_POINT_SPRITE_OES`) não tem nada que desenhemos.
+            "TexEnvx" | "TexEnvi" | "TexEnvf" | "TexEnvxv" | "TexEnviv" | "TexEnvfv" => {}
             "ActiveTexture" => self.gl.set_active_texture(a[0]),
             "ClientActiveTexture" => self.gl.set_client_active_texture(a[0]),
             "BindTexture" => self.gl.bind_texture(a[1]),
@@ -433,14 +470,13 @@ impl<C: CpuBackend> Machine<C> {
                     buffer: self.gl_array_buffer,
                 };
                 // O vetor de coordenadas pertence à unidade escolhida pelo
-                // `glClientActiveTexture`; as outras unidades não têm onde cair aqui.
-                if name == "TexCoordPointer" && !self.gl.base_client_unit() {
-                    return Ok(Some(SUCCESS));
-                }
-                let slot = match name {
-                    "VertexPointer" => &mut self.gl_vertices,
-                    "ColorPointer" => &mut self.gl_colors,
-                    _ => &mut self.gl_texcoords,
+                // `glClientActiveTexture`; só as duas primeiras desenham.
+                let slot = match (name, self.gl.client_unit()) {
+                    ("VertexPointer", _) => &mut self.gl_vertices,
+                    ("ColorPointer", _) => &mut self.gl_colors,
+                    (_, 0) => &mut self.gl_texcoords,
+                    (_, 1) => &mut self.gl_texcoords1,
+                    _ => return Ok(Some(SUCCESS)),
                 };
                 // `enabled` é do `EnableClientState`, não do ponteiro: trocar o ponteiro não
                 // liga nem desliga o vetor.
@@ -453,10 +489,11 @@ impl<C: CpuBackend> Machine<C> {
                     gles::GL_VERTEX_ARRAY => self.gl_vertices.enabled = on,
                     gles::GL_COLOR_ARRAY => self.gl_colors.enabled = on,
                     gles::GL_NORMAL_ARRAY => self.gl_normals.enabled = on,
-                    gles::GL_TEXTURE_COORD_ARRAY if self.gl.base_client_unit() => {
-                        self.gl_texcoords.enabled = on
-                    }
-                    gles::GL_TEXTURE_COORD_ARRAY => {}
+                    gles::GL_TEXTURE_COORD_ARRAY => match self.gl.client_unit() {
+                        0 => self.gl_texcoords.enabled = on,
+                        1 => self.gl_texcoords1.enabled = on,
+                        _ => {}
+                    },
                     _ => {}
                 }
             }
@@ -697,20 +734,31 @@ impl<C: CpuBackend> Machine<C> {
 
     /// Monta os vértices a partir dos vetores do cliente e manda desenhar.
     pub(super) fn gles_draw(&mut self, mode: u32, indices: &[u32]) -> Result<(), CpuError> {
-        if !self.gl_vertices.enabled || self.gl_vertices.address == 0 || indices.is_empty() {
+        if !self.gl_vertices.em_uso() || indices.is_empty() {
             return Ok(());
         }
         let base = self.gl.current_color();
         // Um bloco por array, não um por componente: é a mesma memória do guest, pedida de
         // uma vez. Ver [`Self::read_array`].
         let posicoes = self.read_array(self.gl_vertices, indices, [0.0, 0.0, 0.0, 1.0])?;
-        let cores = (self.gl_colors.enabled && self.gl_colors.address != 0)
+        let cores = self
+            .gl_colors
+            .em_uso()
             .then(|| self.read_array(self.gl_colors, indices, [0.0, 0.0, 0.0, 1.0]))
             .transpose()?;
-        let uvs = (self.gl_texcoords.enabled && self.gl_texcoords.address != 0)
+        let uvs = self
+            .gl_texcoords
+            .em_uso()
             .then(|| self.read_array(self.gl_texcoords, indices, [0.0; 4]))
             .transpose()?;
-        let normais = (self.gl_normals.enabled && self.gl_normals.address != 0)
+        let uvs1 = self
+            .gl_texcoords1
+            .em_uso()
+            .then(|| self.read_array(self.gl_texcoords1, indices, [0.0; 4]))
+            .transpose()?;
+        let normais = self
+            .gl_normals
+            .em_uso()
             .then(|| self.read_array(self.gl_normals, indices, [0.0, 0.0, 1.0, 0.0]))
             .transpose()?;
         let vertices: Vec<Vertex> = (0..indices.len())
@@ -718,6 +766,7 @@ impl<C: CpuBackend> Machine<C> {
                 position: posicoes[i],
                 color: cores.as_ref().map_or(base, |c| c[i]),
                 uv: uvs.as_ref().map_or([0.0; 2], |t| [t[i][0], t[i][1]]),
+                uv1: uvs1.as_ref().map_or([0.0; 2], |t| [t[i][0], t[i][1]]),
                 normal: normais
                     .as_ref()
                     .map_or(self.gl_normal_atual, |n| [n[i][0], n[i][1], n[i][2]]),
