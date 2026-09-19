@@ -285,9 +285,21 @@ impl<C: CpuBackend> Machine<C> {
         if ptr == 0 {
             return self.malloc(size);
         }
+        // Tamanho zero é `FREE`: o bloco sai e o ponteiro vira nulo. Entregar um bloco novo de
+        // oito bytes deixava o `ERR_REALLOC(0, &p)` com `p` não nulo, e um jogo que confia no
+        // nulo nunca o devolvia.
+        if size == 0 {
+            self.heap.free(ptr);
+            return Ok(0);
+        }
         let old_size = self.heap.size_of(ptr).unwrap_or(0);
         let new_ptr = self.malloc(size)?;
-        if new_ptr != 0 && old_size > 0 {
+        // Sem espaço, o bloco antigo fica como estava: é o que o `realloc` promete, e o jogo
+        // que confere o nulo ainda tem os dados dele.
+        if new_ptr == 0 {
+            return Ok(0);
+        }
+        if old_size > 0 {
             self.copy_guest(new_ptr, ptr, old_size.min(size))?;
         }
         self.heap.free(ptr);

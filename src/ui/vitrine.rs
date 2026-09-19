@@ -62,21 +62,67 @@ pub struct Vitrine {
     roda: f32,
     pub logos: HashMap<u32, Option<egui::TextureHandle>>,
     pub classificacoes: HashMap<u32, Option<egui::TextureHandle>>,
+    /// O que está escrito na busca da barra de cima. Vazia, a lista mostra todos os jogos.
+    pub busca: String,
+    /// O campo da busca, para saber se ele tem o foco: com ele, o teclado escreve e não navega.
+    pub campo_da_busca: Option<egui::Id>,
 }
 
 impl Vitrine {
     fn indice(&self, total: usize) -> usize {
         self.cursor.rem_euclid(total.max(1) as i64) as usize
     }
+
+    /// A busca mudou: a escolha volta ao primeiro resultado, sem a animação atravessar a lista.
+    pub fn busca_mudou(&mut self) {
+        self.cursor = 0;
+        self.posicao = 0.0;
+        self.rolar = true;
+    }
+}
+
+/// Se o título tem todas as palavras da busca, em qualquer ordem e em qualquer parte.
+///
+/// Maiúsculas, acentos e pontuação não contam: "cnk" acha "C.N.K.", "joao" acha "João" e
+/// "extreme boia" acha "Zeebo Extreme Bóia Cross".
+pub fn casa_com_a_busca(titulo: &str, busca: &str) -> bool {
+    let titulo = sem_acento(titulo);
+    let compacto: String = titulo.split_whitespace().collect();
+    sem_acento(busca)
+        .split_whitespace()
+        .all(|palavra| titulo.contains(palavra) || compacto.contains(palavra))
+}
+
+/// O texto em minúsculas, sem acento, com a pontuação trocada por espaço e as siglas com ponto
+/// juntas ("C.N.K." vira "cnk").
+fn sem_acento(texto: &str) -> String {
+    let mut saida = String::with_capacity(texto.len());
+    for c in texto.chars().flat_map(char::to_lowercase) {
+        let c = match c {
+            'á' | 'à' | 'â' | 'ã' | 'ä' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            'ñ' => 'n',
+            '.' | '\'' | '’' => continue,
+            c if c.is_alphanumeric() => c,
+            _ => ' ',
+        };
+        saida.push(c);
+    }
+    saida
 }
 
 impl App {
     /// Os jogos que a lista mostra, em ordem de título: todos menos a Z-Wheel, que abre pela
-    /// barra de cima. Cada item é `(título, índice em self.games)`.
+    /// barra de cima, e os que a busca deixa. Cada item é `(título, índice em self.games)`.
     fn lista_visivel(&self) -> Vec<(String, usize)> {
         let mut lista: Vec<(String, usize)> = (0..self.games.len())
             .filter(|&i| self.games[i].clsid != Some(crate::session::Z_WHEEL))
             .map(|i| (self.titulo_de(&self.games[i]), i))
+            .filter(|(titulo, _)| casa_com_a_busca(titulo, &self.vitrine.busca))
             .collect();
         lista.sort_by_key(|(titulo, _)| titulo.to_lowercase());
         lista
@@ -95,11 +141,26 @@ impl App {
         };
         let lista = self.lista_visivel();
 
+        let buscando = !self.vitrine.busca.trim().is_empty();
         ui.horizontal(|ui| {
-            ui.label(
+            let contagem = if buscando {
+                let total = self
+                    .games
+                    .iter()
+                    .filter(|jogo| jogo.clsid != Some(crate::session::Z_WHEEL))
+                    .count();
+                self.catalog.format(
+                    "library.count_filtered",
+                    &[
+                        ("shown", &lista.len().to_string()),
+                        ("count", &total.to_string()),
+                    ],
+                )
+            } else {
                 self.catalog
-                    .format("library.count", &[("count", &lista.len().to_string())]),
-            );
+                    .format("library.count", &[("count", &lista.len().to_string())])
+            };
+            ui.label(contagem);
             if ui.button(self.tr("library.rescan")).clicked() {
                 self.rescan();
             }
@@ -114,6 +175,13 @@ impl App {
             ui.separator();
         }
 
+        if lista.is_empty() && buscando {
+            ui.label(
+                self.catalog
+                    .format("library.no_match", &[("query", self.vitrine.busca.trim())]),
+            );
+            return;
+        }
         if lista.is_empty() {
             ui.label(
                 self.catalog
@@ -179,13 +247,19 @@ impl App {
             return Vec::new();
         }
         ctx.request_repaint_after(LEITURA_DO_CONTROLE);
+        // Escrevendo na busca, setas e espaço são do texto. O Enter tira o foco do campo antes
+        // de a biblioteca ler o quadro, e por isso continua abrindo o jogo escolhido.
+        let escrevendo = self
+            .vitrine
+            .campo_da_busca
+            .is_some_and(|campo| ctx.memory(|m| m.has_focus(campo)));
         let pads: Vec<Pad> = self.pads_now(ctx).into_iter().map(|(_, pad)| pad).collect();
         let botao = |nome: &str| {
             Pad::button_by_name(nome).is_some_and(|i| pads.iter().any(|pad| pad.is_down(i)))
         };
         let eixo = |eixo: usize, sinal: i32| pads.iter().any(|pad| pad.axes[eixo] * sinal > MANCHE);
         let (teclas, enter) = ctx.input(|i| {
-            let k = |tecla| i.key_down(tecla);
+            let k = |tecla| !escrevendo && i.key_down(tecla);
             (
                 [
                     k(egui::Key::ArrowUp),
@@ -690,5 +764,23 @@ mod tests {
         assert_eq!(vitrine.indice(5), 4);
         vitrine.cursor = 7;
         assert_eq!(vitrine.indice(5), 2);
+    }
+
+    #[test]
+    fn a_busca_ignora_caixa_acento_e_pontuacao() {
+        assert!(casa_com_a_busca("Zeebo Extreme Bóia Cross", "boia"));
+        assert!(casa_com_a_busca("Zeebo Extreme Bóia Cross", "EXTREME boia"));
+        assert!(casa_com_a_busca("Zeebo Extreme Bóia Cross", "cross zeebo"));
+        assert!(casa_com_a_busca("C.N.K. 3D", "cnk"));
+        assert!(casa_com_a_busca("Resident Evil 4", "resident evil"));
+        assert!(casa_com_a_busca("Double Dragon", "doubledragon"));
+        assert!(!casa_com_a_busca("Double Dragon", "rolima"));
+        assert!(!casa_com_a_busca("Zeebo Extreme Rolimã", "rolima boia"));
+    }
+
+    #[test]
+    fn a_busca_vazia_mostra_todos() {
+        assert!(casa_com_a_busca("Tênis", ""));
+        assert!(casa_com_a_busca("Tênis", "   "));
     }
 }

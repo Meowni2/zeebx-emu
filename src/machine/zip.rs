@@ -159,19 +159,34 @@ impl<C: CpuBackend> Machine<C> {
             "Release" => {
                 let remaining = self.objects.release(this);
                 if remaining == 0 {
-                    self.streams.remove(&this);
+                    self.solta_stream(this);
                 }
                 remaining
             }
             // void Set(IMemAStream *, byte *pBuff, uint32 dwSize, uint32 dwOffset,
             //          boolean bSysMem)
+            //
+            // **O buffer passa a ser do stream**, que o devolve ao ser destruído ou ao receber
+            // outro — o `bSysMem` só diz de qual heap ele veio, e aqui os dois são o mesmo. O
+            // Action Hero 3D monta bitmaps de 7616 bytes, vários por quadro, entrega ao stream e
+            // nunca mais o toca: sem isso eram 1,9 MB por segundo de fase, e em três minutos
+            // o `MALLOC` devolvia nulo.
+            //
+            // O `SetEx` troca o `bSysMem` por um `pfnFree` do jogo, e esse fica de fora: chamar
+            // código do guest no meio de um despacho é o caminho que já derrubou jogo antes.
             "Set" | "SetEx" => {
+                // Pôr de novo o mesmo buffer não é trocá-lo.
+                if self.streams.get(&this).is_some_and(|s| s.buffer == a1) {
+                    self.streams.remove(&this);
+                }
+                self.solta_stream(this);
                 self.streams.insert(
                     this,
                     MemStream {
                         buffer: a1,
                         size: a2,
                         position: a3.min(a2),
+                        dono: name == "Set",
                     },
                 );
                 SUCCESS
@@ -208,5 +223,14 @@ impl<C: CpuBackend> Machine<C> {
             _ => return Ok(None),
         };
         Ok(Some(result))
+    }
+
+    /// Esquece o buffer de um `IMemAStream`, devolvendo-o ao heap quando ele é do stream.
+    fn solta_stream(&mut self, this: u32) {
+        if let Some(stream) = self.streams.remove(&this)
+            && stream.dono
+        {
+            self.heap.free(stream.buffer);
+        }
     }
 }

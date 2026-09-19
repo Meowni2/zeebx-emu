@@ -13,6 +13,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::input::bindings::Source;
+
 /// O que um Wii Remote está fazendo agora.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EstadoWiimote {
@@ -55,12 +57,40 @@ pub const BOTOES: [(&str, u16); 11] = [
 /// centro (`0x200`); a gravidade fica perto de 100 unidades em todos os eixos.
 const UNIDADES_POR_G: f32 = 100.0;
 
+/// O nome de cada botão de [`BOTOES`] no mapeamento, na mesma ordem.
+///
+/// Os botões do Wii Remote são origens como as do gilrs, e é assim que ele serve de Z-Pad com o
+/// mapeamento que o jogador quiser. O prefixo os separa dos botões do gilrs, que têm nomes como
+/// `South` e `DPadUp`: uma porta com o Wii Remote escolhido lê estes, e só estes.
+pub const FONTES: [&str; 11] = [
+    "WiiUp", "WiiDown", "WiiLeft", "WiiRight", "WiiA", "WiiB", "Wii1", "Wii2", "WiiPlus",
+    "WiiMinus", "WiiHome",
+];
+
 impl EstadoWiimote {
     pub fn apertado(&self, nome: &str) -> bool {
         BOTOES
             .iter()
             .position(|(n, _)| *n == nome)
             .is_some_and(|i| self.botoes & (1 << i) != 0)
+    }
+
+    /// Se a origem é um botão deste controle e está apertada.
+    pub fn fonte_acionada(&self, fonte: &Source) -> bool {
+        match fonte {
+            Source::Button { name } => FONTES
+                .iter()
+                .position(|n| n == name)
+                .is_some_and(|i| self.botoes & (1 << i) != 0),
+            _ => false,
+        }
+    }
+
+    /// O primeiro botão apertado, para a tela de configuração capturar.
+    pub fn primeira_fonte(&self) -> Option<Source> {
+        (0..FONTES.len())
+            .find(|&i| self.botoes & (1 << i) != 0)
+            .map(|i| Source::button(FONTES[i]))
     }
 }
 

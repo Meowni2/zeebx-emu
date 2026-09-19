@@ -45,7 +45,7 @@ impl<C: CpuBackend> Machine<C> {
                     let height = self.cpu.read_u32(source + 12)? as i32;
                     if width > 0 && height > 0 {
                         self.scale_source = Some((width, height));
-                        self.gl.set_surface(width as usize, height as usize);
+                        self.gl.set_surface_esticada(width as usize, height as usize);
                     }
                 }
                 self.write_egl_true(4)?

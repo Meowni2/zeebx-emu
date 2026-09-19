@@ -50,14 +50,20 @@ placa monta já é contada do topo e não passa por ela.
 `perto + (longe − perto) × (z/w × 0,5 + 0,5)`. O Crash alterna faixas para pôr o brilho do kart
 por cima do resto, e antes a chamada era ignorada em silêncio.
 
-## Só a unidade zero desenha — nos dois rasterizadores
+## Duas unidades de textura — nos dois rasterizadores
 
-O pipeline lê uma textura por fragmento, então só a unidade 0 tem efeito. O Resident Evil 4 monta
-o mundo com duas unidades e termina cada bloco na unidade 1, desligando a textura e trocando a
-ligada. O rasterizador de software já ignorava isso fora da unidade 0; o da placa repassava ao
-estado de software, mas aplicava na textura base — e a vila saía branca com a placa ligada. Ligar
-e desligar textura, a textura ligada, o modo, os parâmetros e o recorte agora só valem na unidade
-0 também em `video/gpu.rs` (`GlState::base_active_unit`).
+A Adreno 130 tem duas unidades, e o OpenGL ES 1.1 exige ao menos duas. Por muito tempo o
+pipeline desenhou só a unidade 0 e respondia `GL_MAX_TEXTURE_UNITS` = 1; hoje ele tem as duas
+(`UnidadeDeTextura`): cada uma com textura ligada, liga-desliga, ambiente (`TexEnv`) e vetor de
+coordenadas, e o vértice carrega a `uv1`. A unidade 1 age sobre o que saiu da 0 — no `GL_COMBINE`,
+`GL_PREVIOUS` é a saída da 0 e `GL_PRIMARY_COLOR` a cor do vértice. Ela é amostrada sem mipmap.
+
+**A ligação e os parâmetros são da unidade ativa.** O Resident Evil 4 termina cada bloco na
+unidade 1, desligando a textura e trocando a ligada; quando a placa aplicava isso na textura base,
+a vila saía branca. O `bound_texture` responde pela unidade ativa, que é a que um `glTexImage2D`
+alcança.
+
+Responder uma só era o que escondia os personagens do Dragon Vs Chicken — ver a seção dele.
 
 ## A matriz de textura
 
@@ -125,6 +131,17 @@ Resident Evil 4 e o Crash Nitro Kart ligam em jogo — cortava tudo além dos 64
 lados que a proporção larga acabara de abrir ficavam com a cor de fundo do anexo. Quem não usa
 tesoura, como o Raging Thunder 2, nunca viu a faixa.
 
+**Na placa, o `y` da tesoura também é convertido para o topo** (`tesoura_no_anexo`, em
+`video/gpu.rs`). A viewport passava por `viewport_do_topo` e a tesoura ia crua; na tela inteira
+as duas leituras coincidem, e só um retângulo mostrava a diferença. O portal do Crash Nitro Kart
+é um: viewport e tesoura no retângulo dele, e a tesoura caía na faixa espelhada — o portal saía
+vazio e o cenário voltou a "subir do nada" ao atravessá-lo, o mesmo sintoma que a viewport já
+teve, desde que a tesoura passou a ser respeitada. O rasterizador de software já convertia.
+
+E, na proporção larga, a tesoura **se desloca** de `extra` e só cresce até as bordas que já
+tocava. Alargá-la pela razão da viewport, como a primeira versão fazia, dava certo na tela inteira
+e fazia o retângulo de um portal vazar para fora da moldura.
+
 ## Névoa
 
 O `glFog*` era atendido em silêncio e o `GL_FOG`, ignorado. O Resident Evil 4 pede névoa linear
@@ -140,10 +157,74 @@ do OpenGL ES 1.1. Na placa é mais um atributo do vértice, e quem mistura é o 
 Nas formas `x` o `GL_FOG_MODE` vem **inteiro**, não em ponto fixo: é uma enumeração, e convertê-la
 como escala daria `0x2601/65536`, que não é modo nenhum.
 
+O `GL_FOG_COLOR` tem **quatro** componentes e precisa estar no `gles::componentes`: fora dali o
+`glFogxv` lia só o primeiro, e a névoa bege do Resident Evil 4 chegava com verde e azul zerados —
+vermelha.
+
 **A chave dos ajustes gráficos é de quem joga, não do jogo.** No console a névoa costuma esconder
 o que a distância de desenho não alcançava, e aqui a cena chega inteira; quem prefere ver longe
 desliga. Fica ligada por omissão — o jogo pediu a névoa, e em muitos ela é o efeito, não o
 remendo.
+
+## O Dragon Vs Chicken, a amostra do SDK
+
+O `conftest.mod` do SDK 1.2.4 é um jogo de demonstração sobre o motor QX (malhas `.qxm`,
+texturas `.qxt`, animações `.qxa`, partículas `.qxp`), e o motor escreve um `data/qx.log` com o
+que carregou. Ele fala com o GL **só pela `IGL`**, a interface antiga sem `this`, e pede as
+funções de buffer pelo `eglGetProcAddress`. Três defeitos nossos apareceram com ele:
+
+- **O `eglGetProcAddress` devolvia função com `this`.** Um nome `gl*` resolvia para o slot da
+  `IGLES11`, que lê os argumentos a partir do `r1`; quem chama um ponteiro de função C manda do
+  `r0`. O `glGenBuffers(1, &nome)` tomava o ponteiro pela contagem e escrevia fora da memória. Hoje
+  o nome é procurado na tabela da `IGL`, que ganhou no fim as funções que o `AEEGL.h` não tem (as
+  de ponto flutuante, as de buffer e as de extensão); o começo, que é a vtable dela, não mudou.
+- **O sufixo da extensão cai na função do núcleo.** Anunciamos `GL_ARB_vertex_buffer_object`, e o
+  QX, ao achá-lo, pede `glBindBufferARB` e as outras cinco. O ponteiro era nulo; agora é o do
+  `glBindBuffer`. O mesmo vale para `OES`.
+- **Deslocamento zero num buffer é um vetor de verdade.** O `gles_draw` desistia quando o ponteiro
+  de vértices valia zero, e com um buffer ligado o ponteiro é deslocamento — o QX dá
+  `glVertexPointer(3, GL_FIXED, 0, 0)` para toda malha. Passando a usar buffer, o cenário inteiro
+  sumiu, até isto (`ArrayPointer::em_uso`).
+
+E o `glTexEnv` ganhou o **`GL_COMBINE`** (`TexEnv`, nos dois rasterizadores): função, três fontes e
+operandos para o RGB e para o alfa, escalas e a `GL_TEXTURE_ENV_COLOR`, na unidade 0. Antes ele
+caía no `GL_MODULATE`. O QX configura a combinação com a fonte na textura.
+
+**Os personagens sumiam porque respondíamos uma unidade de textura só.** O motor pergunta
+`GL_MAX_TEXTURE_UNITS` na abertura e guarda a resposta no gerenciador de extensões; o gerenciador
+de iluminação confere o número (`0x2df08`: se for menor que dois, liga o bit `0x100`, que desliga
+a iluminação), e os desenhos dele (`0x1ec20`) desistem com o bit ligado. Sem iluminação, cada
+malha caía no caminho da cor por vértice — apontada para dentro da própria malha carregada, onde o
+`dragon.qxm` guarda zeros —, e a textura em `GL_MODULATE` saía preta e transparente, reprovada no
+teste de alfa. As sombras apareciam porque não passam por ali.
+
+Com duas unidades, o motor ilumina pela textura: `DOT3_RGB` entre o mapa de relevo (`*_b.qxt`) e
+a cor do vértice, que passa a levar a direção da luz, na unidade 0; e `ADD_SIGNED` com a textura
+de cor, alfa pela `GL_TEXTURE_ENV_COLOR`, na unidade 1. O dragão, as galinhas e o cenário inteiro
+— cachoeira, rochas, a iluminação — aparecem, nos dois rasterizadores.
+
+## A distância de desenho dos Zeebo Extreme
+
+O cenário que aparece do nada no Rolima **é decisão do jogo, não recorte nosso.** Medido na
+corrida da primeira pista:
+
+- A projeção é `glFrustumx` com `near = 1` e `far = 500`. Com o plano distante quatro vezes maior,
+  as fotos dos mesmos instantes saem idênticas pixel a pixel: o jogo não manda nada além dos 500.
+- A corrida não lê nada de volta do GL — nenhum `glGet*` —, então a escolha do que desenhar é toda
+  da matemática dele, igual no aparelho.
+- São uns 58 `Draw*` e 3 mil triângulos por quadro, estáveis.
+- O rasterizador de software recorta no plano próximo e resolve o distante pixel a pixel, na
+  profundidade; a placa recorta os dois. Nenhum dos caminhos descarta triângulo inteiro.
+
+O critério está no `pak0.pakz` (um `PACK` de arquivos LZMA, com o índice no fim em entradas de 64
+bytes: 56 de nome, a posição e o tamanho). O `infos/gamecartsinfo1p.txt` divide cada pista em
+segmentos (`models/pista_serra0.xtreme` a `24`, cada um com a sua `.octree`) e diz o último
+waypoint de cada um: o jogo desenha os segmentos em volta de onde o jogador está. Os níveis de
+detalhe declarados ali (`400` perto, `1000` longe) são das malhas dos corredores, três por
+corredor (`pers1_lod1` a `lod3`); a pista não tem uma versão de baixa qualidade separada.
+
+Estender a distância seria um ajuste nosso por cima do jogo — achar e mexer na janela de
+segmentos —, e não correção de fidelidade.
 
 ## O `glReadPixels` e o lado de cima
 

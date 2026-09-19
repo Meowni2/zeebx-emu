@@ -18,6 +18,9 @@ pub struct Region {
     pub base: u32,
     pub bytes: Vec<u8>,
     pub writable: bool,
+    /// Se o processador pode buscar instruções aqui. Só a página nula não pode: ler dela é
+    /// o que o console tolera, saltar para ela é erro que queremos ver.
+    pub executavel: bool,
 }
 
 impl Region {
@@ -82,6 +85,18 @@ impl GuestMemory {
         bytes: Vec<u8>,
         writable: bool,
     ) -> Result<(), MemError> {
+        self.map_com_execucao(name, base, bytes, writable, true)
+    }
+
+    /// Como [`GuestMemory::map`], dizendo também se a região pode ser executada.
+    pub fn map_com_execucao(
+        &mut self,
+        name: &'static str,
+        base: u32,
+        bytes: Vec<u8>,
+        writable: bool,
+        executavel: bool,
+    ) -> Result<(), MemError> {
         let end = base as u64 + bytes.len() as u64;
         let collides = self.regions.iter().any(|r| {
             let r_end = r.base as u64 + r.bytes.len() as u64;
@@ -95,6 +110,7 @@ impl GuestMemory {
             base,
             bytes,
             writable,
+            executavel,
         });
         Ok(())
     }
@@ -107,6 +123,11 @@ impl GuestMemory {
         len: usize,
     ) -> Result<(), MemError> {
         self.map(name, base, vec![0; len], true)
+    }
+
+    /// Se há código que possa ser buscado em `addr`.
+    pub fn executavel(&self, addr: u32) -> bool {
+        self.region_for(addr, 4).is_some_and(|r| r.executavel)
     }
 
     fn region_for(&self, addr: u32, len: u32) -> Option<&Region> {

@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// Quantos sons decodificados o cache guarda antes de esquecer os que ninguém usa. Ver
+/// [`Machine::descarta_sons_sem_dono`].
+const MAX_SONS_GUARDADOS: usize = 64;
+
 impl<C: CpuBackend> Machine<C> {
     /// `ISound` (`AEECLSID_SOUND` = `0x01001056`), de `inc/AEEISound.h`.
     ///
@@ -387,8 +391,26 @@ impl<C: CpuBackend> Machine<C> {
         if !self.cargas_de_midia.contains_key(&chave) {
             let carga = self.decodifica_som(&bytes);
             self.cargas_de_midia.insert(chave, carga);
+            self.descarta_sons_sem_dono(chave);
         }
         chave
+    }
+
+    /// Esquece os sons decodificados que nenhum `IMedia` usa, passando de
+    /// [`MAX_SONS_GUARDADOS`].
+    ///
+    /// O cache existe para não decodificar de novo o som que o jogo entrega outra vez, mas sem
+    /// teto ele guardava **todo** conteúdo que já passou por um `Play`: o Zeebo F.C. escreve
+    /// efeitos diferentes no mesmo buffer de 500 KB, e cada um virava uma entrada para sempre.
+    /// Uma voz tocando não perde nada: o PCM dela está num `Arc` que o mixer também segura.
+    fn descarta_sons_sem_dono(&mut self, nova: u64) {
+        if self.cargas_de_midia.len() <= MAX_SONS_GUARDADOS {
+            return;
+        }
+        let em_uso: std::collections::HashSet<u64> =
+            self.media.values().map(|state| state.carga).collect();
+        self.cargas_de_midia
+            .retain(|chave, _| *chave == nova || em_uso.contains(chave));
     }
 
     /// Decodifica um som pelo que ele é, e não pelo nome.
@@ -467,6 +489,18 @@ impl<C: CpuBackend> Machine<C> {
     pub(super) fn media_play(&mut self, this: u32) -> Result<u32, CpuError> {
         if self.fluxos_pcm.contains_key(&this) {
             return self.inicia_fluxo(this);
+        }
+        // **Um `Play` sobre a música que já toca em laço não a recomeça.** O gerenciador de som
+        // dos Zeebo Extreme manda tocar a trilha da pista de novo toda vez que um efeito acaba —
+        // o turbo, a derrapagem —, e aqui a voz recomeçava do início: a música reiniciava a cada
+        // efeito. Recusar com `EBADSTATE` também não serve: ele entende que a música parou e
+        // repete o `Play` a cada quadro. O que ele espera é o `START`, que o passa a "tocando"; a
+        // voz segue de onde está. A regra fica restrita ao laço infinito: um efeito tocado de
+        // novo por cima de si mesmo é o que o Zeebo F.C. faz, e ele precisa recomeçar.
+        if self.esta_tocando(this) && self.media.get(&this).is_some_and(|state| state.repeat == 0)
+        {
+            self.notify_media(this, MM_CMD_PLAY, MM_STATUS_START)?;
+            return Ok(SUCCESS);
         }
         if let Some(state) = self.media.get_mut(&this)
             && state.buffer.1 != 0

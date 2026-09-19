@@ -298,6 +298,11 @@ impl<C: CpuBackend> Machine<C> {
                     self.images.remove(&this);
                     self.image_bitmaps.remove(&this);
                     self.recortes_de_imagem.remove(&this);
+                    // O endereço volta a ser de outro objeto, que não pode herdar o callback.
+                    self.image_notify.remove(&this);
+                    if let Some(info) = self.image_info.remove(&this) {
+                        self.heap.free(info);
+                    }
                 }
                 remaining
             }
@@ -395,8 +400,19 @@ impl<C: CpuBackend> Machine<C> {
             return Ok(());
         };
         let decoded = self.images.get(&image).cloned();
-        // `AEEImageInfo` tem 10 bytes; alocamos 12 para manter o alinhamento.
-        let info = self.heap.alloc(12).unwrap_or(0);
+        // `AEEImageInfo` tem 10 bytes; alocamos 12 para manter o alinhamento. Um bloco por
+        // imagem, reaproveitado a cada aviso e devolvido no `Release`: um bloco novo por aviso
+        // nunca voltava ao heap.
+        let info = match self.image_info.get(&image) {
+            Some(&info) => info,
+            None => {
+                let info = self.heap.alloc(12).unwrap_or(0);
+                if info != 0 {
+                    self.image_info.insert(image, info);
+                }
+                info
+            }
+        };
         if info != 0 {
             self.cpu.write_mem(info, &[0u8; 12])?;
             if let Some(image) = &decoded {

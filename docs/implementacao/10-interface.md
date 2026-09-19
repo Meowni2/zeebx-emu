@@ -61,6 +61,15 @@ estado só antes de detectar o aperto, para uma seta mapeada também no controle
 biblioteca não escuta com jogo ou configurações abertos, e como o controle não gera evento no egui
 a janela se redesenha sozinha para lê-lo.
 
+### Busca
+
+O campo na barra de cima filtra a lista dos dois modos. Um jogo fica se o título tiver todas as
+palavras digitadas, em qualquer ordem. Caixa, acento e pontuação não contam, e as siglas com
+ponto se juntam: "cnk" acha "C.N.K.", "boia" acha "Bóia". Mudar a busca põe a escolha no primeiro
+resultado, sem a mola do slider atravessar a lista. Com o campo em foco, setas e espaço são do
+texto e o teclado não navega; o controle continua navegando. O Enter tira o foco do campo antes
+de a biblioteca ler o quadro, e por isso abre o jogo escolhido. Ctrl+F leva ao campo e Esc limpa.
+
 ## Configurações
 
 Quatro abas: geral, controles, gráficos e áudio. Tudo é gravado em JSON no diretório de

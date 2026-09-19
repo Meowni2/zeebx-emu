@@ -127,6 +127,25 @@ impl Gamepads {
         .map(|(_, pad)| pad)
     }
 
+    /// Quem é o controle da porta, para achar o sensor de movimento dele: o nome que o sistema
+    /// dá, o par VID/PID e a posição entre os controles iguais ligados antes dele.
+    ///
+    /// É o nome **do sistema**, e não o do mapeamento do gilrs: o sensor ganha o nome do
+    /// dispositivo com um sufixo ("Pro Controller" e "Pro Controller (IMU)"), e o gilrs chama o
+    /// mesmo controle de "Nintendo Switch Pro Controller".
+    pub fn identidade(&self, device: Option<&str>, porta: usize) -> Option<(String, u16, u16, usize)> {
+        let gilrs = self.gilrs.as_ref()?;
+        let pad = self.find(device, porta)?;
+        let chave = |p: &gilrs::Gamepad<'_>| (p.os_name().to_string(), p.vendor_id(), p.product_id());
+        let (nome, vendor, product) = chave(&pad);
+        let ordem = gilrs
+            .gamepads()
+            .take_while(|(id, _)| *id != pad.id())
+            .filter(|(_, outro)| chave(outro) == (nome.clone(), vendor, product))
+            .count();
+        Some((nome, vendor?, product?, ordem))
+    }
+
     /// Se a origem está acionada no controle do jogador.
     ///
     /// Origens de teclado não pertencem aqui: quem sabe do teclado é a janela.

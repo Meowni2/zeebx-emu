@@ -28,8 +28,8 @@ contador de triângulos rejeitados, por motivo, que apontou isso — nenhuma cha
 falhado.
 
 Só o caminho do decodificador publica os pixels sem ser pedido. Nos outros, o `QueryInterface`
-continua sendo a hora de alocar: a região de superfícies não recicla, e toda superfície
-publicada entra no laço de sincronização abaixo.
+continua sendo a hora de alocar, e toda superfície publicada entra no laço de sincronização
+abaixo.
 
 ### O endereço volta a ser usado, e o cabeçalho tem de acompanhar
 
@@ -43,8 +43,14 @@ dela, e depois pedia cada glifo por coordenada da folha inteira: o que caía for
 preenchido com a textura. O menu inteiro saía com as palavras como retângulos laranja.
 
 Hoje o cabeçalho é reescrito a cada exposição, com o tamanho e o passo da imagem que está lá. O
-buffer é reaproveitado quando cabe — reservar outro a cada vez também acertaria o tamanho, mas a
-região de superfícies não recicla e um jogo que decodifique centenas de imagens a esgotaria.
+buffer é reaproveitado quando cabe, o que poupa uma troca de buffer a cada imagem.
+
+**A região de superfícies usa o mesmo alocador do heap do jogo.** Primeiro ela não reciclava, e
+a Z-Wheel a esgotava em 27 s de navegação. Depois passou a reciclar blocos inteiros — o menor
+livre que coubesse —, sem dividir nem fundir vizinhos: com tamanhos variados, os buracos pequenos
+não serviam a pedidos grandes e os 8 MB acabavam do mesmo jeito, só mais devagar, com o bitmap
+nascendo sem pixels. Com o `Heap`, blocos devolvidos se fundem e um bloco grande serve a um pedido
+pequeno. O color buffer do EGL também passa por ele e devolve o antigo quando cresce.
 
 A lição é a mesma de outras vezes: **o que um jogo lê de uma struct nossa vale tanto quanto o
 que devolvemos de uma chamada.** Aqui nenhuma chamada falhou, e o relatório saiu limpo.

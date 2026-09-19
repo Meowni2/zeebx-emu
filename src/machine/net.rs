@@ -37,7 +37,10 @@ impl<C: CpuBackend> Machine<C> {
                 let restantes = self.objects.release(this);
                 if restantes == 0 {
                     self.sources.remove(&this);
-                    self.peeks.remove(&this);
+                    // O buffer de linha é nosso, do tamanho da fonte inteira.
+                    if let Some(peek) = self.peeks.remove(&this) {
+                        self.heap.free(peek.buffer);
+                    }
                 }
                 restantes
             }
@@ -143,6 +146,14 @@ impl<C: CpuBackend> Machine<C> {
             // na posição do `IFile` do jogo — ele continua sendo dele. É o caminho do que foi
             // aberto, e não o nome do jogo resolvido de novo: os dois divergem na `tectoy.cfg`
             // sem fim de vida, e reler pelo nome lia a de fábrica.
+            //
+            // **O `IFile` é um `IAStream`**, e o método aceita qualquer um. O Aviãozinho, um port
+            // do Quake feito por fãs, passa um `IAStream` escrito por ele, cujo `Read` devolve o
+            // que o mixer acabou de misturar, e toca o `ISource` resultante num `IMedia` PCM.
+            // Recusado, o `SNDDMA_Init` desistia e o `S_Init` lia o buffer de som nulo. O
+            // `Read` do `IAStream` e o do `ISource` estão no mesmo slot, com os mesmos
+            // argumentos e o mesmo retorno, então o próprio stream serve de fonte: quem toca
+            // chama o código do jogo, como já faz com um `ISource` do jogo.
             "SourceFromFile" => {
                 let (arquivo, saida) = (self.cpu.read_reg(Reg::R1), self.cpu.read_reg(Reg::R2));
                 let Some(caminho) = self
@@ -150,7 +161,13 @@ impl<C: CpuBackend> Machine<C> {
                     .get(&arquivo)
                     .map(|aberto| aberto.caminho.clone())
                 else {
-                    return Ok(Some(EBADPARM));
+                    if arquivo == 0 || self.objects.kind_of(arquivo).is_some() {
+                        return Ok(Some(EBADPARM));
+                    }
+                    if saida != 0 {
+                        self.cpu.write_u32(saida, arquivo)?;
+                    }
+                    return Ok(Some(SUCCESS));
                 };
                 let Ok(bytes) = std::fs::read(caminho) else {
                     return Ok(Some(EFAILED));
