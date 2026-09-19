@@ -42,7 +42,7 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 | Magical Drop 3 | ✅ | Emulador de arcade embutido, com som |
 | Need For Speed - Carbon - Domine a Cidade | 🔄 | Jogável porém requer otimização (esse realmente PRECISA DE VELOCIDADE) |
 | Pac-Mania | ✅ | |
-| Peggle | ✅ | Joga; menus e mesa corretos |
+| Peggle | 🔄 | Roda, porém os gráficos, cores e sons estão totalmente quebrados |
 | Powerboat Challenge | ❌ | Chega ao menu de idioma e prende na tela de carregamento |
 | Prey 2 Evil | ❌ | Roda e lê os dados, mas a tela fica preta |
 | Quake | 🔄 | Podem existir crashes in-game ou lagging |
