@@ -70,7 +70,8 @@ Três formas de entrega:
   Galaxy on Fire entrega as sete músicas dele assim (`GalaxyOnFire1_Theme.mp3` e as outras), e
   antes elas eram recusadas em silêncio. Um arquivo que não existe responde `EFAILED` e entra no
   relatório.
-- `MMD_ISOURCE` continua sem suporte.
+- `MMD_ISOURCE` só é tocado como PCM cru: um `ISource` que entregue um arquivo comprimido fica
+  mudo.
 
 As classes da família `AEECLSID_MULTIMEDIA` do SDK criam todas o mesmo objeto: QCP, PMD,
 MIDIOUTMSG, MIDIOUTQCP, MPEG4, MMF, PHR, AAC, IMELODY, AMR, XMF e DLS, além de MEDIA, MIDI, MP3,
@@ -295,6 +296,17 @@ A voz de fluxo vive em `audio/mod.rs`, ao lado das vozes de som pronto. Ela ream
 da placa interpolando entre dois quadros, guarda meio segundo no máximo — se o jogo entrega mais
 rápido do que a placa consome, o excesso mais antigo sai em vez de o atraso crescer — e, faltando
 amostra, segura o último valor em vez de estalar para o zero.
+
+### Um `IAStream` do jogo como fonte
+
+O Aviãozinho, um port do Quake feito por fãs, monta o `ISource` de outro jeito: escreve um
+`IAStream` próprio, cujo `Read` devolve o que o mixer do Quake acabou de misturar, e pede ao
+`ISourceUtil` (slot 6) que o transforme em `ISource`. Esse slot só aceitava um `IFile` aberto e
+recusava o resto; o `SNDDMA_Init` desistia, e o `S_Init` lia `shm->speed` do buffer nulo e
+derrubava o jogo aos 24 ms. O `Read` do `IAStream` e o do `ISource` estão no mesmo slot, com os
+mesmos argumentos e o mesmo retorno, então o próprio stream é devolvido como fonte, e a voz de
+fluxo chama o código do jogo como já fazia com os ports de arcade. O formato vem no
+`AEEMediaWaveSpec` de sempre: 22050 Hz, estéreo, 16 bits.
 
 ## O que falta
 

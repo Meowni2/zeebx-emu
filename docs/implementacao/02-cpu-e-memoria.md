@@ -48,6 +48,7 @@ real de cada método de API, que é onde a resposta costuma estar.
 
 | Região | Base | Tamanho | Para quê |
 |---|---|---|---|
+| nulo | `0x0000_0000` | até o módulo | zeros que se leem, sem escrita nem execução |
 | extensões | `0x0800_0000` | 16 MB cada, até 8 | os módulos de extensão do pacote |
 | módulo | `0x0001_0000` | imagem + 1 MB | o `.mod` carregado, com prefixo de uma página |
 | heap | `0x1000_0000` | 64 MB | o que o `MALLOC` do jogo consome |
@@ -63,6 +64,16 @@ Três decisões que não se deduzem olhando a tabela:
 **O prefixo antes do módulo.** O stub que o `elf2mod` põe no início calcula a própria base por
 aritmética relativa ao PC e depois lê **duas palavras antes dela**. O carregador do AEE reserva
 esse prefixo, e nós também — uma página é folga de sobra.
+
+**A página nula se lê.** No console não há proteção de memória, e os endereços baixos são
+legíveis: um jogo que lê por um ponteiro nulo recebe algum valor e segue. O Aviãozinho, um port do
+Quake feito por fãs, depende disso ao carregar a primeira fase: o `start.bsp` tem uma das 19
+texturas faltando, o motor põe no lugar a textura de reserva `r_notexture_mip`, e esse port
+nunca a cria. O nome dela é lido do endereço zero, e parar a execução ali deixava o jogo preso no
+menu. Aqui a faixa abaixo do módulo devolve zeros. Escrever nela continua sendo falha, e executar
+também — nos dois núcleos a região é marcada sem execução, e no Unicorn o `FETCH_PROT` e o
+`WRITE_PROT` viram falha de memória como os acessos fora do mapa. Um salto para o endereço zero
+continua aparecendo no relatório como antes.
 
 **64 MB de heap.** O Quake mede a memória livre antes de carregar os `.pak` e desiste com "Not
 enough free memory" se ela for pequena. O console tem 128 MB; o número aqui é escolha nossa, só

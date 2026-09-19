@@ -47,6 +47,7 @@ fs:/~/arquivo.dat    o "~" é o diretório do próprio módulo
 fs:/~/../id1/x       sobe para a raiz de módulos — o Quake guarda os dados dele assim
 fs:/~0x01234567/x    diretório de outro módulo, pelo ClassID
 fs:/shared/x         área compartilhada
+fs:/mod/<pasta>/x    a pasta de um módulo instalado — os ports feitos por fãs usam assim
 ```
 
 Qualquer caminho que escape da raiz é recusado — `..` além do limite, caminho absoluto do host,
@@ -63,6 +64,16 @@ releitura nunca achava o que o jogo tinha acabado de gravar. O `InfoManager` fic
 quantidade de pistas e sem o vetor delas, e a largada do Bóia Cross lia o ponteiro nulo
 (`0x6cce0`). Sem a barra vazia nada muda: o NFS e o Quake 2 continuam alcançando `../nfsresources` e
 `../quake2res`.
+
+### `fs:/mod/` é do aparelho, com a instalação por trás
+
+O `fs:/` que não é `~` vai para a pasta comum do aparelho, e a Z-Wheel guarda o que é dela em
+`fs:/mod/274755/` de lá. Só que no console `fs:/mod/<pasta>/` é onde o módulo está instalado, e os
+ports feitos por fãs abrem os próprios dados assim: o OpenTyrian pede
+`fs:/mod/opentyrian_zeebo/data/tyrian1.lvl`, não achava, e fechava no primeiro milissegundo. A
+regra ficou em camadas: o que existe no aparelho vem dele; senão, o que existe na raiz de módulos
+da instalação vem dela; um arquivo novo continua sendo criado no aparelho. O `..` continua preso
+à raiz de módulos.
 
 `resolve` recusa o próprio diretório do módulo; `resolve_dir` o aceita. A diferença é exatamente
 essa: listar `fs:/~/` é legítimo, abri-lo como arquivo não.
