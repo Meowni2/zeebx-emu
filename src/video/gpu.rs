@@ -475,16 +475,11 @@ impl GpuState {
             // existe e a chamada não tem efeito: ali o plano distante volta a recortar.
             gl.enable(glow::DEPTH_CLAMP);
             // O `glScissor` do jogo vem em pixels do console, com o `y` de baixo para cima —
-            // a mesma convenção da viewport —, e o anexo é `escala` vezes maior.
+            // a mesma convenção da viewport —, e o anexo é `escala` vezes maior. Ver
+            // [`tesoura_no_anexo`].
             liga(gl, glow::SCISSOR_TEST, e.tesoura_ligada);
             if e.tesoura_ligada {
-                let (sx, sy, sw, sh) = e.tesoura;
-                // **A tesoura passa pela mesma conversão da viewport.** Ela vem em pixels do
-                // console, e na proporção larga o anexo é mais largo: sem converter, um
-                // `glScissor` na tela inteira — que é o que o Resident Evil 4 e o Crash Nitro
-                // Kart ligam — cortava tudo além dos 640 do console e os lados novos ficavam
-                // com a cor de fundo do anexo.
-                let (sx, sw) = para_o_anexo(sx, sw);
+                let (sx, sy, sw, sh) = tesoura_no_anexo(e.tesoura, self.estado.surface(), extra);
                 gl.scissor(sx * n, sy * n, sw.max(0) * n, sh.max(0) * n);
             }
             liga(gl, glow::DEPTH_TEST, e.teste_profundidade);
@@ -1759,6 +1754,39 @@ impl Rasterizador for GpuState {
     }
 }
 
+/// A tesoura do jogo nos pixels do anexo, ainda sem a escala.
+///
+/// **O `y` vira contado do topo, como o da viewport.** O `glScissor` conta de baixo para cima e o
+/// anexo guarda a imagem de cima para baixo; a viewport passa por `viewport_do_topo` e a tesoura
+/// ia crua. Na tela inteira (`0 0 640 480`) as duas leituras coincidem, e por isso o erro só
+/// aparecia em retângulos: o Crash Nitro Kart desenha o trecho seguinte da pista por um portal,
+/// com viewport e tesoura no retângulo dele, e a tesoura caía na faixa espelhada da tela — o
+/// portal saía vazio e o cenário "subia do nada" quando o kart o atravessava. É o mesmo sintoma
+/// que a viewport já teve, e voltou quando a tesoura passou a ser respeitada na placa.
+///
+/// **Na proporção larga, a tesoura se desloca, e só cresce até as bordas que já tocava.** O que
+/// estava na tela cai no mesmo pixel, deslocado de `extra`; uma tesoura na tela inteira — a que o
+/// Resident Evil 4 e o Crash Nitro Kart ligam em jogo — tem de ganhar os lados novos, ou eles
+/// ficam com a cor de fundo do anexo. Alargá-la pela razão da viewport, como antes, fazia o
+/// retângulo de um portal vazar para fora da moldura dele.
+fn tesoura_no_anexo(
+    (x, y, largura, altura): (i32, i32, i32, i32),
+    (largura_da_superficie, altura_da_superficie): (usize, usize),
+    extra: i32,
+) -> (i32, i32, i32, i32) {
+    let (s_largura, s_altura) = (largura_da_superficie as i32, altura_da_superficie as i32);
+    let topo = s_altura - y - altura;
+    let esquerda = match x <= 0 {
+        true => 0,
+        false => x + extra,
+    };
+    let direita = match x + largura >= s_largura {
+        true => s_largura + 2 * extra,
+        false => x + largura + extra,
+    };
+    (esquerda, topo, direita - esquerda, altura)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2074,6 +2102,19 @@ mod tests {
             r > 0 && b > 0
         });
         assert!(misturado, "algum pixel da diagonal devia misturar vermelho e azul");
+    }
+
+    /// A tesoura de um retângulo cai no mesmo lugar do retângulo, com o `y` contado do topo.
+    ///
+    /// O portal do Crash Nitro Kart é uma viewport e uma tesoura num retângulo; com o `y` cru a
+    /// tesoura caía na faixa espelhada e o portal saía vazio.
+    #[test]
+    fn a_tesoura_de_um_retangulo_conta_o_y_do_topo() {
+        // 42×64 a 21 da esquerda e 42 de baixo, numa tela de 640×480: o topo fica em 374.
+        assert_eq!(tesoura_no_anexo((21, 42, 42, 64), (640, 480), 0), (21, 374, 42, 64));
+        // Na proporção larga ele só se desloca; a tela inteira ganha os lados.
+        assert_eq!(tesoura_no_anexo((21, 42, 42, 64), (640, 480), 80), (101, 374, 42, 64));
+        assert_eq!(tesoura_no_anexo((0, 0, 640, 480), (640, 480), 80), (0, 0, 800, 480));
     }
 
     /// Na proporção larga, a tesoura do jogo não pode cortar os lados novos.
