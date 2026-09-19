@@ -106,9 +106,14 @@ pub const BUTTON_UIDS: [u32; BUTTONS] = [
     // `Y`. Mas é como botão que os jogos o leem: com estes quatro UIDs presentes, o menu do
     // Quake anda; sem eles, o cursor não sai do lugar por mais que o eixo mude. Um direcional
     // digital em USB HID costuma ser reportado das duas formas, e é o que fazemos.
+    //
+    // **A ordem é a dos UIDs: cima, esquerda, baixo, direita.** Há quem leia o botão pela
+    // posição na lista, e não pelo UID: o `GamepadMgr` das amostras do SDK guarda o estado num
+    // vetor indexado pelo `id` do `GetNextButtonEvent` (`0x16b68` no Dragon Vs Chicken). Na ordem
+    // cima, baixo, esquerda, direita, a demo andava para baixo quando se apertava esquerda.
     0x0106_c3fe, // DPad_Up
-    0x0106_c400, // DPad_Down
     0x0106_c3ff, // DPad_Left
+    0x0106_c400, // DPad_Down
     0x0106_c401, // DPad_Right
     // O que sobra fica **depois** da faixa que os ports varrem. O `lx` guarda o UID de eixo que
     // o arquivo do console deixou no meio da lista de botões, e o `zrb` é a segunda aparição do
@@ -119,8 +124,8 @@ pub const BUTTON_UIDS: [u32; BUTTONS] = [
 ];
 
 /// Índices dos quatro sentidos do direcional em [`BUTTON_UIDS`], na ordem cima, baixo,
-/// esquerda, direita.
-pub const DPAD: [usize; 4] = [12, 13, 14, 15];
+/// esquerda, direita. Na lista eles ficam na ordem dos UIDs — ver [`BUTTON_UIDS`].
+pub const DPAD: [usize; 4] = [12, 14, 13, 15];
 
 /// Nome de cada botão, para o mapeamento de teclas e para a linha de comando.
 /// O controle tem **um** gatilho de cada lado, o ZL e o ZR, e é o "superior" de cada par que
@@ -139,7 +144,7 @@ pub const DPAD: [usize; 4] = [12, 13, 14, 15];
 /// medido é a **ordem**, e ela vale para quem varre a lista por índice — ver [`BUTTON_UIDS`].
 pub const BUTTON_NAMES: [&str; BUTTONS] = [
     "b1", "b2", "b3", "b4", "zr", "l2", "zl", "r2", "rthumb", "back", "lthumb", "start", "up",
-    "down", "left", "right", "lx", "zrb",
+    "left", "down", "right", "lx", "zrb",
 ];
 
 /// UID de cada eixo: `X`, `Y`, `Z` e `RZ`.
