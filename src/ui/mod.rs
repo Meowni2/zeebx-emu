@@ -767,6 +767,7 @@ impl App {
                     self.play(caminho);
                 }
             }
+            self.campo_da_busca(ui);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(self.catalog.get("nav.settings")).clicked() {
                     self.settings_open = true;
@@ -797,6 +798,46 @@ impl App {
                     self.sync_unlocked = None;
                 }
             });
+        }
+    }
+
+    /// A busca da biblioteca. Ctrl+F leva o foco a ela e Esc a limpa; o Enter joga o jogo
+    /// escolhido, que é o primeiro resultado enquanto ninguém mexe na escolha.
+    fn campo_da_busca(&mut self, ui: &mut egui::Ui) {
+        let campo = egui::TextEdit::singleline(&mut self.vitrine.busca)
+            .hint_text(self.catalog.get("nav.search"))
+            .desired_width(220.0);
+        let resposta = ui
+            .add(campo)
+            .on_hover_text(self.catalog.get("nav.search.hint"));
+        self.vitrine.campo_da_busca = Some(resposta.id);
+        let mut mudou = resposta.changed();
+        let (atalho, esc) = ui.input(|i| {
+            (
+                i.modifiers.command && i.key_pressed(egui::Key::F),
+                i.key_pressed(egui::Key::Escape),
+            )
+        });
+        if atalho {
+            resposta.request_focus();
+        }
+        // O Esc tira o foco do campo sozinho; aqui ele também apaga o que estava escrito.
+        if esc && (resposta.has_focus() || resposta.lost_focus()) && !self.vitrine.busca.is_empty()
+        {
+            self.vitrine.busca.clear();
+            mudou = true;
+        }
+        if !self.vitrine.busca.is_empty()
+            && ui
+                .small_button("✕")
+                .on_hover_text(self.catalog.get("nav.search.clear"))
+                .clicked()
+        {
+            self.vitrine.busca.clear();
+            mudou = true;
+        }
+        if mudou {
+            self.vitrine.busca_mudou();
         }
     }
 
