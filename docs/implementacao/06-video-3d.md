@@ -125,6 +125,17 @@ Resident Evil 4 e o Crash Nitro Kart ligam em jogo — cortava tudo além dos 64
 lados que a proporção larga acabara de abrir ficavam com a cor de fundo do anexo. Quem não usa
 tesoura, como o Raging Thunder 2, nunca viu a faixa.
 
+**Na placa, o `y` da tesoura também é convertido para o topo** (`tesoura_no_anexo`, em
+`video/gpu.rs`). A viewport passava por `viewport_do_topo` e a tesoura ia crua; na tela inteira
+as duas leituras coincidem, e só um retângulo mostrava a diferença. O portal do Crash Nitro Kart
+é um: viewport e tesoura no retângulo dele, e a tesoura caía na faixa espelhada — o portal saía
+vazio e o cenário voltou a "subir do nada" ao atravessá-lo, o mesmo sintoma que a viewport já
+teve, desde que a tesoura passou a ser respeitada. O rasterizador de software já convertia.
+
+E, na proporção larga, a tesoura **se desloca** de `extra` e só cresce até as bordas que já
+tocava. Alargá-la pela razão da viewport, como a primeira versão fazia, dava certo na tela inteira
+e fazia o retângulo de um portal vazar para fora da moldura.
+
 ## Névoa
 
 O `glFog*` era atendido em silêncio e o `GL_FOG`, ignorado. O Resident Evil 4 pede névoa linear
