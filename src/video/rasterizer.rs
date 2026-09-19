@@ -118,6 +118,8 @@ pub struct Vertex {
     pub position: [f32; 4],
     pub color: [f32; 4],
     pub uv: [f32; 2],
+    /// A coordenada de textura da unidade 1. Ver [`UnidadeDeTextura`].
+    pub uv1: [f32; 2],
     /// A normal em coordenadas de objeto, para a iluminação. O padrão do OpenGL é `(0, 0, 1)`.
     pub normal: [f32; 3],
     /// Quanto da cor do fragmento sobra depois da névoa: 1 é cena limpa, 0 é névoa cheia.
@@ -134,10 +136,175 @@ impl Default for Vertex {
             position: [0.0, 0.0, 0.0, 1.0],
             color: [1.0; 4],
             uv: [0.0; 2],
+            uv1: [0.0; 2],
             normal: [0.0, 0.0, 1.0],
             fog: 1.0,
         }
     }
+}
+
+/// O ambiente de textura da unidade 0: o `glTexEnv`, com o modo e a configuração do `GL_COMBINE`.
+///
+/// **O `GL_COMBINE` não era atendido, e caía no `GL_MODULATE`.** O motor QX do SDK (o Dragon Vs
+/// Chicken) desenha os personagens com a fonte 0 na textura e a função `GL_REPLACE`: a cor do
+/// vértice não entra, e ele a deixa zerada. Multiplicada pela textura, ela apagava o dragão e as
+/// galinhas — preto transparente, que o teste de alfa descartava.
+///
+/// Os índices `[0]` e `[1]` são o RGB e o alfa. Os padrões são os da especificação.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TexEnv {
+    pub modo: u32,
+    pub combina: [u32; 2],
+    pub fontes: [[u32; 3]; 2],
+    pub operandos: [[u32; 3]; 2],
+    pub escala: [f32; 2],
+    /// `GL_TEXTURE_ENV_COLOR`, a fonte `GL_CONSTANT`.
+    pub cor: [f32; 4],
+}
+
+impl Default for TexEnv {
+    fn default() -> Self {
+        let fontes = [gles::GL_TEXTURE, gles::GL_PREVIOUS, gles::GL_CONSTANT];
+        Self {
+            modo: gles::GL_MODULATE,
+            combina: [gles::GL_MODULATE; 2],
+            fontes: [fontes; 2],
+            operandos: [
+                [gles::GL_SRC_COLOR, gles::GL_SRC_COLOR, gles::GL_SRC_ALPHA],
+                [gles::GL_SRC_ALPHA; 3],
+            ],
+            escala: [1.0; 2],
+            cor: [0.0; 4],
+        }
+    }
+}
+
+impl TexEnv {
+    /// Só com o modo, para quem monta um estado à parte (a ponte da placa, os testes).
+    pub fn com_modo(modo: u32) -> Self {
+        Self {
+            modo,
+            ..Self::default()
+        }
+    }
+
+    /// Aplica um `glTexEnv` que não é o modo nem a cor. Os enums chegam como inteiro mesmo nas
+    /// formas `x` e `f`; as escalas chegam como número.
+    pub fn define(&mut self, pname: u32, enumeracao: u32, numero: f32) {
+        let faixa = |base: u32| pname.checked_sub(base).filter(|&i| i < 3).map(|i| i as usize);
+        match pname {
+            gles::GL_COMBINE_RGB => self.combina[0] = enumeracao,
+            gles::GL_COMBINE_ALPHA => self.combina[1] = enumeracao,
+            gles::GL_RGB_SCALE => self.escala[0] = numero,
+            gles::GL_ALPHA_SCALE => self.escala[1] = numero,
+            _ => {
+                if let Some(i) = faixa(gles::GL_SRC0_RGB) {
+                    self.fontes[0][i] = enumeracao;
+                } else if let Some(i) = faixa(gles::GL_SRC0_ALPHA) {
+                    self.fontes[1][i] = enumeracao;
+                } else if let Some(i) = faixa(gles::GL_OPERAND0_RGB) {
+                    self.operandos[0][i] = enumeracao;
+                } else if let Some(i) = faixa(gles::GL_OPERAND0_ALPHA) {
+                    self.operandos[1][i] = enumeracao;
+                }
+            }
+        }
+    }
+
+    /// A cor do fragmento a partir da cor primária e do texel, na unidade 0.
+    pub fn aplica(&self, primaria: [f32; 4], texel: [f32; 4]) -> [f32; 4] {
+        self.aplica_com(primaria, primaria, texel)
+    }
+
+    /// O mesmo numa unidade qualquer: `anterior` é o que saiu da unidade de antes (a cor
+    /// primária, na unidade 0), e é sobre ela que os modos clássicos agem.
+    pub fn aplica_com(&self, anterior: [f32; 4], primaria: [f32; 4], texel: [f32; 4]) -> [f32; 4] {
+        let primaria_ = primaria;
+        let primaria = anterior;
+        match self.modo {
+            gles::GL_REPLACE => texel,
+            gles::GL_DECAL => {
+                let mut out = primaria;
+                for c in 0..3 {
+                    out[c] = primaria[c] * (1.0 - texel[3]) + texel[c] * texel[3];
+                }
+                out
+            }
+            gles::GL_ADD => {
+                let mut out = primaria;
+                for c in 0..3 {
+                    out[c] = (primaria[c] + texel[c]).min(1.0);
+                }
+                out[3] = primaria[3] * texel[3];
+                out
+            }
+            gles::GL_COMBINE => self.combina(anterior, primaria_, texel),
+            // `GL_MODULATE` é o padrão e o que os jogos usam quase sempre.
+            _ => std::array::from_fn(|c| primaria[c] * texel[c]),
+        }
+    }
+
+    /// O `GL_COMBINE`. Na unidade 0, `GL_PREVIOUS` é a cor primária.
+    fn combina(&self, anterior: [f32; 4], primaria: [f32; 4], texel: [f32; 4]) -> [f32; 4] {
+        let fonte = |qual: u32| match qual {
+            gles::GL_TEXTURE => texel,
+            gles::GL_CONSTANT => self.cor,
+            gles::GL_PRIMARY_COLOR => primaria,
+            _ => anterior,
+        };
+        // O operando de uma fonte, para um canal. No alfa só existem os dois de alfa; um jogo que
+        // manda `GL_SRC_COLOR` ali (o QX manda) recebe o alfa, que é o que o driver faz.
+        let operando = |canal: usize, i: usize| -> f32 {
+            let lado = usize::from(canal == 3);
+            let valor = fonte(self.fontes[lado][i]);
+            match (self.operandos[lado][i], lado) {
+                (gles::GL_SRC_COLOR, 0) => valor[canal],
+                (gles::GL_ONE_MINUS_SRC_COLOR, 0) => 1.0 - valor[canal],
+                (gles::GL_ONE_MINUS_SRC_ALPHA | gles::GL_ONE_MINUS_SRC_COLOR, _) => 1.0 - valor[3],
+                _ => valor[3],
+            }
+        };
+        let funcao = |canal: usize| -> f32 {
+            let lado = usize::from(canal == 3);
+            let a = |i| operando(canal, i);
+            let resultado = match self.combina[lado] {
+                gles::GL_REPLACE => a(0),
+                gles::GL_ADD => a(0) + a(1),
+                gles::GL_ADD_SIGNED => a(0) + a(1) - 0.5,
+                gles::GL_INTERPOLATE => a(0) * a(2) + a(1) * (1.0 - a(2)),
+                gles::GL_SUBTRACT => a(0) - a(1),
+                gles::GL_DOT3_RGB | gles::GL_DOT3_RGBA => {
+                    let produto: f32 = (0..3)
+                        .map(|c| (operando(c, 0) - 0.5) * (operando(c, 1) - 0.5))
+                        .sum();
+                    4.0 * produto
+                }
+                _ => a(0) * a(1),
+            };
+            (resultado * self.escala[lado]).clamp(0.0, 1.0)
+        };
+        let mut saida: [f32; 4] = std::array::from_fn(funcao);
+        // O `DOT3_RGBA` põe o produto também no alfa, por cima da função de alfa.
+        if self.combina[0] == gles::GL_DOT3_RGBA {
+            saida[3] = saida[0];
+        }
+        saida
+    }
+}
+
+/// A unidade de textura 1: se está ligada, a textura dela e o ambiente dela.
+///
+/// **O pipeline desenhava só a unidade 0**, e respondia `GL_MAX_TEXTURE_UNITS` = 1. A Adreno 130
+/// do console tem duas, e a especificação do OpenGL ES 1.1 exige ao menos duas. O motor QX do
+/// SDK (o Dragon Vs Chicken) confere o número e, com menos de duas, desliga o gerenciador de
+/// iluminação — os personagens caíam num caminho de cor zerada e sumiam. Com duas, ele os
+/// ilumina pela textura: `DOT3` entre o mapa de relevo e a cor do vértice na unidade 0, e
+/// `ADD_SIGNED` com a textura de cor na unidade 1.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct UnidadeDeTextura {
+    pub ligada: bool,
+    pub textura: u32,
+    pub env: TexEnv,
 }
 
 /// A névoa de função fixa: o `glFog*` e o `GL_FOG` do OpenGL ES 1.1.
@@ -505,10 +672,13 @@ pub trait Rasterizador {
 
     fn set_active_texture(&mut self, unit: u32);
     fn set_client_active_texture(&mut self, unit: u32);
-    fn base_client_unit(&self) -> bool;
+    /// A unidade escolhida pelo `glClientActiveTexture`, a partir de zero.
+    fn client_unit(&self) -> u32;
     fn bind_texture(&mut self, name: u32);
     fn bound_texture(&self) -> u32;
     fn set_texture_env(&mut self, mode: u32);
+    fn set_texture_env_param(&mut self, pname: u32, enumeracao: u32, numero: f32);
+    fn set_texture_env_color(&mut self, cor: [f32; 4]);
     fn set_texture_parameter(&mut self, name: u32, value: u32);
     fn set_texture_crop(&mut self, crop: [i32; 4]);
     fn delete_texture(&mut self, name: u32);
@@ -689,8 +859,8 @@ impl Rasterizador for GlState {
     fn set_client_active_texture(&mut self, unit: u32) {
         GlState::set_client_active_texture(self, unit)
     }
-    fn base_client_unit(&self) -> bool {
-        GlState::base_client_unit(self)
+    fn client_unit(&self) -> u32 {
+        self.client_unit
     }
     fn bind_texture(&mut self, name: u32) {
         GlState::bind_texture(self, name)
@@ -700,6 +870,12 @@ impl Rasterizador for GlState {
     }
     fn set_texture_env(&mut self, mode: u32) {
         GlState::set_texture_env(self, mode)
+    }
+    fn set_texture_env_param(&mut self, pname: u32, enumeracao: u32, numero: f32) {
+        GlState::set_texture_env_param(self, pname, enumeracao, numero)
+    }
+    fn set_texture_env_color(&mut self, cor: [f32; 4]) {
+        GlState::set_texture_env_color(self, cor)
     }
     fn set_texture_parameter(&mut self, name: u32, value: u32) {
         GlState::set_texture_parameter(self, name, value)
@@ -784,7 +960,9 @@ pub struct GlState {
 
     textures: HashMap<u32, Texture>,
     bound_texture: u32,
-    texture_env: u32,
+    texture_env: TexEnv,
+    /// A unidade 1. A 0 são os campos soltos acima, de antes de haver outra.
+    unidade1: UnidadeDeTextura,
 
     texture_2d: bool,
     /// Unidade de textura ativa, contada de zero. O `glActiveTexture` a escolhe.
@@ -902,7 +1080,8 @@ impl GlState {
             current_color: [1.0; 4],
             textures: HashMap::new(),
             bound_texture: 0,
-            texture_env: gles::GL_MODULATE,
+            texture_env: TexEnv::default(),
+            unidade1: UnidadeDeTextura::default(),
             texture_2d: false,
             active_unit: 0,
             client_unit: 0,
@@ -1118,10 +1297,11 @@ impl GlState {
         self.active_unit == 0
     }
 
-    /// A mesma pergunta para o vetor de coordenadas.
-    pub fn base_client_unit(&self) -> bool {
-        self.client_unit == 0
+    /// Se a unidade ativa é uma das duas que desenham.
+    pub fn unidade_ativa_desenha(&self) -> bool {
+        self.active_unit < 2
     }
+
 
     /// Um parâmetro do `glFog*`. O que não conhecemos fica de fora em vez de virar lixo.
     pub fn set_fog(&mut self, pname: u32, valores: [f32; 4]) {
@@ -1142,8 +1322,9 @@ impl GlState {
 
     pub fn set_capability(&mut self, capability: u32, on: bool) {
         match capability {
-            // Ligar e desligar textura é por unidade, e só a base conta.
+            // Ligar e desligar textura é por unidade; as duas primeiras desenham.
             gles::GL_TEXTURE_2D if self.active_unit == 0 => self.texture_2d = on,
+            gles::GL_TEXTURE_2D if self.active_unit == 1 => self.unidade1.ligada = on,
             gles::GL_TEXTURE_2D => {}
             gles::GL_DEPTH_TEST => self.depth_test = on,
             gles::GL_BLEND => self.blend = on,
@@ -1381,18 +1562,60 @@ impl GlState {
         }
     }
 
-    pub fn set_texture_env(&mut self, mode: u32) {
-        if self.active_unit != 0 {
-            return;
+    /// O ambiente da unidade ativa, se ela é uma das que desenham.
+    fn env_ativo(&mut self) -> Option<&mut TexEnv> {
+        match self.active_unit {
+            0 => Some(&mut self.texture_env),
+            1 => Some(&mut self.unidade1.env),
+            _ => None,
         }
-        self.texture_env = mode;
+    }
+
+    pub fn set_texture_env(&mut self, mode: u32) {
+        if let Some(env) = self.env_ativo() {
+            env.modo = mode;
+        }
+    }
+
+    /// Um parâmetro do `GL_COMBINE`. Ver [`TexEnv::define`].
+    pub fn set_texture_env_param(&mut self, pname: u32, enumeracao: u32, numero: f32) {
+        if let Some(env) = self.env_ativo() {
+            env.define(pname, enumeracao, numero);
+        }
+    }
+
+    /// A `GL_TEXTURE_ENV_COLOR`.
+    pub fn set_texture_env_color(&mut self, cor: [f32; 4]) {
+        if let Some(env) = self.env_ativo() {
+            env.cor = cor;
+        }
+    }
+
+    /// A unidade 1, para quem repassa o estado.
+    pub fn unidade1(&self) -> UnidadeDeTextura {
+        self.unidade1
+    }
+
+    /// O nome da textura ligada na unidade ativa, se ela é uma das que desenham.
+    fn textura_ativa(&self) -> Option<u32> {
+        match self.active_unit {
+            0 => Some(self.bound_texture),
+            1 => Some(self.unidade1.textura),
+            _ => None,
+        }
+    }
+
+    /// O ambiente de textura da unidade 0, para quem repassa o estado.
+    pub fn texture_env(&self) -> TexEnv {
+        self.texture_env
     }
 
     pub fn bind_texture(&mut self, name: u32) {
-        if self.active_unit != 0 {
-            return;
+        match self.active_unit {
+            0 => self.bound_texture = name,
+            1 => self.unidade1.textura = name,
+            _ => return,
         }
-        self.bound_texture = name;
         // O nome passa a existir já no `BindTexture`: o jogo costuma ajustar os parâmetros
         // antes de mandar os pixels, e sem a entrada esses ajustes se perderiam.
         self.textures.entry(name).or_default();
@@ -1400,14 +1623,14 @@ impl GlState {
 
     /// `glTexParameter` na textura ligada.
     pub fn set_texture_parameter(&mut self, name: u32, value: u32) {
-        if self.active_unit != 0 {
+        let Some(ligada) = self.textura_ativa() else {
             return;
-        }
+        };
         // **O que já foi enfileirado usa os parâmetros de agora.** A fila guarda o *nome* da
         // textura e vai buscar filtro e repetição só no despejo; mudá-los aqui sem pintar antes
         // faz um desenho anterior ser amostrado com a configuração de um posterior. É o mesmo
         // cuidado que o `TexImage2D` já tomava com os pixels, e que faltava aqui.
-        let Some(texture) = self.textures.get(&self.bound_texture) else {
+        let Some(texture) = self.textures.get(&ligada) else {
             return;
         };
         // Muitos jogos (especialmente NFS) reaplicam o mesmo estado antes de cada sprite.
@@ -1431,7 +1654,7 @@ impl GlState {
             return;
         }
         self.flush();
-        let Some(texture) = self.textures.get_mut(&self.bound_texture) else {
+        let Some(texture) = self.textures.get_mut(&ligada) else {
             return;
         };
         match name {
@@ -1454,16 +1677,17 @@ impl GlState {
 
     /// `glTexParameteriv(GL_TEXTURE_CROP_RECT_OES, …)` na textura ligada.
     pub fn set_texture_crop(&mut self, crop: [i32; 4]) {
-        if self.active_unit != 0 {
+        let Some(ligada) = self.textura_ativa() else {
             return;
-        }
-        if let Some(texture) = self.textures.get_mut(&self.bound_texture) {
+        };
+        if let Some(texture) = self.textures.get_mut(&ligada) {
             texture.crop = crop;
         }
     }
 
+    /// A textura ligada na unidade ativa — a que um `glTexImage2D` agora alcançaria.
     pub fn bound_texture(&self) -> u32 {
-        self.bound_texture
+        self.textura_ativa().unwrap_or(self.bound_texture)
     }
 
     /// O tamanho do quadro — a tela, e não a superfície em que o jogo desenha. Ver
@@ -1727,6 +1951,7 @@ impl GlState {
             .iter()
             .map(|&([sx, sy], uv)| Vertex {
                 normal: [0.0, 0.0, 1.0],
+                uv1: [0.0; 2],
                 fog: 1.0,
                 position: [
                     ((sx - vx as f32) / vw as f32) * 2.0 - 1.0,
@@ -1862,7 +2087,7 @@ impl GlState {
         // Os atributos viajam divididos por `w` — é essa divisão que corrige a perspectiva —,
         // e cada um volta multiplicado pelo `w` interpolado. Fazer a divisão aqui, uma vez por
         // vértice, tira três multiplicações por fragmento de dentro do laço.
-        let mut over_w = [[0.0f32; 7]; 3];
+        let mut over_w = [[0.0f32; 9]; 3];
         for i in 0..3 {
             let w = screen[i][3];
             let v = &tri[i];
@@ -1874,6 +2099,8 @@ impl GlState {
                 v.uv[0] * w,
                 v.uv[1] * w,
                 v.fog * w,
+                v.uv1[0] * w,
+                v.uv1[1] * w,
             ];
         }
 
@@ -1938,6 +2165,8 @@ impl GlState {
                 false => None,
             },
             texture_env: self.texture_env,
+            texture1: self.unidade1.ligada.then_some(self.unidade1.textura),
+            env1: self.unidade1.env,
             depth_test: self.depth_test,
             depth_mask: self.depth_mask,
             color_mask: self.color_mask,
@@ -2209,7 +2438,7 @@ struct Prepared {
     /// Vértices em coordenadas de tela, com `1/w` no quarto componente.
     screen: [[f32; 4]; 3],
     /// Cor e coordenada de textura de cada vértice, divididas por `w`.
-    over_w: [[f32; 7]; 3],
+    over_w: [[f32; 9]; 3],
     inv_area: f32,
     /// Quanto cada função de aresta anda a cada pixel para a direita.
     step: [f32; 3],
@@ -2268,7 +2497,10 @@ struct Job {
     last: usize,
     /// Nome da textura ligada, ou `None` se o desenho não usa textura.
     texture: Option<u32>,
-    texture_env: u32,
+    texture_env: TexEnv,
+    /// A textura e o ambiente da unidade 1, quando ela está ligada.
+    texture1: Option<u32>,
+    env1: TexEnv,
     depth_test: bool,
     depth_mask: bool,
     color_mask: [bool; 4],
@@ -2303,6 +2535,8 @@ impl Job {
                     )
             }),
             texture_env: self.texture_env,
+            texture1: self.texture1.and_then(|name| textures.get(&name)),
+            env1: self.env1,
             depth_test: self.depth_test,
             depth_mask: self.depth_mask,
             color_mask: self.color_mask,
@@ -2365,7 +2599,10 @@ struct Uniforms<'a> {
     /// Não depende do fragmento, mas era recalculado dentro do laço — um `matches!` de quatro
     /// constantes em cada pixel aprovado, centenas de milhares de vezes por quadro.
     usa_mipmap: bool,
-    texture_env: u32,
+    texture_env: TexEnv,
+    /// A textura e o ambiente da unidade 1.
+    texture1: Option<&'a Texture>,
+    env1: TexEnv,
     depth_test: bool,
     depth_mask: bool,
     color_mask: [bool; 4],
@@ -2438,6 +2675,7 @@ fn fill_band(tri: &Prepared, uniforms: &Uniforms, band: &mut Band) {
             // reprovado ali não tem direito de mexer no stencil.
             let montar = || {
                 let mut source = [attribute(0), attribute(1), attribute(2), attribute(3)];
+                let primaria = source;
                 if let Some(texture) = uniforms.texture {
                     // A redução pode acontecer em qualquer eixo da tela. Compare os
                     // vizinhos da direita e de baixo, usando o maior footprint.
@@ -2480,7 +2718,13 @@ fn fill_band(tri: &Prepared, uniforms: &Uniforms, band: &mut Band) {
                         reducao(tri.step).max(reducao(tri.step_y))
                     };
                     let texel = texture.sample_lod(u, v, lod);
-                    source = combine(uniforms.texture_env, source, texel);
+                    source = uniforms.texture_env.aplica(source, texel);
+                }
+                // A unidade 1 age sobre o que saiu da 0. Sem mipmap: nos jogos que a usam ela
+                // leva mapa de luz ou a textura de cor de um relevo, e o nível base basta.
+                if let Some(texture) = uniforms.texture1 {
+                    let texel = texture.sample_lod(attribute(7), attribute(8), 0.0);
+                    source = uniforms.env1.aplica_com(source, primaria, texel);
                 }
                 // **A névoa entra depois da textura e antes do teste de alfa**, que é a ordem do
                 // OpenGL ES 1.1, e mexe só no RGB: o alfa do fragmento continua sendo o dele.
@@ -2636,6 +2880,7 @@ fn clip_near(a: Vertex, b: Vertex) -> Vertex {
         position: std::array::from_fn(|i| lerp(a.position[i], b.position[i])),
         color: std::array::from_fn(|i| lerp(a.color[i], b.color[i])),
         uv: std::array::from_fn(|i| lerp(a.uv[i], b.uv[i])),
+        uv1: std::array::from_fn(|i| lerp(a.uv1[i], b.uv1[i])),
         // A normal já foi consumida pela iluminação antes do recorte: aqui ela não muda mais
         // nada, e interpolá-la seria trabalho para ninguém ler.
         normal: a.normal,
@@ -2660,29 +2905,6 @@ fn compare(func: u32, value: f32, reference: f32) -> bool {
 }
 
 /// Combina a cor do fragmento com o texel, conforme o `GL_TEXTURE_ENV_MODE`.
-fn combine(mode: u32, source: [f32; 4], texel: [f32; 4]) -> [f32; 4] {
-    match mode {
-        gles::GL_REPLACE => texel,
-        gles::GL_DECAL => {
-            let mut out = source;
-            for c in 0..3 {
-                out[c] = source[c] * (1.0 - texel[3]) + texel[c] * texel[3];
-            }
-            out
-        }
-        gles::GL_ADD => {
-            let mut out = source;
-            for c in 0..3 {
-                out[c] = (source[c] + texel[c]).min(1.0);
-            }
-            out[3] = source[3] * texel[3];
-            out
-        }
-        // `GL_MODULATE` é o padrão e o que os jogos usam quase sempre.
-        _ => std::array::from_fn(|c| source[c] * texel[c]),
-    }
-}
-
 /// O peso de um fator de mistura para o canal `c`.
 fn factor(kind: u32, source: [f32; 4], destination: [f32; 4], c: usize) -> f32 {
     match kind {
@@ -3039,6 +3261,53 @@ mod tests {
         assert!(estado.lighting);
     }
     use super::*;
+
+    /// O `GL_COMBINE` com a fonte 0 na textura e a função `GL_REPLACE` ignora a cor do
+    /// vértice. É o que o motor QX pede, com a cor zerada; tratado como `GL_MODULATE`, o
+    /// resultado era preto transparente.
+    #[test]
+    fn o_combine_substitui_pela_textura_sem_olhar_o_vertice() {
+        let mut env = TexEnv::com_modo(gles::GL_COMBINE);
+        env.define(gles::GL_COMBINE_RGB, gles::GL_REPLACE, 0.0);
+        env.define(gles::GL_COMBINE_ALPHA, gles::GL_REPLACE, 0.0);
+        env.define(gles::GL_SRC0_RGB, gles::GL_TEXTURE, 0.0);
+        env.define(gles::GL_SRC0_ALPHA, gles::GL_TEXTURE, 0.0);
+        // O QX manda `GL_SRC_COLOR` no operando de alfa; vale como o alfa.
+        env.define(gles::GL_OPERAND0_ALPHA, gles::GL_SRC_COLOR, 0.0);
+        let texel = [0.2, 0.4, 0.6, 0.8];
+        assert_eq!(env.aplica([0.0; 4], texel), texel);
+    }
+
+    /// A unidade 1 do QX: `ADD_SIGNED` da textura de cor com o que saiu da unidade 0 (o `DOT3`
+    /// da luz), e o alfa da textura vezes a cor constante.
+    #[test]
+    fn a_unidade_1_soma_com_sinal_sobre_a_anterior() {
+        let mut env = TexEnv::com_modo(gles::GL_COMBINE);
+        env.define(gles::GL_COMBINE_RGB, gles::GL_ADD_SIGNED, 0.0);
+        env.define(gles::GL_SRC0_RGB + 1, gles::GL_PREVIOUS, 0.0);
+        env.define(gles::GL_SRC0_ALPHA + 1, gles::GL_CONSTANT, 0.0);
+        env.cor = [0.0, 0.0, 0.0, 0.5];
+        let anterior = [0.75, 0.5, 0.25, 1.0];
+        let texel = [0.5, 0.5, 0.5, 1.0];
+        let saida = env.aplica_com(anterior, [0.0; 4], texel);
+        // 0,5 + anterior − 0,5 = anterior; alfa 1 × 0,5.
+        for (canal, esperado) in [0.75, 0.5, 0.25, 0.5].into_iter().enumerate() {
+            assert!((saida[canal] - esperado).abs() < 1e-6, "{saida:?}");
+        }
+    }
+
+    #[test]
+    fn o_combine_interpola_pela_terceira_fonte() {
+        let mut env = TexEnv::com_modo(gles::GL_COMBINE);
+        env.define(gles::GL_COMBINE_RGB, gles::GL_INTERPOLATE, 0.0);
+        env.define(gles::GL_SRC0_RGB, gles::GL_TEXTURE, 0.0);
+        env.define(gles::GL_SRC0_RGB + 1, gles::GL_PRIMARY_COLOR, 0.0);
+        env.define(gles::GL_SRC0_RGB + 2, gles::GL_CONSTANT, 0.0);
+        env.cor = [0.25; 4];
+        let saida = env.aplica([1.0, 1.0, 1.0, 1.0], [0.0, 0.0, 0.0, 1.0]);
+        // 0 × 0,25 + 1 × 0,75
+        assert!((saida[0] - 0.75).abs() < 1e-6, "{saida:?}");
+    }
 
     /// O quadro depois de pintado. O desenho é acumulado e só vira pixel no despejo — que no
     /// emulador acontece no `eglSwapBuffers`, e aqui precisa ser pedido.

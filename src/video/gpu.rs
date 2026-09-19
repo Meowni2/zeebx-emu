@@ -16,7 +16,7 @@
 
 use super::contexto::Contexto;
 use super::gles;
-use super::rasterizer::{GlState, Matrix, QuadroNaPlaca, Rasterizador, Vertex};
+use super::rasterizer::{GlState, Matrix, QuadroNaPlaca, Rasterizador, TexEnv, UnidadeDeTextura, Vertex};
 use eframe::glow::{self, HasContext};
 use std::collections::HashMap;
 
@@ -26,7 +26,7 @@ const TEXTURE_MAX_ANISOTROPY: u32 = 0x84fe;
 const MAX_TEXTURE_MAX_ANISOTROPY: u32 = 0x84ff;
 
 /// Quantos `f32` cada vértice ocupa no buffer: posição, cor e coordenada de textura.
-const FLOATS_POR_VERTICE: usize = 4 + 4 + 2 + 1;
+const FLOATS_POR_VERTICE: usize = 4 + 4 + 2 + 1 + 2;
 
 /// O que a placa precisa saber de uma textura do jogo, além dos pixels que já estão nela.
 struct Textura {
@@ -69,7 +69,9 @@ struct Estado {
     mascara_valor_stencil: u32,
     mascara_escrita_stencil: u32,
     op_stencil: [u32; 3],
-    env_textura: u32,
+    env_textura: TexEnv,
+    /// A unidade de textura 1, espelhada do estado de software.
+    unidade1: UnidadeDeTextura,
     textura_ligada: u32,
     texturando: bool,
     /// A viewport como o jogo a passou, com o `y` de baixo para cima.
@@ -109,7 +111,8 @@ impl Default for Estado {
             mascara_valor_stencil: u32::MAX,
             mascara_escrita_stencil: u32::MAX,
             op_stencil: [gles::GL_KEEP; 3],
-            env_textura: gles::GL_MODULATE,
+            env_textura: TexEnv::default(),
+            unidade1: UnidadeDeTextura::default(),
             textura_ligada: 0,
             texturando: false,
             viewport: (0, 0, 0, 0),
@@ -517,6 +520,7 @@ impl GpuState {
         }
         self.destino();
         self.aplica();
+        let textura_da_ponte = textura.is_some();
         let textura = textura.or_else(|| {
             self.fill
                 .texturando
@@ -524,6 +528,10 @@ impl GpuState {
                 .flatten()
                 .map(|t| t.objeto)
         });
+        let textura1 = match (textura_da_ponte, self.fill.unidade1.ligada) {
+            (false, true) => self.texturas.get(&self.fill.unidade1.textura).map(|t| t.objeto),
+            _ => None,
+        };
         let gl = &self.gl;
         unsafe {
             gl.use_program(Some(self.programa));
@@ -536,7 +544,7 @@ impl GpuState {
             );
             let passo = (FLOATS_POR_VERTICE * 4) as i32;
             for (indice, tamanho, deslocamento) in
-                [(0u32, 4i32, 0i32), (1, 4, 16), (2, 2, 32), (3, 1, 40)]
+                [(0u32, 4i32, 0i32), (1, 4, 16), (2, 2, 32), (3, 1, 40), (4, 2, 44)]
             {
                 gl.enable_vertex_attrib_array(indice);
                 gl.vertex_attrib_pointer_f32(
@@ -552,7 +560,17 @@ impl GpuState {
             gl.bind_texture(glow::TEXTURE_2D, textura);
             uniforme_i32(gl, self.programa, "amostra", 0);
             uniforme_i32(gl, self.programa, "texturando", i32::from(textura.is_some()));
-            uniforme_i32(gl, self.programa, "env", codigo_env(self.fill.env_textura));
+            envia_env(gl, self.programa, "", &self.fill.env_textura);
+            // A unidade 1 só entra com textura de verdade: ligada sem textura carregada, ela
+            // passaria o anterior adiante com um texel preto.
+            gl.active_texture(glow::TEXTURE1);
+            gl.bind_texture(glow::TEXTURE_2D, textura1);
+            gl.active_texture(glow::TEXTURE0);
+            uniforme_i32(gl, self.programa, "amostra1", 1);
+            uniforme_i32(gl, self.programa, "texturando1", i32::from(textura1.is_some()));
+            if textura1.is_some() {
+                envia_env(gl, self.programa, "1", &self.fill.unidade1.env);
+            }
             uniforme_i32(
                 gl,
                 self.programa,
@@ -840,6 +858,16 @@ fn poe_em(destino: &mut Vec<f32>, v: &Vertex) {
     destino.extend_from_slice(&v.color);
     destino.extend_from_slice(&v.uv);
     destino.push(v.fog);
+    destino.extend_from_slice(&v.uv1);
+}
+
+/// Um uniforme de quatro componentes, para a cor do `GL_TEXTURE_ENV_COLOR`.
+fn uniforme_vec4(gl: &glow::Context, programa: glow::Program, nome: &str, valor: [f32; 4]) {
+    unsafe {
+        if let Some(onde) = gl.get_uniform_location(programa, nome) {
+            gl.uniform_4_f32(Some(&onde), valor[0], valor[1], valor[2], valor[3]);
+        }
+    }
 }
 
 /// Um uniforme de três componentes, para a cor da névoa.
@@ -857,12 +885,65 @@ fn bytes_de_f32(dados: &[f32]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(dados.as_ptr().cast(), std::mem::size_of_val(dados)) }
 }
 
-/// O código que o shader usa para cada modo de `glTexEnv`. Ver `combine` no rasterizador.
+/// O código que o shader usa para cada modo de `glTexEnv`. Ver [`TexEnv::aplica`].
 fn codigo_env(modo: u32) -> i32 {
     match modo {
         gles::GL_REPLACE => 0,
         gles::GL_DECAL => 1,
         gles::GL_ADD => 2,
+        gles::GL_COMBINE => 4,
+        _ => 3,
+    }
+}
+
+/// A função do `GL_COMBINE` no shader. Ver `TexEnv::combina`.
+fn codigo_funcao(funcao: u32) -> i32 {
+    match funcao {
+        gles::GL_REPLACE => 0,
+        gles::GL_ADD => 2,
+        gles::GL_ADD_SIGNED => 3,
+        gles::GL_INTERPOLATE => 4,
+        gles::GL_SUBTRACT => 5,
+        gles::GL_DOT3_RGB => 6,
+        gles::GL_DOT3_RGBA => 7,
+        _ => 1,
+    }
+}
+
+/// A fonte do `GL_COMBINE` no shader: textura, constante, cor primária ou unidade anterior.
+fn codigo_fonte(fonte: u32) -> i32 {
+    match fonte {
+        gles::GL_TEXTURE => 0,
+        gles::GL_CONSTANT => 1,
+        gles::GL_PRIMARY_COLOR => 2,
+        _ => 3,
+    }
+}
+
+/// Os uniformes do ambiente de uma unidade; `sufixo` é `""` para a 0 e `"1"` para a 1.
+fn envia_env(gl: &glow::Context, programa: glow::Program, sufixo: &str, env: &TexEnv) {
+    uniforme_i32(gl, programa, &format!("env{sufixo}"), codigo_env(env.modo));
+    if env.modo != gles::GL_COMBINE {
+        return;
+    }
+    for lado in 0..2 {
+        let nome = ["rgb", "alfa"][lado];
+        uniforme_i32(gl, programa, &format!("cmb_{nome}{sufixo}"), codigo_funcao(env.combina[lado]));
+        uniforme_f32(gl, programa, &format!("escala_{nome}{sufixo}"), env.escala[lado]);
+        for i in 0..3 {
+            uniforme_i32(gl, programa, &format!("src_{nome}{sufixo}[{i}]"), codigo_fonte(env.fontes[lado][i]));
+            uniforme_i32(gl, programa, &format!("op_{nome}{sufixo}[{i}]"), codigo_operando(env.operandos[lado][i]));
+        }
+    }
+    uniforme_vec4(gl, programa, &format!("cor_env{sufixo}"), env.cor);
+}
+
+/// O operando do `GL_COMBINE` no shader.
+fn codigo_operando(operando: u32) -> i32 {
+    match operando {
+        gles::GL_SRC_COLOR => 0,
+        gles::GL_ONE_MINUS_SRC_COLOR => 1,
+        gles::GL_SRC_ALPHA => 2,
         _ => 3,
     }
 }
@@ -896,14 +977,17 @@ layout(location = 0) in vec4 pos;
 layout(location = 1) in vec4 cor;
 layout(location = 2) in vec2 uv;
 layout(location = 3) in float fog;
+layout(location = 4) in vec2 uv1;
 uniform float virar;
 out vec4 vcor;
 out vec2 vuv;
 out float vfog;
+out vec2 vuv1;
 void main() {
     vcor = cor;
     vuv = uv;
     vfog = fog;
+    vuv1 = uv1;
     gl_Position = vec4(pos.x, pos.y * virar, pos.z, pos.w);
 }
 "#;
@@ -916,30 +1000,116 @@ const FRAGMENTO: &str = r#"
 in vec4 vcor;
 in vec2 vuv;
 in float vfog;
+in vec2 vuv1;
 uniform sampler2D amostra;
+uniform sampler2D amostra1;
 uniform int com_neblina;
 uniform vec3 cor_neblina;
 uniform int texturando;
+uniform int texturando1;
+// O ambiente de cada unidade: o modo e, no `GL_COMBINE`, função, fontes, operandos, escalas e a
+// cor constante. O sufixo `1` é a unidade 1.
 uniform int env;
+uniform int cmb_rgb;
+uniform int cmb_alfa;
+uniform int src_rgb[3];
+uniform int op_rgb[3];
+uniform int src_alfa[3];
+uniform int op_alfa[3];
+uniform float escala_rgb;
+uniform float escala_alfa;
+uniform vec4 cor_env;
+uniform int env1;
+uniform int cmb_rgb1;
+uniform int cmb_alfa1;
+uniform int src_rgb1[3];
+uniform int op_rgb1[3];
+uniform int src_alfa1[3];
+uniform int op_alfa1[3];
+uniform float escala_rgb1;
+uniform float escala_alfa1;
+uniform vec4 cor_env1;
 uniform int func_alfa;
 uniform float ref_alfa;
 out vec4 saida;
 
-vec4 combina(vec4 fonte, vec4 texel) {
-    if (env == 0) { return texel; }
-    if (env == 1) {
-        return vec4(fonte.rgb * (1.0 - texel.a) + texel.rgb * texel.a, fonte.a);
+// A fonte do `GL_COMBINE`: 0 a textura, 1 a constante, 2 a cor primária, 3 a unidade anterior.
+vec4 fonte_de(int qual, vec4 anterior, vec4 primaria, vec4 texel, vec4 constante) {
+    if (qual == 0) { return texel; }
+    if (qual == 1) { return constante; }
+    if (qual == 2) { return primaria; }
+    return anterior;
+}
+
+// O operando no RGB: a cor, o complemento dela, o alfa ou o complemento dele.
+vec3 operando_rgb(int op, vec4 v) {
+    if (op == 0) { return v.rgb; }
+    if (op == 1) { return vec3(1.0) - v.rgb; }
+    if (op == 2) { return vec3(v.a); }
+    return vec3(1.0 - v.a);
+}
+
+// No alfa só há os operandos de alfa; os de cor valem como eles, como no software.
+float operando_alfa(int op, vec4 v) {
+    if (op == 1 || op == 3) { return 1.0 - v.a; }
+    return v.a;
+}
+
+vec3 funcao_rgb(int f, vec3 a0, vec3 a1, vec3 a2) {
+    if (f == 0) { return a0; }
+    if (f == 2) { return a0 + a1; }
+    if (f == 3) { return a0 + a1 - 0.5; }
+    if (f == 4) { return a0 * a2 + a1 * (1.0 - a2); }
+    if (f == 5) { return a0 - a1; }
+    if (f == 6 || f == 7) { return vec3(4.0 * dot(a0 - 0.5, a1 - 0.5)); }
+    return a0 * a1;
+}
+
+float funcao_alfa(int f, float a0, float a1, float a2) {
+    if (f == 0) { return a0; }
+    if (f == 2) { return a0 + a1; }
+    if (f == 3) { return a0 + a1 - 0.5; }
+    if (f == 4) { return a0 * a2 + a1 * (1.0 - a2); }
+    if (f == 5) { return a0 - a1; }
+    return a0 * a1;
+}
+
+// Uma unidade de textura, caso a caso igual ao `TexEnv::aplica_com` do software: os modos
+// clássicos agem sobre o que saiu da unidade anterior.
+vec4 unidade(int modo, int crgb, int calfa, int srgb[3], int orgb[3], int salfa[3], int oalfa[3],
+             float ergb, float ealfa, vec4 constante, vec4 anterior, vec4 primaria, vec4 texel) {
+    if (modo == 4) {
+        vec3 r[3];
+        float a[3];
+        for (int i = 0; i < 3; i++) {
+            r[i] = operando_rgb(orgb[i], fonte_de(srgb[i], anterior, primaria, texel, constante));
+            a[i] = operando_alfa(oalfa[i], fonte_de(salfa[i], anterior, primaria, texel, constante));
+        }
+        vec3 rgb = clamp(funcao_rgb(crgb, r[0], r[1], r[2]) * ergb, 0.0, 1.0);
+        float alfa = clamp(funcao_alfa(calfa, a[0], a[1], a[2]) * ealfa, 0.0, 1.0);
+        if (crgb == 7) { alfa = rgb.r; }
+        return vec4(rgb, alfa);
     }
-    if (env == 2) {
-        return vec4(min(fonte.rgb + texel.rgb, vec3(1.0)), fonte.a * texel.a);
+    if (modo == 0) { return texel; }
+    if (modo == 1) {
+        return vec4(anterior.rgb * (1.0 - texel.a) + texel.rgb * texel.a, anterior.a);
     }
-    return fonte * texel;
+    if (modo == 2) {
+        return vec4(min(anterior.rgb + texel.rgb, vec3(1.0)), anterior.a * texel.a);
+    }
+    return anterior * texel;
 }
 
 void main() {
-    vec4 cor = vcor;
+    vec4 primaria = vcor;
+    vec4 cor = primaria;
     if (texturando == 1) {
-        cor = combina(cor, texture(amostra, vuv));
+        cor = unidade(env, cmb_rgb, cmb_alfa, src_rgb, op_rgb, src_alfa, op_alfa, escala_rgb,
+                      escala_alfa, cor_env, cor, primaria, texture(amostra, vuv));
+    }
+    if (texturando1 == 1) {
+        cor = unidade(env1, cmb_rgb1, cmb_alfa1, src_rgb1, op_rgb1, src_alfa1, op_alfa1,
+                      escala_rgb1, escala_alfa1, cor_env1, cor, primaria, texture(amostra1, vuv1));
     }
     // A névoa entra depois da textura e antes do teste de alfa, e mexe só no RGB — a mesma
     // ordem do rasterizador de software.
@@ -1121,9 +1291,9 @@ impl Rasterizador for GpuState {
                 self.fill.tesoura_ligada = on;
                 self.estado.set_scissor_test(on);
             }
-            // Ligar e desligar textura é por unidade, e só a base desenha. O Resident Evil 4
-            // desliga a unidade 1 no fim de cada bloco.
+            // Ligar e desligar textura é por unidade; as duas primeiras desenham.
             gles::GL_TEXTURE_2D if self.estado.base_active_unit() => self.fill.texturando = on,
+            gles::GL_TEXTURE_2D => self.fill.unidade1 = self.estado.unidade1(),
             gles::GL_FOG => self.fill.neblina = self.estado.neblina(),
             _ => {}
         }
@@ -1208,33 +1378,43 @@ impl Rasterizador for GpuState {
     fn set_client_active_texture(&mut self, unit: u32) {
         self.estado.set_client_active_texture(unit);
     }
-    fn base_client_unit(&self) -> bool {
-        self.estado.base_client_unit()
+    fn client_unit(&self) -> u32 {
+        Rasterizador::client_unit(&self.estado)
     }
-    // **Só a unidade zero desenha**, aqui como no estado de software: o Resident Evil 4 termina
-    // cada bloco ligando textura na unidade 1, e deixar essa ligação valer trocava a textura
-    // base e pintava a vila de branco. Ver o `active_unit` do `GlState`.
+    // **A ligação é da unidade ativa**, aqui como no estado de software: o Resident Evil 4
+    // termina cada bloco ligando textura na unidade 1, e deixar essa ligação valer na base
+    // trocava a textura dela e pintava a vila de branco. Ver o `active_unit` do `GlState`.
     fn bind_texture(&mut self, name: u32) {
         self.estado.bind_texture(name);
         if self.estado.base_active_unit() {
             self.fill.textura_ligada = name;
         }
+        self.fill.unidade1 = self.estado.unidade1();
     }
     fn bound_texture(&self) -> u32 {
         self.estado.bound_texture()
     }
     fn set_texture_env(&mut self, mode: u32) {
         self.estado.set_texture_env(mode);
-        if self.estado.base_active_unit() {
-            self.fill.env_textura = mode;
-        }
+        self.fill.env_textura = self.estado.texture_env();
+        self.fill.unidade1 = self.estado.unidade1();
+    }
+    fn set_texture_env_param(&mut self, pname: u32, enumeracao: u32, numero: f32) {
+        self.estado.set_texture_env_param(pname, enumeracao, numero);
+        self.fill.env_textura = self.estado.texture_env();
+        self.fill.unidade1 = self.estado.unidade1();
+    }
+    fn set_texture_env_color(&mut self, cor: [f32; 4]) {
+        self.estado.set_texture_env_color(cor);
+        self.fill.env_textura = self.estado.texture_env();
+        self.fill.unidade1 = self.estado.unidade1();
     }
     fn set_texture_parameter(&mut self, name: u32, value: u32) {
         self.estado.set_texture_parameter(name, value);
-        if !self.estado.base_active_unit() {
+        if !self.estado.unidade_ativa_desenha() {
             return;
         }
-        let ligada = self.fill.textura_ligada;
+        let ligada = self.estado.bound_texture();
         if let Some(t) = self.texturas.get_mut(&ligada) {
             match name {
                 gles::GL_TEXTURE_MIN_FILTER => t.filtro_min = value,
@@ -1250,10 +1430,10 @@ impl Rasterizador for GpuState {
     }
     fn set_texture_crop(&mut self, crop: [i32; 4]) {
         self.estado.set_texture_crop(crop);
-        if !self.estado.base_active_unit() {
+        if !self.estado.unidade_ativa_desenha() {
             return;
         }
-        let ligada = self.fill.textura_ligada;
+        let ligada = self.estado.bound_texture();
         if let Some(t) = self.texturas.get_mut(&ligada) {
             t.crop = crop;
         }
@@ -1439,6 +1619,7 @@ impl Rasterizador for GpuState {
         for ([sx, sy], uv) in cantos {
             let v = Vertex {
                 normal: [0.0, 0.0, 1.0],
+                uv1: [0.0; 2],
                 fog: 1.0,
                 position: [
                     ((sx - vx as f32) / vw as f32) * 2.0 - 1.0,
@@ -1625,6 +1806,7 @@ impl Rasterizador for GpuState {
                 color: [1.0; 4],
                 uv,
                 normal: [0.0, 0.0, 1.0],
+                uv1: [0.0; 2],
                 fog: 1.0,
             });
         }
@@ -1636,7 +1818,7 @@ impl Rasterizador for GpuState {
         self.fill.descarte = false;
         self.fill.mascara_profundidade = false;
         self.fill.mascara_cor = [true, true, true, false];
-        self.fill.env_textura = gles::GL_REPLACE;
+        self.fill.env_textura = TexEnv::com_modo(gles::GL_REPLACE);
         self.fill.teste_alfa = true;
         self.fill.func_alfa = gles::GL_GREATER;
         self.fill.ref_alfa = 0.5;
@@ -1849,6 +2031,7 @@ mod tests {
                 position: [x, y, 0.0, 1.0],
                 color: [1.0, 0.0, 0.0, 1.0],
                 uv: [0.0, 0.0],
+                uv1: [0.0; 2],
                 normal: [0.0, 0.0, 1.0],
                 fog: 1.0,
             };
@@ -1898,6 +2081,7 @@ mod tests {
                 position: [x, y, 0.0, 1.0],
                 color: [1.0, 0.0, 0.0, 1.0],
                 uv: [0.0, 0.0],
+                uv1: [0.0; 2],
                 normal: [0.0, 0.0, 1.0],
                 fog: 1.0,
             };
@@ -1970,6 +2154,7 @@ mod tests {
                 position: [x, y, 0.0, 1.0],
                 color: [1.0, 0.0, 0.0, 1.0],
                 uv: [0.0, 0.0],
+                uv1: [0.0; 2],
                 normal: [0.0, 0.0, 1.0],
                 fog: 1.0,
             };
@@ -2037,6 +2222,7 @@ mod tests {
                 position: [x, y, 0.0, 1.0],
                 color: [1.0, 0.0, 0.0, 1.0],
                 uv: [0.0, 0.0],
+                uv1: [0.0; 2],
                 normal: [0.0, 0.0, 1.0],
                 fog: 1.0,
             };
@@ -2085,6 +2271,7 @@ mod tests {
             position: [x, y, 0.0, 1.0],
             color: [1.0, 0.0, 0.0, 1.0],
             uv: [0.0, 0.0],
+            uv1: [0.0; 2],
             normal: [0.0, 0.0, 1.0],
                 fog: 1.0,
         };
@@ -2153,6 +2340,7 @@ mod tests {
             position: [x, y, -1.0, 1.0],
             color: [0.0, 1.0, 0.0, 1.0],
             uv: [0.0, 0.0],
+            uv1: [0.0; 2],
             normal: [0.0, 0.0, 1.0],
             fog: 1.0,
         };
@@ -2194,6 +2382,7 @@ mod tests {
                 position: [x, y, 0.0, 1.0],
                 color: [0.0, 1.0, 0.0, 1.0],
                 uv: [0.0, 0.0],
+                uv1: [0.0; 2],
                 normal: [0.0, 0.0, 1.0],
                 fog: 1.0,
             };
@@ -2238,6 +2427,7 @@ mod tests {
                 position: [x, y, 1.5, 1.0],
                 color: [0.0, 0.0, 1.0, 1.0],
                 uv: [0.0, 0.0],
+                uv1: [0.0; 2],
                 normal: [0.0, 0.0, 1.0],
                 fog: 1.0,
             };
@@ -2287,6 +2477,7 @@ mod tests {
                         position: [x, y, 0.0, 1.0],
                         color: [1.0, 1.0, 1.0, 1.0],
                         uv: [0.0, 0.0],
+                        uv1: [0.0; 2],
                         normal: [0.0, 0.0, 1.0],
                 fog: 1.0,
                     };

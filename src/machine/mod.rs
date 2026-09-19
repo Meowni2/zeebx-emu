@@ -1936,6 +1936,19 @@ struct ArrayPointer {
     buffer: u32,
 }
 
+impl ArrayPointer {
+    /// Se o vetor está ligado e aponta para algum lugar.
+    ///
+    /// **Endereço zero só é "nenhum vetor" sem buffer ligado.** Com um buffer, o ponteiro é um
+    /// deslocamento dentro dele, e zero é o deslocamento mais comum: o motor QX do SDK dá
+    /// `glVertexPointer(3, GL_FIXED, 0, 0)` para toda malha. Conferir só o endereço descartava
+    /// todo desenho por buffer com os vértices no começo — o cenário e os personagens do Dragon
+    /// Vs Chicken sumiam inteiros.
+    fn em_uso(&self) -> bool {
+        self.enabled && (self.address != 0 || self.buffer != 0)
+    }
+}
+
 /// Adapta os registradores e a pilha do guest ao formatador de `printf`.
 struct GuestArgs<'a, C: CpuBackend> {
     words: Vec<u32>,
@@ -2311,6 +2324,8 @@ pub struct Machine<C: CpuBackend> {
     gl_vertices: ArrayPointer,
     gl_colors: ArrayPointer,
     gl_texcoords: ArrayPointer,
+    /// O vetor de coordenadas da unidade de textura 1.
+    gl_texcoords1: ArrayPointer,
     /// O vetor de normais do `glNormalPointer`. Sempre três componentes — a função nem recebe
     /// tamanho.
     gl_normals: ArrayPointer,
@@ -2740,6 +2755,7 @@ impl<C: CpuBackend> Machine<C> {
             gl_vertices: ArrayPointer::default(),
             gl_colors: ArrayPointer::default(),
             gl_texcoords: ArrayPointer::default(),
+            gl_texcoords1: ArrayPointer::default(),
             gl_normals: ArrayPointer::default(),
             gl_buffers: HashMap::new(),
             gl_array_buffer: 0,
