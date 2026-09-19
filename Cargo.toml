@@ -1,6 +1,6 @@
 [package]
 name = "zeebx"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 # GPLv2 porque o unicorn-engine é GPLv2 e vai compilado dentro do binário. Ver LICENSE.
 authors = ["ZeebxTeam"]
