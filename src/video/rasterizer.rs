@@ -635,6 +635,9 @@ pub trait Rasterizador {
     fn set_viewport(&mut self, x: i32, y: i32, width: i32, height: i32);
     fn set_scissor(&mut self, x: i32, y: i32, width: i32, height: i32);
     fn set_surface(&mut self, width: usize, height: usize);
+    /// Como [`Rasterizador::set_surface`], para a superfície que o aparelho estica até a tela
+    /// inteira — a do `EGL_QUALCOMM_surface_scale`. Ver [`GlState::superficie_esticada`].
+    fn set_surface_esticada(&mut self, width: usize, height: usize);
     fn surface(&self) -> (usize, usize);
     fn frame_size(&self) -> (usize, usize);
 
@@ -774,6 +777,9 @@ impl Rasterizador for GlState {
     }
     fn set_surface(&mut self, width: usize, height: usize) {
         GlState::set_surface(self, width, height)
+    }
+    fn set_surface_esticada(&mut self, width: usize, height: usize) {
+        GlState::set_surface_esticada(self, width, height)
     }
     fn surface(&self) -> (usize, usize) {
         GlState::surface(self)
@@ -954,6 +960,8 @@ pub struct GlState {
     tesoura_crua: (i32, i32, i32, i32),
     tesoura_ligada: bool,
     surface: Option<(usize, usize)>,
+    /// Se a superfície vai esticada à tela inteira. Ver [`GlState::superficie_esticada`].
+    esticada: bool,
     clear_color: [f32; 4],
     clear_depth: f32,
     current_color: [f32; 4],
@@ -1075,6 +1083,7 @@ impl GlState {
             tesoura_crua: (0, 0, width as i32, height as i32),
             tesoura_ligada: false,
             surface: None,
+            esticada: false,
             clear_color: [0.0, 0.0, 0.0, 1.0],
             clear_depth: 1.0,
             current_color: [1.0; 4],
@@ -1218,6 +1227,23 @@ impl GlState {
         if width > 0 && height > 0 {
             self.surface = Some((width, height));
         }
+        self.esticada = false;
+    }
+
+    /// Declara a superfície que o aparelho amplia até a tela inteira.
+    pub fn set_surface_esticada(&mut self, width: usize, height: usize) {
+        self.set_surface(width, height);
+        self.esticada = width > 0 && height > 0;
+    }
+
+    /// Se a superfície menor que o quadro vai **esticada** à tela, e não num canto dela.
+    ///
+    /// São dois casos de superfície menor, e eles só diferem aqui. O `EGL_QUALCOMM_surface_scale`
+    /// amplia: o Quake desenha em 320×400 e o aparelho mostra em 640×480, 4:3. Um pbuffer não
+    /// amplia nada: a Z-Wheel desenha o palco num de 640×330 e o copia para onde quiser. A
+    /// proporção larga só sabe abrir os lados do primeiro.
+    pub fn superficie_esticada(&self) -> bool {
+        self.esticada
     }
 
     /// O tamanho da superfície em que o jogo desenha, deduzido das viewports usadas.

@@ -289,7 +289,7 @@ impl<C: CpuBackend> Machine<C> {
                     let altura = self.cpu.read_u32(origem + 12)? as i32;
                     if largura > 0 && altura > 0 {
                         self.scale_source = Some((largura, altura));
-                        self.gl.set_surface(largura as usize, altura as usize);
+                        self.gl.set_surface_esticada(largura as usize, altura as usize);
                     }
                 }
                 (4, gles::EGL_TRUE)

@@ -28,6 +28,12 @@ const MAX_TEXTURE_MAX_ANISOTROPY: u32 = 0x84ff;
 /// Quantos `f32` cada vértice ocupa no buffer: posição, cor e coordenada de textura.
 const FLOATS_POR_VERTICE: usize = 4 + 4 + 2 + 1 + 2;
 
+/// Quantos vértices cabem no anel do buffer de vértices. Ver [`GpuState::anel`].
+const VERTICES_NO_ANEL: usize = 1 << 16;
+
+/// Quantos vértices um lote junta antes de ir à placa mesmo sem mudança de estado.
+const VERTICES_NO_LOTE: usize = 1 << 14;
+
 /// O que a placa precisa saber de uma textura do jogo, além dos pixels que já estão nela.
 struct Textura {
     objeto: glow::Texture,
@@ -43,7 +49,10 @@ struct Textura {
 }
 
 /// O estado do preenchimento, anotado das chamadas e aplicado uma vez por draw.
-#[derive(Clone)]
+///
+/// É também a chave do lote: desenhos seguidos com o mesmo estado vão juntos à placa. Ver
+/// [`GpuState::lote`].
+#[derive(Clone, PartialEq)]
 struct Estado {
     teste_profundidade: bool,
     mascara_profundidade: bool,
@@ -143,8 +152,33 @@ pub struct GpuState {
     /// O destino: uma textura de cor mais profundidade e stencil juntos.
     quadro: Option<Destino>,
     programa: glow::Program,
+    /// Onde fica cada uniforme do programa, e o que foi mandado para ele por último.
+    uniformes: Uniformes,
     vao: glow::VertexArray,
     vbo: glow::Buffer,
+    /// O buffer de vértices é um anel: `(capacidade, próximo livre)`, em vértices.
+    ///
+    /// Cada desenho grava na faixa seguinte e desenha a partir dela, e só quando o anel enche o
+    /// buffer é pedido de novo, inteiro. Redefinir o buffer a cada desenho — o `buffer_data` —
+    /// e refazer os ponteiros de atributo custava 4 µs por chamada, e o Quake faz umas 370 por
+    /// quadro: era o que o deixava abaixo da velocidade do console, em câmera lenta.
+    anel: (usize, usize),
+    /// Se os ponteiros de atributo já estão gravados no `vao`. Eles não mudam: o layout do
+    /// vértice é um só, e a posição de cada desenho no anel vai no `first` do `draw_arrays`.
+    vao_pronto: bool,
+    /// **Os desenhos juntados que ainda não foram à placa**, em triângulos soltos, com o estado
+    /// e a perspectiva em que foram pedidos.
+    ///
+    /// O Quake desenha face por face: um `glDrawArrays` em leque para cada polígono, umas 370
+    /// por quadro, quase todas seguidas com a mesma textura e o mesmo estado. Cada uma ia à placa
+    /// sozinha — estado, uniformes e a chamada do driver, uns 5 µs —, e o jogo não cabia no
+    /// quadro de 60 Hz. Juntos, o leque e a faixa viram triângulos e o lote vai numa chamada só,
+    /// quando o estado muda ou quando alguém precisa do que já foi desenhado. Ver
+    /// [`GpuState::descarrega`].
+    lote: Vec<f32>,
+    estado_do_lote: Option<(Estado, bool)>,
+    /// Os vértices transformados de um desenho, antes de virarem triângulos no lote.
+    soltos: Vec<Vertex>,
     /// A textura de apoio do [`GpuState::import_rgb565_changes`].
     ponte: glow::Texture,
     texturas: HashMap<u32, Textura>,
@@ -237,8 +271,14 @@ impl GpuState {
             },
             quadro: None,
             programa,
+            uniformes: Uniformes::default(),
             vao,
             vbo,
+            anel: (0, 0),
+            vao_pronto: false,
+            lote: Vec::new(),
+            estado_do_lote: None,
+            soltos: Vec::new(),
             ponte,
             texturas: HashMap::new(),
             vertices: Vec::new(),
@@ -254,20 +294,29 @@ impl GpuState {
     }
 
     /// Garante que o destino existe no tamanho do quadro e o deixa ligado.
-    /// As colunas a mais de cada lado, em pixels do console, para a proporção pedida.
+    /// As colunas a mais de cada lado, em pixels da superfície, para a proporção pedida.
     ///
-    /// Só quando a superfície ocupa o quadro inteiro: um pbuffer menor que o quadro (a Z-Wheel
+    /// Só quando a superfície vai à tela inteira: um pbuffer menor que o quadro (a Z-Wheel
     /// desenha em 640×330) não tem "lados" para abrir.
+    ///
+    /// **A conta é em pixels da superfície.** Na superfície esticada pela Qualcomm cada coluna
+    /// dela vale `fw / sw` colunas da tela: o Quake desenha em 320×400, e as colunas a mais do
+    /// 16:9 são as da tela divididas por dois. Contadas em pixels da tela, como antes, a imagem
+    /// larga saía com o dobro dos lados. E só havia lados quando a superfície era do tamanho do
+    /// quadro — no Quake, nunca: o 16:9 não abria nada, e com a resolução interna acima de 1 o
+    /// quadro ia à janela na proporção da superfície, estreito e menor.
     fn extra(&self) -> usize {
         let (fw, fh) = self.estado.frame_size();
         let Some(aspecto) = self.proporcao else {
             return 0;
         };
-        if self.estado.surface() != (fw, fh) || fh == 0 {
+        let (sw, sh) = self.estado.surface();
+        let tela_inteira = (sw, sh) == (fw, fh) || self.estado.superficie_esticada();
+        if !tela_inteira || fh == 0 || fw == 0 {
             return 0;
         }
         let largura = (fh as f32 * aspecto).round() as usize;
-        largura.saturating_sub(fw) / 2
+        largura.saturating_sub(fw) / 2 * sw / fw
     }
 
     fn destino(&mut self) {
@@ -513,6 +562,30 @@ impl GpuState {
     ///
     /// `textura` existe porque a ponte do [`GpuState::import_rgb565_changes`] não pertence ao
     /// jogo e portanto não está no mapa de texturas dele.
+    /// Manda à placa o lote em curso, com o estado em que ele foi juntado.
+    ///
+    /// **Todo mundo que mexe na placa fora do desenho chama isto antes**: quem limpa, quem sobe
+    /// ou apaga textura, quem lê o quadro, quem troca o destino. O que foi pedido antes tem de
+    /// chegar antes — um `glClear` que passasse na frente do lote apagaria o que o jogo desenhou
+    /// antes dele. As mudanças de estado não precisam: elas mudam o `fill`, e o `fill` diferente
+    /// já fecha o lote no próximo desenho.
+    fn descarrega(&mut self) {
+        let Some((estado, perspectiva)) = self.estado_do_lote.take() else {
+            return;
+        };
+        if self.lote.is_empty() {
+            return;
+        }
+        let atual = std::mem::replace(&mut self.fill, estado);
+        let anteriores = std::mem::replace(&mut self.vertices, std::mem::take(&mut self.lote));
+        self.em_perspectiva = perspectiva;
+        self.submete_com(glow::TRIANGLES, -1.0, None);
+        self.em_perspectiva = false;
+        self.lote = std::mem::replace(&mut self.vertices, anteriores);
+        self.lote.clear();
+        self.fill = atual;
+    }
+
     fn submete_com(&mut self, modo: u32, virar: f32, textura: Option<glow::Texture>) {
         let quantos = self.vertices.len() / FLOATS_POR_VERTICE;
         if quantos == 0 {
@@ -537,42 +610,60 @@ impl GpuState {
             gl.use_program(Some(self.programa));
             gl.bind_vertex_array(Some(self.vao));
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
-            gl.buffer_data_u8_slice(
-                glow::ARRAY_BUFFER,
-                bytes_de_f32(&self.vertices),
-                glow::DYNAMIC_DRAW,
-            );
             let passo = (FLOATS_POR_VERTICE * 4) as i32;
-            for (indice, tamanho, deslocamento) in
-                [(0u32, 4i32, 0i32), (1, 4, 16), (2, 2, 32), (3, 1, 40), (4, 2, 44)]
-            {
-                gl.enable_vertex_attrib_array(indice);
-                gl.vertex_attrib_pointer_f32(
-                    indice,
-                    tamanho,
-                    glow::FLOAT,
-                    false,
-                    passo,
-                    deslocamento,
-                );
+            if !self.vao_pronto {
+                for (indice, tamanho, deslocamento) in
+                    [(0u32, 4i32, 0i32), (1, 4, 16), (2, 2, 32), (3, 1, 40), (4, 2, 44)]
+                {
+                    gl.enable_vertex_attrib_array(indice);
+                    gl.vertex_attrib_pointer_f32(
+                        indice,
+                        tamanho,
+                        glow::FLOAT,
+                        false,
+                        passo,
+                        deslocamento,
+                    );
+                }
+                self.vao_pronto = true;
             }
+            let (capacidade, livre) = self.anel;
+            if livre + quantos > capacidade {
+                // O buffer novo não espera os desenhos que ainda usam o antigo: o driver
+                // entrega outra memória, e a de antes é solta quando eles terminam.
+                let capacidade = VERTICES_NO_ANEL.max(quantos);
+                gl.buffer_data_size(
+                    glow::ARRAY_BUFFER,
+                    (capacidade * FLOATS_POR_VERTICE * 4) as i32,
+                    glow::STREAM_DRAW,
+                );
+                self.anel = (capacidade, 0);
+            }
+            let primeiro = self.anel.1;
+            gl.buffer_sub_data_u8_slice(
+                glow::ARRAY_BUFFER,
+                primeiro as i32 * passo,
+                bytes_de_f32(&self.vertices),
+            );
+            self.anel.1 += quantos;
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_2D, textura);
-            uniforme_i32(gl, self.programa, "amostra", 0);
-            uniforme_i32(gl, self.programa, "texturando", i32::from(textura.is_some()));
-            envia_env(gl, self.programa, "", &self.fill.env_textura);
+            uniforme_i32(gl, &self.uniformes, self.programa, "amostra", 0);
+            uniforme_i32(gl, &self.uniformes, self.programa, "texturando", i32::from(textura.is_some()));
+            envia_env(gl, &self.uniformes, self.programa, "", &self.fill.env_textura);
             // A unidade 1 só entra com textura de verdade: ligada sem textura carregada, ela
             // passaria o anterior adiante com um texel preto.
             gl.active_texture(glow::TEXTURE1);
             gl.bind_texture(glow::TEXTURE_2D, textura1);
             gl.active_texture(glow::TEXTURE0);
-            uniforme_i32(gl, self.programa, "amostra1", 1);
-            uniforme_i32(gl, self.programa, "texturando1", i32::from(textura1.is_some()));
+            uniforme_i32(gl, &self.uniformes, self.programa, "amostra1", 1);
+            uniforme_i32(gl, &self.uniformes, self.programa, "texturando1", i32::from(textura1.is_some()));
             if textura1.is_some() {
-                envia_env(gl, self.programa, "1", &self.fill.unidade1.env);
+                envia_env(gl, &self.uniformes, self.programa, "1", &self.fill.unidade1.env);
             }
             uniforme_i32(
                 gl,
+                &self.uniformes,
                 self.programa,
                 "func_alfa",
                 match self.fill.teste_alfa {
@@ -580,17 +671,18 @@ impl GpuState {
                     false => 7,
                 },
             );
-            uniforme_f32(gl, self.programa, "ref_alfa", self.fill.ref_alfa);
-            uniforme_f32(gl, self.programa, "virar", virar);
+            uniforme_f32(gl, &self.uniformes, self.programa, "ref_alfa", self.fill.ref_alfa);
+            uniforme_f32(gl, &self.uniformes, self.programa, "virar", virar);
             let neblina = self.fill.neblina;
             uniforme_i32(
                 gl,
+                &self.uniformes,
                 self.programa,
                 "com_neblina",
                 i32::from(neblina.ligada && neblina.permitida),
             );
-            uniforme_vec3(gl, self.programa, "cor_neblina", neblina.cor);
-            gl.draw_arrays(modo, 0, quantos as i32);
+            uniforme_vec3(gl, &self.uniformes, self.programa, "cor_neblina", neblina.cor);
+            gl.draw_arrays(modo, primeiro as i32, quantos as i32);
             gl.bind_vertex_array(None);
             gl.use_program(None);
         }
@@ -833,20 +925,83 @@ fn liga(gl: &glow::Context, capacidade: u32, ligado: bool) {
     }
 }
 
-fn uniforme_i32(gl: &glow::Context, programa: glow::Program, nome: &str, valor: i32) {
-    unsafe {
-        if let Some(onde) = gl.get_uniform_location(programa, nome) {
-            gl.uniform_1_i32(Some(&onde), valor);
+/// As posições dos uniformes do programa, e o último valor que cada um recebeu.
+///
+/// O Quake faz umas 370 draw calls por quadro, e cada uma procurava pelo nome a posição de uma
+/// dezena de uniformes — o glow monta uma string C e o driver procura o nome a cada vez — e
+/// reenviava todos, mesmo iguais. A posição não muda enquanto o programa existir, e um uniforme
+/// guarda o valor no programa: mandar de novo o mesmo valor não muda nada. Medido, é perto de um
+/// microssegundo a menos por desenho; o grosso do custo era o buffer, ver [`GpuState::anel`].
+#[derive(Default)]
+struct Uniformes {
+    mapa: std::cell::RefCell<HashMap<String, (Option<glow::UniformLocation>, Option<[u32; 4]>)>>,
+}
+
+impl Uniformes {
+    /// Manda `valor` para o uniforme `nome` por `envia`, se ele existir e o valor for novo.
+    fn define(
+        &self,
+        gl: &glow::Context,
+        programa: glow::Program,
+        nome: &str,
+        valor: [u32; 4],
+        envia: impl FnOnce(&glow::UniformLocation),
+    ) {
+        let mut mapa = self.mapa.borrow_mut();
+        if !mapa.contains_key(nome) {
+            let onde = unsafe { gl.get_uniform_location(programa, nome) };
+            mapa.insert(nome.to_string(), (onde, None));
+        }
+        let Some((onde, ultimo)) = mapa.get_mut(nome) else {
+            return;
+        };
+        if *ultimo == Some(valor) {
+            return;
+        }
+        *ultimo = Some(valor);
+        if let Some(onde) = onde {
+            envia(onde);
         }
     }
 }
 
-fn uniforme_f32(gl: &glow::Context, programa: glow::Program, nome: &str, valor: f32) {
-    unsafe {
-        if let Some(onde) = gl.get_uniform_location(programa, nome) {
-            gl.uniform_1_f32(Some(&onde), valor);
-        }
-    }
+fn uniforme_i32(gl: &glow::Context, u: &Uniformes, programa: glow::Program, nome: &str, valor: i32) {
+    u.define(gl, programa, nome, [valor as u32, 0, 0, 0], |onde| unsafe {
+        gl.uniform_1_i32(Some(onde), valor)
+    });
+}
+
+fn uniforme_f32(gl: &glow::Context, u: &Uniformes, programa: glow::Program, nome: &str, valor: f32) {
+    u.define(gl, programa, nome, [valor.to_bits(), 0, 0, 0], |onde| unsafe {
+        gl.uniform_1_f32(Some(onde), valor)
+    });
+}
+
+/// Um uniforme de quatro componentes, para a cor do `GL_TEXTURE_ENV_COLOR`.
+fn uniforme_vec4(
+    gl: &glow::Context,
+    u: &Uniformes,
+    programa: glow::Program,
+    nome: &str,
+    valor: [f32; 4],
+) {
+    u.define(gl, programa, nome, valor.map(f32::to_bits), |onde| unsafe {
+        gl.uniform_4_f32(Some(onde), valor[0], valor[1], valor[2], valor[3])
+    });
+}
+
+/// Um uniforme de três componentes, para a cor da névoa.
+fn uniforme_vec3(
+    gl: &glow::Context,
+    u: &Uniformes,
+    programa: glow::Program,
+    nome: &str,
+    valor: [f32; 4],
+) {
+    let bits = [valor[0].to_bits(), valor[1].to_bits(), valor[2].to_bits(), 0];
+    u.define(gl, programa, nome, bits, |onde| unsafe {
+        gl.uniform_3_f32(Some(onde), valor[0], valor[1], valor[2])
+    });
 }
 
 /// Escreve um vértice no buffer da placa, no layout que [`FLOATS_POR_VERTICE`] declara.
@@ -859,24 +1014,6 @@ fn poe_em(destino: &mut Vec<f32>, v: &Vertex) {
     destino.extend_from_slice(&v.uv);
     destino.push(v.fog);
     destino.extend_from_slice(&v.uv1);
-}
-
-/// Um uniforme de quatro componentes, para a cor do `GL_TEXTURE_ENV_COLOR`.
-fn uniforme_vec4(gl: &glow::Context, programa: glow::Program, nome: &str, valor: [f32; 4]) {
-    unsafe {
-        if let Some(onde) = gl.get_uniform_location(programa, nome) {
-            gl.uniform_4_f32(Some(&onde), valor[0], valor[1], valor[2], valor[3]);
-        }
-    }
-}
-
-/// Um uniforme de três componentes, para a cor da névoa.
-fn uniforme_vec3(gl: &glow::Context, programa: glow::Program, nome: &str, valor: [f32; 4]) {
-    unsafe {
-        if let Some(onde) = gl.get_uniform_location(programa, nome) {
-            gl.uniform_3_f32(Some(&onde), valor[0], valor[1], valor[2]);
-        }
-    }
 }
 
 /// Os bytes de um vetor de `f32`, para o `buffer_data`.
@@ -921,21 +1058,29 @@ fn codigo_fonte(fonte: u32) -> i32 {
 }
 
 /// Os uniformes do ambiente de uma unidade; `sufixo` é `""` para a 0 e `"1"` para a 1.
-fn envia_env(gl: &glow::Context, programa: glow::Program, sufixo: &str, env: &TexEnv) {
-    uniforme_i32(gl, programa, &format!("env{sufixo}"), codigo_env(env.modo));
+fn envia_env(
+    gl: &glow::Context,
+    u: &Uniformes,
+    programa: glow::Program,
+    sufixo: &str,
+    env: &TexEnv,
+) {
+    // O nome do modo sai pronto: ele é mandado a cada desenho, e o resto só no `GL_COMBINE`.
+    let modo = if sufixo.is_empty() { "env" } else { "env1" };
+    uniforme_i32(gl, u, programa, modo, codigo_env(env.modo));
     if env.modo != gles::GL_COMBINE {
         return;
     }
     for lado in 0..2 {
         let nome = ["rgb", "alfa"][lado];
-        uniforme_i32(gl, programa, &format!("cmb_{nome}{sufixo}"), codigo_funcao(env.combina[lado]));
-        uniforme_f32(gl, programa, &format!("escala_{nome}{sufixo}"), env.escala[lado]);
+        uniforme_i32(gl, u, programa, &format!("cmb_{nome}{sufixo}"), codigo_funcao(env.combina[lado]));
+        uniforme_f32(gl, u, programa, &format!("escala_{nome}{sufixo}"), env.escala[lado]);
         for i in 0..3 {
-            uniforme_i32(gl, programa, &format!("src_{nome}{sufixo}[{i}]"), codigo_fonte(env.fontes[lado][i]));
-            uniforme_i32(gl, programa, &format!("op_{nome}{sufixo}[{i}]"), codigo_operando(env.operandos[lado][i]));
+            uniforme_i32(gl, u, programa, &format!("src_{nome}{sufixo}[{i}]"), codigo_fonte(env.fontes[lado][i]));
+            uniforme_i32(gl, u, programa, &format!("op_{nome}{sufixo}[{i}]"), codigo_operando(env.operandos[lado][i]));
         }
     }
-    uniforme_vec4(gl, programa, &format!("cor_env{sufixo}"), env.cor);
+    uniforme_vec4(gl, u, programa, &format!("cor_env{sufixo}"), env.cor);
 }
 
 /// O operando do `GL_COMBINE` no shader.
@@ -1213,7 +1358,12 @@ impl Rasterizador for GpuState {
         self.fill.tesoura = (x, y, width, height);
     }
     fn set_surface(&mut self, width: usize, height: usize) {
+        self.descarrega();
         self.estado.set_surface(width, height);
+    }
+    fn set_surface_esticada(&mut self, width: usize, height: usize) {
+        self.descarrega();
+        self.estado.set_surface_esticada(width, height);
     }
     fn surface(&self) -> (usize, usize) {
         self.estado.surface()
@@ -1242,6 +1392,7 @@ impl Rasterizador for GpuState {
     }
 
     fn clear(&mut self, mask: u32) {
+        self.descarrega();
         self.destino();
         // **O `clear` do rasterizador de software ignora as máscaras**: ele preenche os vetores
         // direto. O `glClear` respeita `glDepthMask`, `glStencilMask` e `glColorMask`, então elas
@@ -1410,6 +1561,7 @@ impl Rasterizador for GpuState {
         self.fill.unidade1 = self.estado.unidade1();
     }
     fn set_texture_parameter(&mut self, name: u32, value: u32) {
+        self.descarrega();
         self.estado.set_texture_parameter(name, value);
         if !self.estado.unidade_ativa_desenha() {
             return;
@@ -1439,6 +1591,7 @@ impl Rasterizador for GpuState {
         }
     }
     fn delete_texture(&mut self, name: u32) {
+        self.descarrega();
         self.estado.delete_texture(name);
         if let Some(t) = self.texturas.remove(&name) {
             unsafe { self.gl.delete_texture(t.objeto) };
@@ -1453,6 +1606,7 @@ impl Rasterizador for GpuState {
         height: usize,
         pixels: Vec<[u8; 4]>,
     ) {
+        self.descarrega();
         let bytes: Vec<u8> = pixels.iter().flatten().copied().collect();
         let gl = &self.gl;
         let objeto = match self.texturas.get(&name) {
@@ -1515,6 +1669,7 @@ impl Rasterizador for GpuState {
         height: u32,
         pixels: &[[u8; 4]],
     ) -> Result<(), Option<(u32, u32)>> {
+        self.descarrega();
         let resultado = self.estado.sub_image(name, x, y, width, height, pixels);
         if resultado.is_ok() {
             if let Some(t) = self.texturas.get(&name) {
@@ -1560,31 +1715,55 @@ impl Rasterizador for GpuState {
             }
             false => 1.0,
         };
-        // O buffer sai do `self` antes do laço: assim `transformados()` empresta o estado só de
-        // leitura e não briga com a escrita no buffer.
-        let mut destino = std::mem::take(&mut self.vertices);
-        destino.clear();
-        for v in self.estado.transformados() {
-            let [px, py, pz, pw] = v.position;
-            // O layout do vértice está num lugar só, o [`GpuState::poe`]: repetido aqui, ele
-            // já saiu de sincronia uma vez — um atributo novo lá e este laço continuava
-            // escrevendo o tamanho antigo, o que desalinha o buffer inteiro e a placa para de
-            // desenhar.
-            poe_em(
-                &mut destino,
-                &Vertex {
-                    position: [px * k, py, pz, pw],
-                    ..*v
-                },
-            );
+        // Estado diferente do lote em curso: o que já foi juntado vai antes, com o estado dele.
+        if self
+            .estado_do_lote
+            .as_ref()
+            .is_some_and(|(estado, p)| *p != perspectiva || *estado != self.fill)
+            || self.lote.len() >= VERTICES_NO_LOTE * FLOATS_POR_VERTICE
+        {
+            self.descarrega();
         }
-        self.vertices = destino;
-        self.em_perspectiva = perspectiva;
-        self.submete_com(modo, -1.0, None);
-        self.em_perspectiva = false;
+        if self.estado_do_lote.is_none() {
+            self.estado_do_lote = Some((self.fill.clone(), perspectiva));
+        }
+        let mut soltos = std::mem::take(&mut self.soltos);
+        soltos.clear();
+        soltos.extend(self.estado.transformados().iter().map(|v| {
+            let [px, py, pz, pw] = v.position;
+            Vertex {
+                position: [px * k, py, pz, pw],
+                ..*v
+            }
+        }));
+        // Leque e faixa viram triângulos soltos na ordem em que o OpenGL os monta, que é o que
+        // mantém a orientação — e com ela o descarte por face. Na faixa, a cada passo a
+        // orientação alterna, e trocar os dois primeiros a mantém.
+        let n = soltos.len();
+        let mut poe = |i: usize| poe_em(&mut self.lote, &soltos[i]);
+        match modo {
+            glow::TRIANGLES => (0..n / 3 * 3).for_each(&mut poe),
+            glow::TRIANGLE_STRIP => {
+                for i in 0..n.saturating_sub(2) {
+                    let (a, b) = if i % 2 == 0 { (i, i + 1) } else { (i + 1, i) };
+                    poe(a);
+                    poe(b);
+                    poe(i + 2);
+                }
+            }
+            _ => {
+                for i in 1..n.saturating_sub(1) {
+                    poe(0);
+                    poe(i);
+                    poe(i + 1);
+                }
+            }
+        }
+        self.soltos = soltos;
     }
 
     fn draw_texture(&mut self, x: f32, y: f32, z: f32, width: f32, height: f32) {
+        self.descarrega();
         let ligada = self.fill.textura_ligada;
         let Some(t) = self.texturas.get(&ligada) else {
             return;
@@ -1651,6 +1830,7 @@ impl Rasterizador for GpuState {
     /// Então a faixa pedida é convertida para a linha correspondente do framebuffer e o
     /// resultado sai espelhado de volta.
     fn read_rect(&mut self, x: i32, y: i32, width: usize, height: usize) -> Vec<[u8; 4]> {
+        self.descarrega();
         if width == 0 || height == 0 {
             return Vec::new();
         }
@@ -1678,6 +1858,7 @@ impl Rasterizador for GpuState {
     }
 
     fn frame_rgb565(&mut self, width: usize, height: usize, out: &mut Vec<u8>) {
+        self.descarrega();
         // Mesmo atalho do rasterizador de software: quadro igual ao que já está em `out` não tem
         // o que reconverter. Na placa isso vale ainda mais, porque a leitura é uma ida e volta.
         if !self.sujo && out.len() == width * height * 2 {
@@ -1719,6 +1900,7 @@ impl Rasterizador for GpuState {
     }
 
     fn import_rgb565_changes(&mut self, width: usize, height: usize, old: &[u8], new: &[u8]) {
+        self.descarrega();
         let (sw, sh) = self.surface();
         if width == 0 || height == 0 || old.len() != width * height * 2 || new.len() != old.len() {
             return;
@@ -1829,6 +2011,7 @@ impl Rasterizador for GpuState {
     }
 
     fn define_escala(&mut self, escala: usize) {
+        self.descarrega();
         // O teto é o maior anexo que a placa aceita: um fator acima dele não criaria o destino.
         let maximo = unsafe {
             self.gl
@@ -1846,6 +2029,7 @@ impl Rasterizador for GpuState {
     }
 
     fn le_quadro_grande(&mut self) -> Option<(usize, usize, Vec<u8>)> {
+        self.descarrega();
         let extra = self.extra();
         if self.escala <= 1 && extra == 0 {
             return None;
@@ -1871,6 +2055,7 @@ impl Rasterizador for GpuState {
     }
 
     fn define_proporcao(&mut self, aspecto: Option<f32>) {
+        self.descarrega();
         // Mais estreito que o nativo não abre nada; o teto evita um anexo absurdo.
         let aspecto = aspecto.filter(|a| a.is_finite()).map(|a| a.clamp(4.0 / 3.0, 3.6));
         if aspecto != self.proporcao {
@@ -1880,6 +2065,7 @@ impl Rasterizador for GpuState {
     }
 
     fn define_antialias(&mut self, amostras: usize) {
+        self.descarrega();
         let maximo = unsafe { self.gl.get_parameter_i32(glow::MAX_SAMPLES) }.max(1) as usize;
         // Potências de dois são o que as placas oferecem; 1 é desligado.
         let pedido = match amostras {
@@ -1893,6 +2079,7 @@ impl Rasterizador for GpuState {
     }
 
     fn define_anisotropico(&mut self, nivel: usize) {
+        self.descarrega();
         let tem = self.gl.supported_extensions().iter().any(|e| {
             e == "GL_EXT_texture_filter_anisotropic" || e == "GL_ARB_texture_filter_anisotropic"
         });
@@ -1931,7 +2118,12 @@ impl Rasterizador for GpuState {
                 (sw.min(fw) + 2 * extra) as f32 / (fw + 2 * extra).max(1) as f32,
                 sh.min(fh) as f32 / fh.max(1) as f32,
             ],
-            proporcao: (sw.min(fw) + 2 * extra) as f32 / sh.min(fh).max(1) as f32,
+            proporcao: match self.estado.superficie_esticada() {
+                // Esticada, a superfície ocupa a tela: a altura é a da tela, e a largura é a
+                // dela mais as colunas a mais, na escala do esticamento.
+                true => (sw + 2 * extra) as f32 / sw.max(1) as f32 * fw as f32 / fh.max(1) as f32,
+                false => (sw.min(fw) + 2 * extra) as f32 / sh.min(fh).max(1) as f32,
+            },
         })
     }
 }
@@ -2548,3 +2740,4 @@ mod tests {
         );
     }
 }
+
