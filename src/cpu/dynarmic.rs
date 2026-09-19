@@ -207,7 +207,7 @@ impl Estado {
 impl Callbacks for Estado {
     fn memory_read_code(cb: &CallbackImpl<Self>, addr: VAddr) -> Option<u32> {
         let mut bytes = [0; 4];
-        if cb.le(addr, &mut bytes) {
+        if cb.memoria.borrow().executavel(addr) && cb.le(addr, &mut bytes) {
             // Página que vira código sai da tabela, para que toda escrita nela chegue à callback
             // que invalida o bloco recompilado.
             let pagina = addr / PAGE;
@@ -413,11 +413,12 @@ impl CpuBackend for DynarmicCpu {
         let mut copia = GuestMemory::new();
         for regiao in mem.regions() {
             copia
-                .map(
+                .map_com_execucao(
                     regiao.name,
                     regiao.base,
                     regiao.bytes.clone(),
                     regiao.writable,
+                    regiao.executavel,
                 )
                 .map_err(|e| CpuError(e.to_string()))?;
         }

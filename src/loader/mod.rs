@@ -209,6 +209,20 @@ pub fn load_with(
     module_bytes.extend_from_slice(image.image());
     module_bytes.resize(module_bytes.len() + MODULE_BSS_SLACK, 0);
     mem.map("module", MODULE_BASE - MODULE_PREFIX, module_bytes, true)?;
+    // **A página nula se lê, e dá zero.** No console não há proteção de memória, e o que
+    // mora nos endereços baixos é legível: um jogo que lê por um ponteiro nulo recebe algum
+    // valor e segue. O Aviãozinho, um port do Quake feito por fãs, faz isso ao carregar a
+    // primeira fase: o mapa tem uma textura faltando, a textura de reserva do motor nunca é
+    // criada, e o nome dela é lido do endereço zero. Parando a execução ali, o jogo não
+    // passava do menu. Escrever continua sendo erro, e executar também: um salto para o
+    // endereço zero é defeito que o relatório precisa mostrar, e não código a percorrer.
+    mem.map_com_execucao(
+        "nulo",
+        0,
+        vec![0u8; (MODULE_BASE - MODULE_PREFIX) as usize],
+        false,
+        false,
+    )?;
     mem.map_zeroed("heap", HEAP_BASE, HEAP_SIZE)?;
     mem.map_zeroed("stack", STACK_BASE, STACK_SIZE)?;
     mem.map_zeroed("objects", OBJECT_BASE, OBJECT_SIZE)?;
@@ -335,7 +349,7 @@ mod tests {
         assert_eq!(
             names,
             [
-                "module", "heap", "stack", "objects", "helpers", "stubs", "surfaces", "vtables"
+                "module", "nulo", "heap", "stack", "objects", "helpers", "stubs", "surfaces", "vtables"
             ]
         );
     }

@@ -114,7 +114,8 @@ impl Vfs {
     /// host ou raiz do Windows. O jogo não tem por que sair do diretório dele, e um `.mod` de
     /// origem desconhecida não deveria conseguir ler o resto da máquina.
     pub fn resolve(&self, guest_path: &str) -> Option<PathBuf> {
-        self.resolve_inner(guest_path, false).map(match_case)
+        let caminho = self.resolve_inner(guest_path, false).map(match_case);
+        self.ou_na_raiz_de_modulos(guest_path, caminho, false)
     }
 
     /// **Sobre o `preloaded.cfg`.**
@@ -137,7 +138,36 @@ impl Vfs {
     /// Listar `fs:/~/` é legítimo — é o diretório do jogo —, ainda que abri-lo como arquivo não
     /// seja. A diferença está só nisso.
     pub fn resolve_dir(&self, guest_path: &str) -> Option<PathBuf> {
-        self.resolve_inner(guest_path, true).map(match_case)
+        let caminho = self.resolve_inner(guest_path, true).map(match_case);
+        self.ou_na_raiz_de_modulos(guest_path, caminho, true)
+    }
+
+    /// `fs:/mod/<pasta>/…` que não existe no aparelho, procurado na raiz de módulos.
+    ///
+    /// No console, `fs:/mod/` é onde os módulos estão instalados, e `fs:/mod/<pasta>/` é a pasta
+    /// de um deles. Os ports feitos por fãs usam essa forma para os próprios dados: o OpenTyrian
+    /// abre `fs:/mod/opentyrian_zeebo/data/tyrian1.lvl`, não achava, e fechava no primeiro
+    /// milissegundo. Aqui o `fs:/` é do aparelho, e a Z-Wheel guarda o que é dela em
+    /// `fs:/mod/274755/` dessa raiz; por isso o que existe lá continua ganhando, e o que só
+    /// existe na instalação do jogo vem dela. Um arquivo novo continua sendo criado no aparelho.
+    fn ou_na_raiz_de_modulos(
+        &self,
+        guest_path: &str,
+        caminho: Option<PathBuf>,
+        allow_root: bool,
+    ) -> Option<PathBuf> {
+        let normalizado = guest_path.replace('\\', "/");
+        let Some(resto) = normalizado.strip_prefix("fs:/mod/") else {
+            return caminho;
+        };
+        if caminho.as_ref().is_some_and(|c| c.exists()) {
+            return caminho;
+        }
+        // A pasta do módulo fica um nível abaixo da raiz de módulos, e o `..` dela não sobe mais.
+        self.resolve_inner(&format!("../{resto}"), allow_root)
+            .map(match_case)
+            .filter(|instalado| instalado.exists())
+            .or(caminho)
     }
 
     fn resolve_inner(&self, guest_path: &str, allow_root: bool) -> Option<PathBuf> {
@@ -371,6 +401,41 @@ mod tests_no_disco {
         assert_eq!(vfs.resolve("font.fnz"), Some(modulo.join("font.fnz")));
         // O que não existe volta como veio: é assim que um arquivo novo é criado.
         assert_eq!(vfs.resolve("save.dat"), Some(modulo.join("save.dat")));
+
+        std::fs::remove_dir_all(&raiz).unwrap();
+    }
+
+    /// O OpenTyrian abre `fs:/mod/opentyrian_zeebo/data/tyrian1.lvl`: é a pasta dele no console.
+    #[test]
+    fn fs_mod_acha_a_pasta_do_modulo_quando_o_aparelho_nao_tem() {
+        let raiz = std::env::temp_dir().join(format!("zeebx-vfs-mod-{}", std::process::id()));
+        let modulo = raiz.join("jogo/tyrian");
+        let aparelho = raiz.join("aparelho");
+        std::fs::create_dir_all(modulo.join("data")).unwrap();
+        std::fs::create_dir_all(aparelho.join("mod/tyrian")).unwrap();
+        std::fs::write(modulo.join("data/tyrian1.lvl"), b"fase").unwrap();
+        std::fs::write(modulo.join("tyrian.cfg"), b"pacote").unwrap();
+        std::fs::write(aparelho.join("mod/tyrian/tyrian.cfg"), b"gravado").unwrap();
+
+        let mut vfs = Vfs::new(&modulo);
+        vfs.set_device_root(&aparelho);
+        assert_eq!(
+            vfs.resolve("fs:/mod/tyrian/DATA/tyrian1.lvl"),
+            Some(modulo.join("data/tyrian1.lvl"))
+        );
+        // O que o aparelho tem continua vindo dele.
+        assert_eq!(
+            vfs.resolve("fs:/mod/tyrian/tyrian.cfg"),
+            Some(aparelho.join("mod/tyrian/tyrian.cfg"))
+        );
+        // Um arquivo novo é criado no aparelho, como antes.
+        assert_eq!(
+            vfs.resolve("fs:/mod/tyrian/novo.sav"),
+            Some(aparelho.join("mod/tyrian/novo.sav"))
+        );
+        assert_eq!(vfs.resolve_dir("fs:/mod/tyrian/data"), Some(modulo.join("data")));
+        // E dali não se sobe para fora da instalação.
+        assert_eq!(vfs.resolve("fs:/mod/../../segredo"), None);
 
         std::fs::remove_dir_all(&raiz).unwrap();
     }
