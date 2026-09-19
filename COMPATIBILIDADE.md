@@ -36,7 +36,7 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 | FIFA 09 | ✅ | |
 | Galaxy on Fire | 🔄 | Jogável, porém com inputs incorretos e tela de Pause quebrado |
 | Heavy Barrel | ✅ | Abre e chega ao menu do arcade; partida não conferida aqui |
-| Heavy Weapon | 🔄 | Menus e missão funcionam; falta conferir o tiro |
+| Heavy Weapon | 🔄 | Jogável, porém com as cores erradas |
 | Iron Sight | 🔄 | Menus e campanha funcionam; quebra ao carregar a fase, sem achar os recursos no pacote dele |
 | Karnovs Revenge | ✅ | Emulador de arcade embutido, com som |
 | Magical Drop 3 | ✅ | Emulador de arcade embutido, com som |
