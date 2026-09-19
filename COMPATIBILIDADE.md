@@ -3,8 +3,8 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 
 | Status | Legenda | Jogos | % |
 |---|---|---|---|
-| ✅ | (compatível) | 42 | 70% |
-| 🔄 | (roda com ressalvas) | 11 | 18% |
+| ✅ | (compatível) | 43 | 72% |
+| 🔄 | (roda com ressalvas) | 10 | 16% |
 | ❌ | (incompatível) | 7 | 12% |
 
 
@@ -12,7 +12,7 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 
 - É recomendado configurar o controle ao abrir o emulador pela primeira vez, mesmo assim, alguns games podem apresentar inputs diferentes.
 - Jogos compatíveis com Boomerang (Sensor de movimento), como Crash Nitro Kart 3D, todos os Zeebo Sports, entre outros, podem ser jogados utilizando Wii Remote por meio de pareamento Bluetooth.
-- Todos os jogos da Data East são jogos arcade em um emulador embutido próprio, todos funcionam porém ainda sem áudio.
+- Todos os jogos da Data East são jogos arcade em um emulador embutido próprio, todos funcionam porém alguns podem não ter áudio e problemas de inputs invertidos.
 - Nenhum jogo está livre de bugs ou crashes, agradeço seus reports!
 - Único jogo homebrew testado e funcionando é o Zeetris, demais brews e ports podem ser ainda incompatíveis.
 - Funcionalidades online do Zeeboids podem não estar em operação a todo momento, visto que ainda é um recurso em desenvolvimento. Todos os avatares Zeeboids poderão ser excluídos após o desenvolvimento e migração para um servidor final adequado, mas fique à vontade para testar.
@@ -50,14 +50,14 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 | Raging Thunder 2 | ✅ | |
 | Rally Master Pro | ✅ | |
 | Reckless Racing | 🔄 | Abre, porém com uma série de glitches nos modelos e texturas |
-| Resident Evil 4 - Zeebo Edition | ✅ | Reportado pela comunidade: Falta fog em algumas cenas do jogo |
+| Resident Evil 4 - Zeebo Edition | ✅ | Reportado pela comunidade: Fog avermelhado em algumas cenas do jogo |
 | Ridge Racer | ❌ | Abertura e tela de título certas; no menu e na corrida a câmera aponta para trás da cena e só 2 de cada 27 desenhos passam do recorte |
 | Spin Master | ✅ | Emulador de arcade embutido, com som |
 | Street Hoop | ✅ | Emulador de arcade embutido, com som |
 | Super BurgerTime | ✅ | Emulador de arcade embutido, com som |
 | Tekken 2 | ✅ | |
 | Tork and Kral - A Prehistorik Adventure | ✅ | Joga; menus e fase corretos |
-| Toy Raid | 🔄 | Jogável, porém sem som e com glitches visuais |
+| Toy Raid | 🔄 | Jogável, porém com glitches visuais |
 | Treino Cerebral | ✅ | |
 | Turma da Monica em Vamos Brincar Vol. 1 | ✅ | Abre, navega os menus e chega à escolha de nome |
 | Ultimate Chess 3D | ✅ | |
