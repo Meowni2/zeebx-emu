@@ -40,14 +40,14 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 | Iron Sight | 🔄 | Menus e campanha funcionam; quebra ao carregar a fase, sem achar os recursos no pacote dele |
 | Karnovs Revenge | ✅ | Emulador de arcade embutido, com som |
 | Magical Drop 3 | ✅ | Emulador de arcade embutido, com som |
-| Need For Speed - Carbon - Domine a Cidade | 🔄 | Jogável porém requer otimizacão (esse realmente PRECISA DE VELOCIDADE) |
+| Need For Speed - Carbon - Domine a Cidade | 🔄 | Jogável porém requer otimização (esse realmente PRECISA DE VELOCIDADE) |
 | Pac-Mania | ✅ | |
 | Peggle | ✅ | Joga; menus e mesa corretos |
 | Powerboat Challenge | ❌ | Chega ao menu de idioma e prende na tela de carregamento |
 | Prey 2 Evil | ❌ | Roda e lê os dados, mas a tela fica preta |
 | Quake | 🔄 | Podem existir crashes in-game ou lagging |
 | Quake 2 | ❌ | Menus funcionam; quebra ao iniciar a fase |
-| Raging Thunder 2 | 🔄 | Jogável, porém sem som |
+| Raging Thunder 2 | ✅ | |
 | Rally Master Pro | ✅ | |
 | Reckless Racing | 🔄 | Abre, porém com uma série de glitches nos modelos e texturas |
 | Resident Evil 4 - Zeebo Edition | ✅ | Reportado pela comunidade: Falta fog em algumas cenas do jogo |
