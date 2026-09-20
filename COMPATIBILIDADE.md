@@ -39,7 +39,7 @@ Versão considerada na análise: v0.2.1 (em desenvolvimento)
 | Iron Sight | 🔄 | Menus e campanha funcionam; quebra ao carregar a fase, sem achar os recursos no pacote dele |
 | Karnovs Revenge | ✅ | Emulador de arcade embutido, com som |
 | Magical Drop 3 | ✅ | Emulador de arcade embutido, com som |
-| Need For Speed - Carbon - Domine a Cidade | 🔄 | Jogável porém requer otimização (esse realmente PRECISA DE VELOCIDADE) |
+| Need For Speed - Carbon - Domine a Cidade | ✅ | |
 | Pac-Mania | ✅ | |
 | Peggle | 🔄 | Roda, porém os gráficos, cores e sons estão totalmente quebrados |
 | Powerboat Challenge | ❌ | Chega ao menu de idioma e prende na tela de carregamento |
