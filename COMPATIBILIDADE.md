@@ -49,7 +49,7 @@ Versão considerada na análise: v0.2.1 (em desenvolvimento)
 | Raging Thunder 2 | ✅ | |
 | Rally Master Pro | ✅ | |
 | Reckless Racing | 🔄 | Abre, porém com uma série de glitches nos modelos e texturas |
-| Resident Evil 4 - Zeebo Edition | ✅ | Reportado pela comunidade: Fog avermelhado em algumas cenas do jogo |
+| Resident Evil 4 - Zeebo Edition | ✅ | |
 | Ridge Racer | ❌ | Abertura e tela de título certas; no menu e na corrida a câmera aponta para trás da cena e só 2 de cada 27 desenhos passam do recorte |
 | Spin Master | ✅ | Emulador de arcade embutido, com som |
 | Street Hoop | ✅ | Emulador de arcade embutido, com som |
