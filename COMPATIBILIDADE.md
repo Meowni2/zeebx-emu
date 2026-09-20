@@ -54,6 +54,7 @@ Versão considerada na análise: v0.2.1 (em desenvolvimento)
 | Spin Master | ✅ | Emulador de arcade embutido, com som |
 | Street Hoop | ✅ | Emulador de arcade embutido, com som |
 | Super BurgerTime | ✅ | Emulador de arcade embutido, com som |
+| Super Mario 64 (Port) | ✅ | |
 | Tekken 2 | ✅ | |
 | Tork and Kral - A Prehistorik Adventure | ✅ | |
 | Toy Raid | 🔄 | Jogável, porém com glitches visuais |
@@ -76,7 +77,7 @@ Versão considerada na análise: v0.2.1 (em desenvolvimento)
 | Zeebo Sports Queimada | ✅ | |
 | Zeebo Sports Tenis | ✅ | |
 | Zeebo Sports Volei | ✅ | |
-| Zeetris | ✅ | |
+| Zeetris (Homebrew) | ✅ | |
 | Zenonia | ✅ | |
 | Zumas Revenge | ❌ | Quebra no começo, no mesmo desenho em superfície própria do Bejeweled Twist |
 | Z-Wheel | 🔄 | Utilizável, porém ainda com muitos bugs, online não implementado |
