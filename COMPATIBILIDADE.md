@@ -55,7 +55,7 @@ Versão considerada na análise: v0.2.1 (em desenvolvimento)
 | Street Hoop | ✅ | Emulador de arcade embutido, com som |
 | Super BurgerTime | ✅ | Emulador de arcade embutido, com som |
 | Tekken 2 | ✅ | |
-| Tork and Kral - A Prehistorik Adventure | ✅ | Joga; menus e fase corretos |
+| Tork and Kral - A Prehistorik Adventure | ✅ | |
 | Toy Raid | 🔄 | Jogável, porém com glitches visuais |
 | Treino Cerebral | ✅ | |
 | Turma da Monica em Vamos Brincar Vol. 1 | ✅ | Abre, navega os menus e chega à escolha de nome |
