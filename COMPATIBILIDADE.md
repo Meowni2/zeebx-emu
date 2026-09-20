@@ -67,7 +67,7 @@ Versão considerada na análise: v0.2.1 (em desenvolvimento)
 | Zeebo Extreme Boia Cross | ✅ | |
 | Zeebo Extreme Corrida Aerea | ✅ | |
 | Zeebo Extreme Jetboard | ✅ | |
-| Zeebo Extreme Rolima | ✅ | Abre e chega ao menu; corrida não conferida aqui |
+| Zeebo Extreme Rolima | ✅ | |
 | Zeebo Family Pack | ✅ | |
 | Zeebo F.C. Foot Camp | ✅ | |
 | Zeebo F.C. Super League | ✅ | Herda funcionalidades online do Zeeboids |
