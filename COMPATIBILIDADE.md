@@ -1,5 +1,5 @@
 # Status geral
-Versão considerada na análise: v0.2.0 (em desenvolvimento)
+Versão considerada na análise: v0.2.1 (em desenvolvimento)
 
 | Status | Legenda | Jogos | % |
 |---|---|---|---|
