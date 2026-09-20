@@ -24,7 +24,7 @@ Versão considerada na análise: v0.2.1 (em desenvolvimento)
 | Alice no Pais das Maravilhas | ✅ | Joga; chega à fase |
 | Alien Breaker Deluxe | ✅ | Joga |
 | Alpine Racer | ✅ | Poucos problemas visuais e de som, mas completamente jogável |
-| Armageddon Squadron | ✅ | Jogável, com apenas bugs visuais no menu |
+| Armageddon Squadron | ✅ | |
 | Bad Dudes vs. DragonNinja | ✅ | Procura baddudes.pkg e o pacote traz baddudes.zip |
 | Bejeweled Twist | ❌ | acesso inválido a 0x00000024, em 0x0003ab20 |
 | Caveman Ninja | ✅ | Emulador de arcade embutido, com som |
