@@ -62,7 +62,7 @@ Versão considerada na análise: v0.2.1 (em desenvolvimento)
 | Ultimate Chess 3D | ✅ | |
 | Um Jogo de Ovos | ✅ | Menus e controles respondem |
 | Wizard Fire | ✅ | Emulador de arcade embutido, com som |
-| Zeebo Clube | ❌ | Envolve sistema online, recriacão pendente |
+| Zeebo Clube | ❌ | Envolve sistema online, recriação pendente |
 | Zeebo Extreme Baja | ✅ | |
 | Zeebo Extreme Boia Cross | ✅ | |
 | Zeebo Extreme Corrida Aerea | ✅ | |
