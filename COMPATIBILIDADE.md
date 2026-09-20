@@ -13,8 +13,7 @@ Versão considerada na análise: v0.2.1 (em desenvolvimento)
 - É recomendado configurar o controle ao abrir o emulador pela primeira vez, mesmo assim, alguns games podem apresentar inputs diferentes.
 - Jogos compatíveis com Boomerang (Sensor de movimento), como Crash Nitro Kart 3D, todos os Zeebo Sports, entre outros, podem ser jogados utilizando controles com sensores de movimento - tais como Dualshock 4, Dualsense, Wii Remote, e Switch Pro Controller - por meio de pareamento Bluetooth.
 - Todos os jogos da Data East são jogos arcade em um emulador embutido próprio.
-- Nenhum jogo está livre de bugs ou crashes, agradeço seus reports!
-- Único jogo homebrew testado e funcionando é o Zeetris, demais brews e ports podem ser ainda incompatíveis.
+- Nenhum jogo, indenpendentemente de ser oficial, homebrew, ou port, está livre de bugs ou crashes e podem ser ainda incompatíveis. Agradeço pelos reports!
 - Funcionalidades online do Zeeboids podem não estar em operação a todo momento, visto que ainda é um recurso em desenvolvimento. Todos os avatares Zeeboids poderão ser excluídos após o desenvolvimento e migração para um servidor final adequado, mas fique à vontade para testar.
 
 # Lista de Compatibilidade
