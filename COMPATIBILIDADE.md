@@ -43,7 +43,7 @@ Versão considerada na análise: v0.2.1 (em desenvolvimento)
 | Pac-Mania | ✅ | |
 | Peggle | 🔄 | Roda, porém os gráficos, cores e sons estão totalmente quebrados |
 | Powerboat Challenge | ❌ | Chega ao menu de idioma e prende na tela de carregamento |
-| Prey 2 Evil | ❌ | Roda e lê os dados, mas a tela fica preta |
+| Prey 2 Evil | ❌ | Roda, lê os dados, porém a tela fica preta. Avançando com o 1, é possível ter gameplay, mas a HUD está completamente quebrada |
 | Quake | 🔄 | Podem existir crashes in-game ou lagging |
 | Quake 2 | ❌ | Menus funcionam; quebra ao iniciar a fase |
 | Raging Thunder 2 | ✅ | |
