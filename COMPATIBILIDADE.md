@@ -33,7 +33,7 @@ Versão considerada na análise: v0.2.1 (em desenvolvimento)
 | Disney All Star Cards | ✅ | Joga |
 | Double Dragon | ✅ | |
 | FIFA 09 | ✅ | |
-| Galaxy on Fire | 🔄 | Jogável, porém com inputs incorretos e tela de Pause quebrado |
+| Galaxy on Fire | 🔄 | Jogável, porém com tela de Pause e Menu quebrados após alguns minutos de jogatina, porém se mantém jogável |
 | Heavy Barrel | ✅ | Emulador de arcade embutido, com som |
 | Heavy Weapon | 🔄 | Jogável, porém com as cores erradas |
 | Iron Sight | 🔄 | Menus e campanha funcionam; quebra ao carregar a fase, sem achar os recursos no pacote dele |
