@@ -3,9 +3,9 @@ Versão considerada na análise: v0.2.1 (em desenvolvimento)
 
 | Status | Legenda | Jogos | % |
 |---|---|---|---|
-| ✅ | (compatível) | 43 | 72% |
-| 🔄 | (roda com ressalvas) | 10 | 16% |
-| ❌ | (incompatível) | 7 | 12% |
+| ✅ | (compatível) | 46 | 75,4% |
+| 🔄 | (roda com ressalvas) | 8 | 13,1% |
+| ❌ | (incompatível) | 7 | 11,5% |
 
 
 # Observações:
