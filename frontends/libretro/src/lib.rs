@@ -190,7 +190,24 @@ fn liga_a_placa(estado: &mut Core) {
         *guarda = Some(contexto);
     }
     let antes = estado.path.clone();
-    match troca_para(estado, &antes, false) {
+    // **Um `panic` aqui derrubaria o RetroArch.** Não há fronteira segura para atravessar uma
+    // falha de Rust e voltar para o C do frontend: o processo inteiro cai, e o usuário perde o
+    // emulador por causa de uma otimização de desenho. O `catch_unwind` transforma isso no mesmo
+    // caminho da falha comum — aviso no log, sessão de software, jogo rodando.
+    //
+    // `AssertUnwindSafe` é o que a situação pede: se o meio da montagem do contexto ficou
+    // inconsistente, o que vem depois **não** continua dali — a sessão é recriada do zero, e o
+    // global da placa é limpo.
+    let tentativa = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        troca_para(estado, &antes, false)
+    }));
+    let desfecho = match tentativa {
+        Ok(resultado) => resultado,
+        Err(_) => Err(StartError::NotLoadable(
+            "a montagem do contexto de placa entrou em pânico".to_string(),
+        )),
+    };
+    match desfecho {
         Ok(()) => log("Zeebx: desenhando na placa"),
         Err(erro) => {
             aviso(&format!(
