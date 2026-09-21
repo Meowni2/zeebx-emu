@@ -10,12 +10,12 @@ use std::time::{Duration, Instant};
 
 use crate::cpu::dynarmic::DynarmicCpu;
 use crate::input::Pad;
+use crate::library;
 use crate::loader;
 use crate::loader::archive;
 use crate::loader::modfile::ModImage;
 use crate::machine::{AppletResult, Machine, Outcome};
 use crate::storage::StoragePaths;
-use crate::library;
 use crate::video::display::Framebuffer;
 
 /// Teto de instruções por fatia entre duas chamadas de API — evita que um laço infinito no
@@ -37,6 +37,12 @@ const QUADROS_POR_VOLTA: u32 = 4;
 
 /// O atraso a partir do qual o jogo recupera quadros: um quadro de 60 Hz.
 const ATRASO_PARA_RECUPERAR_MS: u64 = 17;
+
+/// Milissegundos de um quadro a 60 Hz: o passo que um frontend Libretro avança por chamada.
+const FRAME_MS: u64 = 16;
+
+/// Teto de voltas internas por quadro virtual, contra um guest que não avança nem apresenta.
+const MAX_STEPS_PER_FRAME: u32 = 200_000;
 
 /// O maior atraso que o jogo recupera. Além dele o atraso é perdoado, e não corrido atrás: uma
 /// pausa, um carregamento ou a janela arrastada param o relógio virtual enquanto o real anda, e
@@ -373,6 +379,31 @@ impl Session {
                 None => {}
             }
         }
+    }
+
+    /// Avança **um quadro virtual**, sem consultar o relógio de parede.
+    ///
+    /// É a unidade que um frontend repete: o tempo do jogo anda pelo relógio virtual, e nenhuma
+    /// decisão depende de quão rápido o host executa. [`Session::step`] continua sendo o caminho
+    /// da janela, que precisa devolver o controle ao sistema operacional de tempos em tempos.
+    pub fn run_frame(&mut self) -> Step {
+        if self.stopped.is_some() {
+            return Step::Stopped;
+        }
+        let inicio = u64::from(self.machine.clock_ms());
+        for _ in 0..MAX_STEPS_PER_FRAME {
+            match self.advance_once() {
+                Some(step) => return step,
+                None => {
+                    if u64::from(self.machine.clock_ms()).saturating_sub(inicio) >= FRAME_MS {
+                        return Step::Presented;
+                    }
+                }
+            }
+        }
+        // Um guest que não avança o relógio nem apresenta nada: devolver o controle é melhor que
+        // travar o frontend para sempre.
+        Step::Running
     }
 
     /// Quantos milissegundos o jogo está atrasado em relação ao relógio do mundo.

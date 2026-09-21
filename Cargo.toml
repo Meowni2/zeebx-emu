@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "frontends/libretro"]
+resolver = "3"
+
 [package]
 name = "zeebx"
 version = "0.2.1"

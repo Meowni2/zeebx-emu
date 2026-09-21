@@ -186,7 +186,9 @@ impl Vfs {
         let save = self.save.as_deref()?;
         let destino_pai = match_case_parent(save.join(relativo));
         let existente_no_overlay = match_case(save.join(relativo));
-        let no_overlay = existente_no_overlay.exists().then_some(existente_no_overlay);
+        let no_overlay = existente_no_overlay
+            .exists()
+            .then_some(existente_no_overlay);
         let conteudo = match_case(base.clone());
         let no_conteudo = conteudo.exists().then_some(conteudo);
         match intent {
@@ -213,7 +215,9 @@ impl Vfs {
     /// Comportamento histórico, sem overlay: grava dentro do próprio conteúdo.
     fn legacy_target(&self, guest_path: &str, intent: OpenIntent) -> Option<OpenTarget> {
         let path = match intent {
-            OpenIntent::Read | OpenIntent::ReadWrite | OpenIntent::Append => self.resolve(guest_path)?,
+            OpenIntent::Read | OpenIntent::ReadWrite | OpenIntent::Append => {
+                self.resolve(guest_path)?
+            }
             OpenIntent::Create => self.resolve_new(guest_path)?,
         };
         Some(OpenTarget {
@@ -550,7 +554,10 @@ mod tests_no_disco {
         assert_eq!(alvo.copy_from, Some(modulo.join("config.ini")));
         std::fs::write(&alvo.path, b"do save").unwrap();
         assert_eq!(vfs.resolve("config.ini"), Some(save.join("config.ini")));
-        assert_eq!(std::fs::read(modulo.join("config.ini")).unwrap(), b"do pacote");
+        assert_eq!(
+            std::fs::read(modulo.join("config.ini")).unwrap(),
+            b"do pacote"
+        );
 
         // Arquivo novo: nasce no overlay.
         let novo = vfs
@@ -566,10 +573,7 @@ mod tests_no_disco {
         let dispositivo = vfs
             .open_target("fs:/zeeboiddata/zeeboid.db", OpenIntent::Create)
             .unwrap();
-        assert_eq!(
-            dispositivo.path,
-            aparelho.join("zeeboiddata/zeeboid.db")
-        );
+        assert_eq!(dispositivo.path, aparelho.join("zeeboiddata/zeeboid.db"));
 
         std::fs::remove_dir_all(&raiz).unwrap();
     }
