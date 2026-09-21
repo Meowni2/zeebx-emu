@@ -185,7 +185,7 @@ pub fn detecta_z_wheel(roms: Option<&Path>, jogos: &[Game]) -> Option<PathBuf> {
 /// Transforma um arquivo encontrado em jogo. `None` para o que não é jogo — um `.zip` sem
 /// módulo dentro é só um zip.
 fn describe(path: PathBuf) -> Option<Game> {
-    let packed = path.extension().and_then(|e| e.to_str()) == Some("zip");
+    let packed = crate::loader::archive::embalado(&path);
     if !packed {
         return Some(Game {
             title: title_for(&path),
@@ -252,10 +252,9 @@ fn collect(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
     for path in paths {
         if path.is_dir() {
             collect(&path, depth + 1, found);
-        } else if matches!(
-            path.extension().and_then(|e| e.to_str()),
-            Some("mod" | "zip")
-        ) {
+        } else if path.extension().and_then(|e| e.to_str()) == Some("mod")
+            || crate::loader::archive::embalado(&path)
+        {
             found.push(path);
         }
     }
@@ -269,11 +268,9 @@ fn collect(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
 /// O id do módulo de um jogo: a pasta em que o `.mod` mora, `mod/<id>/`. É também o nome do
 /// `.mif` dele. Num pacote, sai do caminho interno, sem extrair.
 pub fn id_do_modulo(path: &Path) -> Option<String> {
-    let interno = match path.extension().and_then(|e| e.to_str()) {
-        Some(ext) if ext.eq_ignore_ascii_case("zip") => {
-            PathBuf::from(crate::loader::archive::find_module(path)?)
-        }
-        _ => path.to_path_buf(),
+    let interno = match crate::loader::archive::embalado(path) {
+        true => PathBuf::from(crate::loader::archive::find_module(path)?),
+        false => path.to_path_buf(),
     };
     Some(interno.parent()?.file_name()?.to_str()?.to_string())
 }

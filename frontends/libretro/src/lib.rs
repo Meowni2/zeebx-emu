@@ -636,7 +636,7 @@ pub unsafe extern "C" fn retro_get_system_info(info: *mut RetroSystemInfo) {
         *info = RetroSystemInfo {
             library_name: c"Zeebx".as_ptr(),
             library_version: concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const c_char,
-            valid_extensions: c"mod|zip".as_ptr(),
+            valid_extensions: c"mod|zip|7z".as_ptr(),
             need_fullpath: true,
             block_extract: true,
         };
@@ -868,7 +868,7 @@ fn prepara_fonte(storage: &StoragePaths, jogos: &[(u32, PathBuf)]) -> Option<Pat
             .collect();
         let pacote = candidatos
             .iter()
-            .find(|caminho| caminho.extension().and_then(|e| e.to_str()) == Some("zip"))
+            .find(|caminho| zeebx::loader::archive::embalado(caminho))
             .or_else(|| candidatos.first())?;
         zeebx::loader::archive::instala_fonte_do_pacote(pacote, &storage.device)
     })

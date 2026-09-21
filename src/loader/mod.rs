@@ -10,6 +10,7 @@
 //! ```
 
 pub mod archive;
+pub mod sete_z;
 pub mod miffile;
 pub mod modfile;
 pub mod resfile;

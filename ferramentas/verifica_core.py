@@ -97,7 +97,7 @@ def main(argv):
     if nome != "Zeebx":
         print("o nome do sistema não é o esperado", file=sys.stderr)
         return 1
-    if extensoes != "mod|zip":
+    if extensoes != "mod|zip|7z":
         print("as extensões não são as esperadas", file=sys.stderr)
         return 1
     if not info.need_fullpath or not info.block_extract:

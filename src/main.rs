@@ -737,13 +737,13 @@ fn run(path: &str, options: Options) -> Result<(), Box<dyn std::error::Error>> {
         teclas,
         instalados,
     } = options;
-    // Um jogo em `.zip` é extraído para o cache e rodado de lá, como na interface.
+    // Um jogo em `.zip` ou `.7z` é extraído para o cache e rodado de lá, como na interface.
     let extracted;
     let path = match std::path::Path::new(path)
         .extension()
         .and_then(|e| e.to_str())
     {
-        Some("zip") => {
+        Some("zip" | "7z") => {
             extracted = archive::extract(std::path::Path::new(path))?;
             println!("extraído:  {}", extracted.display());
             extracted.to_str().unwrap_or(path)
@@ -1192,7 +1192,7 @@ fn bench_dynarmic(
         .extension()
         .and_then(|e| e.to_str())
     {
-        Some("zip") => {
+        Some("zip" | "7z") => {
             extracted = archive::extract(std::path::Path::new(path))?;
             extracted.as_path()
         }

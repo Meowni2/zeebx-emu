@@ -7,7 +7,7 @@
 ## Objetivo
 
 Entregar o Zeebx como um core Libretro para Linux **x86_64** e **AArch64**, inicialmente para
-RetroArch. O core recebe um jogo Zeebo (`.mod`, `.zip`; `.7z` após suporte real), executa o
+RetroArch. O core recebe um jogo Zeebo (`.mod`, `.zip`, `.7z`), executa o
 applet BREW, entrega vídeo, áudio e input ao frontend, e mantém conteúdo, saves e dados do
 "aparelho" em locais separados.
 
@@ -51,7 +51,7 @@ de parede. Um core Libretro precisa de passo virtual determinístico.
 | Áudio | estéreo PCM16, 44 100 Hz; a quantidade por `retro_run` sai do tempo **virtual** decorrido |
 | Entrada | até duas portas RetroPad → Z-Pad |
 | Conteúdo inicial | `.mod` e `.zip` |
-| `.7z` | somente após decoder embutido e testes com arquivos reais |
+| `.7z` | feito: decodificador embutido, limites iguais aos do zip e prova com jogo real |
 | Renderização HW | fora do MVP |
 | Save states | fora do MVP; API retorna sem suporte |
 | Core Options | nenhuma até existir opção funcional real |
@@ -216,7 +216,7 @@ ponteiro ou caminho nulo e limpar sessão anterior caso o frontend viole o fluxo
 ```text
 library_name      = "Zeebx"
 library_version   = versão do Cargo
-valid_extensions  = "mod|zip"             # "|7z" somente depois do suporte real
+valid_extensions  = "mod|zip|7z"
 need_fullpath     = true
 block_extract     = true
 supports_no_game  = false

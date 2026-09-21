@@ -12,21 +12,30 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::config;
 use crate::loader::miffile::MifFile;
+use crate::loader::sete_z;
 use crate::storage::ContentId;
 
 /// Limites antes de descompactar conteúdo não confiável. São generosos para não rejeitar jogos
 /// legítimos, mas impedem que um ZIP com metadados maliciosos consuma espaço/memória sem teto.
-const MAX_ENTRIES: usize = 20_000;
-const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
-const MAX_TOTAL_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+pub(crate) const MAX_ENTRIES: usize = 20_000;
+pub(crate) const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
+pub(crate) const MAX_TOTAL_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// Um `.mif` é metadado pequeno; teto próprio evita alocar centenas de MiB só para escolher módulo.
-const MAX_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
+pub(crate) const MAX_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy)]
-struct ArchiveLimits {
-    entries: usize,
-    file_bytes: u64,
-    total_bytes: u64,
+pub(crate) struct ArchiveLimits {
+    pub(crate) entries: usize,
+    pub(crate) file_bytes: u64,
+    pub(crate) total_bytes: u64,
+}
+
+impl ArchiveLimits {
+    /// Os limites de sempre, para quem precisa extrair fora do caminho de `extract_in`.
+    #[cfg(test)]
+    pub(crate) fn padrao() -> Self {
+        ARCHIVE_LIMITS
+    }
 }
 
 const ARCHIVE_LIMITS: ArchiveLimits = ArchiveLimits {
@@ -150,7 +159,16 @@ pub fn instala_fonte_do_pacote(pacote: &Path, device: &Path) -> Option<PathBuf> 
     // Duas formas de Z-Wheel aparecem no mesmo acervo: o `.zip` do pacote e uma cópia já extraída,
     // em que a fonte fica **ao lado** do módulo (`mod/274755/tectoy.ttf`). Tratar só o zip deixava
     // o acervo extraído sem fonte.
-    let bytes = match pacote.extension().and_then(|e| e.to_str()) {
+    let bytes = if sete_z::eh_sete_z(pacote) {
+        // No `.7z` a fonte é procurada pelo nome, e o formato é decidido pela assinatura: o
+        // pacote do acervo pode ter sido renomeado.
+        let nome = sete_z::listar(pacote)?
+            .into_iter()
+            .map(|(nome, _)| nome)
+            .find(|nome| nome.to_ascii_lowercase().ends_with(".ttf"))?;
+        sete_z::ler(pacote, &nome, MAX_MANIFEST_BYTES)?
+    } else {
+        match pacote.extension().and_then(|e| e.to_str()) {
         Some("zip") => {
             let file = std::fs::File::open(pacote).ok()?;
             let mut archive = zip::ZipArchive::new(file).ok()?;
@@ -165,13 +183,31 @@ pub fn instala_fonte_do_pacote(pacote: &Path, device: &Path) -> Option<PathBuf> 
             bytes
         }
         _ => std::fs::read(pacote.parent()?.join("tectoy.ttf")).ok()?,
+        }
     };
     std::fs::create_dir_all(destino.parent()?).ok()?;
     std::fs::write(&destino, bytes).ok()?;
     Some(destino)
 }
 
-/// O caminho interno do `.mod` dentro do zip, se houver um.
+/// O arquivo é um pacote: `.zip` ou `.7z`.
+///
+/// **A extensão não decide o formato** — quem decide é a assinatura, no momento de abrir —, mas
+/// ela decide se vale tratar o arquivo como pacote, e é essa a pergunta que o resto do emulador
+/// faz. Um título circula das duas formas, e recusar o `.7z` aqui dava o pior sintoma possível:
+/// o jogo simplesmente "não carrega", sem dizer por quê.
+pub fn embalado(caminho: &Path) -> bool {
+    matches!(
+        caminho
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("zip" | "7z")
+    )
+}
+
+/// O caminho interno do `.mod` dentro do pacote, se houver um.
 ///
 /// Havendo mais de um, decide nesta ordem:
 ///
@@ -182,83 +218,121 @@ pub fn instala_fonte_do_pacote(pacote: &Path, device: &Path) -> Option<PathBuf> 
 ///    pacote com o jogo e algum extra tem o módulo do jogo ali, e o extra é que costuma estar
 ///    solto.
 /// 3. O caminho mais curto.
-pub fn find_module(zip: &Path) -> Option<String> {
-    let file = std::fs::File::open(zip).ok()?;
-    let mut archive = zip::ZipArchive::new(file).ok()?;
-    validate_archive(&mut archive, ARCHIVE_LIMITS).ok()?;
-    let mut candidates: Vec<(bool, usize, String)> = Vec::new();
-    for i in 0..archive.len() {
-        let entry = archive.by_index(i).ok()?;
+pub fn find_module(pacote: &Path) -> Option<String> {
+    let nomes = nomes_do_pacote(pacote)?;
+    // O manifesto só é lido quando há mais de um candidato: com um só, a resposta é ele de
+    // qualquer jeito, e abrir o pacote de novo seria trabalho à toa em todo jogo do acervo.
+    escolhe_modulo(nomes, |nome| {
+        find_manifest(pacote, nome)
+            .and_then(|dados| MifFile::parse(&dados).ok())
+            .and_then(|mif| mif.main_applet())
+            .is_some()
+    })
+}
+
+/// Os nomes de dentro do pacote, seja ele `.zip` ou `.7z`.
+///
+/// É a única pergunta que o resto do arquivo faz sobre o formato: daqui para baixo, zip e 7z são
+/// o mesmo pacote. O `.7z` é reconhecido pela assinatura, e não pela extensão — um `.7z`
+/// renomeado para `.zip` continua sendo um `.7z`.
+fn nomes_do_pacote(pacote: &Path) -> Option<Vec<String>> {
+    if sete_z::eh_sete_z(pacote) {
+        return sete_z::listar(pacote).map(|lista| lista.into_iter().map(|(nome, _)| nome).collect());
+    }
+    let arquivo = std::fs::File::open(pacote).ok()?;
+    let mut zip = zip::ZipArchive::new(arquivo).ok()?;
+    validate_archive(&mut zip, ARCHIVE_LIMITS).ok()?;
+    let mut nomes = Vec::with_capacity(zip.len());
+    for indice in 0..zip.len() {
+        let entrada = zip.by_index(indice).ok()?;
         // `enclosed_name` recusa caminhos com `..` ou raiz absoluta, que é como um zip
         // malicioso escreveria fora da pasta de destino.
-        let Some(name) = entry.enclosed_name() else {
-            continue;
-        };
-        if name.extension().and_then(|e| e.to_str()) != Some("mod") {
+        entrada.enclosed_name()?;
+        nomes.push(entrada.name().to_string());
+    }
+    Some(nomes)
+}
+
+/// Escolhe o `.mod`, na ordem documentada em [`find_module`].
+///
+/// Está separado porque a escolha é a mesma para zip e para 7z — o que muda é quem lista os
+/// nomes. Duas cópias desta regra divergiriam no primeiro ajuste.
+fn escolhe_modulo(
+    nomes: Vec<String>,
+    com_applet: impl Fn(&str) -> bool,
+) -> Option<String> {
+    let mut candidatos: Vec<(bool, usize, String)> = Vec::new();
+    for nome in nomes {
+        if Path::new(&nome).extension().and_then(|e| e.to_str()) != Some("mod") {
             continue;
         }
-        let name = entry.name().to_string();
-        let parts: Vec<&str> = name.split('/').collect();
-        let console = parts.len() >= 4 && parts[parts.len() - 3] == "mod";
-        candidates.push((console, parts.len(), name));
+        let partes: Vec<&str> = nome.split(['/', '\\']).collect();
+        let console = partes.len() >= 4 && partes[partes.len() - 3] == "mod";
+        candidatos.push((console, partes.len(), nome));
     }
-    // O manifesto só é lido quando há mais de um candidato: com um só, a resposta é ele de
-    // qualquer jeito, e abrir o zip de novo seria trabalho à toa em todo jogo do acervo.
-    let sozinho = candidates.len() <= 1;
-    let com_applet = |name: &str| {
-        sozinho
-            || find_manifest(zip, name)
-                .and_then(|data| MifFile::parse(&data).ok())
-                .and_then(|mif| mif.main_applet())
-                .is_some()
-    };
-    candidates
+    let sozinho = candidatos.len() <= 1;
+    candidatos
         .into_iter()
-        .max_by_key(|(console, depth, name)| {
-            (com_applet(name), *console, std::cmp::Reverse(*depth))
+        .max_by_key(|(console, profundidade, nome)| {
+            (sozinho || com_applet(nome), *console, std::cmp::Reverse(*profundidade))
         })
-        .map(|(_, _, name)| name)
+        .map(|(_, _, nome)| nome)
 }
 
 /// O conteúdo do `.mif` que acompanha `module` dentro do zip.
 ///
 /// O `.mif` do título fica em `<Título>/mif/<id>.mif`, irmão da pasta `mod/`. Havendo mais de
 /// um, vale o que combina com o identificador do módulo; sem isso, o primeiro serve.
-pub fn find_manifest(zip: &Path, module: &str) -> Option<Vec<u8>> {
-    let file = std::fs::File::open(zip).ok()?;
-    let mut archive = zip::ZipArchive::new(file).ok()?;
-    validate_archive(&mut archive, ARCHIVE_LIMITS).ok()?;
+pub fn find_manifest(pacote: &Path, module: &str) -> Option<Vec<u8>> {
     // `<Título>/mod/<id>/x.mod` -> o identificador é a pasta que contém o módulo.
-    let parts: Vec<&str> = module.split('/').collect();
-    let id = parts.get(parts.len().checked_sub(2)?).copied();
-    let mut best: Option<usize> = None;
-    for i in 0..archive.len() {
-        let entry = archive.by_index(i).ok()?;
-        if entry.enclosed_name().is_none() {
-            continue;
-        }
-        let name = entry.name().to_string();
-        if !name.ends_with(".mif") {
-            continue;
-        }
-        let matches = id.is_some_and(|id| name.ends_with(&format!("/{id}.mif")));
-        if matches {
-            best = Some(i);
-            break;
-        }
-        best.get_or_insert(i);
+    let partes: Vec<&str> = module.split('/').collect();
+    let id = partes.get(partes.len().checked_sub(2)?).copied();
+
+    if sete_z::eh_sete_z(pacote) {
+        let lista = sete_z::listar(pacote)?;
+        let nome = escolhe_mif(lista.into_iter().filter(|(_, pasta)| !pasta).map(|(nome, _)| nome), id)?;
+        return sete_z::ler(pacote, &nome, MAX_MANIFEST_BYTES);
     }
-    let mut entry = archive.by_index(best?).ok()?;
-    if entry.size() > MAX_MANIFEST_BYTES {
+
+    let arquivo = std::fs::File::open(pacote).ok()?;
+    let mut zip = zip::ZipArchive::new(arquivo).ok()?;
+    validate_archive(&mut zip, ARCHIVE_LIMITS).ok()?;
+    let mut nomes = Vec::with_capacity(zip.len());
+    for indice in 0..zip.len() {
+        let entrada = zip.by_index(indice).ok()?;
+        entrada.enclosed_name()?;
+        nomes.push(entrada.name().to_string());
+    }
+    let nome = escolhe_mif(nomes.into_iter(), id)?;
+    let mut entrada = zip.by_name(&nome).ok()?;
+    if entrada.size() > MAX_MANIFEST_BYTES {
         return None;
     }
-    let mut data = Vec::with_capacity(entry.size() as usize);
-    entry
+    let mut dados = Vec::with_capacity(entrada.size() as usize);
+    entrada
         .by_ref()
         .take(MAX_MANIFEST_BYTES + 1)
-        .read_to_end(&mut data)
+        .read_to_end(&mut dados)
         .ok()?;
-    (data.len() as u64 <= MAX_MANIFEST_BYTES).then_some(data)
+    (dados.len() as u64 <= MAX_MANIFEST_BYTES).then_some(dados)
+}
+
+/// Escolhe o `.mif` do título entre os nomes do pacote.
+///
+/// Vale o que combina com o identificador do módulo; sem combinação, o primeiro serve — o mesmo
+/// critério para zip e para 7z.
+fn escolhe_mif(nomes: impl Iterator<Item = String>, id: Option<&str>) -> Option<String> {
+    let mut primeiro: Option<String> = None;
+    for nome in nomes {
+        if !nome.ends_with(".mif") {
+            continue;
+        }
+        if id.is_some_and(|id| nome.ends_with(&format!("/{id}.mif"))) {
+            return Some(nome);
+        }
+        primeiro.get_or_insert(nome);
+    }
+    primeiro
 }
 
 /// O título que o zip anuncia.
@@ -294,7 +368,7 @@ pub fn extract_in(zip: &Path, cache: &Path) -> std::io::Result<PathBuf> {
     // sob uma chave de conteúdo errada.
     let source_fingerprint = fingerprint(zip)?;
     let module = find_module(zip)
-        .ok_or_else(|| std::io::Error::other("o zip não contém nenhum arquivo .mod"))?;
+        .ok_or_else(|| std::io::Error::other("o pacote não contém nenhum arquivo .mod"))?;
     if fingerprint(zip)? != source_fingerprint {
         return Err(std::io::Error::other("o zip mudou enquanto era analisado"));
     }
@@ -316,6 +390,14 @@ pub fn extract_in(zip: &Path, cache: &Path) -> std::io::Result<PathBuf> {
     // cópia fica em `.partial`, que a próxima abertura remove antes de tentar de novo.
     let partial = partial_dir(&target);
     let result = (|| -> std::io::Result<()> {
+        // O `.7z` descompacta por caminho próprio, e **daqui para baixo o caminho é o mesmo**:
+        // conferir o digest, escrever o manifesto, exigir a presença do `.mod` e publicar a
+        // extração com um renomeio. Sair cedo daqui deixava o conteúdo numa pasta `.partial` e
+        // devolvia um caminho que não existia — foi o que aconteceu na primeira versão.
+        if sete_z::eh_sete_z(zip) {
+            std::fs::create_dir_all(&partial)?;
+            sete_z::extrair(zip, &partial, ARCHIVE_LIMITS)?;
+        } else {
         let file = std::fs::File::open(zip)?;
         let mut archive = zip::ZipArchive::new(file).map_err(std::io::Error::other)?;
         validate_archive(&mut archive, ARCHIVE_LIMITS)?;
@@ -351,16 +433,17 @@ pub fn extract_in(zip: &Path, cache: &Path) -> std::io::Result<PathBuf> {
                 .checked_add(written)
                 .ok_or_else(|| std::io::Error::other("o zip tem tamanho inválido"))?;
         }
+        }
         if fingerprint(zip)? != source_fingerprint {
-            return Err(std::io::Error::other("o zip mudou durante a extração"));
+            return Err(std::io::Error::other("o pacote mudou durante a extração"));
         }
         escrever_manifesto(zip, &partial)?;
         if fingerprint(zip)? != source_fingerprint {
-            return Err(std::io::Error::other("o zip mudou durante a extração"));
+            return Err(std::io::Error::other("o pacote mudou durante a extração"));
         }
         if !partial.join(&module).is_file() {
             return Err(std::io::Error::other(
-                "o .mod não apareceu depois de extrair o zip",
+                "o .mod não apareceu depois de extrair o pacote",
             ));
         }
         if let Some(parent) = target.parent() {
@@ -461,17 +544,11 @@ fn tamanho_em_disco(caminho: &Path) -> u64 {
 /// botão de excluir, errar assim apaga o jogo.
 ///
 /// A lista vem do zip, que é a fonte: o que está nele é do pacote, o resto o jogo escreveu.
-pub fn escrever_manifesto(zip: &Path, destino: &Path) -> std::io::Result<()> {
-    let file = std::fs::File::open(zip)?;
-    let mut archive = zip::ZipArchive::new(file).map_err(std::io::Error::other)?;
-    validate_archive(&mut archive, ARCHIVE_LIMITS)?;
-    let mut nomes = Vec::new();
-    for i in 0..archive.len() {
-        let entry = archive.by_index(i).map_err(std::io::Error::other)?;
-        if let Some(nome) = entry.enclosed_name() {
-            nomes.push(nome.to_string_lossy().replace('\\', "/"));
-        }
-    }
+pub fn escrever_manifesto(pacote: &Path, destino: &Path) -> std::io::Result<()> {
+    // Os nomes saem do mesmo lugar que a escolha do módulo, então o manifesto cobre zip e 7z sem
+    // caminho separado. Ele é o que diz ao motor quais arquivos vieram do pacote — sem ele, um
+    // `.7z` extraído trataria o conteúdo como se fosse do aparelho.
+    let mut nomes: Vec<String> = nomes_do_pacote(pacote).unwrap_or_default();
     nomes.sort();
     nomes.dedup();
     std::fs::write(destino.join(MANIFESTO), nomes.join("\n"))

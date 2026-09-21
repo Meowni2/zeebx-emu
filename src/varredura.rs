@@ -706,7 +706,7 @@ mod tests {
                 .filter(|p| {
                     matches!(
                         p.extension().and_then(|e| e.to_str()),
-                        Some("zip" | "mod" | "ZIP" | "MOD")
+                        Some("zip" | "mod" | "ZIP" | "MOD" | "7z" | "7Z")
                     )
                 })
                 .collect();

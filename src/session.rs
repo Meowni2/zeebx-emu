@@ -247,7 +247,8 @@ impl Session {
         let conteudo = path;
         let extracted;
         let path = match path.extension().and_then(|e| e.to_str()) {
-            Some("zip") => {
+            // O `.7z` extrai pelo mesmo caminho: quem separa os formatos é o descompactador.
+            Some("zip" | "7z") => {
                 extracted =
                     archive::extract_in(path, &storage.cache).map_err(StartError::Unreadable)?;
                 extracted.as_path()

@@ -128,8 +128,11 @@ Sem argumentos, abre a interface. Pela linha de comando:
 cargo run --release -- run "roms/Quake.zip" --window
 ```
 
-Zips são extraídos para um cache e o `.mod` certo é escolhido sozinho. `--seconds=N` define
-quantos segundos de tempo virtual emular quando não há janela; com janela, roda até você fechar.
+Pacotes `.zip` e `.7z` são extraídos para um cache e o `.mod` certo é escolhido sozinho — o formato
+é reconhecido pela assinatura do arquivo, então um `.7z` renomeado para `.zip` também abre. O que
+não for extraído com segurança é recusado antes de escrever qualquer coisa: caminho com `..`,
+link simbólico, entradas demais ou tamanho além do teto. `--seconds=N` define quantos segundos de
+tempo virtual emular quando não há janela; com janela, roda até você fechar.
 
 Os controles no teclado:
 
