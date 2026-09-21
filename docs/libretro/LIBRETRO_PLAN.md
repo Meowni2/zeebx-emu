@@ -1199,6 +1199,48 @@ Consequências incorporadas neste plano:
 - mouse/pointer só entram depois de haver aparelho BREW medido;
 - 7z anunciado somente após parser seguro e testes de corpus.
 
+## Matriz de build
+
+Seis alvos por artefato — o core e o standalone —, três sistemas × duas arquiteturas, **cada um
+no seu runner nativo**:
+
+| | x86_64 | AArch64 |
+|---|---|---|
+| Linux | `ubuntu-24.04` | `ubuntu-24.04-arm` |
+| Windows | `windows-latest` | `windows-11-arm` (experimental) |
+| macOS | `macos-15-intel` | `macos-latest` (Apple Silicon) |
+
+Nada aqui é cross-compilação, e é de propósito: o `unicorn` compila o QEMU em C e o `dynarmic`
+compila C++20, exatamente a combinação em que cross-build exige toolchain C++ e sysroot. Existe
+runner ARM64 nativo para os três sistemas, e ele sai mais barato que manter cross.
+
+O core é publicado como `<alvo>/zeebx_libretro.{so,dll,dylib}` junto do `.info`, e o standalone
+como o binário do alvo. Cada artefato passa por duas provas antes de subir:
+
+1. **A biblioteca carrega e a ABI responde** (`ferramentas/verifica_core.py`): abre a biblioteca
+   com o `dlopen`/`LoadLibrary` por trás do `ctypes` — como o frontend abre —, confere os 25
+   símbolos, exige `retro_api_version` igual a 1 e exige que `retro_get_system_info` preencha
+   `Zeebx`, `mod|zip` e os dois sinalizadores. Ler símbolos com `nm` não apanharia uma biblioteca
+   que existe e **não carrega** por dependência que faltou no link; carregar, sim.
+2. **Sem dependência de interface** (Linux): `ldd` recusa `libX11`, Wayland, EGL, ALSA, udev e GTK.
+   Vídeo, áudio e entrada são do frontend.
+
+### Windows ARM64 é experimental, e a causa é medida
+
+O alvo existe na matriz, roda, e **não** derruba a rodada. Ele não fica verde por causa de uma
+limitação de terceiros:
+
+```text
+FAILED: CMakeFiles/unicorn-common.dir/qemu/util/setjmp-wrapper-win32.asm.obj
+  ml  -I...unicorn-engine-sys-2.1.5\msvc -I...
+  CreateProcess failed: The system cannot find the file specified.
+```
+
+O QEMU monta esse `.asm` com o `ml` do MSVC, que **só existe para x86 e x64** — não há montador
+MASM para ARM64. O `unicorn-engine` 2.1.5 é a última versão publicada, e o QEMU não tem o Windows
+ARM64 como host. Quando isso mudar — versão nova do unicorn, ou o `unicorn` virar opcional nesta
+plataforma, com o `dynarmic` sozinho —, basta tirar a marca de experimental do alvo.
+
 ## Ordem de implementação
 
 1. Inventariar toda E/S de core e definir `StorageFs`/`GuestFile`; decidir SQLite VFS ou staging

@@ -7,7 +7,7 @@
 # Seis alvos, três sistemas × duas arquiteturas:
 #
 #   linux-x86_64 / linux-aarch64      ubuntu-24.04 / ubuntu-24.04-arm
-#   windows-x86_64 / windows-aarch64  windows-latest / windows-11-arm
+#   windows-x86_64 / windows-aarch64  windows-latest / windows-11-arm   (o ARM64 experimental)
 #   macos-x86_64 / macos-arm64        macos-15-intel / macos-latest
 #
 # **Runners nativos, não cross-compilação**: o `unicorn` compila o QEMU em C e o `dynarmic` compila
@@ -55,6 +55,7 @@ jobs:
   compila:
     name: ${{ matrix.nome }}
     runs-on: ${{ matrix.sistema }}
+    continue-on-error: ${{ matrix.experimental }}
     # Um alvo que ficou pendurado não pode queimar a cota da conta: seis horas de espera viram uma
     # hora de falha.
     timeout-minutes: 60
@@ -80,6 +81,14 @@ jobs:
           - alvo: windows-aarch64
             nome: windows-aarch64
             sistema: windows-11-arm
+            # **Experimental, e o motivo e medido.** O `unicorn` compila o QEMU em C, e o QEMU do Windows
+            # monta `qemu/util/setjmp-wrapper-win32.asm` com o `ml` do MSVC — que so existe para x86 e x64.
+            # Nao ha montador MASM para ARM64, entao o `ml` nao e encontrado (o log traz "CreateProcess
+            # failed: The system cannot find the file specified") e o build para ali. O `unicorn-engine`
+            # 2.1.5 e a ultima versao publicada, e o QEMU nao tem o Windows ARM64 como host. O alvo fica na
+            # matriz para o dia em que isso mudar, ou para o dia em que o unicorn virar opcional nesta
+            # plataforma; enquanto isso, ele nao derruba a rodada.
+            experimental: true
             binario: target/release/zeebx.exe
           - alvo: macos-x86_64
             nome: macos-x86_64
