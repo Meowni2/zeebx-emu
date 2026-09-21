@@ -1,48 +1,85 @@
-# Compila o core Libretro nos dois alvos e confere o que sai.
+# Compila o core Libretro e confere que ele é carregável e completo.
 #
-# O core é um pacote separado (`frontends/libretro`), e o build dele **não** usa nenhuma biblioteca
-# de interface: sem ALSA, sem udev, sem Wayland ou X11. O trabalho tem três provas, e nenhuma é
-# "compilou":
+# O core é um pacote separado (`frontends/libretro`) e o build dele **não** usa biblioteca de
+# interface: sem ALSA, sem udev, sem Wayland ou X11. As provas, em ordem de força:
 #
-# 1. os 25 símbolos `retro_*` estão exportados;
-# 2. o `.so` não puxa biblioteca de janela, áudio ou controle do host;
-# 3. o artefato publicado é o `.so` **com** o `.info` ao lado — um `.info` velho ao lado de um core
-#    novo quebra o scan pela interface sem dizer nada.
+# 1. a biblioteca **carrega** de verdade (`ctypes` = `dlopen`/`LoadLibrary`, como o frontend faz) —
+#    isso apanha dependência que faltou no link, que uma lista de símbolos não apanha;
+# 2. os 25 símbolos `retro_*` respondem, `retro_api_version` devolve 1 e `retro_get_system_info`
+#    preenche a struct com `Zeebx`, `mod|zip`, `need_fullpath` e `block_extract`;
+# 3. no Linux, `ldd` mostra que não há `libX11`, Wayland, EGL, ALSA, udev nem GTK pendurados.
 #
-# O AArch64 roda em runner ARM64 nativo: cross-build do `unicorn-engine`/`dynarmic` exigiria
-# toolchain e sysroot que a gente não quer manter só para empacotar.
+# Cada alvo roda no seu próprio runner: AArch64 Linux e Windows em runner ARM64 nativo, porque
+# cross-build de `unicorn` (QEMU em C) e `dynarmic` (C++20 com CMake) exigiria toolchain e sysroot
+# que ninguém quer manter só para empacotar.
 
 name: libretro
 
 on:
   push:
+    branches: [development, master, main, "feat/**", "fix/**"]
+    paths:
+      - "frontends/libretro/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
+      - ".github/workflows/libretro.yml"
+  pull_request:
     paths:
       - "frontends/libretro/**"
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/libretro.yml"
-  pull_request:
-    paths:
-      - "frontends/libretro/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
   workflow_dispatch:
+
+concurrency:
+  group: libretro-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   core:
-    name: ${{ matrix.nome }}
+    name: core-${{ matrix.nome }}
     runs-on: ${{ matrix.sistema }}
     strategy:
       fail-fast: false
       matrix:
+        # Em PR, só o alvo barato: a matriz inteira é coisa de push.
+        alvo: ${{ github.event_name == 'pull_request'
+                  && fromJSON('["linux-x86_64"]')
+                  || fromJSON('["linux-x86_64","linux-aarch64","windows-x86_64","windows-aarch64","macos-x86_64","macos-arm64"]') }}
         include:
-          - nome: linux-x86_64
+          - alvo: linux-x86_64
+            nome: linux-x86_64
             sistema: ubuntu-24.04
-            arquitetura: x86_64
-          - nome: linux-aarch64
+            biblioteca: target/release/libzeebx_libretro.so
+            pacote: zeebx_libretro.so
+          - alvo: linux-aarch64
+            nome: linux-aarch64
             sistema: ubuntu-24.04-arm
-            arquitetura: aarch64
+            biblioteca: target/release/libzeebx_libretro.so
+            pacote: zeebx_libretro.so
+          - alvo: windows-x86_64
+            nome: windows-x86_64
+            sistema: windows-latest
+            biblioteca: target/release/zeebx_libretro.dll
+            pacote: zeebx_libretro.dll
+          - alvo: windows-aarch64
+            nome: windows-aarch64
+            sistema: windows-11-arm
+            biblioteca: target/release/zeebx_libretro.dll
+            pacote: zeebx_libretro.dll
+          - alvo: macos-x86_64
+            nome: macos-x86_64
+            sistema: macos-15-intel
+            biblioteca: target/release/libzeebx_libretro.dylib
+            pacote: zeebx_libretro.dylib
+          - alvo: macos-arm64
+            nome: macos-arm64
+            sistema: macos-latest
+            biblioteca: target/release/libzeebx_libretro.dylib
+            pacote: zeebx_libretro.dylib
     steps:
       - uses: actions/checkout@v4
 
@@ -50,56 +87,48 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: libretro-${{ matrix.arquitetura }}
+          key: libretro-${{ matrix.nome }}
 
       # As duas dependências nativas: o `unicorn-engine` compila o QEMU em C e usa o `bindgen`
-      # (que carrega o `libclang`), e o `dynarmic` compila C++20 com CMake e Ninja.
-      - name: Dependências do build nativo
+      # (que carrega o `libclang`), e o `dynarmic` compila C++20 com CMake e Ninja. Depender do que
+      # a imagem do runner já traz funciona até o dia em que não traz.
+      - name: Dependências do build (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config python3 \
             libclang-dev libglib2.0-dev
 
-      # Sem debuginfo o `dynarmic` sai de mais de 5 GiB para algumas centenas de MB: o mesmo
-      # motivo que fez o build local encher o disco mais de uma vez.
+      - name: Dependências do build (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja pkg-config || true
+
+      # Sem debuginfo a árvore do `dynarmic` sai de mais de 5 GiB para algumas centenas de MB.
       - name: Compila o core
         env:
           CARGO_PROFILE_DEV_DEBUG: "0"
         run: cargo build --release --locked -p zeebx-libretro
 
-      - name: Os símbolos da ABI estão todos lá
-        run: |
-          esperados="retro_api_version retro_cheat_reset retro_cheat_set retro_deinit \
-            retro_get_memory_data retro_get_memory_size retro_get_region \
-            retro_get_system_av_info retro_get_system_info retro_init retro_load_game \
-            retro_load_game_special retro_reset retro_run retro_serialize \
-            retro_serialize_size retro_set_audio_sample retro_set_audio_sample_batch \
-            retro_set_controller_port_device retro_set_environment retro_set_input_poll \
-            retro_set_input_state retro_set_video_refresh retro_unload_game retro_unserialize"
-          faltando=0
-          for simbolo in $esperados; do
-            if ! nm -D --defined-only target/release/libzeebx_libretro.so | grep -q " T $simbolo$"; then
-              echo "FALTA: $simbolo"
-              faltando=1
-            fi
-          done
-          test "$faltando" = "0"
-          echo "os símbolos da ABI estão exportados"
+      # A prova principal: abrir a biblioteca como o frontend abre e chamar a ABI.
+      - name: A biblioteca carrega e a ABI responde
+        run: python3 ferramentas/verifica_core.py "${{ matrix.biblioteca }}"
 
-      - name: O core não depende de biblioteca de host
+      - name: O core não depende de biblioteca de host (Linux)
+        if: runner.os == 'Linux'
         run: |
-          ldd target/release/libzeebx_libretro.so
-          if ldd target/release/libzeebx_libretro.so | grep -qiE 'libX11|wayland|EGL|libGL|asound|libudev|gtk'; then
+          ldd "${{ matrix.biblioteca }}"
+          if ldd "${{ matrix.biblioteca }}" | grep -qiE 'libX11|wayland|EGL|libGL|asound|libudev|gtk'; then
             echo "o core puxou biblioteca de interface: vídeo, áudio e entrada são do frontend"
             exit 1
           fi
           echo "só libc, libm, libstdc++ e libgcc"
 
       - name: Monta o pacote do core
+        shell: bash
         run: |
           mkdir -p pacote
-          cp target/release/libzeebx_libretro.so pacote/zeebx_libretro.so
+          cp "${{ matrix.biblioteca }}" "pacote/${{ matrix.pacote }}"
           cp frontends/libretro/zeebx_libretro.info pacote/
           grep -q '^database = "Mobile - Zeebo"' pacote/zeebx_libretro.info
           ls -la pacote/

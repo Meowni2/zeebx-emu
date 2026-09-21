@@ -1,26 +1,32 @@
-# Compila e testa o emulador standalone (a interface desktop) nas cinco plataformas.
+# Compila, testa e abre o emulador standalone (a interface desktop) nas seis plataformas.
 #
-# O que este trabalho responde é "o binário sai e os testes passam?", que o `release.yml` **não**
-# responde: ele roda em tag, empacota, e deixa os testes como `continue-on-error` para não segurar
-# os instaladores.
+# O que este trabalho responde é "o binário sai, os testes passam e ele abre?", que o `release.yml`
+# **não** responde: ele roda em tag, empacota, e não pode segurar os instaladores por causa de um
+# teste. A release continua sendo só por tag — nenhum PR dispara release.
 #
-# Custo: cada plataforma compila o `unicorn` (QEMU em C) e o `dynarmic` (JIT em C++20), uns 15
-# minutos por runner. Por isso a matriz completa roda em **push** para as ramas de desenvolvimento e
-# sob demanda; em PR roda só o Linux x86_64, onde o retorno precisa ser rápido.
+# Seis alvos, três sistemas × duas arquiteturas:
+#
+#   linux-x86_64 / linux-aarch64      ubuntu-24.04 / ubuntu-24.04-arm
+#   windows-x86_64 / windows-aarch64  windows-latest / windows-11-arm
+#   macos-x86_64 / macos-arm64        macos-15-intel / macos-latest
+#
+# **Runners nativos, não cross-compilação**: o `unicorn` compila o QEMU em C e o `dynarmic` compila
+# C++20, que é justamente a combinação que cross-build faz sofrer (toolchain C++ e sysroot). Runner
+# ARM64 nativo existe para Linux, Windows e macOS, e sai mais barato que manter cross.
+#
+# Custo: cada alvo compila o QEMU e o JIT, uns 15 minutos por runner. Por isso a matriz completa roda
+# em **push** para as ramas de desenvolvimento e sob demanda; em PR roda só o Linux x86_64, onde o
+# retorno precisa ser rápido.
 #
 # **A lista de PR é escolhida por expressão, não por `if` de job**: o contexto `matrix` não existe
 # em `jobs.<id>.if` — o GitHub rejeita o arquivo inteiro, e o sintoma é um run sem job nenhum.
-#
-# Windows e macOS usam os mesmos passos do `release.yml`, onde eles já produzem instalador: é a
-# prova de que o build passa. Os **testes** nesses dois ficam tolerantes a falha enquanto ninguém
-# tiver olhado o resultado deles, como no release.
 
 name: ci
 
 on:
   push:
     branches: [development, master, main, "feat/**", "fix/**"]
-    # Só o que pode mudar o binário. Um commit de documentação não deve gastar cinco runners — nem
+    # Só o que pode mudar o binário. Um commit de documentação não deve gastar seis runners — nem
     # cancelar, pela `concurrency`, um build de verdade que estava no meio do caminho.
     paths:
       - "src/**"
@@ -45,12 +51,15 @@ jobs:
   compila:
     name: ${{ matrix.nome }}
     runs-on: ${{ matrix.sistema }}
+    # Um alvo que ficou pendurado não pode queimar a cota da conta: seis horas de espera viram uma
+    # hora de falha.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         alvo: ${{ github.event_name == 'pull_request'
                   && fromJSON('["linux-x86_64"]')
-                  || fromJSON('["linux-x86_64","linux-aarch64","windows-x86_64","macos-arm64","macos-x86_64"]') }}
+                  || fromJSON('["linux-x86_64","linux-aarch64","windows-x86_64","windows-aarch64","macos-x86_64","macos-arm64"]') }}
         include:
           - alvo: linux-x86_64
             nome: linux-x86_64
@@ -64,13 +73,17 @@ jobs:
             nome: windows-x86_64
             sistema: windows-latest
             binario: target/release/zeebx.exe
-          - alvo: macos-arm64
-            nome: macos-arm64
-            sistema: macos-latest
-            binario: target/release/zeebx
+          - alvo: windows-aarch64
+            nome: windows-aarch64
+            sistema: windows-11-arm
+            binario: target/release/zeebx.exe
           - alvo: macos-x86_64
             nome: macos-x86_64
             sistema: macos-15-intel
+            binario: target/release/zeebx
+          - alvo: macos-arm64
+            nome: macos-arm64
+            sistema: macos-latest
             binario: target/release/zeebx
     steps:
       - uses: actions/checkout@v4
@@ -104,9 +117,6 @@ jobs:
         run: cargo build --release --locked
 
       - name: Testes
-        # Windows e macOS: ninguém olhou esses testes ainda, e um tropeço deles não pode esconder o
-        # resultado do build. No Linux é para valer.
-        continue-on-error: ${{ runner.os != 'Linux' }}
         env:
           CARGO_PROFILE_DEV_DEBUG: "0"
           CARGO_PROFILE_TEST_DEBUG: "0"
@@ -116,15 +126,33 @@ jobs:
         shell: bash
         run: ls -la ${{ matrix.binario }}
 
-      - name: O binário abre no Linux
+      # `controles` lista o que o sistema vê de controle e sai: é o comando mais barato que
+      # exercita a inicialização de verdade (udev, gilrs) sem precisar de tela. Em cada sistema,
+      # com o comando de tempo limite que ele tem.
+      - name: O binário abre (Linux)
         if: runner.os == 'Linux'
         shell: bash
         run: |
           file ${{ matrix.binario }}
           ldd ${{ matrix.binario }} | head -20
-          # `controles` lista o que o sistema vê de controle e sai: é o comando mais barato que
-          # exercita a inicialização de verdade (udev, gilrs) sem precisar de tela.
-          ${{ matrix.binario }} controles
+          timeout 60 ${{ matrix.binario }} controles
+
+      - name: O binário abre (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          file ${{ matrix.binario }}
+          otool -L ${{ matrix.binario }} | head -20
+          # O macOS não traz o `timeout` do GNU; o `perl` traz o alarme, e existe em toda imagem.
+          perl -e 'alarm 60; exec @ARGV' ${{ matrix.binario }} controles
+
+      - name: O binário abre (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $prova = Start-Process -FilePath "${{ matrix.binario }}" -ArgumentList "controles" -PassThru -NoNewWindow
+          if (-not $prova.WaitForExit(60000)) { $prova.Kill(); throw "o binario pendurou" }
+          if ($prova.ExitCode -ne 0) { throw "o binario saiu com $($prova.ExitCode)" }
 
       - uses: actions/upload-artifact@v4
         with:
