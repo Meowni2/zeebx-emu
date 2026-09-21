@@ -1,20 +1,19 @@
 # Status geral
-Versão considerada na análise: v0.2.0 (em desenvolvimento)
+Versão considerada na análise: v0.2.1 (em desenvolvimento)
 
 | Status | Legenda | Jogos | % |
 |---|---|---|---|
-| ✅ | (compatível) | 42 | 70% |
-| 🔄 | (roda com ressalvas) | 11 | 18% |
-| ❌ | (incompatível) | 7 | 12% |
+| ✅ | (compatível) | 46 | 75,4% |
+| 🔄 | (roda com ressalvas) | 8 | 13,1% |
+| ❌ | (incompatível) | 7 | 11,5% |
 
 
 # Observações:
 
 - É recomendado configurar o controle ao abrir o emulador pela primeira vez, mesmo assim, alguns games podem apresentar inputs diferentes.
-- Jogos compatíveis com Boomerang (Sensor de movimento), como Crash Nitro Kart 3D, todos os Zeebo Sports, entre outros, podem ser jogados utilizando Wii Remote por meio de pareamento Bluetooth.
-- Todos os jogos da Data East são jogos arcade em um emulador embutido próprio, todos funcionam porém ainda sem áudio.
-- Nenhum jogo está livre de bugs ou crashes, agradeço seus reports!
-- Único jogo homebrew testado e funcionando é o Zeetris, demais brews e ports podem ser ainda incompatíveis.
+- Jogos compatíveis com Boomerang (Sensor de movimento), como Crash Nitro Kart 3D, todos os Zeebo Sports, entre outros, podem ser jogados utilizando controles com sensores de movimento - tais como Dualshock 4, Dualsense, Wii Remote, e Switch Pro Controller - por meio de pareamento Bluetooth.
+- Todos os jogos da Data East são jogos arcade em um emulador embutido próprio.
+- Nenhum jogo, indenpendentemente de ser oficial, homebrew, ou port, está livre de bugs ou crashes e podem ser ainda incompatíveis. Agradeço pelos reports!
 - Funcionalidades online do Zeeboids podem não estar em operação a todo momento, visto que ainda é um recurso em desenvolvimento. Todos os avatares Zeeboids poderão ser excluídos após o desenvolvimento e migração para um servidor final adequado, mas fique à vontade para testar.
 
 # Lista de Compatibilidade
@@ -25,8 +24,8 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 | Alice no Pais das Maravilhas | ✅ | Joga; chega à fase |
 | Alien Breaker Deluxe | ✅ | Joga |
 | Alpine Racer | ✅ | Poucos problemas visuais e de som, mas completamente jogável |
-| Armageddon Squadron | 🔄 | Jogável, porém sem som |
-| Bad Dudes vs. DragonNinja | 🔄 | Abre e joga, mas fica mudo: procura baddudes.pkg e o pacote traz baddudes.zip |
+| Armageddon Squadron | ✅ | |
+| Bad Dudes vs. DragonNinja | ✅ | Procura baddudes.pkg e o pacote traz baddudes.zip |
 | Bejeweled Twist | ❌ | acesso inválido a 0x00000024, em 0x0003ab20 |
 | Caveman Ninja | ✅ | Emulador de arcade embutido, com som |
 | Crash Bandicoot Nitro Kart 3D | ✅ |  |
@@ -34,41 +33,42 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 | Disney All Star Cards | ✅ | Joga |
 | Double Dragon | ✅ | |
 | FIFA 09 | ✅ | |
-| Galaxy on Fire | 🔄 | Jogável, porém sem som e com inputs incorretos |
-| Heavy Barrel | ✅ | Abre e chega ao menu do arcade; partida não conferida aqui |
-| Heavy Weapon | 🔄 | Menus e missão funcionam; falta conferir o tiro |
+| Galaxy on Fire | 🔄 | Jogável, porém com tela de Pause e Menu quebrados após alguns minutos de jogatina, porém se mantém jogável |
+| Heavy Barrel | ✅ | Emulador de arcade embutido, com som |
+| Heavy Weapon | 🔄 | Jogável, porém com as cores erradas |
 | Iron Sight | 🔄 | Menus e campanha funcionam; quebra ao carregar a fase, sem achar os recursos no pacote dele |
 | Karnovs Revenge | ✅ | Emulador de arcade embutido, com som |
 | Magical Drop 3 | ✅ | Emulador de arcade embutido, com som |
-| Need For Speed - Carbon - Domine a Cidade | 🔄 | Jogável porém requer otimizacão (esse realmente PRECISA DE VELOCIDADE) |
+| Need For Speed - Carbon - Domine a Cidade | ✅ | |
 | Pac-Mania | ✅ | |
-| Peggle | ✅ | Joga; menus e mesa corretos |
+| Peggle | 🔄 | Roda, porém os gráficos, cores e sons estão totalmente quebrados |
 | Powerboat Challenge | ❌ | Chega ao menu de idioma e prende na tela de carregamento |
-| Prey 2 Evil | ❌ | Roda e lê os dados, mas a tela fica preta |
+| Prey 2 Evil | ❌ | Roda, lê os dados, porém a tela fica preta. Avançando com o 1, é possível ter gameplay, mas a HUD está completamente quebrada |
 | Quake | 🔄 | Podem existir crashes in-game ou lagging |
 | Quake 2 | ❌ | Menus funcionam; quebra ao iniciar a fase |
-| Raging Thunder 2 | 🔄 | Jogável, porém sem som |
+| Raging Thunder 2 | ✅ | |
 | Rally Master Pro | ✅ | |
 | Reckless Racing | 🔄 | Abre, porém com uma série de glitches nos modelos e texturas |
-| Resident Evil 4 - Zeebo Edition | ✅ | Reportado pela comunidade: Falta fog em algumas cenas do jogo |
+| Resident Evil 4 - Zeebo Edition | ✅ | |
 | Ridge Racer | ❌ | Abertura e tela de título certas; no menu e na corrida a câmera aponta para trás da cena e só 2 de cada 27 desenhos passam do recorte |
 | Spin Master | ✅ | Emulador de arcade embutido, com som |
 | Street Hoop | ✅ | Emulador de arcade embutido, com som |
 | Super BurgerTime | ✅ | Emulador de arcade embutido, com som |
+| Super Mario 64 (Port) | ✅ | |
 | Tekken 2 | ✅ | |
-| Tork and Kral - A Prehistorik Adventure | ✅ | Joga; menus e fase corretos |
-| Toy Raid | 🔄 | Jogável, porém sem som e com glitches visuais |
+| Tork and Kral - A Prehistorik Adventure | ✅ | |
+| Toy Raid | 🔄 | Jogável, porém com glitches visuais |
 | Treino Cerebral | ✅ | |
 | Turma da Monica em Vamos Brincar Vol. 1 | ✅ | Abre, navega os menus e chega à escolha de nome |
 | Ultimate Chess 3D | ✅ | |
 | Um Jogo de Ovos | ✅ | Menus e controles respondem |
 | Wizard Fire | ✅ | Emulador de arcade embutido, com som |
-| Zeebo Clube | ❌ | Envolve sistema online, recriacão pendente |
+| Zeebo Clube | ❌ | Envolve sistema online, recriação pendente |
 | Zeebo Extreme Baja | ✅ | |
 | Zeebo Extreme Boia Cross | ✅ | |
 | Zeebo Extreme Corrida Aerea | ✅ | |
-| Zeebo Extreme Jetboard | ✅ | Precisa do Boomerang: com ele calibra e segue para o jogo |
-| Zeebo Extreme Rolima | ✅ | Abre e chega ao menu; corrida não conferida aqui |
+| Zeebo Extreme Jetboard | ✅ | |
+| Zeebo Extreme Rolima | ✅ | |
 | Zeebo Family Pack | ✅ | |
 | Zeebo F.C. Foot Camp | ✅ | |
 | Zeebo F.C. Super League | ✅ | Herda funcionalidades online do Zeeboids |
@@ -77,7 +77,7 @@ Versão considerada na análise: v0.2.0 (em desenvolvimento)
 | Zeebo Sports Queimada | ✅ | |
 | Zeebo Sports Tenis | ✅ | |
 | Zeebo Sports Volei | ✅ | |
-| Zeetris | ✅ | |
+| Zeetris (Homebrew) | ✅ | |
 | Zenonia | ✅ | |
 | Zumas Revenge | ❌ | Quebra no começo, no mesmo desenho em superfície própria do Bejeweled Twist |
 | Z-Wheel | 🔄 | Utilizável, porém ainda com muitos bugs, online não implementado |
