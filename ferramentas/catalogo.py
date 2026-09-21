@@ -341,6 +341,25 @@ def escreve_fora_do_dat(saida, fichas):
             linhas.append("  (não deu para listar os arquivos do módulo)")
         linhas.append("")
     caminho.write_text("\n".join(linhas), encoding="utf-8")
+
+    # E o mesmo conteúdo no **formato do DAT**, que é o que a proposta pede. O nome do arquivo
+    # segue a convenção do banco: a pasta do módulo e o nome do arquivo, sem barra — o No-Intro
+    # grava `mod274259font.bar` para `mod/274259/font.bar`. Um `game` com vários `rom` é válido no
+    # formato e é o certo aqui: **qual dos arquivos é o dump é decisão de quem mantém o banco**, e
+    # a proposta leva todos, com os hashes, em vez de apostar num.
+    linhas_dat = []
+    for ficha in fora:
+        linhas_dat.append("game (")
+        linhas_dat.append(f'\tname "{ficha["nome_no_intro"]}"')
+        linhas_dat.append('\tregion "Brazil"')
+        for nome, tam, crc, md5, sha1 in ficha.get("arquivos_do_modulo", []):
+            sem_barra = nome.replace("/", "").replace("\\", "")
+            linhas_dat.append(
+                f'\trom ( name "{sem_barra}" size {tam} crc {crc} md5 {md5} sha1 {sha1} )'
+            )
+        linhas_dat.append(")")
+    caminho_dat = saida / "fora-do-dat.dat"
+    caminho_dat.write_text("\n".join(linhas_dat) + "\n", encoding="utf-8")
     return caminho
 
 

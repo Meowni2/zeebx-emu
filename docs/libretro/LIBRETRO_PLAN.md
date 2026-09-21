@@ -1521,6 +1521,22 @@ crc32 do pacote: 56020280   sha1: 2E E9 …
     tamanho: 1456  crc32: AD9831B6  md5: 82A42D24…  sha1: E4DCEE01…
 ```
 
+E o mesmo conteúdo sai em **formato DAT**, que é o que a proposta pede de verdade — cinco blocos
+`game (`, com o nome do arquivo na convenção do banco (a pasta do módulo e o arquivo, sem barra):
+
+```text
+game (
+	name "Bad Dudes vs. DragonNinja (Brazil) (Es,Pt)"
+	region "Brazil"
+	rom ( name "mod279888baddudes.mod" size 3034964 crc DE1F72C0 md5 3567F3EE… sha1 BB5781BE… )
+	… (todos os arquivos do módulo)
+)
+```
+
+Um `game` com vários `rom` é válido no formato, e é o certo aqui: **qual dos arquivos é o dump é
+decisão de quem mantém o banco**. A proposta leva todos, com os hashes, em vez de apostar num — e
+aposta errada, nesse caso, custa uma rodada inteira de ida e volta.
+
 ## Ordem de implementação
 
 1. Inventariar toda E/S de core e definir `StorageFs`/`GuestFile`; decidir SQLite VFS ou staging
