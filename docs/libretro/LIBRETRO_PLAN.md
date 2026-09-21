@@ -997,6 +997,17 @@ XDG_CONFIG_HOME=/tmp/zeebx-ra retroarch -c /tmp/zeebx-ra/ra.cfg \
 | Crash Bandicoot Nitro Kart 3D | 900 | 14 s | 5 959 cores distintas |
 | Double Dragon | 3 600 | 59 s | branco uniforme |
 
+**A fonte do sistema tinha dois defeitos, os dois corrigidos:** `fonte_do_sistema()` procurava no
+cache do desktop em vez do cache do frontend, e `fonte_do_console()` — a busca na hora de desenhar —
+também usava o caminho do desktop, então a fonte que o core instalava em
+`<raiz do aparelho>/shared/fonts/tectoy.ttf` nunca era encontrada. Mesmo assim o quadro do Double
+Dragon **continua branco e uniforme**, medido duas vezes.
+
+E há uma contradição a resolver: pelo harness da varredura, que usa a **mesma** `Session`, o jogo
+*roda* e desenha 15 360 000 pixels em ~5 s. Ou o que ele desenha não chega à tela do aparelho, ou o
+`Session::screen()` do core pega a superfície errada. Comparar os dois caminhos, quadro a quadro, é
+o próximo passo.
+
 Peteca e Crash provam vídeo real pelo caminho Libretro. Double Dragon carrega, roda 59 segundos
 virtuais sem erro e não quebra, mas entrega quadro branco.
 

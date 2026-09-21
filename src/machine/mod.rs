@@ -1825,8 +1825,16 @@ fn font_do_modulo(raiz: &std::path::Path) -> Option<crate::video::font::Font> {
 ///
 /// Sem ela, todo `DrawText` de um jogo sem `.ttf` ia só para o relatório: o menu do Kingdom
 /// Hearts desenhava as cinco caixas e nenhuma das palavras dentro delas.
-fn fonte_do_console() -> Option<crate::video::font::Font> {
-    let caminho = crate::loader::archive::fonte_do_sistema()?;
+fn fonte_do_console(aparelho: &std::path::Path) -> Option<crate::video::font::Font> {
+    // **O aparelho do frontend primeiro.** A versão anterior só olhava o caminho do desktop, então
+    // a fonte que o core instala no perfil dele — `<raiz do aparelho>/shared/fonts/tectoy.ttf` —
+    // nunca era encontrada: o jogo seguia sem desenhar texto, e o quadro ficava em branco quando a
+    // tela é fundo branco mais as palavras.
+    let do_aparelho = aparelho.join("shared").join("fonts").join("tectoy.ttf");
+    let caminho = match do_aparelho.is_file() {
+        true => do_aparelho,
+        false => crate::loader::archive::fonte_do_sistema()?,
+    };
     crate::video::font::Font::load(std::fs::read(caminho).ok()?, "tectoy.ttf".into())
 }
 
@@ -2605,7 +2613,7 @@ impl<C: CpuBackend> Machine<C> {
         save_root: Option<std::path::PathBuf>,
     ) -> Self {
         let raiz: std::path::PathBuf = root.into();
-        let device_root: std::path::PathBuf = storage.device.clone();
+        let aparelho: std::path::PathBuf = storage.device.clone();
         let heap = Heap::new(loader::HEAP_BASE, loader::HEAP_SIZE);
         // Os objetos ficam depois dos ponteiros que o carregador já reservou no começo da
         // região, para não sobrescrevê-los.
@@ -2641,7 +2649,7 @@ impl<C: CpuBackend> Machine<C> {
             vfs: {
                 let mut vfs = Vfs::new(raiz.clone());
                 // Todos os jogos compartilham o mesmo `fs:/`, como no console.
-                vfs.set_device_root(device_root);
+                vfs.set_device_root(aparelho.clone());
                 if let Some(save) = save_root {
                     vfs.set_save_root(save);
                 }
@@ -2818,7 +2826,9 @@ impl<C: CpuBackend> Machine<C> {
             screen: Framebuffer::new(SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32),
             colors: default_colors(),
             pending_text: Vec::new(),
-            font: font_do_modulo(&raiz).or_else(fonte_do_console),
+            // A fonte do aparelho sai da raiz que este motor recebeu, não da configuração do
+            // desktop: é isso que faz a fonte instalada pelo frontend ser encontrada.
+            font: font_do_modulo(&raiz).or_else(|| fonte_do_console(&aparelho)),
             calls: BTreeMap::new(),
             calls_total: 0,
         }

@@ -541,7 +541,14 @@ mod tests {
             return Vec::new();
         };
         let mut caminhos = Vec::new();
-        for parte in valor.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+        // **O valor inteiro primeiro.** Todo nome No-Intro tem vírgula — `Double Dragon (Brazil)
+        // (Es,Pt).zip` — e a lista separada por vírgula partia o caminho em dois, dizendo "não deu
+        // para ler o arquivo" para ambos. Quem aponta um arquivo existente quer aquele arquivo.
+        let partes: Vec<&str> = match PathBuf::from(valor.trim()).exists() {
+            true => vec![valor.trim()],
+            false => valor.split(',').map(str::trim).filter(|p| !p.is_empty()).collect(),
+        };
+        for parte in partes {
             let caminho = PathBuf::from(parte);
             if !caminho.is_dir() {
                 caminhos.push(caminho);
