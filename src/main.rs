@@ -5,33 +5,19 @@
 // ela, o build de desenvolvimento continua com console.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-mod audio;
-mod brew;
-mod cpu;
-mod input;
-mod loader;
-mod machine;
-mod ponte;
-mod rede;
-mod session;
-mod ui;
-mod video;
-
-/// Varredura de ROMs por teste — ver [`varredura`]. Só existe em compilação de teste.
-#[cfg(test)]
-mod varredura;
-
 use std::process::ExitCode;
 
-use crate::brew::aee;
-use crate::cpu::{CpuBackend, dynarmic::DynarmicCpu, unicorn::UnicornCpu};
-use crate::input::bindings;
-use crate::loader::archive;
-use crate::loader::modfile::{ModImage, Variant};
-use crate::machine::{AppletResult, Machine, Outcome};
-use crate::ui::library;
-use crate::ui::window;
-use crate::video::icon;
+use zeebx::{PORTAS_PADRAO, audio, cpu, input, loader, machine, session, ui};
+
+use zeebx::brew::aee;
+use zeebx::cpu::{CpuBackend, dynarmic::DynarmicCpu, unicorn::UnicornCpu};
+use zeebx::input::bindings;
+use zeebx::loader::archive;
+use zeebx::loader::modfile::{ModImage, Variant};
+use zeebx::machine::{AppletResult, Machine, Outcome};
+use zeebx::ui::library;
+use zeebx::ui::window;
+use zeebx::video::icon;
 
 /// Teto de instruções por fatia entre duas chamadas de API — evita que um laço infinito no
 /// guest trave o emulador. Precisa ser generoso: a inicialização do Bejeweled Twist passa
@@ -670,10 +656,6 @@ fn teclado(lista: &str) -> Vec<(u32, u32)> {
         })
         .collect()
 }
-
-/// O padrão sem janela: um controle na primeira porta, a segunda livre. É o que sempre houve.
-const PORTAS_PADRAO: [Option<bindings::Aparelho>; input::PORTAS] =
-    [Some(bindings::Aparelho::Controle), None];
 
 /// Lê `controle,teclado` e afins. `None` quando algum nome não existe.
 ///

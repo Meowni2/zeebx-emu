@@ -17,7 +17,7 @@
 use super::contexto::Contexto;
 use super::gles;
 use super::rasterizer::{GlState, Matrix, QuadroNaPlaca, Rasterizador, TexEnv, UnidadeDeTextura, Vertex};
-use eframe::glow::{self, HasContext};
+use glow::HasContext;
 use std::collections::HashMap;
 
 /// `GL_TEXTURE_MAX_ANISOTROPY` e o máximo que a placa aceita, da extensão

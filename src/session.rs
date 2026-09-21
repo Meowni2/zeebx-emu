@@ -160,7 +160,7 @@ impl Session {
         portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
         serial: Option<&Path>,
         placa: bool,
-        contexto: Option<std::sync::Arc<eframe::glow::Context>>,
+        contexto: Option<std::sync::Arc<glow::Context>>,
         z_wheel: crate::ui::settings::ZWheel,
     ) -> Result<Self, StartError> {
         Self::start_inner(path, Some(portas), serial, placa, contexto, z_wheel)
@@ -177,7 +177,7 @@ impl Session {
         portas: Option<[Option<crate::input::bindings::Aparelho>; crate::input::PORTAS]>,
         serial: Option<&Path>,
         placa: bool,
-        contexto: Option<std::sync::Arc<eframe::glow::Context>>,
+        contexto: Option<std::sync::Arc<glow::Context>>,
         z_wheel: crate::ui::settings::ZWheel,
     ) -> Result<Self, StartError> {
         let extracted;

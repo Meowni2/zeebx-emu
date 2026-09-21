@@ -2460,7 +2460,7 @@ fn rasterizador(largura: usize, altura: usize) -> Box<dyn Rasterizador> {
 fn na_placa(
     largura: usize,
     altura: usize,
-    contexto: Option<std::sync::Arc<eframe::glow::Context>>,
+    contexto: Option<std::sync::Arc<glow::Context>>,
 ) -> Box<dyn Rasterizador> {
     match crate::video::gpu::GpuState::novo(largura, altura, contexto) {
         Ok(gpu) => Box::new(gpu),
@@ -2482,7 +2482,7 @@ impl<C: CpuBackend> Machine<C> {
     pub fn usa_placa(
         &mut self,
         sim: bool,
-        contexto: Option<std::sync::Arc<eframe::glow::Context>>,
+        contexto: Option<std::sync::Arc<glow::Context>>,
     ) {
         let (largura, altura) = self.gl.frame_size();
         self.gl = match placa_pedida(sim) {

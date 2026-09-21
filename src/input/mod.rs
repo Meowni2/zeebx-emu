@@ -6,6 +6,9 @@
 //! índice, então o que precisa estar certo é a tabela.
 
 pub mod bindings;
+// O `gilrs` não tem backend no Android: lá os eventos de joystick chegam pela
+// `android-activity`, e quem os traduz é o frontend.
+#[cfg(not(target_os = "android"))]
 pub mod gamepads;
 pub mod padview;
 pub mod sensores;

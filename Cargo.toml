@@ -8,23 +8,36 @@ license = "GPL-2.0-only"
 repository = "https://github.com/ZeebxTeam/zeebx-emu"
 description = "Emulador do Zeebo, o console da TecToy"
 
+# O Android entra como um pacote proprio, ao lado deste.
+[workspace]
+members = ["frontends/android"]
+
+# O nucleo e uma biblioteca; o binario de desktop e um consumidor dela, como o `.so` do Android.
+[lib]
+name = "zeebx"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zeebx"
+path = "src/main.rs"
+
 [dependencies]
-eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
-# Saída de áudio do host. A decodificação é nossa: os jogos entregam PCM.
-# Contexto de OpenGL fora de tela para o rasterizador na placa. Já vinha na árvore pelo
-# eframe, então promovê-lo a dependência direta não acrescenta build nenhuma — e é o que
-# permite a GPU funcionar também no `run` sem janela, onde toda a medição é feita.
-glutin = "0.32.3"
+# O ligador de OpenGL. Vinha de carona no `eframe`, e o núcleo o usava como `eframe::glow` — o
+# que amarrava a emulação à interface sem nenhuma necessidade. Direto aqui, na mesma versão que
+# o `eframe` resolve, é o mesmo `glow` compilado uma vez só: os tipos continuam os mesmos.
+glow = "0.16"
+# A interface. O núcleo desenha telas (a biblioteca, os ajustes, a placa) e o frontend é quem
+# as põe numa janela: no desktop pelo `eframe`, no Android por um laço nosso sobre a
+# `android-activity`. Depender do `egui` direto, e não via `eframe`, é o que deixa os dois
+# frontends compartilharem essas telas sem arrastar o laço de eventos do desktop junto.
+egui = { version = "0.33.3", default-features = false, features = ["default_fonts"] }
 raw-window-handle = "0.6"
+# Saída de áudio do host. A decodificação é nossa: os jogos entregam PCM. No Android o backend
+# é o AAudio, e no desktop o ALSA, o WASAPI e o CoreAudio — a caixa cobre os quatro.
 cpal = "0.15"
-# Controles de verdade, nos três sistemas.
-gilrs = "0.11"
 # Inflate, para o IUnzipAStream do BREW.
 flate2 = "1"
-minifb = "0.28.0"
 png = "0.18.1"
-# Só o seletor de pastas. O `xdg-portal` evita depender do GTK no Linux.
-rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 unicorn-engine = "2.1.5"
@@ -52,6 +65,20 @@ zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }
 # som que toca e sai errado. O symphonia é Rust puro (sem build C) e MPL-2.0, que se combina com
 # o GPLv2 daqui. Só o MP3 entra: o resto dos codecs fica fora.
 symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
+
+# O que so existe onde ha um desktop: o `eframe` com os backends de Wayland e X11, o `minifb`
+# e o `rfd`, que nem compilam para o Android, e o `gilrs`, que nao tem backend la. No Android
+# quem abre a janela e entrega os eventos e o pacote `frontends/android`.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+# Contexto de OpenGL fora de tela para o rasterizador na placa — é o que permite a GPU
+# funcionar também no `run` sem janela, onde toda a medição é feita.
+glutin = "0.32.3"
+# Controles de verdade, nos três sistemas de desktop.
+gilrs = "0.11"
+eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+minifb = "0.28.0"
+# Só o seletor de pastas. O `xdg-portal` evita depender do GTK no Linux.
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }
 discord-rich-presence = "1.1"
 ureq = "3"
 

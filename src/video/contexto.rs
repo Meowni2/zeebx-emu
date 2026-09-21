@@ -18,24 +18,27 @@
 //! de tela responde que não existe, e o caminho sem janela usa o rasterizador de software. Com
 //! janela nada muda: o backend recebe o contexto do `eframe`.
 
-use eframe::glow;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
 use glutin::config::{ConfigSurfaceTypes, ConfigTemplateBuilder};
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
 use glutin::context::{ContextApi, ContextAttributesBuilder, NotCurrentGlContext, Version};
+#[cfg(not(target_os = "android"))]
 use glutin::context::PossiblyCurrentContext;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
 use glutin::display::{DisplayApiPreference, GlDisplay};
+#[cfg(not(target_os = "android"))]
 use glutin::display::Display;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
 use glutin::surface::SurfaceAttributesBuilder;
+#[cfg(not(target_os = "android"))]
 use glutin::surface::{PbufferSurface, Surface};
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
 use raw_window_handle::{RawDisplayHandle, XlibDisplayHandle};
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
 use std::num::NonZeroU32;
 
 /// O contexto e o carregador de funções, vivos enquanto o backend existir.
+#[cfg(not(target_os = "android"))]
 pub struct Contexto {
     /// As funções de GL já resolvidas. É o que o backend usa.
     ///
@@ -50,6 +53,21 @@ pub struct Contexto {
     _display: Display,
 }
 
+/// No Android não há contexto fora de tela: quem entrega o GL é o eframe, junto com a janela.
+/// A forma existe para que o [`crate::video::gpu`] não precise saber disso.
+#[cfg(target_os = "android")]
+pub struct Contexto {
+    pub gl: std::sync::Arc<glow::Context>,
+}
+
+#[cfg(target_os = "android")]
+impl Contexto {
+    pub fn novo() -> Result<Self, String> {
+        Err("no Android o contexto de GL vem do eframe, não de um display fora de tela".to_string())
+    }
+}
+
+#[cfg(not(target_os = "android"))]
 impl Contexto {
     /// Abre um contexto fora de tela, ou diz por que não deu.
     ///
@@ -127,7 +145,7 @@ mod tests {
     fn o_contexto_fora_de_tela_abre_ou_diz_por_que_nao() {
         match Contexto::novo() {
             Ok(contexto) => {
-                use eframe::glow::HasContext;
+                use glow::HasContext;
                 let versao = unsafe { contexto.gl.get_parameter_string(glow::VERSION) };
                 let placa = unsafe { contexto.gl.get_parameter_string(glow::RENDERER) };
                 println!("contexto aberto: {versao} — {placa}");
