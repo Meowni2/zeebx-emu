@@ -1560,13 +1560,58 @@ impl Rasterizador for GpuState {
         self.fill.env_textura = self.estado.texture_env();
         self.fill.unidade1 = self.estado.unidade1();
     }
+    /// **Repor o valor que já está lá não descarrega o lote.**
+    ///
+    /// O [`GpuState::descarrega`] daqui existe por um motivo legítimo: os triângulos já
+    /// acumulados foram batidos sob os parâmetros antigos, e trocá-los antes de submeter
+    /// desenharia o lote com o filtro errado. Mas isso só vale **quando o parâmetro muda**.
+    ///
+    /// O que os jogos fazem é repor. O laço típico é `glBindTexture` seguido de quatro
+    /// `glTexParameter` — filtro de ampliação, de redução e os dois modos de repetição — antes
+    /// de cada objeto, a cada quadro; do segundo quadro em diante os quatro repõem o que a
+    /// textura já tem, e cada um deles descarregava o lote e remandava os cinco parâmetros.
+    ///
+    /// **Não espere velocidade disto onde o lote não tinha como juntar.** Medido no Crash
+    /// Bandicoot Nitro Kart 3D, num Anbernic RG505: antes, o `glTexParameterx` respondia por
+    /// 48% do tempo de API e o `glDrawElements` por 11%; depois, o primeiro sumiu do perfil e o
+    /// segundo foi a 57%, com o total idêntico — 28,3 s contra 28,27 s. Aqueles 48% não eram
+    /// desperdício, eram o desenho, cobrado na chamada que antecipava a submissão. O Crash
+    /// troca de textura a cada objeto, então o lote não juntaria de qualquer jeito. O ganho
+    /// aparece onde ele juntaria: desenhos seguidos com a mesma textura e o mesmo estado, que é
+    /// o caso que o comentário do rasterizador de software aponta no Need for Speed.
+    ///
+    /// Sair cedo é seguro porque o [`GpuState::parametros`] empurra o cache [`Textura`]
+    /// inteiro para o objeto de GL: o cache espelha o objeto, então um valor igual ao do cache
+    /// já está no objeto, e não há nem o que descarregar nem o que mandar.
+    ///
+    /// **O rasterizador de software já fazia isto**, pela mesma razão e com a mesma medida por
+    /// trás — ver [`crate::video::rasterizer::Rasterizer::set_texture_parameter`], onde o
+    /// comentário aponta o Need for Speed repondo o estado antes de cada sprite. O caminho da
+    /// placa nasceu depois e não herdou o cuidado. Cada um compara contra o próprio cache: lá o
+    /// filtro de ampliação é guardado normalizado, aqui é guardado como o jogo o mandou.
     fn set_texture_parameter(&mut self, name: u32, value: u32) {
+        let ligada = self.estado.bound_texture();
+        let reposicao = self.estado.unidade_ativa_desenha()
+            && self.texturas.get(&ligada).is_some_and(|t| match name {
+                gles::GL_TEXTURE_MIN_FILTER => t.filtro_min == value,
+                gles::GL_TEXTURE_MAG_FILTER => t.filtro == value,
+                gles::GL_TEXTURE_WRAP_S => t.wrap[0] == value,
+                gles::GL_TEXTURE_WRAP_T => t.wrap[1] == value,
+                // Um parâmetro que o cache não guarda passa pelo caminho inteiro, como antes.
+                _ => false,
+            });
+        if reposicao {
+            // O espelho do estado do guest continua sendo atualizado: a pergunta aqui é só se
+            // alguma coisa muda na placa, e não se a chamada aconteceu.
+            self.estado.set_texture_parameter(name, value);
+            return;
+        }
+
         self.descarrega();
         self.estado.set_texture_parameter(name, value);
         if !self.estado.unidade_ativa_desenha() {
             return;
         }
-        let ligada = self.estado.bound_texture();
         if let Some(t) = self.texturas.get_mut(&ligada) {
             match name {
                 gles::GL_TEXTURE_MIN_FILTER => t.filtro_min = value,
