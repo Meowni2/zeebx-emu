@@ -1335,10 +1335,33 @@ porta, e num PC novo quando a porta muda.
 | 6 | `IGLES11ExtPak` | 30 | **a lista de classes faltantes ficou vazia** |
 
 As seis foram entregues, e o relatório do Prey Evil **não tem mais nenhuma classe faltando** — o
-levantamento por classe, que é o que diz "o jogo pediu algo que não temos", está limpo. O que
-sobrou é outra pergunta: o jogo ainda quebra no mesmo ponto, chamando `0x0` a partir de `0x161d8`,
-e agora **não é classe ausente** — é algum valor que devolvemos e ele usa como ponteiro (um `Get`
-que responde zero, por exemplo). O caminho para achar é o mesmo: o relatório e o rastreio.
+levantamento por classe, que é o que diz "o jogo pediu algo que não temos", está limpo.
+
+**E o que sobrou já está identificado.** O jogo ainda quebra no mesmo ponto — `0x161d8` chamando
+`0x0` —, e agora não é classe ausente: é um ponteiro nulo que ele guardou antes. Quem entregou a
+pista foi o **log do próprio jogo**, nas últimas linhas antes da falha:
+
+```text
+*dbgprintf-4* ..\..\..\common\sharedgl\gamepadmgr.cpp:277
+Creating USB Joystick interface
+*dbgprintf-4* ..\..\..\common\sharedgl\gamepadmgr.cpp:319
+1 Joysticks connected
+```
+
+O gerenciador de joystick da Qualcomm pede a interface `IJoystick` ao `CreateInstance`, recebe
+nulo, guarda — e o primeiro `Read` cai no vazio. E a interface é **pequena**, com os slots no
+`sdk/inc/AEEJoystick.h`:
+
+```c
+AEECLSID_IJOYSTICK1 = 0x01021c2b        // e IJOYSTICK2 = 0x01021dac
+  INHERIT_IQueryInterface(IJoystick);
+  int (*SetParm)(IJoystick *po, int16 nParmID, int32 p1, int32 p2);
+  int (*GetParm)(IJoystick *po, int16 nParmID, int32 *pP1);
+  int (*Read)(IJoystick *po, int16 *px, int16 *py);
+```
+
+Seis slots, e o `Read` tem implementação **de verdade** disponível: é o mesmo estado do Z-Pad que
+o `IHIDDevice::GetPositionState` já entrega. É a próxima peça, e é menor que as seis anteriores 
 
 O `IGLES11ExtPak` responde com o tratamento das outras extensões gráficas — "consegui" ao que não
 muda o traço, identificador `1` para os `Gen*OES` (o alvo aqui é um só) e `GL_FRAMEBUFFER_COMPLETE`
