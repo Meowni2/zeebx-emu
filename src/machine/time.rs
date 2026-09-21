@@ -108,8 +108,8 @@ impl<C: CpuBackend> Machine<C> {
         self.next_vsync_us += VSYNC_PERIOD_US;
     }
 
-    /// Se não há mais nada para o guest fazer: nenhum timer armado, nenhum callback na fila e
-    /// nenhuma thread esperando a vez.
+    /// Se não há mais nada para o guest fazer: nenhum timer armado, nenhum callback na fila,
+    /// nenhuma thread esperando a vez e nenhum interesse registrado em entrada.
     ///
     /// O laço de quadros para aqui. Olhar só para os timers não bastava: quando o jogo passa a
     /// viver dentro de uma thread cooperativa — como o Quake faz depois de carregar o mapa —,
@@ -120,6 +120,13 @@ impl<C: CpuBackend> Machine<C> {
             && self.pending_threads.is_empty()
             && self.pending_probes.is_empty()
             && self.pending_blits.is_empty()
+            && self.pending_signals.is_empty()
+            // **Um jogo que registrou interesse em entrada está esperando o jogador.** Chamar isso
+            // de ocioso encerrava a sessão no meio da tela de título: o Crash Nitro Kart parava
+            // aos 19,6 s, exatamente quando o intro acaba e o jogo passa a esperar "aperte start"
+            // — sem timer armado e com o callback de entrada registrado, ele ficava "ocioso" para
+            // esta função. No console o jogo continua na tela esperando; aqui também.
+            && self.input_signals.is_empty()
     }
 
     /// Quantos timers estão armados.

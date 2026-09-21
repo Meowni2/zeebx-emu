@@ -753,6 +753,18 @@ impl Session {
         self.machine.set_portas(portas);
     }
 
+    /// Assinatura do conteúdo da tela, para o frontend evitar reenvio de quadro repetido.
+    pub fn screen_signature(&self) -> u64 {
+        self.screen().signature()
+    }
+
+    /// A raiz do sistema de arquivos do jogo: onde a extração vive.
+    ///
+    /// O frontend precisa dela para podar o cache sem apagar o jogo em execução.
+    pub fn content_root(&self) -> &Path {
+        self.machine.file_root()
+    }
+
     /// A tela, como está agora.
     pub fn screen(&self) -> &Framebuffer {
         self.intermediario

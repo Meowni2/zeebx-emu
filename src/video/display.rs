@@ -361,6 +361,31 @@ impl Framebuffer {
     }
 
     /// Os pixels em bytes RGB565, na ordem em que o `IDIB` os expõe ao jogo.
+    /// Escreve o quadro em RGB565 no buffer dado, reaproveitando a alocação dele.
+    ///
+    /// [`Framebuffer::to_rgb565_bytes`] aloca um `Vec` novo a cada quadro; num frontend que
+    /// entrega 60 quadros por segundo isso é lixo a cada 16 ms, e o coletor aparece como engasgo.
+    pub fn write_rgb565_into(&self, out: &mut Vec<u8>) {
+        out.clear();
+        out.reserve(self.pixels.len() * 2);
+        for pixel in &self.pixels {
+            out.extend_from_slice(&pixel.to_le_bytes());
+        }
+    }
+
+    /// Assinatura barata do conteúdo da tela, para reconhecer quadro repetido.
+    ///
+    /// Não é hash criptográfico: é o suficiente para dizer "nada mudou" sem custar uma passada
+    /// cara sobre 600 KB por quadro.
+    pub fn signature(&self) -> u64 {
+        let mut valor: u64 = 0xcbf2_9ce4_8422_2325;
+        for pixel in &self.pixels {
+            valor ^= u64::from(*pixel);
+            valor = valor.wrapping_mul(0x100_0000_01b3);
+        }
+        valor
+    }
+
     pub fn to_rgb565_bytes(&self) -> Vec<u8> {
         self.pixels.iter().flat_map(|p| p.to_le_bytes()).collect()
     }

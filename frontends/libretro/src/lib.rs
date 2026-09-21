@@ -23,14 +23,18 @@ use zeebx::storage::StoragePaths;
 /// Versão da ABI que este core implementa.
 const API_VERSION: u32 = 1;
 
-/// Taxa nominal do core: 44,1 kHz estéreo, 735 quadros por quadro de vídeo a 60 Hz.
+/// Taxa nominal do core: 44,1 kHz estéreo.
+///
+/// A quantidade entregue por chamada **não** é fixa: sai do tempo virtual que passou desde a
+/// chamada anterior. Ver `retro_run`.
 const SAMPLE_RATE: u32 = 44_100;
-const FRAMES_PER_RUN: usize = (SAMPLE_RATE / 60) as usize;
 
 /// Formato de pixel negociado com o frontend, em `retro_pixel_format`.
 const PIXEL_FORMAT_RGB565: u32 = 2;
 
 /// Comandos de ambiente usados.
+/// Pergunta se o frontend aceita receber quadro nulo quando nada mudou.
+const ENV_GET_CAN_DUPE: u32 = 3;
 const ENV_GET_SYSTEM_DIRECTORY: u32 = 9;
 const ENV_SET_PIXEL_FORMAT: u32 = 10;
 const ENV_SET_INPUT_DESCRIPTORS: u32 = 11;
@@ -141,7 +145,12 @@ struct RetroControllerInfo {
 unsafe impl Sync for RetroControllerInfo {}
 
 /// O que o frontend oferece ao core.
-#[derive(Default)]
+///
+/// É `Copy` de propósito: os ponteiros são tirados do mutex **antes** de qualquer chamada, para
+/// que o core nunca segure um cadeado seu enquanto o frontend executa. Um frontend que abra
+/// diálogo, salve estado ou espere outra thread dentro do callback travaria o core — e foi o que
+/// aconteceu com o disco cheio, quando o RetroArch abriu o aviso de gravação no meio do quadro.
+#[derive(Default, Clone, Copy)]
 struct Frontend {
     environ: Option<EnvironmentFn>,
     video: Option<VideoRefreshFn>,
@@ -161,6 +170,19 @@ struct Core {
     audio: Vec<i16>,
     /// Caminho do conteúdo, para o `retro_reset`.
     path: PathBuf,
+    /// Se o frontend aceita quadro nulo quando a tela não mudou.
+    aceita_dupe: bool,
+    /// Assinatura do último quadro entregue.
+    ultima_assinatura: Option<u64>,
+    /// Relógio virtual da última chamada, para o áudio acompanhar o tempo que passou de verdade.
+    ultimo_relogio_ms: u32,
+    /// Amostras que o frontend não aceitou e ficam para a chamada seguinte.
+    audio_pendente: Vec<i16>,
+    /// Se o desfecho já foi relatado ao frontend.
+    ///
+    /// Sem isto o core repetiria a mesma linha a cada quadro depois da parada, e um log que cresce
+    /// para sempre esconde justamente o instante em que o jogo parou.
+    parou: bool,
 }
 
 fn frontend() -> &'static Mutex<Frontend> {
@@ -184,15 +206,18 @@ fn core() -> &'static Mutex<Option<EstadoDoCore>> {
     CORE.get_or_init(|| Mutex::new(None))
 }
 
+/// Uma cópia dos callbacks do frontend, sem manter o cadeado.
+fn callbacks() -> Frontend {
+    frontend().lock().map(|guard| *guard).unwrap_or_default()
+}
+
 unsafe fn environ(cmd: u32, data: *mut c_void) -> bool {
-    let Ok(guard) = frontend().lock() else {
+    let Some(callback) = callbacks().environ else {
         return false;
     };
-    match guard.environ {
-        // SAFETY: o frontend promete que o callback aceita o comando pedido.
-        Some(callback) => unsafe { callback(cmd, data) },
-        None => false,
-    }
+    // SAFETY: o frontend promete que o callback aceita o comando pedido. O cadeado do core já foi
+    // solto, então o frontend pode fazer o que quiser aqui dentro.
+    unsafe { callback(cmd, data) }
 }
 
 fn log(mensagem: &str) {
@@ -221,13 +246,10 @@ fn aparelho_do_dispositivo(device: u32) -> Option<Aparelho> {
 
 /// Lê o RetroPad e monta o estado que o console enxerga.
 fn le_pad(porta: u32) -> Pad {
-    let Ok(guard) = frontend().lock() else {
+    let frente = callbacks();
+    let (Some(poll), Some(state)) = (frente.input_poll, frente.input_state) else {
         return Pad::default();
     };
-    let (Some(poll), Some(state)) = (guard.input_poll, guard.input_state) else {
-        return Pad::default();
-    };
-    drop(guard);
     // SAFETY: os callbacks vêm do frontend e são chamados na thread de `retro_run`.
     unsafe { poll() };
     let botao = |id: u32| -> bool {
@@ -514,17 +536,24 @@ pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
         log("Zeebx: o frontend não informou diretório de saves; recusando carregar.");
         return false;
     };
-    if let Some(sistema) = diretorio(ENV_GET_SYSTEM_DIRECTORY) {
-        log(&format!("Zeebx: sistema em {}", sistema.display()));
-    }
-    let storage = StoragePaths::from_save_dir(&save_dir);
-    if let Err(erro) = std::fs::create_dir_all(&storage.root) {
+    let sistema = diretorio(ENV_GET_SYSTEM_DIRECTORY);
+    // O sistema guarda o que é da máquina e o que é descartável — a NAND `fs:/` e o cache de
+    // conteúdo extraído. Os saves do título ficam no diretório de saves, que é o que o frontend
+    // sincroniza. É a mesma divisão que o PPSSPP faz entre `flash0` e o memory stick.
+    let storage = StoragePaths::for_frontend(&save_dir, sistema.as_deref());
+    if let Err(erro) = storage.create_dirs() {
         log(&format!(
-            "Zeebx: sem permissão em {}: {erro}",
-            storage.root.display()
+            "Zeebx: sem permissão em {} / {}: {erro}",
+            storage.saves.display(),
+            storage.cache.display()
         ));
         return false;
     }
+    log(&format!(
+        "Zeebx: saves em {}, sistema em {}",
+        storage.saves.display(),
+        storage.cache.display()
+    ));
     // O formato de vídeo é negociado antes de rodar: sem ele não há como entregar quadro.
     let mut formato = PIXEL_FORMAT_RGB565;
     let alvo = &mut formato as *mut u32 as *mut c_void;
@@ -532,10 +561,17 @@ pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
         log("Zeebx: o frontend não aceita RGB565.");
         return false;
     }
+    // O quadro repetido pode ir como nulo: economiza uma cópia de 600 KB por quadro e evita
+    // ocupar o frontend com trabalho que não muda nada na tela.
+    let mut aceita_dupe = false;
+    let alvo_dupe = &mut aceita_dupe as *mut bool as *mut c_void;
+    let aceita_dupe = unsafe { environ(ENV_GET_CAN_DUPE, alvo_dupe) } && aceita_dupe;
     let portas = [Some(Aparelho::Controle), None];
     let resultado = unsafe { carrega(&caminho, &storage, portas, PathBuf::from(&caminho)) };
     match resultado {
-        Ok(novo) => {
+        Ok(mut novo) => {
+            novo.aceita_dupe = aceita_dupe;
+            novo.ultimo_relogio_ms = novo.session.clock_ms();
             if let Ok(mut guard) = core().lock() {
                 *guard = Some(EstadoDoCore(novo));
             }
@@ -563,6 +599,20 @@ unsafe fn carrega(
     )?;
     let mut session = session;
     let mixer = session.grava_audio(SAMPLE_RATE);
+    // O cache guarda a extração de **todo** jogo já aberto; sem poda, um acervo inteiro acaba
+    // dentro da pasta de saves do frontend. A extração em uso nunca sai.
+    match zeebx::loader::archive::prune_cache(
+        &storage.cache,
+        Some(session.content_root()),
+        zeebx::loader::archive::CACHE_LIMIT_BYTES,
+    ) {
+        Ok(liberado) if liberado > 0 => log(&format!(
+            "Zeebx: cache podado, {liberado} bytes liberados em {}",
+            storage.cache.display()
+        )),
+        Ok(_) => {}
+        Err(erro) => log(&format!("Zeebx: não deu para podar o cache: {erro}")),
+    }
     Ok(Core {
         session,
         mixer,
@@ -570,65 +620,109 @@ unsafe fn carrega(
         frame: Vec::new(),
         audio: Vec::new(),
         path,
+        aceita_dupe: false,
+        ultima_assinatura: None,
+        ultimo_relogio_ms: 0,
+        audio_pendente: Vec::new(),
+        parou: false,
     })
 }
 
 /// `retro_run`: um quadro virtual, um quadro de vídeo e o áudio correspondente.
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_run() {
-    let Ok(mut guard) = core().lock() else {
-        return;
-    };
-    let Some(EstadoDoCore(estado)) = guard.as_mut() else {
-        return;
-    };
-    // Entrada primeiro: o guest lê o controle dentro do quadro que vai rodar.
-    for porta in 0..zeebx::input::PORTAS {
-        if estado.portas[porta].is_none() {
-            continue;
+    // Os buffers saem do estado antes das chamadas ao frontend: nenhum cadeado do core fica preso
+    // enquanto o frontend executa, e é isso que impede um aviso dele — "disco cheio, quer salvar?"
+    // — de travar o emulador.
+    let (frame, audio, largura, altura, duplicado) = {
+        let Ok(mut guard) = core().lock() else {
+            return;
+        };
+        let Some(EstadoDoCore(estado)) = guard.as_mut() else {
+            return;
+        };
+        // Entrada primeiro: o guest lê o controle dentro do quadro que vai rodar.
+        for porta in 0..zeebx::input::PORTAS {
+            if estado.portas[porta].is_none() {
+                continue;
+            }
+            let pad = le_pad(porta as u32);
+            estado.session.set_port_pad(porta, pad);
         }
-        let pad = le_pad(porta as u32);
-        estado.session.set_port_pad(porta, pad);
-    }
-    match estado.session.run_frame() {
-        Step::Stopped => {
-            if let Some(motivo) = estado.session.stopped_reason() {
-                log(&format!("Zeebx: {motivo}"));
+        if let Step::Stopped = estado.session.run_frame() {
+            if !estado.parou {
+                estado.parou = true;
+                let relogio = estado.session.clock_ms();
+                let motivo = estado
+                    .session
+                    .stopped_reason()
+                    .unwrap_or_else(|| "sem motivo relatado".to_string());
+                log(&format!("Zeebx: parou em {relogio} ms virtuais: {motivo}"));
+                // O log do próprio jogo é o que costuma nomear o motivo da parada; as últimas
+                // linhas vão para o frontend, que é onde alguém vai olhar.
+                let relato = estado.session.log();
+                for linha in relato.iter().rev().take(6).rev() {
+                    log(&format!("Zeebx:   {linha}"));
+                }
+                let faltando = estado.session.memory();
+                log(&format!("Zeebx:   heap {} bytes, {} objetos", faltando.0, faltando.1));
             }
         }
-        _ => {}
-    }
-    // Vídeo: o framebuffer do console, no formato negociado.
-    let tela = estado.session.screen();
-    let (largura, altura) = (tela.width(), tela.height());
-    estado.frame.clear();
-    estado.frame.extend(tela.to_rgb565_bytes());
-    let pitch = largura as usize * 2;
-    let Ok(frente) = frontend().lock() else {
-        return;
+        // Vídeo: o framebuffer do console, no formato negociado.
+        let tela = estado.session.screen();
+        let (largura, altura) = (tela.width(), tela.height());
+        let mut quadro = std::mem::take(&mut estado.frame);
+        tela.write_rgb565_into(&mut quadro);
+        let assinatura = tela.signature();
+        let duplicado = estado.aceita_dupe && estado.ultima_assinatura == Some(assinatura);
+        estado.ultima_assinatura = Some(assinatura);
+        // Áudio: **o tempo vem do relógio virtual**, não de um número fixo. Um jogo que passa dois
+        // quadros virtuais entre duas chamadas precisa entregar o dobro de amostras, senão o som
+        // atrasa em relação à imagem e o frontend engasga ao tentar acompanhar.
+        let agora = estado.session.clock_ms();
+        let decorrido = u64::from(agora.wrapping_sub(estado.ultimo_relogio_ms));
+        estado.ultimo_relogio_ms = agora;
+        let devidas = (decorrido.min(1000) * u64::from(SAMPLE_RATE) / 1000) as usize;
+        let mut som = std::mem::take(&mut estado.audio);
+        som.clear();
+        // O que o frontend não aceitou da vez anterior vai na frente, para não sumir um pedaço.
+        som.append(&mut estado.audio_pendente);
+        for amostra in estado.mixer.render(devidas) {
+            som.push((amostra.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16);
+        }
+        (quadro, som, largura, altura, duplicado)
     };
+    let frente = callbacks();
     if let Some(video) = frente.video {
-        // SAFETY: o buffer vive durante a chamada e as dimensões são as anunciadas.
+        let (ponteiro, _) = match duplicado {
+            // Quadro nulo avisa "repete o anterior", que é o que a ABI oferece para tela parada.
+            true => (std::ptr::null(), ()),
+            false => (frame.as_ptr() as *const c_void, ()),
+        };
+        // SAFETY: o buffer vive durante a chamada; no quadro repetido o frontend reusa o último.
         unsafe {
-            video(
-                estado.frame.as_ptr() as *const c_void,
-                largura,
-                altura,
-                pitch,
-            );
+            video(ponteiro, largura, altura, largura as usize * 2);
         }
     }
-    // Áudio: a taxa é fixa, então o número de quadros por chamada também é.
-    estado.audio.clear();
-    for amostra in estado.mixer.render(FRAMES_PER_RUN) {
-        estado
-            .audio
-            .push((amostra.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16);
-    }
+    // O retorno do lote é em quadros **aceitos**; o que sobrar espera a próxima chamada.
+    let mut sobra = Vec::new();
     if let Some(batch) = frente.audio_batch {
+        let quadros = audio.len() / 2;
         // SAFETY: o lote é intercalado em estéreo e o tamanho é o número de quadros.
-        unsafe {
-            batch(estado.audio.as_ptr(), FRAMES_PER_RUN);
+        let aceitos = unsafe { batch(audio.as_ptr(), quadros) }.min(quadros);
+        if aceitos < quadros {
+            sobra = audio[aceitos * 2..].to_vec();
+        }
+    }
+    // Os buffers voltam para o estado, para a próxima chamada reaproveitar a mesma alocação.
+    if let Ok(mut guard) = core().lock() {
+        if let Some(EstadoDoCore(estado)) = guard.as_mut() {
+            estado.frame = frame;
+            estado.audio = audio;
+            // A sobra não pode crescer sem fim; meio segundo é o teto.
+            let limite = (SAMPLE_RATE as usize / 2) * 2;
+            sobra.truncate(limite);
+            estado.audio_pendente = sobra;
         }
     }
 }
@@ -655,7 +749,8 @@ pub extern "C" fn retro_reset() {
     let Some(save_dir) = diretorio(ENV_GET_SAVE_DIRECTORY) else {
         return;
     };
-    let storage = StoragePaths::from_save_dir(&save_dir);
+    let sistema = diretorio(ENV_GET_SYSTEM_DIRECTORY);
+    let storage = StoragePaths::for_frontend(&save_dir, sistema.as_deref());
     let texto = caminho.to_string_lossy().into_owned();
     // SAFETY: mesma montagem do carregamento, na thread de `retro_run`.
     match unsafe { carrega(&texto, &storage, portas, caminho.clone()) } {

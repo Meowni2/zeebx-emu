@@ -470,18 +470,43 @@ atômico também em caminhos SAF/Android; a compatibilidade completa desses cami
 condicionada à solução SQLite descrita abaixo. Só materializar arquivo temporário local se o
 frontend autorizar localização nativa e o arquivo for removido no unload.
 
-Usar `RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY` e criar:
+O perfil usa **os dois** diretórios que o frontend fornece, com a mesma divisão que o PPSSPP faz
+entre `flash0` (sistema) e o memory stick (saves):
 
 ```text
-<save-dir>/zeebx/
-├── aparelho/                  # fs:/ compartilhado entre títulos
-├── saves/<content-id>/        # overlay gravável do módulo
-├── cache/<content-hash>/      # conteúdo extraído e descartável
-└── metadata/<content-id>.json # índice de origem/cache
+<system-dir>/zeebx/            # o que é da máquina ou descartável
+├── aparelho/                  # fs:/ compartilhado entre títulos (a NAND do console)
+└── cache/<conteúdo>/          # extração do pacote: descartável e o que enche disco
+
+<save-dir>/zeebx/              # o que o jogador quer guardar
+├── saves/<conteúdo>/          # overlay gravável do título
+└── metadata/<conteúdo>.json   # índice de origem e identidade
 ```
 
-`RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY` fica reservado para firmware ou dados externos futuros.
+**O nome `zeebx` é fixo e minúsculo.** Nunca pode sair do nome de exibição do core: o RetroArch já
+cria as pastas dele com esse nome — `states/Zeebx`, `saves/Título.srm` — e num host que distingue
+caixa (`saves/zeebx` e `saves/Zeebx` são pastas diferentes) o jogo passaria a ter dois perfis.
+
+Sem `GET_SYSTEM_DIRECTORY` tudo cai no diretório de saves, que é o mínimo que a ABI garante.
 Não alterar `HOME`, `XDG_CONFIG_HOME` ou diretório corrente do processo do frontend.
+
+### Disco cheio
+
+O cache guarda a extração de **todo** título já aberto; sem limite, um acervo de 62 jogos passa de
+1,5 GB dentro do diretório do frontend e enche o disco de quem só queria jogar. Medido nesta
+máquina: 66 zips somam 1,6 GB extraídos.
+
+Regra: o core poda o cache a cada carga, mantendo a extração em uso e apagando as mais antigas até
+caber em `CACHE_LIMIT_BYTES` (512 MB). A extração em uso nunca é removida, nem que sozinha estoure
+o teto — apagar o jogo em execução seria pior que o disco cheio.
+
+Disco cheio não pode travar o frontend. Duas regras de código sustentam isso:
+
+1. o core **nunca** chama callback do frontend segurando um mutex próprio: os ponteiros são copiados
+   antes da chamada. Um aviso do frontend ("disco cheio, quer salvar?") deixava de travar quando o
+   `retro_run` passou a soltar o cadeado antes de vídeo e áudio;
+2. falha de escrita no VFS é erro do guest, não pânico: o jogo recebe `IFAILED` e segue, e o motivo
+   fica no relatório.
 
 Se `GET_SAVE_DIRECTORY` não retornar diretório gravável, `retro_load_game()` deve falhar com
 mensagem clara. Não usar a pasta da ROM como fallback e não aceitar execução que prometa save mas
@@ -779,6 +804,28 @@ virtuais sem erro e não quebra, mas entrega quadro branco.
 foi medida com o caminho `zeebx run` (**Unicorn**, `src/main.rs::run_frames`), enquanto o core usa
 `Session` (**Dynarmic**). Antes de acusar o core é preciso rodar a mesma ROM nos dois caminhos e
 comparar; o próprio documento lista Double Dragon com "ponteiro recusado, texto sem fonte".
+
+### O que os testes no Wayland acharam
+
+Rodando o Crash Nitro Kart no RetroArch do usuário (Wayland + Vulkan, driver de vídeo real), o log
+do core mostrou o defeito mais caro desta etapa:
+
+```text
+Zeebx: parou em 19640 ms virtuais: o jogo terminou
+```
+
+O jogo rodava 19,6 s e a sessão se encerrava sozinha. Causa: `Machine::is_idle()` decidia que a
+máquina estava ociosa olhando timers, callbacks, threads e blits — mas **não** olhando
+`pending_signals` nem o fato de o guest ter registrado interesse em entrada. O intro do Crash acaba
+exatamente quando ele passa a esperar o jogador: sem timer armado e com o callback de entrada
+registrado, o emulador concluía "acabou". Depois da correção o mesmo jogo passa de 27,7 s, e um
+título que fica esperando botão continua rodando, como no console.
+
+Segundo achado, ainda no Wayland: com o disco da máquina cheio, o RetroArch abriu o aviso de
+gravação e o emulador travou. O core chamava `video_refresh` e `audio_sample_batch` segurando o
+mutex do estado, e também chamava o callback de ambiente segurando o mutex dos ponteiros do
+frontend. Agora os ponteiros são copiados e os cadeados soltos antes de qualquer chamada ao
+frontend, e os buffers de quadro e áudio saem do estado antes de vídeo/áudio e voltam depois.
 
 ### Testes automatizados
 

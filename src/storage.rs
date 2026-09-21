@@ -8,7 +8,13 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-/// Diretórios que pertencem a um perfil Zeebx.
+/// Nome da pasta do perfil criada por um frontend dentro dos diretórios dele.
+///
+/// É **fixo e minúsculo de propósito**. O frontend já cria as pastas dele com o nome de exibição
+/// do core — o RetroArch grava `states/Zeebx` e `saves/Zeebx.srm` —, e derivar este nome da mesma
+/// fonte espalharia os dados por dois caminhos que só coincidem em sistema sem diferença de caixa.
+/// Num host Linux, `zeebx` e `Zeebx` são pastas diferentes, e o jogo passaria a ter dois perfis.
+pub const PROFILE_DIR: &str = "zeebx";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoragePaths {
     /// Raiz `.../zeebx` criada sob o diretório de saves do frontend.
@@ -47,14 +53,48 @@ impl StoragePaths {
         }
     }
 
-    /// Cria o layout lógico do perfil dentro de `save_dir`.
-    ///
-    /// É a raiz que um frontend Libretro fornece: pasta `zeebx` própria, nunca ao lado da ROM.
+    /// Cria o layout lógico do perfil só com o diretório de saves do frontend.
     pub fn from_save_dir(save_dir: impl AsRef<Path>) -> Self {
+        Self::for_frontend(save_dir, None::<&Path>)
+    }
+
+    /// O layout que um frontend Libretro recebe, separando o que é do aparelho do que é do jogo.
+    ///
+    /// A divisão segue o que os cores grandes fazem — o PPSSPP põe o `flash0` do sistema no
+    /// **system directory** e o memory stick no de saves —, e ela existe por um motivo prático:
+    ///
+    /// | Peça | Onde | Por quê |
+    /// |---|---|---|
+    /// | `aparelho/` (a NAND `fs:/`) | `system` | é da máquina, não do título, e sobrevive a tudo |
+    /// | `cache/` (conteúdo extraído) | `system` | é descartável e é o que enche o disco |
+    /// | `saves/<conteúdo>/` | `save` | é o que o jogador quer guardar, e o frontend o sincroniza |
+    /// | `metadata/` | `save` | descreve o save, então anda junto dele |
+    ///
+    /// Sem `system_dir` tudo cai no diretório de saves, que é o mínimo que a ABI garante.
+    pub fn for_frontend(
+        save_dir: impl AsRef<Path>,
+        system_dir: Option<impl AsRef<Path>>,
+    ) -> Self {
+        let save_dir = save_dir.as_ref();
+        let system_dir = system_dir.as_ref().map_or(save_dir, AsRef::as_ref);
+        let perfil_save = save_dir.join(PROFILE_DIR);
+        let perfil_sistema = system_dir.join(PROFILE_DIR);
         Self {
+            cache: perfil_sistema.join("cache"),
+            device: perfil_sistema.join("aparelho"),
+            saves: perfil_save.join("saves"),
+            metadata: perfil_save.join("metadata"),
+            root: perfil_save,
             overlay: true,
-            ..Self::from_root(save_dir.as_ref().join("zeebx"))
         }
+    }
+
+    /// Cria as raízes que o motor escreve. Erro aqui é motivo para não carregar o jogo.
+    pub fn create_dirs(&self) -> std::io::Result<()> {
+        for dir in [&self.saves, &self.device, &self.cache, &self.metadata] {
+            std::fs::create_dir_all(dir)?;
+        }
+        Ok(())
     }
 
     /// Identidade do conteúdo, para nomear overlay e cache.
@@ -120,18 +160,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn perfil_nao_mistura_cache_save_e_aparelho() {
-        let paths = StoragePaths::from_save_dir("/saves");
-        assert_eq!(paths.root, PathBuf::from("/saves/zeebx"));
-        assert_eq!(paths.cache, PathBuf::from("/saves/zeebx/cache"));
-        assert_eq!(paths.device, PathBuf::from("/saves/zeebx/aparelho"));
+    fn perfil_separa_aparelho_e_cache_no_sistema_e_saves_no_jogo() {
+        let paths = StoragePaths::for_frontend("/saves", Some("/sistema"));
         assert_eq!(paths.saves, PathBuf::from("/saves/zeebx/saves"));
         assert_eq!(paths.metadata, PathBuf::from("/saves/zeebx/metadata"));
+        assert_eq!(paths.device, PathBuf::from("/sistema/zeebx/aparelho"));
+        assert_eq!(paths.cache, PathBuf::from("/sistema/zeebx/cache"));
+        assert!(paths.overlay);
+    }
+
+    /// Sem diretório de sistema, tudo cai nos saves: é o mínimo que a ABI garante.
+    #[test]
+    fn sem_sistema_o_perfil_inteiro_cabe_nos_saves() {
+        let paths = StoragePaths::for_frontend("/saves", None::<&Path>);
+        assert_eq!(paths.device, PathBuf::from("/saves/zeebx/aparelho"));
+        assert_eq!(paths.cache, PathBuf::from("/saves/zeebx/cache"));
+        assert_eq!(paths.saves, PathBuf::from("/saves/zeebx/saves"));
+    }
+
+    /// O nome do perfil é fixo e minúsculo: nunca pode sair do nome de exibição do core, senão
+    /// `zeebx` e `Zeebx` viram dois perfis num host que distingue caixa.
+    #[test]
+    fn o_nome_do_perfil_nao_depende_da_caixa_do_core() {
+        assert_eq!(PROFILE_DIR, "zeebx");
+        let paths = StoragePaths::for_frontend("/saves", Some("/sistema"));
+        assert!(paths.saves.to_string_lossy().contains("/zeebx/"));
+        assert!(!paths.saves.to_string_lossy().contains("/Zeebx/"));
     }
 
     #[test]
-    fn raiz_de_frontend_liga_overlay_e_o_desktop_nao() {
-        assert!(StoragePaths::from_save_dir("/saves").overlay);
+    fn o_desktop_historico_nao_usa_overlay() {
         assert!(!StoragePaths::from_root("/config/zeebx").overlay);
     }
 

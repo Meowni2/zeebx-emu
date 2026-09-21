@@ -331,8 +331,73 @@ pub fn extract_in(zip: &Path, cache: &Path) -> std::io::Result<PathBuf> {
     Ok(extracted)
 }
 
+/// Teto do cache de conteúdo extraído, em bytes.
+///
+/// Sem ele, cada jogo aberto deixa a própria extração para sempre: um acervo de teste de 62
+/// títulos passa de 1,5 GB e enche o disco de quem só queria jogar. O valor é generoso para o
+/// jogo em uso e apertado para o acervo inteiro.
+pub const CACHE_LIMIT_BYTES: u64 = 512 * 1024 * 1024;
+
 /// O nome do arquivo que lista o que veio do pacote.
 pub const MANIFESTO: &str = ".zeebx-pacote";
+
+/// Apaga extrações antigas até o cache caber em `limite`, preservando a que contém `manter`.
+///
+/// `manter` é um caminho **dentro** da extração em uso — o `.mod`, por exemplo. A entrada que o
+/// contém nunca é removida, nem que sozinha estoure o teto: apagar o jogo em execução seria pior
+/// que o disco cheio. As outras saem da mais antiga para a mais nova, pela data de modificação.
+///
+/// Devolve quantos bytes foram liberados.
+pub fn prune_cache(cache: &Path, manter: Option<&Path>, limite: u64) -> std::io::Result<u64> {
+    let Ok(entradas) = std::fs::read_dir(cache) else {
+        // Sem cache não há o que podar.
+        return Ok(0);
+    };
+    let mut itens: Vec<(std::time::SystemTime, PathBuf, u64)> = Vec::new();
+    for entrada in entradas.flatten() {
+        let caminho = entrada.path();
+        if !caminho.is_dir() {
+            continue;
+        }
+        if manter.is_some_and(|manter| manter.starts_with(&caminho)) {
+            continue;
+        }
+        let idade = entrada
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        itens.push((idade, caminho, tamanho_em_disco(&entrada.path())));
+    }
+    let mut total: u64 = itens.iter().map(|(_, _, bytes)| bytes).sum();
+    // A entrada em uso já está fora da soma; o teto vale para o que pode sair.
+    itens.sort_by_key(|(idade, _, _)| *idade);
+    let mut liberado = 0u64;
+    for (_, caminho, bytes) in itens {
+        if total <= limite {
+            break;
+        }
+        if std::fs::remove_dir_all(&caminho).is_ok() {
+            total = total.saturating_sub(bytes);
+            liberado += bytes;
+        }
+    }
+    Ok(liberado)
+}
+
+/// Tamanho de uma árvore de diretórios, em bytes de arquivo.
+fn tamanho_em_disco(caminho: &Path) -> u64 {
+    let Ok(entradas) = std::fs::read_dir(caminho) else {
+        return 0;
+    };
+    entradas
+        .flatten()
+        .map(|entrada| match entrada.file_type() {
+            Ok(tipo) if tipo.is_dir() => tamanho_em_disco(&entrada.path()),
+            Ok(_) => entrada.metadata().map(|meta| meta.len()).unwrap_or(0),
+            Err(_) => 0,
+        })
+        .sum()
+}
 
 /// Grava, dentro do cache, a lista do que o zip trouxe.
 ///
@@ -510,6 +575,33 @@ mod tests {
         .unwrap_err();
         assert!(err.to_string().contains("entradas"));
         let _ = std::fs::remove_file(zip);
+    }
+
+    #[test]
+    fn a_poda_larga_o_cache_antigo_e_preserva_o_jogo_em_uso() {
+        let raiz = std::env::temp_dir().join("zeebx-teste-poda");
+        let _ = std::fs::remove_dir_all(&raiz);
+        let cache = raiz.join("cache");
+        let antigo = cache.join("jogo-antigo");
+        let em_uso = cache.join("jogo-em-uso");
+        for (pasta, tamanho) in [(&antigo, 4096usize), (&em_uso, 4096usize)] {
+            std::fs::create_dir_all(pasta).unwrap();
+            std::fs::write(pasta.join("dados.bin"), vec![0u8; tamanho]).unwrap();
+        }
+        let modulo = em_uso.join("mod/1/jogo.mod");
+        std::fs::create_dir_all(modulo.parent().unwrap()).unwrap();
+        std::fs::write(&modulo, b"mod").unwrap();
+
+        // Teto zero: só o jogo em uso sobrevive.
+        let liberado = prune_cache(&cache, Some(&modulo), 0).unwrap();
+        assert!(liberado > 0, "deveria ter liberado espaço");
+        assert!(!antigo.exists(), "a extração antiga sai");
+        assert!(modulo.is_file(), "a extração em uso fica");
+
+        // Sem nada acima do teto, ninguém é tocado.
+        assert_eq!(prune_cache(&cache, Some(&modulo), u64::MAX).unwrap(), 0);
+
+        let _ = std::fs::remove_dir_all(&raiz);
     }
 
     #[test]
