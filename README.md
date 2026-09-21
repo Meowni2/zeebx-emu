@@ -145,6 +145,15 @@ O `run` informa onde o jogo parou, o que ele pediu e não temos, e o log que os 
 desenvolvedores deixaram no binário — por `DBGPRINTF` e por semihosting do ARM. Esse relatório é
 o backlog do projeto. As opções de depuração estão em [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Integração contínua
+
+Cada push nas ramas de desenvolvimento compila e testa o emulador em cinco plataformas — Linux
+x86_64 e AArch64, Windows x86_64 e macOS Intel e Apple Silicon. Em pull request roda só o Linux
+x86_64, que é onde o retorno precisa ser rápido.
+
+As dependências nativas do build estão na seção acima, e `python3 ferramentas/prepara_build.py`
+confere quais faltam na sua máquina.
+
 ## Plataformas
 
 Linux, Windows e macOS. Mobile está fora do escopo por enquanto.
