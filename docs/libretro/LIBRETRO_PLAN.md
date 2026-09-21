@@ -1467,10 +1467,26 @@ quatro palavras à volta dela são legíveis à mão:
 0x161d8   (retorno)
 ```
 
-A cadeia é curta e aponta para um lugar só: **o objeto em `[r6+8]` tem o campo `+0x274` nulo**, e o
-que preenche esse campo é a pergunta seguinte — provavelmente o retorno de uma chamada de API que
-respondemos com zero. É aí que a próxima medição começa, com o filtro de família do rastreio (que
-funciona) para ver a última chamada da interface dona desse objeto.
+A cadeia é curta e aponta para um lugar só: **o objeto em `[r6+8]` tem o campo `+0x274` nulo**.
+
+**Medido, e o nulo está lá.** Com `r6 = 0x1000110c` no instante da falha, o objeto é `0x10001114`, e
+o despejo mostra as duas pontas:
+
+```text
+0x10001114   d8 19 00 10  …      → vtable 0x100019d8, **no módulo**: é estrutura do próprio jogo
+0x10001388   00 00 … (32 bytes)  → o campo +0x274, todo zero: é ele que o BLX chama
+```
+
+**E o cruzamento com o rastreio diz qual campo é.** A última coisa que o jogo fez antes de quebrar
+foi a calibração do controle, incluindo `RegisterForPositionChange` — o registro do callback de
+posição. O campo `+0x274` é esse callback, e ficou sem ser gravado.
+
+Há uma hipótese de causa **do lado do emulador**, e ela vem do que o motor faz hoje: o
+`RegisterForPositionChange` **levanta o sinal durante a própria chamada de registro** (é o que faz o
+Ridge Racer calibrar sem ninguém encostar no analógico). Se o callback for entregue antes de o jogo
+gravar o ponteiro, ele roda com o campo ainda vazio — reentrância. A medição que decide é simples:
+adiar o primeiro aviso para o quadro seguinte e ver se o campo deixa de ficar nulo. Fica anotado
+como **a próxima tentativa**, e é do tipo que este projeto já resolveu antes.
 
 E o que ele mostrou foi o padrão exato antes da queda: uma **tabela sendo construída**, entradas de
 28 bytes (`malloc 0x1c` seguido de `memmove 0x1c`), num laço, com as origens a 28 bytes de
