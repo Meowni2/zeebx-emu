@@ -467,6 +467,29 @@ pub const EGL: &[&str] = &[
 /// Mesma convenção do [`EGL`]: `this` no primeiro argumento, código de erro no retorno e o
 /// resultado por ponteiro de saída. Um objeto `IGLES11` serve também como `IGLES10`, porque a
 /// segunda tabela apenas estende a primeira.
+/// `IGLES11Ext`: as extensões OES do OpenGL ES 1.1, na ordem do `AEEGLES11Ext.h`.
+///
+/// **O Prey Evil pede esta interface por `CreateInstance` e para de desenhar sem ela**: o
+/// levantamento das 62 ROMs mostrou onze métodos de GL, nenhum desenho e tela preta. Os
+/// `DrawTex*` são os que importam para um jogo que monta o quadro numa textura.
+pub const GLES11_EXT: &[&str] = &[
+    "AddRef",
+    "Release",
+    "QueryInterface",
+    "CurrentPaletteMatrixOES",
+    "LoadPaletteFromModelViewMatrixOES",
+    "MatrixIndexPointerOES",
+    "WeightPointerOES",
+    "DrawTexsOES",
+    "DrawTexiOES",
+    "DrawTexxOES",
+    "DrawTexsvOES",
+    "DrawTexivOES",
+    "DrawTexxvOES",
+    "DrawTexfOES",
+    "DrawTexfvOES",
+];
+
 pub const GLES: &[&str] = &[
     "AddRef",
     "Release",

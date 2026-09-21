@@ -1301,6 +1301,25 @@ A tabela do `IGLES11Ext` já está lida, e são **15 slots**: os três de `IQuer
 `DrawTexfvOES`. Os `DrawTex*` são os que interessam a um jogo que monta o quadro em textura — que é
 o caso do Prey Evil, com 16.746 `BindTexture` e nenhum desenho.
 
+**Feito, e medido — o mecanismo está confirmado.** A `IGLES11Ext` foi registrada na fábrica
+(`shell_create_instance`) e no `QueryInterface` **do objeto EGL**, que é por onde o jogo pergunta
+(a primeira tentativa só na fábrica não mudou nada, e foi o relatório que disse: a classe continuava
+na lista). Depois do registro:
+
+```text
+antes:  classes que faltam: 0x0103d8de 0x0103d8eb 0x0103d8ef 0x0103d8f0 0x0103def1 0x010426e3
+        onze métodos de GL, nenhum desenho, tela de uma cor, "roda" a 3287%
+
+depois: 0x0103d8eb **saiu da lista**
+        o jogo passa a fazer sprintf/strlen/strncmp/malloc em volume — outra fase
+        e quebra no **próximo** portão: acesso inválido a 0x0, de 0x161d8
+```
+
+Ou seja: **entregar uma interface move o jogo um portão adiante**, e o que ele chama em seguida é
+o ponteiro nulo de uma das outras cinco (`GLES10Ext`, `EGLGetColorBuffer`, `EGLGetPowerLevel`,
+`GLES11ExtPak`, `EGLOESSwapInterval`). O caminho para as cinco é o mesmo, uma linha cada, com a
+mesma verificação — e cada uma move o jogo para o portão seguinte.
+
 **E o número da classe já aparece no motor por outro caminho.** No BREW, o ClassID e o IID são o
 mesmo valor: `AEEIID_GLES_IMAGEON_EXT` (`0x01058546`) já é atendido em `machine/egl.rs` pela rota de
 **função** (`eglGetProcAddress`), e o Prey Evil pede as extensões dele pela rota de **objeto**

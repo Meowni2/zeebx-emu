@@ -585,6 +585,7 @@ impl<C: CpuBackend> Machine<C> {
             AEECLSID_PNGDECODER | AEECLSID_PNGDECODER_BREW => Interface::ImageDecoder,
             AEECLSID_THREAD => Interface::Thread,
             AEECLSID_QEGL => Interface::Egl,
+            AEECLSID_GLES11EXT => Interface::Gles11Ext,
             AEECLSID_EGL => Interface::EglLegacy,
             AEECLSID_GL => Interface::GlLegacy,
             AEECLSID_MEDIAUTIL => Interface::MediaUtil,

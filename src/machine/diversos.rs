@@ -28,6 +28,24 @@ impl<C: CpuBackend> Machine<C> {
         let result = match name {
             "AddRef" => self.objects.add_ref(this),
             "Release" => self.objects.release(this),
+            // `IQueryInterface`: um objeto responde por várias interfaces, e quem pergunta qual
+            // delas quer recebe um ponteiro para **aquela** vtable.
+            //
+            // **É por aqui que o Prey Evil pede as extensões OES**, e não por
+            // `ISHELL_CreateInstance`: ele pergunta no objeto do EGL se há `IGLES11Ext`, e recebia
+            // `ECLASSNOTSUPPORT` — daí ele montar matrizes e texturas e nunca desenhar. A resposta
+            // certa é um objeto com a vtable pedida; sem isto, registrar a classe na fábrica não
+            // muda nada.
+            "QueryInterface" if iface == Interface::Egl && self.arg(1) == AEECLSID_GLES11EXT => {
+                let (out, objeto) = (self.arg(2), self.new_object(Interface::Gles11Ext)?);
+                if out != 0 {
+                    self.cpu.write_u32(out, objeto)?;
+                }
+                match objeto {
+                    0 => ECLASSNOTSUPPORT,
+                    _ => SUCCESS,
+                }
+            }
             "QueryInterface" => {
                 let (iid, out) = (self.arg(1), self.arg(2));
                 if out != 0 {
@@ -255,6 +273,33 @@ impl<C: CpuBackend> Machine<C> {
                 self.assumptions
                     .insert("o jogo usou um buffer de vértices da extensão, que não temos");
                 EUNSUPPORTED
+            }
+            // `IGLES11Ext`: as extensões OES do OpenGL ES 1.1.
+            //
+            // **O Prey Evil não desenha sem elas.** O levantamento das 62 ROMs o pegou com a tela
+            // de uma cor só: onze métodos de GL no relatório — `MatrixMode`, `PushMatrix`,
+            // `BindTexture` dezesseis mil vezes — e **nenhum** `Draw` ou `eglSwapBuffers`. Ele
+            // monta o estado e para, porque pede estas extensões por `CreateInstance` e recebia
+            // nulo. Sem a interface, o caminho de desenho dele nunca começa.
+            //
+            // Os `DrawTex*` desenham um retângulo de textura em coordenadas de tela, sem passar
+            // pela matriz de modelo — é o que um jogo faz para compor o quadro numa textura. Aqui
+            // eles ainda respondem "consegui" sem desenhar: é o passo que faz o jogo **chegar** ao
+            // desenho, e o efeito dele é medido pela contagem de cores do relatório. O retângulo
+            // de verdade é o passo seguinte, e a referência para ele é o `gles_draw`.
+            "CurrentPaletteMatrixOES" | "LoadPaletteFromModelViewMatrixOES"
+            | "MatrixIndexPointerOES" | "WeightPointerOES" | "DrawTexsOES" | "DrawTexiOES"
+            | "DrawTexxOES" | "DrawTexsvOES" | "DrawTexivOES" | "DrawTexxvOES" | "DrawTexfOES"
+            | "DrawTexfvOES"
+                if iface == Interface::Gles11Ext =>
+            {
+                // O nome do método já aparece em "chamadas que mais pesaram"; aqui basta nomear a
+                // causa, porque as hipóteses são um conjunto de textos fixos.
+                self.assumptions.insert(concat!(
+                    "o jogo desenhou por uma extensão OES (IGLES11Ext), cujo ",
+                    "retângulo de textura ainda não desenhamos"
+                ));
+                SUCCESS
             }
             _ => return Ok(None),
         };

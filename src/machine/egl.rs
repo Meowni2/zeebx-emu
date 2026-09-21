@@ -487,6 +487,15 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 self.imageon_ext
             }
+            // `IGLES11Ext`: as extensões OES do OpenGL ES 1.1. **É por aqui que o Prey Evil pede**,
+            // e o pedido caía no ramo genérico abaixo — `ECLASSNOTSUPPORT` —, de onde ele seguia
+            // montando matrizes e texturas sem nunca desenhar.
+            AEECLSID_GLES11EXT => {
+                if self.gles11_ext == 0 {
+                    self.gles11_ext = self.new_object(Interface::Gles11Ext)?;
+                }
+                self.gles11_ext
+            }
             _ => {
                 self.unknown_classes.insert(iid);
                 if out != 0 {

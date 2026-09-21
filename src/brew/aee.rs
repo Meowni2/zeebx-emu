@@ -84,6 +84,11 @@ pub enum Interface {
     EglSurfaceManip = 33,
     /// Os extras do ATI Imageon sobre o OpenGL ES, de `sdk/inc/AEEGLESImageonEXT.h`.
     GlesImageonExt = 34,
+    /// `AEEIID_GLES11EXT`: as extensões OES do OpenGL ES 1.1. Ver [`aee_slots::GLES11_EXT`].
+    ///
+    /// O Prey Evil só desenha se ela existir: sem a interface, ele monta matrizes e texturas e
+    /// para — onze métodos de GL no relatório, nenhum `Draw` e tela preta.
+    Gles11Ext = 55,
     /// `AEECLSID_SQLMGR` do console: abre bancos SQLite. Ver [`crate::brew::sql`].
     SqlMgr = 36,
     /// Um banco aberto pelo [`Interface::SqlMgr`].
@@ -414,6 +419,7 @@ impl Interface {
             Self::ForceFeed => "IForceFeed",
             Self::EglSurfaceManip => "IEGLSurfaceManip",
             Self::GlesImageonExt => "IGLESImageonExt",
+            Self::Gles11Ext => "IGLES11Ext",
             Self::SqlMgr => "ISQLMgr",
             Self::SqlDatabase => "ISQLDatabase",
             Self::Collection => "IColecao",
@@ -475,6 +481,7 @@ impl Interface {
             Self::ForceFeed => aee_slots::FORCE_FEED,
             Self::EglSurfaceManip => aee_slots::EGL_SURFACE_MANIP,
             Self::GlesImageonExt => aee_slots::GLES_IMAGEON_EXT,
+            Self::Gles11Ext => aee_slots::GLES11_EXT,
             Self::SqlMgr => aee_slots::SQL_MGR,
             Self::SqlDatabase => aee_slots::SQL_DATABASE,
             Self::Collection => aee_slots::COLLECTION,
@@ -551,6 +558,7 @@ impl Interface {
             32 => Self::ForceFeed,
             33 => Self::EglSurfaceManip,
             34 => Self::GlesImageonExt,
+            55 => Self::Gles11Ext,
             35 => Self::Probe,
             36 => Self::SqlMgr,
             37 => Self::SqlDatabase,

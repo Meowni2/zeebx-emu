@@ -701,6 +701,12 @@ const AEEIID_EGL_SURFACE_MANIP: u32 = 0x0105_1834;
 /// `AEEIID_GLESIMAGEONEXT_V1` e `AEEIID_GLESIMAGEONEXT`, de `sdk/inc/AEEGLESImageonEXT.h`.
 const AEEIID_GLES_IMAGEON_EXT_V1: u32 = 0x0104_59b1;
 const AEEIID_GLES_IMAGEON_EXT: u32 = 0x0105_8546;
+/// `AEEIID_GLES11EXT`, de `sdk/inc/AEEGLES11Ext.h` — as extensões OES do OpenGL ES 1.1.
+///
+/// **O Prey Evil pede esta classe por `ISHELL_CreateInstance`** e desiste do caminho de desenho
+/// quando recebe nulo: sem ela, o levantamento o pega com onze métodos de GL e nenhum desenho.
+const AEECLSID_GLES11EXT: u32 = 0x0103_d8eb;
+
 const AEEIID_EGL10: u32 = 0x0103_d8ed;
 const AEEIID_EGL11: u32 = 0x0103_d8ee;
 /// Identificador do display do EGL. Só existe um, e o valor é arbitrário — o que não pode é
@@ -2080,6 +2086,8 @@ pub struct Machine<C: CpuBackend> {
     /// Os objetos das extensões gráficas do console, criados na primeira vez que são pedidos.
     surface_manip: u32,
     imageon_ext: u32,
+    /// O objeto do `IGLES11Ext`, criado na primeira vez que o pedem. Ver o slot 2 da vtable do EGL.
+    gles11_ext: u32,
     /// O retângulo em que o jogo desenha, quando ele o declara pelo `SetSurfaceScale`. Vale
     /// mais que a dedução por viewport: aqui o jogo **diz** o tamanho.
     scale_source: Option<(i32, i32)>,
@@ -2714,6 +2722,7 @@ impl<C: CpuBackend> Machine<C> {
             feeds: HashMap::new(),
             surface_manip: 0,
             imageon_ext: 0,
+            gles11_ext: 0,
             scale_source: None,
             prefs: HashMap::new(),
             enumerations: HashMap::new(),
@@ -3459,7 +3468,9 @@ impl<C: CpuBackend> Machine<C> {
                 Some(result) => result,
                 None => return Ok(None),
             },
-            (Interface::EglSurfaceManip, _) | (Interface::GlesImageonExt, _) => {
+            (Interface::EglSurfaceManip, _)
+            | (Interface::GlesImageonExt, _)
+            | (Interface::Gles11Ext, _) => {
                 match self.extension_call(iface, slot)? {
                     Some(result) => result,
                     None => return Ok(None),
