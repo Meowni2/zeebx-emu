@@ -48,7 +48,7 @@ de parede. Um core Libretro precisa de passo virtual determinístico.
 |---|---|
 | CPU | Dynarmic, como a `Session` atual |
 | Vídeo | software RGB565, 640×480, 4:3 |
-| Áudio | estéreo PCM16, 44 100 Hz, 735 frames por `retro_run` a 60 Hz |
+| Áudio | estéreo PCM16, 44 100 Hz; a quantidade por `retro_run` sai do tempo **virtual** decorrido |
 | Entrada | até duas portas RetroPad → Z-Pad |
 | Conteúdo inicial | `.mod` e `.zip` |
 | `.7z` | somente após decoder embutido e testes com arquivos reais |
@@ -283,7 +283,7 @@ adaptador deve aplicar clamp e converter para `i16`.
 Configuração MVP:
 
 ```text
-44 100 Hz, estéreo, 60 Hz de vídeo = 735 frames por retro_run
+44 100 Hz, estéreo; a cada retro_run o core entrega (ms virtuais decorridos x 44,1) amostras
 ```
 
 Fluxo:
@@ -514,11 +514,11 @@ o perca em diretório temporário.
 
 ### Três camadas
 
-| Camada | Persistente | Compartilhada | Conteúdo |
-|---|---:|---:|---|
-| `cache/` | opcional | não | ROM extraída, `.mod`, `.mif`, assets |
-| `saves/<content-id>/` | sim | não | arquivos relativos gravados pelo jogo |
-| `aparelho/` | sim | sim | `fs:/`, Z-Wheel, dados globais |
+| Camada | Onde | Persistente | Compartilhada | Conteúdo |
+|---|---|---:|---:|---|
+| `cache/<conteúdo>/` | system | descartável | não | ROM extraída, `.mod`, `.mif`, assets |
+| `saves/<conteúdo>/` | save | sim | não | arquivos relativos gravados pelo jogo |
+| `aparelho/` | system | sim | sim | `fs:/`, Z-Wheel, dados globais |
 
 Isto preserva o comportamento medido do console: Zeeboids pode gravar em
 `fs:/zeeboiddata`, e Zeebo F.C. pode ler esses dados em outra sessão.
@@ -624,8 +624,9 @@ Requisitos de segurança para ambos os formatos:
 
 ### Cache ou `/tmp`
 
-O padrão deve ser cache persistente em `<save-dir>/zeebx/cache/`. Isto evita descompressão em
-todo boot e funciona em ambientes sem `/tmp` estável.
+O cache fica em `<system-dir>/zeebx/cache/`, persistente entre sessões, para não descomprimir o
+pacote em toda abertura — e **fora** do diretório de saves, que é o que o frontend sincroniza. Ele é
+podado a 512 MB a cada carga (`CACHE_LIMIT_BYTES`), preservando a extração em uso.
 
 Modo futuro opcional:
 
@@ -949,7 +950,10 @@ frontend, e os buffers de quadro e áudio saem do estado antes de vídeo/áudio 
 
 ```text
 cargo test --lib --locked
-→ 439 passaram, 0 falharam, 9 ignorados
+→ 442 passaram, 0 falharam, 9 ignorados (com as features de desktop)
+
+cargo test --lib --locked --no-default-features
+→ 384 passaram, 0 falharam, 5 ignorados (só o motor, que é o que o core usa)
 
 cargo test --lib --locked brew::vfs      → 14 passaram
 cargo test --lib --locked loader::archive → 6 passaram

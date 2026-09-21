@@ -71,6 +71,30 @@ def baixa_dat(destino):
     return destino.read_text(encoding="utf-8", errors="replace")
 
 
+def crc_do_arquivo(caminho):
+    """CRC32 de um arquivo, lido em blocos."""
+    crc = 0
+    with caminho.open("rb") as fonte:
+        while True:
+            bloco = fonte.read(1 << 20)
+            if not bloco:
+                break
+            crc = zlib.crc32(bloco, crc)
+    return crc & 0xFFFFFFFF
+
+
+def sha1_do_arquivo(caminho):
+    """SHA1 de um arquivo, lido em blocos."""
+    sha1 = hashlib.sha1()
+    with caminho.open("rb") as fonte:
+        while True:
+            bloco = fonte.read(1 << 20)
+            if not bloco:
+                break
+            sha1.update(bloco)
+    return sha1.hexdigest().upper()
+
+
 def hasheia(zf, nome):
     """Tamanho, CRC32, MD5 e SHA1 de um arquivo dentro do pacote, em blocos."""
     crc = 0
@@ -160,9 +184,10 @@ def analisa(zip_path, tabela):
             "sha1_zip": None,
             "icone": None,
         }
-        tamanho, crc, md5, sha1 = hasheia(zf, nomes and nomes[0]) if nomes else (0, "", "", "")
-        ficha["crc_zip"] = f"{zlib.crc32(zip_path.read_bytes()) & 0xFFFFFFFF:08X}"
-        ficha["sha1_zip"] = hashlib.sha1(zip_path.read_bytes()).hexdigest().upper()
+        # O hash do pacote é streamado: ler dois arquivos inteiros na memória só para somar dois
+        # hashes custava, no acervo inteiro, duas passadas de 1,6 GB.
+        ficha["crc_zip"] = f"{crc_do_arquivo(zip_path):08X}"
+        ficha["sha1_zip"] = sha1_do_arquivo(zip_path)
         if esperado:
             arquivo, tam_esp, crc_esp, md5_esp, sha1_esp = esperado
             alvo = acha_arquivo_do_dat(nomes, arquivo)
@@ -207,7 +232,6 @@ def analisa(zip_path, tabela):
             if imagem:
                 mime, bytes_imagem = imagem
                 ficha["icone"] = {"mime": mime, "bytes": bytes_imagem, "de": manif[0]}
-        del tamanho, crc, md5, sha1
         return ficha
 
 
@@ -236,28 +260,34 @@ def escreve_capas_da_loja(saida, fichas, z_wheel, ao_lado):
     """
     raiz = saida / "thumbnails" / DAT_NOME / "Named_Boxarts"
     raiz.mkdir(parents=True, exist_ok=True)
+    capas = capas_por_classe(z_wheel)
     achadas = 0
     sem_capa = []
+    ao_lado_falhou = 0
     for ficha in fichas:
         class_id = ficha.get("clsid")
         if class_id is None:
             sem_capa.append((ficha["nome_no_intro"], "sem ClassID no .mif"))
             continue
-        capa, titulos = capa_da_z_wheel(z_wheel, class_id)
+        capa = capas.get(class_id)
         if capa is None:
-            motivo = "sem ficha na loja" if titulos is None else "ficha sem imagem"
-            sem_capa.append((ficha["nome_no_intro"], motivo))
+            sem_capa.append((ficha["nome_no_intro"], "sem ficha na loja ou sem imagem"))
             continue
-        arquivo, dados, game_id = capa
+        arquivo, dados, game_id, titulos = capa
         extensao = pathlib.Path(arquivo).suffix.lstrip(".")
         destino = raiz / f"{ficha['nome_no_intro']}.{extensao}"
         destino.write_bytes(dados)
         ficha["capa"] = {"arquivo": arquivo, "game_id": game_id, "bytes": len(dados)}
         ficha["titulos_da_loja"] = sorted(titulos) if titulos else []
         if ao_lado:
-            ficha["caminho"].with_suffix("." + extensao).write_bytes(dados)
+            # A pasta da ROM pode ser somente-leitura (um pendrive, um pacote compartilhado): a
+            # capa publicada já foi escrita acima, então falhar aqui é aviso, não erro.
+            try:
+                ficha["caminho"].with_suffix("." + extensao).write_bytes(dados)
+            except OSError:
+                ao_lado_falhou += 1
         achadas += 1
-    return raiz, achadas, sem_capa
+    return raiz, achadas, sem_capa, ao_lado_falhou
 
 
 def escreve_capas(saida, fichas, com_icone):
@@ -314,7 +344,7 @@ def clsid_do_mif(dados):
 def le_z_wheel(caminho):
     """O catálogo da loja que vem dentro do pacote da Z-Wheel.
 
-    Devolve `{class_id: (game_id, pasta_da_capa, {idioma: título})}`. As tabelas estão descritas em
+    Devolve `{class_id: (game_id, pasta_da_capa, {títulos})}`. As tabelas estão descritas em
     `src/ui/acervo.rs`: `GAMEINFO` liga `game_id` ao `class_id` do applet e ao caminho da capa, e
     `TITLETEXT` guarda o nome por idioma.
     """
@@ -328,7 +358,9 @@ def le_z_wheel(caminho):
         banco.write_bytes(dados)
         con = sqlite3.connect(str(banco))
         titulos = {}
-        for game_id, _lang, texto in con.execute("select game_id, lang_id, titletext from TITLETEXT"):
+        for game_id, _lang, texto in con.execute(
+            "select game_id, lang_id, titletext from TITLETEXT"
+        ):
             titulos.setdefault(game_id, set()).add(texto)
         fichas = {}
         for class_id, game_id, capa, *_ in con.execute(
@@ -339,27 +371,25 @@ def le_z_wheel(caminho):
     return fichas
 
 
-def capa_da_z_wheel(caminho, class_id):
-    """A maior capa publicada para o jogo, e o nome oficial dele.
+def capas_por_classe(caminho):
+    """As capas da loja, lidas **uma vez** para o pacote inteiro.
 
-    `boxartlg.jpg` é a capa grande da loja; `boxart.bmp` é a pequena. São imagens oficiais da
-    TecToy, que vêm dentro do pacote da Z-Wheel — o standalone as usa pela mesma via.
+    `{class_id: (nome_do_arquivo, bytes, game_id, títulos)}`. A versão anterior abria o pacote e
+    relia o banco a cada jogo — 59 aberturas e 59 parses do mesmo SQLite —, e o custo aparecia como
+    lentidão no acervo grande.
     """
     fichas = le_z_wheel(caminho)
-    ficha = fichas.get(class_id)
-    if ficha is None:
-        return None, None
-    game_id, pasta, titulos = ficha
+    capas = {}
     with zipfile.ZipFile(caminho) as zf:
-        for arquivo in ("boxartlg.jpg", "boxart.bmp"):
-            alvo = f"{pasta}/{arquivo}".lstrip("./")
-            alvo = alvo if alvo.startswith("mod/") else f"mod/274755/{alvo}"
-            try:
-                dados = zf.read(alvo)
-            except KeyError:
-                continue
-            return (arquivo, dados, game_id), titulos
-    return None, titulos
+        presentes = set(zf.namelist())
+        for class_id, (game_id, pasta, titulos) in fichas.items():
+            for arquivo in ("boxartlg.jpg", "boxart.bmp"):
+                alvo = f"{pasta}/{arquivo}".replace("./", "", 1)
+                alvo = alvo if alvo.startswith("mod/") else f"mod/274755/{alvo}"
+                if alvo in presentes:
+                    capas[class_id] = (arquivo, zf.read(alvo), game_id, titulos)
+                    break
+    return capas
 
 
 def main():
@@ -408,10 +438,12 @@ def main():
     print(f"playlist: {playlist}")
     print(f"capas: {raiz}" + (f" ({escritos} ícones gravados)" if args.icones else ""))
     if args.zwheel:
-        raiz_box, achadas, sem_capa = escreve_capas_da_loja(
+        raiz_box, achadas, sem_capa, falhou = escreve_capas_da_loja(
             args.saida, fichas, args.zwheel, args.capas_ao_lado
         )
         print(f"capas oficiais: {achadas} de {len(fichas)} em {raiz_box}")
+        if falhou:
+            print(f"  {falhou} capa(s) não puderam ser copiadas para o lado da ROM (pasta sem escrita)")
         for nome, motivo in sem_capa:
             print(f"  sem capa: {nome} ({motivo})")
 
