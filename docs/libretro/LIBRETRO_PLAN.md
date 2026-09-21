@@ -1332,8 +1332,17 @@ A verificação é sempre a mesma, e é o que torna isto um procedimento e não 
 da lista de "pedidas e não temos", e o jogo quebra em outro lugar — no mesmo PC enquanto é a mesma
 porta, e num PC novo quando a porta muda.
 
-**Falta a `IGLES11ExtPak`** (30 slots: a família `TexGen`, o blending de separação e os objetos de
-framebuffer/renderbuffer). É a maior das seis, e é a última porta entre este jogo e o desenho.
+| 6 | `IGLES11ExtPak` | 30 | **a lista de classes faltantes ficou vazia** |
+
+As seis foram entregues, e o relatório do Prey Evil **não tem mais nenhuma classe faltando** — o
+levantamento por classe, que é o que diz "o jogo pediu algo que não temos", está limpo. O que
+sobrou é outra pergunta: o jogo ainda quebra no mesmo ponto, chamando `0x0` a partir de `0x161d8`,
+e agora **não é classe ausente** — é algum valor que devolvemos e ele usa como ponteiro (um `Get`
+que responde zero, por exemplo). O caminho para achar é o mesmo: o relatório e o rastreio.
+
+O `IGLES11ExtPak` responde com o tratamento das outras extensões gráficas — "consegui" ao que não
+muda o traço, identificador `1` para os `Gen*OES` (o alvo aqui é um só) e `GL_FRAMEBUFFER_COMPLETE`
+(0x8CD5) para a consulta de completude.
 
 **E o número da classe já aparece no motor por outro caminho.** No BREW, o ClassID e o IID são o
 mesmo valor: `AEEIID_GLES_IMAGEON_EXT` (`0x01058546`) já é atendido em `machine/egl.rs` pela rota de

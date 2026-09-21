@@ -326,6 +326,53 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 SUCCESS
             }
+            // `IGLES11ExtPak`: `TexGen`, blending separado e objetos de framebuffer.
+            //
+            // **O tratamento é o mesmo das outras extensões gráficas** — responder "consegui" ao
+            // que não muda o que o jogo desenha, e dar resposta plausível ao que ele consulta.
+            // Nenhuma dessas famílias altera o traço no nosso rasterizador: a geração de
+            // coordenadas de textura é a única que mexeria, e nenhum jogo do acervo a usa para
+            // desenhar — o Prey Evil a pede para saber que o pacote existe. Os objetos de
+            // framebuffer ganham identificadores de mentira e respondem "completo": o alvo aqui é
+            // um só, e é o certo.
+            "TexGenf" | "TexGeni" | "TexGenx" | "TexGenfv" | "TexGeniv" | "TexGenxv"
+            | "BlendEquation" | "BlendFuncSeparate" | "BlendEquationSeparate"
+            | "BindRenderbufferOES" | "DeleteFramebuffersOES" | "DeleteRenderbuffersOES"
+            | "FramebufferRenderbufferOES" | "FramebufferTexture2DOES" | "GenerateMipmapOES"
+            | "RenderbufferStorageOES"
+                if iface == Interface::Gles11ExtPak =>
+            {
+                self.assumptions.insert(concat!(
+                    "o jogo usou o pacote de extensões OES (IGLES11ExtPak); o alvo de desenho ",
+                    "continua sendo único, e o que ele pediu foi atendido sem mudar o traço"
+                ));
+                SUCCESS
+            }
+            // Os `Gen*OES` devolvem um identificador pelo ponteiro de saída: zero é "acabou", e o
+            // jogo desiste da família inteira. **Devolvemos sempre o mesmo `1`**, e é coerente: o
+            // alvo de desenho aqui é um só, então há um framebuffer e um renderbuffer, e pedir
+            // mais devolve o mesmo. Um contador daria identificadores que não levam a lugar nenhum.
+            "GenFramebuffersOES" | "GenRenderbuffersOES" if iface == Interface::Gles11ExtPak => {
+                let out = self.arg(1);
+                if out != 0 {
+                    self.cpu.write_u32(out, 1)?;
+                }
+                SUCCESS
+            }
+            "IsFramebufferOES" | "IsRenderbufferOES" if iface == Interface::Gles11ExtPak => {
+                self.write_egl_true(1)?
+            }
+            // `GL_FRAMEBUFFER_COMPLETE_OES` é 0x8CD5, e é o que um alvo único sempre é.
+            "CheckFramebufferStatusOES" if iface == Interface::Gles11ExtPak => 0x8cd5,
+            "GetTexGenfv" | "GetTexGeniv" | "GetTexGenxv"
+            | "GetFramebufferAttachmentParameterivOES" | "GetRenderbufferParameterivOES"
+                if iface == Interface::Gles11ExtPak =>
+            {
+                // Zerar o que se consulta é melhor que deixar lixo na memória do jogo, e é o que
+                // o resto do motor faz com os `Get` que não têm o que devolver.
+                self.write_at(self.arg(2), 0)?;
+                SUCCESS
+            }
             // `IGLES11Ext`: as extensões OES do OpenGL ES 1.1.
             //
             // **O Prey Evil não desenha sem elas.** O levantamento das 62 ROMs o pegou com a tela

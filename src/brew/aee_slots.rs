@@ -467,6 +467,24 @@ pub const EGL: &[&str] = &[
 /// Mesma convenção do [`EGL`]: `this` no primeiro argumento, código de erro no retorno e o
 /// resultado por ponteiro de saída. Um objeto `IGLES11` serve também como `IGLES10`, porque a
 /// segunda tabela apenas estende a primeira.
+/// `IGLES11ExtPak`: as extensões OES do pacote. Ver `AEEGLES11ExtPak.h`.
+///
+/// Três famílias: a geração de coordenadas de textura (`TexGen`), o blending separado por equação
+/// e os objetos de framebuffer e renderbuffer. **É a última porta entre o Prey Evil e o desenho** —
+/// as outras cinco já foram entregues, cada uma medida.
+pub const GLES11_EXT_PAK: &[&str] = &[
+    "AddRef", "Release", "QueryInterface",
+    "GetTexGenfv", "GetTexGeniv", "GetTexGenxv",
+    "TexGenf", "TexGeni", "TexGenx", "TexGenfv", "TexGeniv", "TexGenxv",
+    "BlendEquation", "BlendFuncSeparate", "BlendEquationSeparate",
+    "BindFramebufferOES", "BindRenderbufferOES", "CheckFramebufferStatusOES",
+    "DeleteFramebuffersOES", "DeleteRenderbuffersOES",
+    "FramebufferRenderbufferOES", "FramebufferTexture2DOES",
+    "GenerateMipmapOES", "GenFramebuffersOES", "GenRenderbuffersOES",
+    "GetFramebufferAttachmentParameterivOES", "GetRenderbufferParameterivOES",
+    "IsFramebufferOES", "IsRenderbufferOES", "RenderbufferStorageOES",
+];
+
 /// `IGLES11Ext`: as extensões OES do OpenGL ES 1.1, na ordem do `AEEGLES11Ext.h`.
 ///
 /// **O Prey Evil pede esta interface por `CreateInstance` e para de desenhar sem ela**: o

@@ -586,6 +586,14 @@ impl<C: CpuBackend> Machine<C> {
             AEECLSID_THREAD => Interface::Thread,
             AEECLSID_QEGL => Interface::Egl,
             AEECLSID_GLES11EXT => Interface::Gles11Ext,
+            // As outras cinco extensões gráficas, para quem as pedir por `CreateInstance` em vez
+            // de `QueryInterface` — o Prey Evil usa o segundo caminho, mas a fábrica é a porta
+            // documentada do BREW.
+            AEEIID_GLES10EXT => Interface::Gles10Ext,
+            AEEIID_GLES11EXTPAK => Interface::Gles11ExtPak,
+            AEEIID_EGLGETCOLORBUFFER => Interface::EglGetColorBuffer,
+            AEEIID_EGLGETPOWERLEVEL => Interface::EglGetPowerLevel,
+            AEEIID_EGLOESSWAPINTERVAL => Interface::EglOesSwapInterval,
             AEECLSID_EGL => Interface::EglLegacy,
             AEECLSID_GL => Interface::GlLegacy,
             AEECLSID_MEDIAUTIL => Interface::MediaUtil,

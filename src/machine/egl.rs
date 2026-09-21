@@ -517,6 +517,12 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 self.egl_get_power_level
             }
+            AEEIID_GLES11EXTPAK => {
+                if self.gles11_ext_pak == 0 {
+                    self.gles11_ext_pak = self.new_object(Interface::Gles11ExtPak)?;
+                }
+                self.gles11_ext_pak
+            }
             AEEIID_EGLGETCOLORBUFFER => {
                 if self.egl_get_color_buffer == 0 {
                     self.egl_get_color_buffer = self.new_object(Interface::EglGetColorBuffer)?;

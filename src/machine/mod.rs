@@ -715,6 +715,8 @@ const AEEIID_EGLGETPOWERLEVEL: u32 = 0x0103_d8f0;
 const AEEIID_EGLOESSWAPINTERVAL: u32 = 0x0104_26e3;
 /// `AEEIID_EGLGETCOLORBUFFER`, de `sdk/inc/AEEEGLGetColorBuffer.h`.
 const AEEIID_EGLGETCOLORBUFFER: u32 = 0x0103_d8ef;
+/// `AEEIID_GLES11EXTPAK`, de `sdk/inc/AEEGLES11ExtPak.h`.
+const AEEIID_GLES11EXTPAK: u32 = 0x0103_def1;
 
 const AEEIID_EGL10: u32 = 0x0103_d8ed;
 const AEEIID_EGL11: u32 = 0x0103_d8ee;
@@ -2105,6 +2107,8 @@ pub struct Machine<C: CpuBackend> {
     egl_oes_swap_interval: u32,
     /// O objeto do `IEGLGetColorBuffer`.
     egl_get_color_buffer: u32,
+    /// O objeto do `IGLES11ExtPak`.
+    gles11_ext_pak: u32,
     /// O retângulo em que o jogo desenha, quando ele o declara pelo `SetSurfaceScale`. Vale
     /// mais que a dedução por viewport: aqui o jogo **diz** o tamanho.
     scale_source: Option<(i32, i32)>,
@@ -2744,6 +2748,7 @@ impl<C: CpuBackend> Machine<C> {
             egl_get_power_level: 0,
             egl_oes_swap_interval: 0,
             egl_get_color_buffer: 0,
+            gles11_ext_pak: 0,
             scale_source: None,
             prefs: HashMap::new(),
             enumerations: HashMap::new(),
@@ -3495,7 +3500,8 @@ impl<C: CpuBackend> Machine<C> {
             | (Interface::Gles10Ext, _)
             | (Interface::EglGetPowerLevel, _)
             | (Interface::EglOesSwapInterval, _)
-            | (Interface::EglGetColorBuffer, _) => {
+            | (Interface::EglGetColorBuffer, _)
+            | (Interface::Gles11ExtPak, _) => {
                 match self.extension_call(iface, slot)? {
                     Some(result) => result,
                     None => return Ok(None),
