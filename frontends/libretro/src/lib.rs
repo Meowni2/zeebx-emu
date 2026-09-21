@@ -33,6 +33,9 @@ const SAMPLE_RATE: u32 = 44_100;
 const PIXEL_FORMAT_RGB565: u32 = 2;
 
 /// Comandos de ambiente usados.
+/// Pede ao frontend que descarregue o conteúdo e volte ao menu dele.
+const ENV_SHUTDOWN: u32 = 7;
+
 /// Pergunta se o frontend aceita receber quadro nulo quando nada mudou.
 const ENV_GET_CAN_DUPE: u32 = 3;
 const ENV_GET_SYSTEM_DIRECTORY: u32 = 9;
@@ -178,6 +181,11 @@ struct Core {
     ultimo_relogio_ms: u32,
     /// Amostras que o frontend não aceitou e ficam para a chamada seguinte.
     audio_pendente: Vec<i16>,
+    /// Quantos quadros já foram apresentados depois da parada.
+    ///
+    /// A tela final fica à mostra por um instante antes de o frontend ser dispensado: sem isso o
+    /// conteúdo some no mesmo quadro em que o jogo acaba, e quem está jogando não vê o desfecho.
+    quadros_apos_parar: u32,
     /// Se o desfecho já foi relatado ao frontend.
     ///
     /// Sem isto o core repetiria a mesma linha a cada quadro depois da parada, e um log que cresce
@@ -624,6 +632,7 @@ unsafe fn carrega(
         ultima_assinatura: None,
         ultimo_relogio_ms: 0,
         audio_pendente: Vec::new(),
+        quadros_apos_parar: 0,
         parou: false,
     })
 }
@@ -664,8 +673,21 @@ pub extern "C" fn retro_run() {
                 for linha in relato.iter().rev().take(6).rev() {
                     log(&format!("Zeebx:   {linha}"));
                 }
-                let faltando = estado.session.memory();
-                log(&format!("Zeebx:   heap {} bytes, {} objetos", faltando.0, faltando.1));
+                let memoria = estado.session.memory();
+                log(&format!(
+                    "Zeebx:   heap {} bytes, {} objetos",
+                    memoria.0, memoria.1
+                ));
+                // No console, sair de um jogo devolve o controle à Z-Wheel, que é outro applet
+                // instalado. Aqui o pedido é registrado, mas **a ABI não deixa o core pedir
+                // outro conteúdo ao frontend**: ou o core carregaria a Z-Wheel por conta própria,
+                // ou o frontend encerra o conteúdo. Ver o plano, seção de desfecho.
+                if let Some(classe) = estado.session.take_launch_request() {
+                    log(&format!(
+                        "Zeebx: o shell pediu para abrir {classe:#010x}; trocar de conteúdo dentro do core ainda não existe"
+                    ));
+                }
+                estado.quadros_apos_parar = 0;
             }
         }
         // Vídeo: o framebuffer do console, no formato negociado.
@@ -715,6 +737,7 @@ pub extern "C" fn retro_run() {
         }
     }
     // Os buffers voltam para o estado, para a próxima chamada reaproveitar a mesma alocação.
+    let mut dispensar = false;
     if let Ok(mut guard) = core().lock() {
         if let Some(EstadoDoCore(estado)) = guard.as_mut() {
             estado.frame = frame;
@@ -723,6 +746,19 @@ pub extern "C" fn retro_run() {
             let limite = (SAMPLE_RATE as usize / 2) * 2;
             sobra.truncate(limite);
             estado.audio_pendente = sobra;
+            if estado.parou {
+                estado.quadros_apos_parar += 1;
+                // Dois segundos de tela parada bastam para ver o desfecho e o log.
+                dispensar = estado.quadros_apos_parar == 120;
+            }
+        }
+    }
+    if dispensar {
+        // Encerrar o conteúdo é o desfecho que a ABI oferece: o frontend volta ao menu dele, em
+        // vez de ficar mostrando para sempre o último quadro de um jogo que acabou.
+        log("Zeebx: jogo terminado; pedindo ao frontend para encerrar o conteúdo");
+        unsafe {
+            environ(ENV_SHUTDOWN, std::ptr::null_mut());
         }
     }
 }

@@ -672,6 +672,36 @@ própria de commit/journal; rename atômico de arquivos externos não protege se
 
 Não registrar opção cosmética ou que não possa ser aplicada de forma segura numa sessão viva.
 
+## Desfecho de um jogo
+
+No console, sair de um jogo devolve o controle à Z-Wheel, que é apenas outro applet instalado. No
+Libretro isso tem duas formas possíveis, e elas não são equivalentes:
+
+| Caminho | Como funciona | Estado |
+|---|---|---|
+| Frontend encerra o conteúdo | o core chama `RETRO_ENVIRONMENT_SHUTDOWN` (7) | **implementado** |
+| Core carrega a Z-Wheel | o próprio core inicia outra `Session` com o `.mod` da Z-Wheel e segue apresentando | planejado |
+
+O motor já sabe que o shell pediu outro applet: `Machine::pending_launch`, exposto por
+`Session::take_launch_request()`, é o que a UI desktop usa para voltar à Z-Wheel. O que **não**
+existe na ABI é um "carregue este outro conteúdo" do core para o frontend — nenhum comando faz o
+frontend trocar de jogo a pedido do core. Logo, a volta à Z-Wheel só pode acontecer se o core a
+carregar internamente.
+
+Comportamento atual:
+
+1. o desfecho é relatado **uma vez**, com o relógio virtual (`parou em N ms virtuais`), seguido das
+   últimas linhas do log do próprio jogo e do uso de heap;
+2. se o shell pediu um applet, o ClassID vai para o log, com o aviso de que a troca de conteúdo
+   dentro do core ainda não existe;
+3. a tela final fica à mostra **2 segundos** e então o core pede `SHUTDOWN`, e o frontend volta ao
+   menu dele. Sem o pedido, o RetroArch ficaria para sempre no último quadro de um jogo terminado;
+4. o pedido de descarga é feito **fora** do mutex do estado, como todas as chamadas ao frontend.
+
+O caminho do core-carrega-a-Z-Wheel exige resolver o ClassID para um pacote instalado — o core ainda
+não tem varredura de biblioteca — e decidir a política de "próximo conteúdo" com o frontend. Fica
+como feature, com o motor já pronto para iniciar uma sessão nova.
+
 ## Save states
 
 Save states exigem snapshot pointer-free e versionado de:
