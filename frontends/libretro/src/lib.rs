@@ -70,14 +70,150 @@ const RETROK_LEFT: u32 = 276;
 static ULTIMA_ABERTURA: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// O frontend oferece um contexto de placa para o core desenhar.
-///
-/// **O core não pede, e é assim que ele recusa.** No `libretro`, quem *oferece* é o core: ele
-/// preenche o struct e chama o ambiente. Pedir e ignorar a resposta deixaria o frontend esperando
-/// que nós desenhássemos no framebuffer dele — que ninguém desenhou. Enquanto o encaixe não
-/// existe, o core **não chama** `SET_HW_RENDER`, e o RetroArch segue no caminho de software, que
-/// é o medido e comparado com o da placa. Ver `docs/libretro/LIBRETRO_PLAN.md`, item 5.
-#[allow(dead_code)]
 const ENV_SET_HW_RENDER: u32 = 14;
+
+/// `RETRO_HW_CONTEXT_OPENGL` — é o que o motor desenha.
+const HW_CONTEXT_OPENGL: u32 = 1;
+
+/// O valor que o `retro_video_refresh` recebe quando o quadro saiu no framebuffer do frontend.
+///
+/// É o sentinela do `libretro`: passar pixels junto com ele seria mentira, e o RetroArch apresenta
+/// o framebuffer que ele mesmo forneceu.
+const HW_FRAME_BUFFER_VALID: usize = usize::MAX;
+
+/// O começo de `retro_hw_render_callback`, na ordem do `libretro.h` vendorizado.
+///
+/// Os campos são os que o core precisa ler e preencher: o tipo de contexto (o core escolhe), os
+/// dois ponteiros que o **frontend** preenche depois (o framebuffer corrente e o resolvedor de
+/// funções de GL) e o `context_reset`, que é como o frontend avisa que o contexto está utilizável.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RetroHwRenderCallback {
+    context_type: u32,
+    context_reset: Option<unsafe extern "C" fn()>,
+    get_current_framebuffer: Option<unsafe extern "C" fn() -> u32>,
+    get_proc_address: Option<unsafe extern "C" fn(*const c_char) -> *const c_void>,
+    depth: bool,
+    stencil: bool,
+    bottom_left_origin: bool,
+    version_major: u32,
+    version_minor: u32,
+}
+
+/// O que o frontend respondeu ao pedido de render em hardware.
+static OFERTA_DE_PLACA: std::sync::OnceLock<RetroHwRenderCallback> = std::sync::OnceLock::new();
+
+/// Se o frontend já avisou que o contexto está utilizável.
+///
+/// **A ordem importa:** o `retro_load_game` pede o contexto, e o frontend chama o `context_reset`
+/// **depois** — só ali as funções de GL existem. Por isso a placa entra no primeiro `retro_run`, e
+/// não na carga.
+static CONTEXTO_PRONTO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// O contexto de GL montado a partir do que o frontend entregou, quando ele entregou.
+static PLACA: std::sync::Mutex<Option<std::sync::Arc<glow::Context>>> =
+    std::sync::Mutex::new(None);
+
+/// O contexto de placa, quando já se desenha nele.
+fn placa() -> Option<std::sync::Arc<glow::Context>> {
+    PLACA.lock().ok().and_then(|guarda| guarda.clone())
+}
+
+/// Pede o contexto de placa ao frontend, uma vez, e guarda a resposta.
+///
+/// No `libretro`, quem **oferece** é o core: ele preenche o struct e chama o ambiente. O frontend
+/// devolve `true` se aceitar, e depois disso ele cria o contexto e chama o nosso `context_reset`.
+fn pede_o_contexto_de_placa() {
+    if OFERTA_DE_PLACA.get().is_some() {
+        return;
+    }
+    let mut oferta = RetroHwRenderCallback {
+        context_type: HW_CONTEXT_OPENGL,
+        context_reset: Some(contexto_pronto),
+        get_current_framebuffer: None,
+        get_proc_address: None,
+        // Profundidade e stencil são exigências do console, não enfeite: o palco da Z-Wheel marca
+        // o chão no stencil para desenhar o reflexo.
+        depth: true,
+        stencil: true,
+        bottom_left_origin: false,
+        version_major: 3,
+        version_minor: 3,
+    };
+    let alvo = &mut oferta as *mut RetroHwRenderCallback as *mut c_void;
+    if unsafe { environ(ENV_SET_HW_RENDER, alvo) } {
+        log(&format!(
+            "Zeebx: o frontend aceitou render em hardware (OpenGL {}.{}); o desenho passa a ser na placa",
+            oferta.version_major, oferta.version_minor
+        ));
+        let _ = OFERTA_DE_PLACA.set(oferta);
+    } else {
+        log("Zeebx: o frontend não oferece render em hardware; o desenho fica no processador");
+    }
+}
+
+/// Monta o contexto de GL a partir do resolvedor do frontend e **recria a sessão** na placa.
+///
+/// **Uma vez, no primeiro quadro** — e não na carga —, porque é só depois do `context_reset` que
+/// as funções existem. Recriar a sessão aqui custa um reinício que ninguém vê: nenhum quadro foi
+/// entregue ainda.
+///
+/// **Qualquer falha devolve o software e diz por quê.** Um frontend que aceita o pedido e não
+/// cumpre — sem `get_proc_address`, sem contexto — não pode deixar o emulador sem imagem: o
+/// caminho de software é o medido e o que já funcionava.
+fn liga_a_placa(estado: &mut Core) {
+    if estado.placa_ligada || !CONTEXTO_PRONTO.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    // Tenta **uma vez**: um contexto que não veio não vem no quadro seguinte, e insistir a cada
+    // quadro gastaria o log inteiro.
+    estado.placa_ligada = true;
+    let Some(oferta) = OFERTA_DE_PLACA.get() else {
+        return;
+    };
+    let Some(pega_endereco) = oferta.get_proc_address else {
+        aviso("Zeebx: o frontend aceitou render em hardware mas não oferece get_proc_address; seguindo no processador");
+        return;
+    };
+    let contexto = std::sync::Arc::new(unsafe {
+        glow::Context::from_loader_function(|nome| {
+            let Ok(nome) = CString::new(nome) else {
+                return std::ptr::null();
+            };
+            pega_endereco(nome.as_ptr())
+        })
+    });
+    // A placa entra no global **antes** da troca: é ele que `troca_para` consulta para decidir se
+    // a sessão nasce com o rasterizador de placa. Assim as trocas seguintes — a Z-Wheel abrindo um
+    // jogo, o jogo voltando para ela — também nascem na placa.
+    if let Ok(mut guarda) = PLACA.lock() {
+        *guarda = Some(contexto);
+    }
+    let antes = estado.path.clone();
+    match troca_para(estado, &antes, false) {
+        Ok(()) => log("Zeebx: desenhando na placa"),
+        Err(erro) => {
+            aviso(&format!(
+                "Zeebx: o render em hardware falhou ({erro}); seguindo no processador"
+            ));
+            // A sessão de software foi perdida na tentativa. Recria sem placa para não ficar sem
+            // imagem nenhuma — e o global da placa é limpo, para as trocas seguintes nascerem no
+            // processador.
+            estado.placa_ligada = false;
+            if let Ok(mut guarda) = PLACA.lock() {
+                *guarda = None;
+            }
+            if let Err(tambem) = troca_para(estado, &antes, false) {
+                aviso(&format!("Zeebx: nem no processador deu para reabrir: {tambem}"));
+            }
+        }
+    }
+}
+
+/// O `context_reset` que nós preenchemos: o frontend chama quando o contexto está utilizável.
+unsafe extern "C" fn contexto_pronto() {
+    CONTEXTO_PRONTO.store(true, std::sync::atomic::Ordering::Relaxed);
+}
 
 /// Pergunta se o frontend aceita receber quadro nulo quando nada mudou.
 const ENV_GET_CAN_DUPE: u32 = 3;
@@ -258,6 +394,9 @@ struct Core {
     /// A tela final fica à mostra por um instante antes de o frontend ser dispensado: sem isso o
     /// conteúdo some no mesmo quadro em que o jogo acaba, e quem está jogando não vê o desfecho.
     quadros_apos_parar: u32,
+    /// Se já se tentou ligar o render em hardware. Uma vez só: um contexto que não veio não vem
+    /// no quadro seguinte. Ver [`liga_a_placa`].
+    placa_ligada: bool,
     /// Se o desfecho já foi relatado ao frontend.
     ///
     /// Sem isto o core repetiria a mesma linha a cada quadro depois da parada, e um log que cresce
@@ -795,6 +934,11 @@ unsafe fn carrega(
         )),
     }
 
+    // **Pede o contexto de placa ao frontend, se ele tiver um.** Quem aceita é ele; nós só usamos
+    // mais tarde, quando o `context_reset` chegar. Recusar aqui não muda nada: a sessão de
+    // software já nasceu e é ela que roda até prova em contrário.
+    pede_o_contexto_de_placa();
+
     let mut session = Session::start_software_with_storage(
         std::path::Path::new(caminho),
         portas,
@@ -829,6 +973,7 @@ unsafe fn carrega(
     };
 
     Ok(Core {
+        placa_ligada: false,
         session,
         mixer,
         portas,
@@ -897,12 +1042,26 @@ fn prepara_fonte(storage: &StoragePaths, jogos: &[(u32, PathBuf)]) -> Option<Pat
 /// É o que o console faz quando a Z-Wheel abre um jogo e quando o jogo fecha: o shell continua
 /// sendo o shell. O frontend não participa — para ele, `retro_run` só devolveu outro quadro.
 fn troca_para(estado: &mut Core, caminho: &Path, aberto_pela_z_wheel: bool) -> Result<(), StartError> {
-    let mut session = Session::start_software_with_storage(
-        caminho,
-        estado.portas,
-        ZWheel::default(),
-        &estado.storage,
-    )?;
+    // **Se já se desenha na placa, a sessão nova também nasce nela** — a Z-Wheel abrindo um jogo,
+    // o jogo voltando para ela. Sem isto a primeira troca devolveria o desenho ao processador, e o
+    // sintoma seria "o render em hardware funciona até o primeiro jogo".
+    let mut session = match placa() {
+        Some(contexto) => Session::start_with_storage(
+            caminho,
+            estado.portas,
+            None,
+            true,
+            Some(contexto),
+            ZWheel::default(),
+            &estado.storage,
+        )?,
+        None => Session::start_software_with_storage(
+            caminho,
+            estado.portas,
+            ZWheel::default(),
+            &estado.storage,
+        )?,
+    };
     // O novo applet nasce sem lista de instalados: sem isto a Z-Wheel volta vazia.
     session.set_installed_applets(
         estado
@@ -940,6 +1099,21 @@ pub extern "C" fn retro_run() {
         let Some(EstadoDoCore(estado)) = guard.as_mut() else {
             return;
         };
+        // **A placa entra no primeiro quadro.** O contexto de GL só existe depois que o frontend
+        // chama o `context_reset`, que acontece depois do `retro_load_game`; aqui é o primeiro
+        // lugar em que ele pode estar pronto. Recriar a sessão custa um reinício que ninguém vê:
+        // nenhum quadro foi entregue ainda.
+        liga_a_placa(estado);
+        // Em modo de placa, o alvo do desenho é o framebuffer que o frontend indica **a cada
+        // quadro** — ele pode trocar.
+        if let Some(pega_framebuffer) = OFERTA_DE_PLACA
+            .get()
+            .and_then(|oferta| oferta.get_current_framebuffer)
+            && placa().is_some()
+        {
+            let fbo = unsafe { pega_framebuffer() };
+            estado.session.desenha_no_fbo(Some(fbo));
+        }
         // Teclas que o frontend entregou desde o último quadro. O callback só enfileira; aqui
         // elas entram no guest, na thread normal do core.
         if let Ok(mut fila) = teclas().lock() {
@@ -1060,10 +1234,14 @@ pub extern "C" fn retro_run() {
     };
     let frente = callbacks();
     if let Some(video) = frente.video {
-        let (ponteiro, _) = match duplicado {
+        let na_placa = placa().is_some();
+        let (ponteiro, _) = match (na_placa, duplicado) {
+            // **Em modo de placa o quadro já está no framebuffer do frontend**: entregar pixels
+            // aqui seria mentira, e o `libretro` tem um sentinela para dizer exatamente isso.
+            (true, _) => (HW_FRAME_BUFFER_VALID as *const c_void, ()),
             // Quadro nulo avisa "repete o anterior", que é o que a ABI oferece para tela parada.
-            true => (std::ptr::null(), ()),
-            false => (frame.as_ptr() as *const c_void, ()),
+            (false, true) => (std::ptr::null(), ()),
+            (false, false) => (frame.as_ptr() as *const c_void, ()),
         };
         // SAFETY: o buffer vive durante a chamada; no quadro repetido o frontend reusa o último.
         unsafe {
