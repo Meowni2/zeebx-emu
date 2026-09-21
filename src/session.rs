@@ -105,7 +105,8 @@ pub struct Session {
     /// que o som passou a ser ligado só com a janela pronta, não saía de jeito nenhum, porque o
     /// jogo já tinha tocado.
     partida: Option<(u32, u32)>,
-    /// A saída de som. Enquanto ela existe, o som toca; largá-la fecha o fluxo.
+    /// A saída de som do host. Um frontend Libretro não tem esta peça: ele recebe o mixer.
+    #[cfg(feature = "desktop")]
     audio: Option<crate::audio::Output>,
     title: String,
     /// O ClassID do applet desta sessão.
@@ -167,7 +168,7 @@ impl Session {
         portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
         serial: Option<&Path>,
         placa: bool,
-        contexto: Option<std::sync::Arc<eframe::glow::Context>>,
+        contexto: Option<std::sync::Arc<glow::Context>>,
         z_wheel: crate::config::ZWheel,
     ) -> Result<Self, StartError> {
         Self::start_inner(path, Some(portas), serial, placa, contexto, z_wheel)
@@ -183,7 +184,7 @@ impl Session {
         portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
         serial: Option<&Path>,
         placa: bool,
-        contexto: Option<std::sync::Arc<eframe::glow::Context>>,
+        contexto: Option<std::sync::Arc<glow::Context>>,
         z_wheel: crate::config::ZWheel,
         storage: &StoragePaths,
     ) -> Result<Self, StartError> {
@@ -226,7 +227,7 @@ impl Session {
         portas: Option<[Option<crate::input::bindings::Aparelho>; crate::input::PORTAS]>,
         serial: Option<&Path>,
         placa: bool,
-        contexto: Option<std::sync::Arc<eframe::glow::Context>>,
+        contexto: Option<std::sync::Arc<glow::Context>>,
         z_wheel: crate::config::ZWheel,
     ) -> Result<Self, StartError> {
         let storage = StoragePaths::from_root(crate::config::config_dir());
@@ -238,7 +239,7 @@ impl Session {
         portas: Option<[Option<crate::input::bindings::Aparelho>; crate::input::PORTAS]>,
         serial: Option<&Path>,
         placa: bool,
-        contexto: Option<std::sync::Arc<eframe::glow::Context>>,
+        contexto: Option<std::sync::Arc<glow::Context>>,
         z_wheel: crate::config::ZWheel,
         storage: &StoragePaths,
     ) -> Result<Self, StartError> {
@@ -327,6 +328,7 @@ impl Session {
         Ok(Self {
             machine,
             partida: Some((applet, clsid)),
+            #[cfg(feature = "desktop")]
             audio: None,
             title: library::title_for(path),
             classe: clsid,
@@ -687,6 +689,7 @@ impl Session {
     ///
     /// Um host sem placa de áudio não pode impedir o jogo de rodar: o motivo é devolvido para
     /// quem quiser mostrá-lo, e o emulador segue mudo.
+    #[cfg(feature = "desktop")]
     pub fn set_audio(&mut self, enabled: bool, volume: u8) -> Option<String> {
         let level = f32::from(volume.min(100)) / 100.0;
         if !enabled {

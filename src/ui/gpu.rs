@@ -14,7 +14,7 @@
 //! assim), então não há pipeline fixo: mesmo para um quadrado com textura é preciso shader.
 
 use eframe::egui;
-use eframe::glow::{self, HasContext};
+use glow::{self, HasContext};
 
 /// O triângulo que cobre a tela inteira, gerado sem vetor de vértices.
 ///

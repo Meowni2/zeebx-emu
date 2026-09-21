@@ -11,4 +11,5 @@ name = "zeebx_libretro"
 crate-type = ["cdylib"]
 
 [dependencies]
-zeebx = { path = "../.." }
+# Sem `desktop`: o core não linka janela, placa de som nem controle do host.
+zeebx = { path = "../..", default-features = false }

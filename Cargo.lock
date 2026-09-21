@@ -5005,6 +5005,7 @@ dependencies = [
  "eframe",
  "flate2",
  "gilrs",
+ "glow",
  "glutin",
  "libc",
  "minifb",

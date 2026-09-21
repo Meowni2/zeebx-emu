@@ -2467,15 +2467,21 @@ fn rasterizador(largura: usize, altura: usize) -> Box<dyn Rasterizador> {
 fn na_placa(
     largura: usize,
     altura: usize,
-    contexto: Option<std::sync::Arc<eframe::glow::Context>>,
+    contexto: Option<std::sync::Arc<glow::Context>>,
 ) -> Box<dyn Rasterizador> {
-    match crate::video::gpu::GpuState::novo(largura, altura, contexto) {
-        Ok(gpu) => Box::new(gpu),
-        Err(motivo) => {
-            eprintln!("sem rasterizador na placa ({motivo}); seguindo em software");
-            Box::new(GlState::new(largura, altura))
+    // Sem a feature `gpu` não há como abrir contexto nenhum: o software é a única rota, e é
+    // exatamente o que um core Libretro quer.
+    #[cfg(feature = "gpu")]
+    {
+        match crate::video::gpu::GpuState::novo(largura, altura, contexto) {
+            Ok(gpu) => return Box::new(gpu),
+            Err(motivo) => {
+                eprintln!("sem rasterizador na placa ({motivo}); seguindo em software");
+            }
         }
     }
+    let _ = contexto;
+    Box::new(GlState::new(largura, altura))
 }
 
 impl<C: CpuBackend> Machine<C> {
@@ -2489,7 +2495,7 @@ impl<C: CpuBackend> Machine<C> {
     pub fn usa_placa(
         &mut self,
         sim: bool,
-        contexto: Option<std::sync::Arc<eframe::glow::Context>>,
+        contexto: Option<std::sync::Arc<glow::Context>>,
     ) {
         let (largura, altura) = self.gl.frame_size();
         self.gl = match placa_pedida(sim) {

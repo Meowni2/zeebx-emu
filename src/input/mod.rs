@@ -6,7 +6,9 @@
 //! índice, então o que precisa estar certo é a tabela.
 
 pub mod bindings;
+#[cfg(feature = "desktop")]
 pub mod gamepads;
+#[cfg(feature = "desktop")]
 pub mod padview;
 pub mod sensores;
 pub mod wiimote;

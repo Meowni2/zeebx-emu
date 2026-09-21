@@ -16,6 +16,7 @@ pub mod ponte;
 pub mod rede;
 pub mod session;
 pub mod storage;
+#[cfg(feature = "desktop")]
 pub mod ui;
 pub mod video;
 

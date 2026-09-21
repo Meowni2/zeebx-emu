@@ -268,7 +268,7 @@ pub struct App {
     ///
     /// Guardá-lo é o que permite pintar o quadro do console com GL do host em vez de mandá-lo
     /// como textura do egui. Sem ele — e o `eframe` admite não ter —, vale o caminho antigo.
-    gl: Option<std::sync::Arc<eframe::glow::Context>>,
+    gl: Option<std::sync::Arc<glow::Context>>,
     /// O pintor de GL, montado na primeira vez que a janela do jogo desenha.
     ///
     /// Vive atrás de um `Mutex` porque o `egui_glow` exige um retorno de chamada `Sync`, e é
@@ -2930,7 +2930,7 @@ impl eframe::App for App {
     /// O contexto só existe enquanto a janela existe: soltar depois seria mexer num contexto
     /// morto, e não soltar deixa programa e textura vivos até o processo acabar. O `eframe`
     /// chama isto com o contexto ainda de pé, que é a única hora em que dá para fazer certo.
-    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self, gl: Option<&glow::Context>) {
         let (Some(gl), Ok(mut guarda)) = (gl, self.pintor.lock()) else {
             return;
         };

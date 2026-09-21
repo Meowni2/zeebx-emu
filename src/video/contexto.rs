@@ -18,7 +18,7 @@
 //! de tela responde que não existe, e o caminho sem janela usa o rasterizador de software. Com
 //! janela nada muda: o backend recebe o contexto do `eframe`.
 
-use eframe::glow;
+use glow;
 #[cfg(not(target_os = "macos"))]
 use glutin::config::{ConfigSurfaceTypes, ConfigTemplateBuilder};
 #[cfg(not(target_os = "macos"))]
@@ -127,7 +127,7 @@ mod tests {
     fn o_contexto_fora_de_tela_abre_ou_diz_por_que_nao() {
         match Contexto::novo() {
             Ok(contexto) => {
-                use eframe::glow::HasContext;
+                use glow::HasContext;
                 let versao = unsafe { contexto.gl.get_parameter_string(glow::VERSION) };
                 let placa = unsafe { contexto.gl.get_parameter_string(glow::RENDERER) };
                 println!("contexto aberto: {versao} — {placa}");
