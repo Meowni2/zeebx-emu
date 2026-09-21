@@ -1395,12 +1395,27 @@ esse nulo, e para isso o relatório não bastava: é o rastreio.
 (`ZEEBX_ROM_TRACO=IFile`). Sem esta opção o rastreio existia no motor e ninguém o ligava numa
 varredura, que é onde a investigação acontece.
 
-**O `1` funciona; o filtro por família não deu resultado e fica anotado.** Com `IGL`, `IHID` e
-`IDisplay` o relatório saiu com a seção vazia, embora o jogo faça milhares de chamadas de `IGLES*`
-(módulo `MatrixMode`) e o filtro seja `contains` sobre o nome descrito — ou seja, deveria casar.
-Não investiguei até o fim porque o `1` já tinha dado o que a sessão precisava. A próxima pessoa
-começa por aqui: rodar `ZEEBX_ROM_TRACO=1` (que funciona) e comparar com `ZEEBX_ROM_TRACO=IGL` no
-mesmo jogo, para ver onde a diferença aparece.
+**Os dois funcionam, e o filtro é o mais útil.** Cheguei a anotar aqui que o filtro por família não
+dava resultado — **e o erro era meu, na leitura**: usei `sed` do cabeçalho até o fim do arquivo e um
+`tail -3`, que pegaram o fim do **log**, não do rastreio. Com `awk` delimitando a seção certa, o
+filtro entrega exatamente o que se quer.
+
+E o que ele entregou foi a **sequência final antes da queda**, filtrada por `IHID`:
+
+```text
+IHIDDevice::RegisterForButtonEvent     (r1=0x30000650)
+IHIDDevice::RegisterForPositionChange  (r1=0x300006d0)
+IHIDDevice::GetMinPositionInfo         (r1=0x1002bad8)
+IHIDDevice::GetMaxPositionInfo         (r1=0x1002bb3c)
+IHIDDevice::GetAxesInfo                (r1=0x1002bba0)
+IHIDDevice::GetPositionState           (r1=0x200fff3c)
+```
+
+É a calibração do controle, feita pelo gerenciador de joystick do jogo, e **todas respondem
+SUCCESS com as estruturas preenchidas** (`write_axis_range`, `write_position_info` com
+`POSITION_INFO_WORDS` e `AXIS_SLOTS`). A falha, portanto, está no que o jogo faz **depois** disso —
+a tabela de entradas de 28 bytes que o rastreio sem filtro mostrou. É daqui que a próxima sessão
+continua: essas seis chamadas são o último contato do jogo com o emulador antes de quebrar.
 
 E o que ele mostrou foi o padrão exato antes da queda: uma **tabela sendo construída**, entradas de
 28 bytes (`malloc 0x1c` seguido de `memmove 0x1c`), num laço, com as origens a 28 bytes de
