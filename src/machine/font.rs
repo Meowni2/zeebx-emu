@@ -91,25 +91,35 @@ pub fn metricas_da_classe(classe: u32) -> Metricas {
         0x0100_a002 => (6, 2, 1, 5, 9, false),
         0x0100_a003 => (9, 3, 1, 6, 13, false),
         0x0100_a004 => (10, 3, 1, 7, 14, false),
-        0x0100_a005 | 0x0101_2786 | 0x0101_402c | 0x0102_f679 | 0x0100_1022 => {
-            (13, 3, 2, 8, 18, false)
-        }
-        0x0100_a006 | 0x0101_2788 | 0x0101_402d | 0x0102_f67a => (13, 3, 2, 8, 18, true),
+        0x0100_a005 | 0x0101_2786 | 0x0101_402c | 0x0100_1022 => (13, 3, 2, 8, 18, false),
+        0x0100_a006 | 0x0101_2788 | 0x0101_402d => (13, 3, 2, 8, 18, true),
         0x0100_a007 => (14, 4, 2, 9, 20, false),
         0x0100_a008 => (12, 4, 2, 8, 18, false),
         0x0100_a009 => (12, 4, 2, 8, 18, true),
         0x0100_a00a => (15, 4, 2, 10, 21, false),
         0x0101_2787 | 0x0101_402e => (21, 5, 2, 10, 28, false),
-        0x0102_f67b => (17, 4, 2, 9, 23, false),
-        0x0103_0852 => (15, 3, 2, 8, 20, false),
-        0x0102_f67c | 0x0103_0853 => (17, 4, 2, 9, 23, true),
-        0x0102_f67d | 0x0102_f67e => (21, 5, 2, 10, 28, false),
-        0x0102_f67f | 0x0102_f680 => (23, 6, 2, 10, 31, false),
+        // A família `FONT_STANDARD`, uma linha por classe, com `ascent` e `descent` **copiados do
+        // `AEEFontsStandard.BID`** e o negrito que o próprio texto do `.bid` declara ("Bolded").
+        // A tabela errava três: a `STANDARD15B` respondia 17/4 — os números da 18B —, e o negrito
+        // da 23B e da 26B vivia num remendo fora da tabela, onde a próxima edição não o veria.
+        // Um jogo que reserva altura pela resposta do `GetInfo` desenha linha em cima de linha
+        // quando ela vem errada, e a diferença de 2 px entre 15/3 e 17/4 é a altura de uma linha
+        // inteira numa tela de 320 pixels.
+        0x0102_f679 => (13, 3, 2, 8, 18, false), // STANDARD11
+        0x0102_f67a => (13, 3, 2, 8, 18, true),  // STANDARD11B
+        0x0103_0852 => (15, 3, 2, 8, 20, false), // STANDARD15
+        0x0103_0853 => (15, 3, 2, 8, 20, true),  // STANDARD15B
+        0x0102_f67b => (17, 4, 2, 9, 23, false), // STANDARD18
+        0x0102_f67c => (17, 4, 2, 9, 23, true),  // STANDARD18B
+        0x0102_f67d => (21, 5, 2, 10, 28, false), // STANDARD23
+        0x0102_f67e => (21, 5, 2, 10, 28, true), // STANDARD23B
+        0x0102_f67f => (23, 6, 2, 10, 31, false), // STANDARD26
+        0x0102_f680 => (23, 6, 2, 10, 31, true), // STANDARD26B
         // A maior do sistema, usada em títulos grandes.
-        0x0102_f681 => (38, 10, 2, 12, 50, false),
+        0x0102_f681 => (38, 10, 2, 12, 50, false), // STANDARD36
         _ => (12, 4, 2, 8, 16, false),
     };
-    let negrito = bold || classe == 0x0102_f67e || classe == 0x0102_f680;
+    let negrito = bold;
     Metricas {
         ascent,
         descent,
@@ -118,6 +128,55 @@ pub fn metricas_da_classe(classe: u32) -> Metricas {
         height,
         bold: negrito,
         italic: matches!(classe, 0x0101_402c | 0x0101_402d | 0x0101_402e),
+    }
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+
+    /// **As métricas do `FONT_STANDARD` são transcritas do `.bid`, não inventadas.**
+    ///
+    /// O `AEEFontsStandard.BID` declara ascent e descent das onze classes, e diz quais são negrito.
+    /// Este teste é a cópia literal daquele arquivo: se alguém "arrumar" a tabela de memória, ele
+    /// discorda — que é o ponto, porque a memória já errou três linhas uma vez.
+    #[test]
+    fn as_metricas_do_standard_batem_com_o_bid() {
+        let bid = [
+            (0x0102_f679u32, 13u16, 3u16, false), // STANDARD11
+            (0x0102_f67a, 13, 3, true),           // STANDARD11B
+            (0x0103_0852, 15, 3, false),          // STANDARD15
+            (0x0103_0853, 15, 3, true),           // STANDARD15B
+            (0x0102_f67b, 17, 4, false),          // STANDARD18
+            (0x0102_f67c, 17, 4, true),           // STANDARD18B
+            (0x0102_f67d, 21, 5, false),          // STANDARD23
+            (0x0102_f67e, 21, 5, true),           // STANDARD23B
+            (0x0102_f67f, 23, 6, false),          // STANDARD26
+            (0x0102_f680, 23, 6, true),           // STANDARD26B
+            (0x0102_f681, 38, 10, false),         // STANDARD36
+        ];
+        for (classe, ascent, descent, negrito) in bid {
+            let medida = metricas_da_classe(classe);
+            assert_eq!(
+                (medida.ascent, medida.descent),
+                (ascent, descent),
+                "ascent/descent da classe {classe:#010x}"
+            );
+            assert_eq!(medida.bold, negrito, "negrito da classe {classe:#010x}");
+            assert!(
+                medida.height >= medida.ascent + medida.descent,
+                "altura menor que a soma de ascent e descent na {classe:#010x}"
+            );
+        }
+    }
+
+    /// A `STANDARD15B` responde como a 15, e não como a 18: era o defeito que esteve aqui.
+    #[test]
+    fn a_standard15b_nao_herda_os_numeros_da_18b() {
+        let quinze_b = metricas_da_classe(0x0103_0853);
+        let quinze = metricas_da_classe(0x0103_0852);
+        assert_eq!((quinze_b.ascent, quinze_b.descent), (quinze.ascent, quinze.descent));
+        assert_ne!((quinze_b.ascent, quinze_b.descent), (17, 4));
     }
 }
 
