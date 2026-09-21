@@ -1842,8 +1842,20 @@ prática é que **só o RetroArch responde** — não vale gastar outra sessão 
 A **precondição**, essa sim, está medida pelo caminho do core: ao abrir a Z-Wheel, o core acha
 **63 jogos** ao lado do conteúdo (o levantamento por ClassID, com deduplicação entre o `.zip` e a
 cópia extraída). Isso separa dois sintomas que se parecem: **"a roda abre vazia" não é falha de
-descoberta** — ela soube de todos os 63. O que falta verificar é o desenho e a escolha, e para isso
-é preciso controle na mão.
+descoberta** — ela soube de todos os 63.
+
+**E a entrada chega ao guest, medido.** O teste `a_entrada_do_retropad_chega_ao_guest` aperta um
+botão do RetroPad pelo caminho do core e conta as imagens distintas que o jogo devolve:
+
+```text
+Pac-Mania:   botão START →  2 imagens distintas em 60 quadros (o jogo respondeu)
+Peteca:      botão START → 28 imagens distintas em 60 quadros
+```
+
+Isso fecha a outra hipótese que estava aberta: quando a Z-Wheel não reagiu ao manche no teste
+headless, eu não sabia se era o caminho de entrada do core ou o estado da roda. **É o estado da
+roda** — a entrada comprovadamente chega ao guest, em dois jogos. O que falta na Z-Wheel é o
+frontend de verdade, que é o que o item 8 pede.
 
 ### Item 9 — capas e No-Intro: depende de conta
 

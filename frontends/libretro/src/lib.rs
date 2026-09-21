@@ -1494,6 +1494,70 @@ mod testes {
     /// funciona", sem nada no log que explique. Os números são a soma dos campos que o
     /// `include/libretro.h` declara, na ordem dele.
     #[test]
+    fn a_entrada_do_retropad_chega_ao_guest() {
+        let Ok(caminho) = std::env::var("ZEEBX_TESTE_ROM") else {
+            eprintln!("sem ZEEBX_TESTE_ROM: nada a testar");
+            return;
+        };
+        let pasta = std::env::temp_dir().join(format!("zeebx-entrada-{}", std::process::id()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        let _ = PASTA.set(CString::new(pasta.to_string_lossy().to_string()).unwrap());
+        let caminho_c = CString::new(caminho.clone()).unwrap();
+        let info = RetroGameInfo {
+            path: caminho_c.as_ptr(),
+            data: std::ptr::null(),
+            size: 0,
+            meta: std::ptr::null(),
+        };
+        let mut reagiu = None;
+        unsafe {
+            retro_set_environment(Some(ambiente));
+            retro_set_video_refresh(Some(video));
+            retro_set_audio_sample_batch(Some(audio));
+            retro_set_input_poll(Some(sem_poll));
+            retro_set_input_state(Some(entrada));
+            retro_init();
+            retro_set_controller_port_device(0, DEVICE_JOYPAD);
+            assert!(retro_load_game(&info), "o core recusou {caminho}");
+            for _ in 0..180 {
+                retro_run();
+            }
+            for botao in [ID_START, ID_A, ID_B, ID_SELECT] {
+                if let Ok(mut vistos) = ASSINATURAS.lock() {
+                    vistos.clear();
+                }
+                BOTAO.store(botao, Ordering::Relaxed);
+                for _ in 0..40 {
+                    retro_run();
+                }
+                BOTAO.store(u32::MAX, Ordering::Relaxed);
+                for _ in 0..20 {
+                    retro_run();
+                }
+                let distintas = ASSINATURAS
+                    .lock()
+                    .map(|v| v.iter().collect::<std::collections::BTreeSet<_>>().len())
+                    .unwrap_or(0);
+                eprintln!("botao {botao}: {distintas} imagem(ns) distinta(s) em 60 quadros");
+                if distintas > 1 {
+                    reagiu = Some(botao);
+                    break;
+                }
+            }
+            retro_unload_game();
+            retro_deinit();
+        }
+        let _ = std::fs::remove_dir_all(&pasta);
+        eprintln!(
+            "entrada: {}",
+            match reagiu {
+                Some(botao) => format!("chegou — o botao {botao} mudou a imagem"),
+                None => "nenhum dos quatro botoes mudou a imagem".to_string(),
+            }
+        );
+    }
+
+    #[test]
     fn os_deslocamentos_do_struct_da_placa_batem_com_o_libretro_h() {
         use std::mem::{offset_of, size_of};
         assert_eq!(offset_of!(RetroHwRenderCallback, context_reset), 8);
