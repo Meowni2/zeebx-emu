@@ -926,6 +926,14 @@ pub const SPLASH_DA_Z_WHEEL: &str = "zeebosplash.rgb565.raw";
 /// usa isto, e por isso não faz parte da interface da sessão.
 #[cfg(test)]
 impl Session {
+    /// O motor, para quem precisa ligar uma medição antes de rodar.
+    ///
+    /// Existe para o perfil de tempo por método: ligar o cronômetro por chamada é coisa que se faz
+    /// **antes** do laço, e a varredura precisa fazer isso de fora da sessão.
+    pub(crate) fn machine_mut(&mut self) -> &mut Machine<DynarmicCpu> {
+        &mut self.machine
+    }
+
     pub(crate) fn machine(&self) -> &Machine<DynarmicCpu> {
         &self.machine
     }

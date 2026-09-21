@@ -118,6 +118,26 @@ pub trait CpuBackend {
 
     fn write_mem(&mut self, addr: u32, data: &[u8]) -> Result<(), CpuError>;
 
+    /// Preenche `len` bytes com `valor`, sem alocar.
+    ///
+    /// Existe por causa de uma medição: o `memset` do guest é chamado em laço de espera, e a
+    /// implementação por `write_mem` **alocava um `Vec` do tamanho pedido em cada chamada**. No
+    /// Zeebo Extreme Rolima isso era 731 ms dos 1.149 ms gastos em chamadas de API — 63% —, para
+    /// 12 mil chamadas de limpeza. Aqui a limpeza vai em blocos de um buffer de pilha.
+    fn fill_mem(&mut self, addr: u32, valor: u8, len: u32) -> Result<(), CpuError> {
+        const BLOCO: usize = 4096;
+        let pilha = [valor; BLOCO];
+        let mut restante = len as usize;
+        let mut onde = addr;
+        while restante > 0 {
+            let passo = restante.min(BLOCO);
+            self.write_mem(onde, &pilha[..passo])?;
+            onde = onde.wrapping_add(passo as u32);
+            restante -= passo;
+        }
+        Ok(())
+    }
+
     fn read_u32(&self, addr: u32) -> Result<u32, CpuError> {
         let mut buf = [0u8; 4];
         self.read_mem(addr, &mut buf)?;

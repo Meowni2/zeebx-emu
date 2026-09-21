@@ -309,6 +309,16 @@ pub struct Relatorio {
     pub estado_da_falha: Option<String>,
     /// Os métodos mais chamados, do maior para o menor.
     pub chamadas_maiores: Vec<(String, u64)>,
+    /// Onde o tempo real foi gasto, por método de API, do mais caro para o mais barato.
+    ///
+    /// Vazio a menos que `ZEEBX_ROM_PERFIL` esteja definido: ligar o cronômetro em cada chamada
+    /// muda a velocidade medida, e o número de velocidade é o que a varredura existe para dar.
+    /// Com a contagem de chamadas ao lado do custo, dá para separar **volume** de **peso**: o
+    /// Rolima fazia 6,8 milhões de chamadas e o Ridge Racer 70 mil, e só o perfil diz qual dos
+    /// dois custa mais por chamada.
+    pub custo_maiores: Vec<(String, u64)>,
+    /// O tempo real somado de todas as chamadas de API, em nanossegundos.
+    pub custo_total: u64,
     /// O fim do log do próprio jogo, por `DBGPRINTF` e por semihosting.
     pub log_do_jogo: Vec<String>,
     /// O que o áudio fez, quando houve áudio para medir.
@@ -402,6 +412,19 @@ impl Relatorio {
         if let Some(estado) = &self.estado_da_falha {
             texto.push_str(&format!("no instante da falha:\n{estado}"));
         }
+        if !self.custo_maiores.is_empty() {
+            texto.push_str(&format!(
+                "onde o tempo foi ({} ms em chamadas de API):\n",
+                self.custo_total / 1_000_000
+            ));
+            for (nome, ns) in &self.custo_maiores {
+                texto.push_str(&format!(
+                    "  {:>9.1} ms  {:>5.1}%  {nome}\n",
+                    *ns as f64 / 1e6,
+                    *ns as f64 * 100.0 / (self.custo_total.max(1)) as f64,
+                ));
+            }
+        }
         if let Some(audio) = &self.audio {
             // Fica no relatório completo e não no resumo, pela mesma razão do estado da falha:
             // é número de investigação, e a linha de base não cobra limiar escolhido hoje.
@@ -475,6 +498,8 @@ impl Relatorio {
             pendencias: Pendencias::default(),
             estado_da_falha: None,
             chamadas_maiores: Vec::new(),
+            custo_maiores: Vec::new(),
+            custo_total: 0,
             log_do_jogo: Vec::new(),
             audio: None,
         }
@@ -526,6 +551,11 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     // **O áudio é medido, não ouvido.** Sem placa, o mixer entrega as amostras do relógio virtual —
     // a mesma cadência que o frontend Libretro usa —, e a conta do estalo sai daí.
     let mixer = session.grava_audio(TAXA_DE_AMOSTRAGEM);
+    // Perfil de custo: opt-in, porque o cronômetro por chamada encarece a própria execução.
+    let perfilando = std::env::var("ZEEBX_ROM_PERFIL").is_ok();
+    if perfilando {
+        session.machine_mut().enable_api_profile();
+    }
     let mut som = Audio::default();
     let mut soma = 0.0_f64;
     let mut soma_dos_quadrados = 0.0_f64;
@@ -632,6 +662,17 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     log.drain(..sobra);
 
     medida.pixels = session.screen().escritas();
+    // O total sai da lista inteira, e só depois ela é cortada: a fatia mostrada tem de ser
+    // porcentagem do que o jogo gastou, e não do punhado que coube no relatório.
+    let (mut custo, custo_total) = match perfilando {
+        true => {
+            let tudo = session.machine().api_profile();
+            let total: u64 = tudo.iter().map(|(_, ns)| ns).sum();
+            (tudo, total)
+        }
+        false => (Vec::new(), 0),
+    };
+    custo.truncate(CHAMADAS_MOSTRADAS);
     // Fecha as contas do áudio. `rms` e `continuo` só fazem sentido com amostra na conta, e um
     // jogo que não tocou nada fica com `None` em vez de zeros que pareceriam silêncio medido.
     if som.amostras > 0 {
@@ -653,6 +694,8 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
         pendencias: Pendencias::de(&session),
         estado_da_falha: estado_da_falha(&session),
         chamadas_maiores: chamadas,
+        custo_maiores: custo,
+        custo_total,
         log_do_jogo: log,
         audio,
     }
@@ -1070,6 +1113,8 @@ fn exige_espaco(dirs: &[PathBuf]) {
             },
             estado_da_falha: None,
             chamadas_maiores: vec![("IDisplay::Update".to_string(), 300)],
+            custo_maiores: Vec::new(),
+            custo_total: 0,
             log_do_jogo: vec!["carregando".to_string()],
             audio: None,
         };
@@ -1082,6 +1127,8 @@ fn exige_espaco(dirs: &[PathBuf]) {
                 ..Default::default()
             }),
             chamadas_maiores: Vec::new(),
+            custo_maiores: Vec::new(),
+            custo_total: 0,
             log_do_jogo: Vec::new(),
             audio: None,
             ..modelo.clone()
@@ -1104,6 +1151,8 @@ fn exige_espaco(dirs: &[PathBuf]) {
             pendencias: Pendencias::default(),
             estado_da_falha: None,
             chamadas_maiores: Vec::new(),
+            custo_maiores: Vec::new(),
+            custo_total: 0,
             log_do_jogo: Vec::new(),
             audio: None,
         };
@@ -1134,6 +1183,8 @@ fn exige_espaco(dirs: &[PathBuf]) {
             pendencias: Pendencias::default(),
             estado_da_falha: None,
             chamadas_maiores: Vec::new(),
+            custo_maiores: Vec::new(),
+            custo_total: 0,
             log_do_jogo: Vec::new(),
             audio: None,
         };
@@ -1169,6 +1220,8 @@ fn exige_espaco(dirs: &[PathBuf]) {
             pendencias: Pendencias::default(),
             estado_da_falha: Some("  r0=0x0 r1=0x24\n  pilha: 0x1 0x2\n".to_string()),
             chamadas_maiores: Vec::new(),
+            custo_maiores: Vec::new(),
+            custo_total: 0,
             log_do_jogo: Vec::new(),
             audio: None,
         };
