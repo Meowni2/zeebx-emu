@@ -86,8 +86,101 @@ jobs:
             target/pacotes/*.dmg
           if-no-files-found: error
 
+  # O core Libretro nos seis alvos. É o mesmo caminho do `libretro.yml`, e o que muda é o
+  # empacotamento: um `.zip` por alvo, com o `.so`/`.dll`/`.dylib` e o `.info` juntos, porque o
+  # RetroArch quer os dois **com o mesmo nome** na pasta de cores — e porque seis arquivos com o
+  # mesmo nome não cabem soltos numa release.
+  core:
+    name: core-${{ matrix.nome }}
+    runs-on: ${{ matrix.sistema }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nome: linux-x86_64
+            sistema: ubuntu-24.04
+            biblioteca: target/release/libzeebx_libretro.so
+            arquivo: zeebx_libretro.so
+          - nome: linux-aarch64
+            sistema: ubuntu-24.04-arm
+            biblioteca: target/release/libzeebx_libretro.so
+            arquivo: zeebx_libretro.so
+          - nome: windows-x86_64
+            sistema: windows-latest
+            biblioteca: target/release/zeebx_libretro.dll
+            arquivo: zeebx_libretro.dll
+          - nome: windows-aarch64
+            sistema: windows-11-arm
+            biblioteca: target/release/zeebx_libretro.dll
+            arquivo: zeebx_libretro.dll
+          - nome: macos-arm64
+            sistema: macos-latest
+            biblioteca: target/release/libzeebx_libretro.dylib
+            arquivo: zeebx_libretro.dylib
+          - nome: macos-x86_64
+            sistema: macos-15-intel
+            biblioteca: target/release/libzeebx_libretro.dylib
+            arquivo: zeebx_libretro.dylib
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: core-${{ matrix.nome }}
+
+      - name: Dependências do Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config libclang-dev libglib2.0-dev
+
+      - name: Dependências do macOS
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja pkg-config || true
+
+      - name: Compila o core
+        env:
+          CARGO_PROFILE_DEV_DEBUG: "0"
+        run: cargo build --release --locked -p zeebx-libretro
+
+      # A mesma prova do `libretro.yml`: abrir a biblioteca como o frontend abre e chamar a ABI.
+      - name: A biblioteca carrega e a ABI responde
+        run: python3 ferramentas/verifica_core.py "${{ matrix.biblioteca }}"
+
+      # **Cada sistema empacota com a ferramenta que tem.** O `zip` não existe no runner do
+      # Windows, e o `Compress-Archive` não existe nos outros: um `shell: bash` com `zip` falharia
+      # em um terço dos alvos, no dia da tag.
+      - name: Empacota o core (Linux e macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p pacote
+          cp "${{ matrix.biblioteca }}" "pacote/${{ matrix.arquivo }}"
+          cp frontends/libretro/zeebx_libretro.info pacote/
+          cd pacote && zip -r "../zeebx_libretro-${{ matrix.nome }}.zip" .
+
+      - name: Empacota o core (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path pacote | Out-Null
+          Copy-Item "${{ matrix.biblioteca }}" "pacote/${{ matrix.arquivo }}"
+          Copy-Item "frontends/libretro/zeebx_libretro.info" "pacote/"
+          Compress-Archive -Path pacote/* -DestinationPath "zeebx_libretro-${{ matrix.nome }}.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeebx_libretro_${{ matrix.nome }}
+          path: zeebx_libretro-${{ matrix.nome }}.zip
+
   release:
-    needs: pacotes
+    # O core entra na release junto com os instaladores: o objetivo é **publicar** o core, e um
+    # artefato de CI que ninguém baixa não é publicação. O `!cancelled()` do `if` continua valendo,
+    # então um alvo que falhe não segura os outros.
+    needs: [pacotes, core]
     # Sai com o que deu certo: um sistema que falhou não segura os outros.
     if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest

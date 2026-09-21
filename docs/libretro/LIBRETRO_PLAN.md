@@ -1367,6 +1367,23 @@ próxima vez:
    inteiro** — o run aparece como falha **sem nenhum trabalho**. `actionlint` e um leitor de YAML
    não acusam: o diagnóstico é o run vazio.
 
+## Publicação do core
+
+O core é publicado junto com os instaladores, na mesma tag. O trabalho `core` do `release.yml`
+compila e confere os seis alvos (a mesma prova de ABI do `libretro.yml`) e empacota **um `.zip` por
+alvo**, com a biblioteca e o `.info` juntos — o RetroArch quer os dois com o mesmo nome na pasta de
+cores, e seis arquivos de mesmo nome não cabem soltos numa release.
+
+```text
+zeebx_libretro-linux-x86_64.zip      zeebx_libretro-windows-x86_64.zip
+zeebx_libretro-linux-aarch64.zip     zeebx_libretro-windows-aarch64.zip
+zeebx_libretro-macos-x86_64.zip      zeebx_libretro-macos-arm64.zip
+```
+
+Cada sistema empacota com a ferramenta que tem: `zip` no Linux e no macOS, `Compress-Archive` no
+Windows — o `zip` **não existe** no runner do Windows, e um `shell: bash` com `zip` falharia num
+terço dos alvos no dia da tag.
+
 ## O que falta, com o mapa de cada item
 
 ### Item 5 — render em hardware: só o encanamento
