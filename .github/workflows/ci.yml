@@ -83,12 +83,6 @@ jobs:
             # monta um `.asm` com o `ml` do MSVC, que só existe para x86 e x64). O alvo compila assim
             # mesmo: o `unicorn-engine` sai do grafo por dependência condicional de alvo e o motor usa o
             # `dynarmic`, que recompila os blocos A32. Ver `src/cpu/mod.rs`, `BackendPadrao`.
-            # monta `qemu/util/setjmp-wrapper-win32.asm` com o `ml` do MSVC — que so existe para x86 e x64.
-            # Nao ha montador MASM para ARM64, entao o `ml` nao e encontrado (o log traz "CreateProcess
-            # failed: The system cannot find the file specified") e o build para ali. O `unicorn-engine`
-            # 2.1.5 e a ultima versao publicada, e o QEMU nao tem o Windows ARM64 como host. O alvo fica na
-            # matriz para o dia em que isso mudar, ou para o dia em que o unicorn virar opcional nesta
-            # plataforma; enquanto isso, ele nao derruba a rodada.
             binario: target/release/zeebx.exe
           - alvo: macos-x86_64
             nome: macos-x86_64
