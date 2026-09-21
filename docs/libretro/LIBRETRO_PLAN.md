@@ -1274,6 +1274,19 @@ escritas: registrava "roda" com a tela apagada. Agora o relatório conta **cores
 dominante**, e a linha entra na comparação com a linha de base — uma regressão que apaga a tela sem
 quebrar a execução passa a aparecer no commit que a causou.
 
+**A contagem entra na linha de base, então ela precisava ser estável** — uma métrica que varia
+entre execuções acusaria regressão falsa a cada varredura, e um teste que acusa sempre não é lido
+nunca. Medido com o Pac-Mania, três execuções seguidas:
+
+```text
+execução 1: tela: 695 cor(es), dominante 0x0004
+execução 2: tela: 695 cor(es), dominante 0x0004
+execução 3: tela: 695 cor(es), dominante 0x0004
+```
+
+É o esperado — o quadro final é função do tempo **virtual**, que a varredura controla — e é o que
+permite à linha de base cobrar a linha inteira, e não só o estado.
+
 Na primeira varredura com a métrica, duas telas pretas entre os que "rodam", e dar mais tempo
 virtual separou os dois casos possíveis:
 
