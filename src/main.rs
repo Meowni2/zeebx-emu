@@ -9,10 +9,6 @@
 // quais deles entram na compilação.
 use zeebx::{audio, cpu, input, library, loader, machine, session, ui};
 
-/// Varredura de ROMs por teste — ver [`varredura`]. Só existe em compilação de teste.
-#[cfg(test)]
-use zeebx::varredura;
-
 use std::process::ExitCode;
 
 use zeebx::brew::aee;
