@@ -107,6 +107,18 @@ struct RetroHwRenderCallback {
     bottom_left_origin: bool,
     version_major: u32,
     version_minor: u32,
+    /// Se o frontend quer que o core guarde os recursos de GL entre contextos.
+    ///
+    /// Fica declarado para o struct ter o **tamanho e os deslocamentos** do `libretro.h`: um campo
+    /// a menos aqui e o `context_destroy` abaixo seria lido no lugar errado. Não usamos cache, e
+    /// responder `false` (o zero) é a resposta certa.
+    cache_context: bool,
+    /// Chamado pelo frontend quando o contexto **deixa de valer** — trocar de driver de vídeo, por
+    /// exemplo. Sem ele, o `glow::Context` que guardamos continua apontando para funções que já não
+    /// existem e o primeiro desenho depois disso quebra.
+    context_destroy: Option<unsafe extern "C" fn()>,
+    /// O resto do struct não nos interessa, mas o tamanho tem de bater com o do frontend.
+    _resto: [usize; 4],
 }
 
 /// O que o frontend respondeu ao pedido de render em hardware.
@@ -148,6 +160,10 @@ fn pede_o_contexto_de_placa() {
         bottom_left_origin: false,
         version_major: 3,
         version_minor: 3,
+        // Não guardamos recursos de GL entre contextos, e o `libretro` só oferece a opção.
+        cache_context: false,
+        context_destroy: Some(contexto_perdido),
+        _resto: [0; 4],
     };
     let alvo = &mut oferta as *mut RetroHwRenderCallback as *mut c_void;
     if unsafe { environ(ENV_SET_HW_RENDER, alvo) } {
@@ -240,6 +256,22 @@ fn liga_a_placa(estado: &mut Core) {
 unsafe extern "C" fn contexto_pronto() {
     CONTEXTO_PRONTO.store(true, std::sync::atomic::Ordering::Relaxed);
 }
+
+/// O frontend avisa que o contexto deixou de valer.
+///
+/// **O `glow::Context` guardado vira lixo aqui**: as funções de GL que ele resolveu não existem
+/// mais. Descartar o contexto e voltar ao software é a resposta segura — o jogo continua rodando
+/// no processador, e o aviso diz por quê.
+unsafe extern "C" fn contexto_perdido() {
+    if let Ok(mut guarda) = PLACA.lock() {
+        *guarda = None;
+    }
+    CONTEXTO_PRONTO.store(false, std::sync::atomic::Ordering::Relaxed);
+    PERDEU_A_PLACA.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Se o frontend já avisou que o contexto se perdeu. Ver [`contexto_perdido`].
+static PERDEU_A_PLACA: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Pergunta se o frontend aceita receber quadro nulo quando nada mudou.
 const ENV_GET_CAN_DUPE: u32 = 3;
@@ -1132,6 +1164,20 @@ pub extern "C" fn retro_run() {
         // lugar em que ele pode estar pronto. Recriar a sessão custa um reinício que ninguém vê:
         // nenhum quadro foi entregue ainda.
         liga_a_placa(estado);
+        // **O contexto se perdeu e a sessão estava nele.** O aviso sozinho não basta: a sessão
+        // guarda o rasterizador de placa, e continuar desenhando por ele chamaria funções de GL que
+        // já não existem. Voltar ao software é o mesmo caminho da falha na ativação.
+        if PERDEU_A_PLACA.swap(false, std::sync::atomic::Ordering::Relaxed) && estado.placa_ligada {
+            estado.placa_ligada = false;
+            let antes = estado.path.clone();
+            if let Err(erro) = troca_para(estado, &antes, false) {
+                aviso(&format!(
+                    "Zeebx: o contexto de placa se perdeu e nem no processador deu para reabrir: {erro}"
+                ));
+            } else {
+                aviso("Zeebx: o frontend trocou o contexto de vídeo; seguindo no processador");
+            }
+        }
         // Em modo de placa, o alvo do desenho é o framebuffer que o frontend indica **a cada
         // quadro** — ele pode trocar.
         if let Some(pega_framebuffer) = OFERTA_DE_PLACA
@@ -1439,6 +1485,27 @@ pub extern "C" fn retro_get_memory_size(_id: u32) -> usize {
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    /// **Os deslocamentos do struct da placa têm de bater com o `libretro.h`.**
+    ///
+    /// O core preenche o struct, o frontend o devolve preenchido, e nós lemos
+    /// `get_current_framebuffer` e `get_proc_address` dele. Um campo a mais ou a menos aqui faria
+    /// esses dois serem lidos no lugar errado — e o sintoma seria "o render em hardware não
+    /// funciona", sem nada no log que explique. Os números são a soma dos campos que o
+    /// `include/libretro.h` declara, na ordem dele.
+    #[test]
+    fn os_deslocamentos_do_struct_da_placa_batem_com_o_libretro_h() {
+        use std::mem::{offset_of, size_of};
+        assert_eq!(offset_of!(RetroHwRenderCallback, context_reset), 8);
+        assert_eq!(offset_of!(RetroHwRenderCallback, get_current_framebuffer), 16);
+        assert_eq!(offset_of!(RetroHwRenderCallback, get_proc_address), 24);
+        assert_eq!(offset_of!(RetroHwRenderCallback, depth), 32);
+        assert_eq!(offset_of!(RetroHwRenderCallback, version_major), 36);
+        assert_eq!(offset_of!(RetroHwRenderCallback, version_minor), 40);
+        assert_eq!(offset_of!(RetroHwRenderCallback, cache_context), 44);
+        assert_eq!(offset_of!(RetroHwRenderCallback, context_destroy), 48);
+        assert!(size_of::<RetroHwRenderCallback>() >= 56);
+    }
     use std::ffi::CString;
     use std::sync::OnceLock;
     use std::sync::atomic::{AtomicU32, Ordering};
