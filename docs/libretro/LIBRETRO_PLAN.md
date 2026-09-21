@@ -1297,7 +1297,30 @@ texturas comprimidas, blend), não a velocidade deste acervo.
 
 O `memset` do Rolima custava 731 ms porque o `helpers` **alocava um `Vec` do tamanho pedido em cada
 chamada**. Com limpeza em blocos de um buffer de pilha: 520 ms, e o jogo de 247% para 267%.
-| Render em hardware (`SET_HW_RENDER`) | **falta** | o core entrega RGB565 do rasterizador software; o 3D roda por ele |
+| Render em hardware (`SET_HW_RENDER`) | **meio caminho, com prova** | o rasterizador da placa está **verificado contra o de software** (ver abaixo); falta ligar ao core |
+
+### O rasterizador da placa desenha o mesmo quadro, medido
+
+Antes de ligar `SET_HW_RENDER` no core, era preciso saber se o caminho de GPU desenha **a mesma
+imagem** que o de software — senão a troca seria sair de um caminho medido para um que ninguém
+olhou. O teste `os_dois_rasterizadores_desenham_o_mesmo_quadro` roda o mesmo conteúdo pelo mesmo
+tempo virtual nos dois e compara pixel a pixel, **sem janela** (o contexto fora de tela existe
+justamente para isso: medir).
+
+```bash
+ZEEBX_TESTE_ROM="roms/jogo.zip" ZEEBX_TESTE_MS=3000   cargo test --features gpu os_dois_rasterizadores -- --nocapture
+```
+
+| Jogo | Pixels diferentes | Diferença média | Pior pixel |
+|---|---:|---:|---:|
+| Double Dragon | **0,00%** | 0,000 | 0 |
+| Crash Nitro Kart 3D | **0,00%** | 0,000 | 0 |
+| Zeebo Sports Peteca | 2,62% | 0,034 | 3 de 63 |
+
+Dois jogos saem **idênticos**, e o terceiro difere só em arredondamento de meio nível — o que a
+comparação cobra é que desenhem a mesma imagem, não que sejam bit a bit iguais. Com esta conta
+feita, o que falta no item 5 é o encanamento: negociar o contexto com o frontend na
+`RETRO_ENVIRONMENT_SET_HW_RENDER` e entregar o `glow::Context` que o motor já aceita.
 
 ### A lacuna de GL que o levantamento achou
 

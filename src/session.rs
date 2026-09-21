@@ -952,6 +952,112 @@ impl Session {
 mod tests {
     use super::*;
 
+/// **O mesmo jogo pelos dois rasterizadores, no mesmo instante virtual.**
+///
+/// É a verificação que faltava para o render em hardware. Com a janela fechada, os dois caminhos
+/// rodam o mesmo conteúdo pelo mesmo tempo virtual, e os quadros são comparados byte a byte. Sem
+/// isto, ligar o render em hardware seria trocar um caminho medido por um caminho que ninguém
+/// olhou — e é por isso que o `SET_HW_RENDER` fica por fazer no core até esta conta existir.
+///
+/// **Sem `ZEEBX_TESTE_ROM` não roda**, e **sem placa também não**: num terminal sem EGL o caminho
+/// fora de tela responde que não existe, e isso é o caso normal, não uma falha do teste.
+#[cfg(feature = "gpu")]
+#[test]
+fn os_dois_rasterizadores_desenham_o_mesmo_quadro() {
+    use std::time::Duration;
+
+    let Ok(rom) = std::env::var("ZEEBX_TESTE_ROM") else {
+        eprintln!("sem ZEEBX_TESTE_ROM: nada a comparar");
+        return;
+    };
+    let origem = std::path::PathBuf::from(&rom);
+    let ms: u64 = std::env::var("ZEEBX_TESTE_MS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(3000);
+
+    // O contexto precisa ficar vivo enquanto a sessão roda: as funções de GL moram nele.
+    let contexto = match crate::video::contexto::Contexto::novo() {
+        Ok(contexto) => contexto,
+        Err(porque) => {
+            eprintln!("sem placa fora de tela: {porque}");
+            return;
+        }
+    };
+
+    let tela_de = |placa: bool, contexto: Option<std::sync::Arc<glow::Context>>| {
+        let mut session = Session::start_with(
+            &origem,
+            crate::PORTAS_PADRAO,
+            None,
+            placa,
+            contexto,
+            Default::default(),
+        )
+        .ok()?;
+        let base = session.clock_ms();
+        while session.clock_ms().saturating_sub(base) < ms as u32 {
+            match session.step(Duration::ZERO, false) {
+                Step::Stopped => break,
+                Step::Presented => {
+                    while session.mostra_quadro_intermediario() {}
+                }
+                Step::Running | Step::Ahead => {}
+            }
+        }
+        let tela = session.screen();
+        let (largura, altura) = (tela.width(), tela.height());
+        let mut bytes = Vec::new();
+        tela.write_rgb565_into(&mut bytes);
+        Some((largura, altura, bytes))
+    };
+
+    let software = tela_de(false, None).expect("a sessão de software abriu");
+    let placa = tela_de(true, Some(contexto.gl.clone())).expect("a sessão de placa abriu");
+
+    assert_eq!(
+        (software.0, software.1),
+        (placa.0, placa.1),
+        "os dois caminhos desenham em tamanhos diferentes"
+    );
+    assert_eq!(software.2.len(), placa.2.len());
+
+    // Comparação de pixel RGB565: quantos diferem e por quanto. Um rasterizador na placa e outro
+    // no processador não dão o **mesmo** quadro — a diferença é arredondamento e ordem de
+    // operações. O que se cobra aqui é que desenhem a mesma imagem, e não que sejam idênticos.
+    let mut diferentes = 0usize;
+    let mut soma = 0u64;
+    let mut pior = 0u16;
+    for (a, b) in software.2.chunks_exact(2).zip(placa.2.chunks_exact(2)) {
+        let (a, b) = (
+            u16::from_le_bytes([a[0], a[1]]),
+            u16::from_le_bytes([b[0], b[1]]),
+        );
+        let (r1, g1, b1) = (a >> 11 & 0x1f, a >> 5 & 0x3f, a & 0x1f);
+        let (r2, g2, b2) = (b >> 11 & 0x1f, b >> 5 & 0x3f, b & 0x1f);
+        let d = (r1.abs_diff(r2) as u64)
+            + (g1.abs_diff(g2) as u64)
+            + (b1.abs_diff(b2) as u64);
+        if d > 0 {
+            diferentes += 1;
+        }
+        soma += d;
+        pior = pior.max(d as u16);
+    }
+    let total = software.2.len() / 2;
+    let percentual = diferentes as f64 * 100.0 / total as f64;
+    eprintln!(
+        "software x placa: {diferentes} de {total} pixel(s) diferentes ({percentual:.2}%), \
+         diferença média {:.3} por pixel, pior {pior}",
+        soma as f64 / total as f64
+    );
+    assert!(
+        percentual < 60.0,
+        "os dois rasterizadores desenham imagens diferentes: {percentual:.2}% dos pixels"
+    );
+}
+
+
     #[test]
     fn um_arquivo_que_nao_existe_diz_que_nao_deu_para_ler() {
         let err = Session::start_inner(

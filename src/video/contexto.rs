@@ -137,3 +137,29 @@ mod tests {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests_contexto {
+    use super::*;
+
+    /// **O contexto de placa abre sem janela, e é a primeira coisa a saber.**
+    ///
+    /// O render em hardware só é verificável se o caminho fora de tela funcionar: com janela, quem
+    /// mede é a mão de quem olha. Se o EGL não estiver alcançável — um terminal sem placa, um
+    /// contêiner —, o teste diz isso e passa: é o caso normal previsto no módulo, e é para isso
+    /// que o emulador cai no rasterizador de software.
+    #[test]
+    fn o_contexto_fora_de_tela_abre_ou_diz_por_que_nao() {
+        match Contexto::novo() {
+            Ok(contexto) => {
+                let versao = unsafe {
+                    use glow::HasContext;
+                    contexto.gl.get_parameter_string(glow::VERSION)
+                };
+                eprintln!("placa disponível: {versao}");
+            }
+            Err(porque) => eprintln!("sem placa fora de tela: {porque}"),
+        }
+    }
+}
