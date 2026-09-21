@@ -1481,12 +1481,18 @@ o despejo mostra as duas pontas:
 foi a calibração do controle, incluindo `RegisterForPositionChange` — o registro do callback de
 posição. O campo `+0x274` é esse callback, e ficou sem ser gravado.
 
-Há uma hipótese de causa **do lado do emulador**, e ela vem do que o motor faz hoje: o
-`RegisterForPositionChange` **levanta o sinal durante a própria chamada de registro** (é o que faz o
-Ridge Racer calibrar sem ninguém encostar no analógico). Se o callback for entregue antes de o jogo
-gravar o ponteiro, ele roda com o campo ainda vazio — reentrância. A medição que decide é simples:
-adiar o primeiro aviso para o quadro seguinte e ver se o campo deixa de ficar nulo. Fica anotado
-como **a próxima tentativa**, e é do tipo que este projeto já resolveu antes.
+**A hipótese de reentrância foi levantada e derrubada na mesma sessão — e vale registrar por quê.**
+A ideia era: o `RegisterForPositionChange` levanta o sinal durante a própria chamada de registro, e
+o callback poderia rodar antes de o jogo gravar o ponteiro. A leitura do escalonamento refuta:
+`raise_input_signal` só **enfileira** (`pending_signals`), e a fila é drenada no início da **volta
+seguinte** (`bombeia_fluxos_pcm` e companhia, em `machine/signal.rs`), depois de a chamada de API ter
+retornado inteira. Não há reentrância, e o aviso antecipado — que existe porque faz o Ridge Racer
+calibrar sem ninguém encostar no analógico — não tem culpa.
+
+Então o campo `+0x274` fica nulo **pela lógica do próprio jogo**, ou pertence a outro objeto que não
+o que o despejo pegou. O que sobra é engenharia reversa do jogo, com cinco pontos de partida
+medidos: o PC (`0x161d8`), a pilha (`0x43494 0x4f300 0x3af54 0x43d5c`), o objeto (`0x10001114`,
+vtable `0x100019d8`), o campo (`0x10001388`) e a tabela de 28 bytes (`0x10038600`).
 
 E o que ele mostrou foi o padrão exato antes da queda: uma **tabela sendo construída**, entradas de
 28 bytes (`malloc 0x1c` seguido de `memmove 0x1c`), num laço, com as origens a 28 bytes de
