@@ -876,6 +876,19 @@ impl Session {
     }
 
     /// A proporção experimental do 3D, largura sobre altura; `None` é o 4:3 do console.
+    /// Faz o desenho sair no framebuffer do frontend, quando ele entrega um.
+    ///
+    /// **É o que o core precisa para o `SET_HW_RENDER`**, e por isso tem caminho público: o motor
+    /// já sabe desenhar no framebuffer de fora (`Machine::desenha_no_fbo`, verificado pelo teste
+    /// `o_motor_desenha_no_framebuffer_do_frontend`), mas quem tem o framebuffer em mãos é o core,
+    /// a cada quadro, pelo `get_current_framebuffer` do `retro_hw_render_callback`.
+    ///
+    /// `Some(0)` é o framebuffer padrão do frontend; `None` devolve o desenho ao framebuffer do
+    /// próprio motor, que é o caminho de sempre.
+    pub fn desenha_no_fbo(&mut self, fbo: Option<u32>) {
+        self.machine.desenha_no_fbo(fbo);
+    }
+
     pub fn define_proporcao(&mut self, aspecto: Option<f32>) {
         self.machine.define_proporcao(aspecto);
     }

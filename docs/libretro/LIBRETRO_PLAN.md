@@ -1389,6 +1389,18 @@ frontend.
 3. Trocar o `retro_video_refresh` de quadro por `RETRO_HW_FRAME_BUFFER_VALID` — sem isso o
    RetroArch recebe pixels que não são os do FBO.
 
+O lado do motor já está pronto para receber: `Session::desenha_no_fbo(Option<u32>)` é público, e
+`Some(0)` significa o framebuffer padrão do frontend. O que sobra no core é ligar os fios.
+
+**Uma armadilha de ordem, para não gastar uma sessão descobrindo:** o `libretro` só entrega um
+contexto de GL **válido** depois de chamar o `context_reset` do struct que o core preencheu. Quem
+chama `SET_HW_RENDER` é o core (dentro do `retro_load_game`, antes de criar a sessão), e quem avisa
+"o contexto está pronto" é o frontend, **depois**. Ou seja: a sessão de placa não pode ser criada
+junto com a negociação — ela precisa esperar o `context_reset`, ou o primeiro `retro_run`. As duas
+saídas possíveis são criar a sessão dentro do `context_reset`, ou guardar o pedido e criá-la no
+primeiro `retro_run`, quando o contexto já está corrente. E `get_current_framebuffer` é consultado
+**por quadro**, no `retro_run`, porque o framebuffer pode mudar.
+
 **Como verificar:** o teste `os_dois_rasterizadores_desenham_o_mesmo_quadro` continua valendo como
 régua; o que muda é por onde o quadro sai.
 
