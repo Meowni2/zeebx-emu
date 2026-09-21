@@ -435,8 +435,21 @@ impl<C: CpuBackend> Machine<C> {
                     // próprio bloco: é assim que se soube que a trilha do Tekken 2 é MP3 sem
                     // abrir o jogo, e que a dos ports de arcade é MIDI.
                     let formato = detect_mime(bytes, "").unwrap_or("formato desconhecido");
-                    self.bad_pointers
-                        .insert(format!("som recusado ({formato}): {err}"));
+                    // Os primeiros bytes vão no relatório junto do nome do formato: é o que
+                    // **identifica** o que chegou sem abrir o jogo. `FF FB` é quadro MP3, `ftyp`
+                    // é caixa MP4, `OggS` é Ogg — e a diferença entre eles decide o que
+                    // implementar. Sem isto, a linha dizia só "recusado", e a investigação
+                    // seguinte começava do zero, dentro do jogo.
+                    let assinatura: String = bytes
+                        .iter()
+                        .take(16)
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    self.bad_pointers.insert(format!(
+                        "som recusado ({formato}, {} bytes, {assinatura}): {err}",
+                        bytes.len()
+                    ));
                     None
                 }
             },
