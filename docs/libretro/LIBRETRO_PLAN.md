@@ -1250,6 +1250,23 @@ plataforma, com o `dynarmic` sozinho —, basta tirar a marca de experimental do
 | `IFont` e o layout do `DrawText` | feito | métricas transcritas do `AEEFontsStandard.BID`, com teste que cobra as onze classes |
 | Áudio e desempenho | feito | varredura mede pico/rms/contínuo/salto por jogo; Rolima 79% → 284%, 51 jogos mais rápidos; e **pelo caminho do core**: o Peggle entrega 229.080 amostras estéreo em 120 quadros |
 
+### A varredura pegou uma "regressão" que era uma verdade
+
+Depois das seis extensões e do joystick, uma varredura de conferência mostrou **um jogo a mais fora
+de "roda"**: 7 em vez de 6. O jogo era o **Prey Evil**, e a leitura fácil seria "as extensões
+quebraram alguma coisa" — não quebraram.
+
+Ele estava **nos dois casos igualmente quebrado**. Antes o relatório dizia `roda`, porque o jogo
+executava, respondia API e apresentava quadro: o que não fazia era desenhar, e a varredura de então
+não olhava a tela. Agora ele diz `quebrou no laço de quadros`, que é o que sempre foi — e as seis
+extensões são o que o levou até o ponto onde a quebra acontece, em vez de parar no primeiro portão
+fechado.
+
+Os outros seis jogos fora de "roda" são exatamente os mesmos de antes, sem mudança de estado em
+nenhum. A conferência valeu por dois motivos: confirmou que as mudanças de hoje não mexeram em jogo
+nenhum, e mostrou que **a métrica de cores trocou um rótulo falso por um verdadeiro** — que é o
+serviço dela.
+
 ### A tela que a varredura não olhava
 
 A varredura contava **escritas** na tela, e um jogo que pinta 307.200 pixels de preto conta 307.200
