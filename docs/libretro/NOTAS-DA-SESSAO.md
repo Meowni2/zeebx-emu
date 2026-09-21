@@ -96,6 +96,37 @@ investigação inteira dentro do jogo.
   segundos com e sem manche diferem em mil instruções de 133 milhões. Só o RetroArch responde.
 - **Item 9** (capas e No-Intro): local pronto; falta publicar.
 
+## Como fechar o item 8 (o ciclo da Z-Wheel)
+
+É a única coisa que nenhum teste daqui alcança: a roda **não desenha** no caminho da varredura
+(medido: doze segundos com e sem manche diferem em mil instruções de 133 milhões), então só o
+RetroArch responde. O roteiro, e o que cada resultado significa:
+
+1. abra a **Z-Wheel** como conteúdo (o `.zip` do pacote, ou o `.mod` de dentro dele);
+2. espere a roda aparecer — o core acha **63 jogos** ao lado do conteúdo (medido), então ela não
+   pode abrir vazia;
+3. **navegue pelo manche** (a roda é navegada pelo analógico, não pelos botões) até um jogo;
+4. **confirme** com o botão de ação — o shell então pede a abertura, e o core troca de sessão
+   sozinho;
+5. jogue alguns segundos e **saia pelo Select** do RetroPad (ele vale como `AVK_CLR`, o "voltar" do
+   console) — a volta é para a roda, como no aparelho.
+
+O que observar, e o que cada coisa quer dizer:
+
+| Sintoma | Leitura provável |
+|---|---|
+| a roda abre e navega, mas nenhum jogo abre | o pedido de abertura não chegou, ou o ClassID não está na pasta de jogos |
+| o jogo abre e o Select não volta | o atalho de `AVK_CLR` ou a volta pela sessão anterior |
+| a roda abre **vazia** | não é descoberta: o core vê os 63 (medido) — é desenho ou instalação |
+| a roda não desenha nada | mesma família do Prey Evil: falta alguma interface gráfica |
+
+A linha do log que interessa em cada caso:
+
+```text
+Zeebx: o shell pediu {classe}; abrindo {caminho}
+Zeebx: o shell pediu {classe}, que não está na pasta de jogos
+```
+
 ## Como capturar o que o core diz
 
 O core escreve em dois lugares, e os dois servem para diagnosticar sem abrir depurador:
