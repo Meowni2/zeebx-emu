@@ -27,6 +27,8 @@ import hashlib
 import json
 import pathlib
 import re
+import sqlite3
+import tempfile
 import struct
 import sys
 import urllib.request
@@ -183,7 +185,24 @@ def analisa(zip_path, tabela):
                 ficha["verificado"] = False
                 ficha["erro"] = f"o arquivo do DAT ({arquivo}) não está no pacote"
         if manif:
-            dados = zf.read(manif[0])
+            # O `.mif` que interessa é o do módulo escolhido: num pacote com dois jogos, o primeiro
+            # manifesto pode ser o do outro. O DAT diz a pasta do módulo (`mod/<id>/...`), e o
+            # manifesto dela é `mif/<id>.mif`.
+            escolhido = None
+            arquivo_dat = ficha.get("arquivo_do_dat")
+            if arquivo_dat:
+                partes = arquivo_dat.replace("\\", "/").split("/")
+                if len(partes) >= 3 and partes[0].lower() == "mod":
+                    escolhido = f"mif/{partes[1]}.mif"
+            if escolhido:
+                escolhido = next((n for n in manif if n.replace("\\", "/").endswith(escolhido)), None)
+            if escolhido is None:
+                escolhido = next(
+                    (n for n in manif if clsid_do_mif(zf.read(n)) is not None), manif[0]
+                )
+            dados = zf.read(escolhido)
+            ficha["mif"] = escolhido
+            ficha["clsid"] = clsid_do_mif(dados)
             imagem = icone_do_mif(dados)
             if imagem:
                 mime, bytes_imagem = imagem
@@ -209,6 +228,38 @@ def escreve_playlist(saida, fichas, core):
     return destino
 
 
+def escreve_capas_da_loja(saida, fichas, z_wheel, ao_lado):
+    """Grava as capas oficiais, casadas pelo ClassID do applet.
+
+    `ao_lado` copia a capa para o lado do `.zip`, que é onde o frontend standalone a procura: ele
+    lê `<jogo>.png|jpg|bmp` ao lado do arquivo (ver `library::cover`).
+    """
+    raiz = saida / "thumbnails" / DAT_NOME / "Named_Boxarts"
+    raiz.mkdir(parents=True, exist_ok=True)
+    achadas = 0
+    sem_capa = []
+    for ficha in fichas:
+        class_id = ficha.get("clsid")
+        if class_id is None:
+            sem_capa.append((ficha["nome_no_intro"], "sem ClassID no .mif"))
+            continue
+        capa, titulos = capa_da_z_wheel(z_wheel, class_id)
+        if capa is None:
+            motivo = "sem ficha na loja" if titulos is None else "ficha sem imagem"
+            sem_capa.append((ficha["nome_no_intro"], motivo))
+            continue
+        arquivo, dados, game_id = capa
+        extensao = pathlib.Path(arquivo).suffix.lstrip(".")
+        destino = raiz / f"{ficha['nome_no_intro']}.{extensao}"
+        destino.write_bytes(dados)
+        ficha["capa"] = {"arquivo": arquivo, "game_id": game_id, "bytes": len(dados)}
+        ficha["titulos_da_loja"] = sorted(titulos) if titulos else []
+        if ao_lado:
+            ficha["caminho"].with_suffix("." + extensao).write_bytes(dados)
+        achadas += 1
+    return raiz, achadas, sem_capa
+
+
 def escreve_capas(saida, fichas, com_icone):
     raiz = saida / "thumbnails" / DAT_NOME
     pastas = ["Named_Boxarts", "Named_Snaps", "Named_Titles", "Named_Logos"]
@@ -231,6 +282,86 @@ def escreve_capas(saida, fichas, com_icone):
     return raiz, escritos
 
 
+def clsid_do_mif(dados):
+    """ClassID do applet principal, lido do `.mif` (mesma regra de `src/loader/miffile.rs`).
+
+    A Z-Wheel liga a capa ao jogo pelo **ClassID do applet**, não por nome de arquivo nem de
+    pasta (`GAMEINFO.class_id`), então esta é a chave do cruzamento com o catálogo da loja.
+    """
+    if len(dados) < 0x18 or struct.unpack_from("<H", dados, 0)[0] != 0x0011:
+        return None
+    tabela, secoes = struct.unpack_from("<II", dados, 0x10)
+    if secoes == 0 or secoes > 4096:
+        return None
+    limites = []
+    for i in range(secoes + 1):
+        if tabela + i * 4 + 4 > len(dados):
+            return None
+        limites.append(struct.unpack_from("<I", dados, tabela + i * 4)[0])
+    for inicio, fim in zip(limites, limites[1:]):
+        if fim - inicio != 20 or fim > len(dados):
+            continue
+        zeros = (
+            struct.unpack_from("<I", dados, inicio + 4)[0] == 0
+            and struct.unpack_from("<I", dados, inicio + 12)[0] == 0
+        )
+        classe = struct.unpack_from("<I", dados, inicio)[0]
+        if zeros and classe:
+            return classe
+    return None
+
+
+def le_z_wheel(caminho):
+    """O catálogo da loja que vem dentro do pacote da Z-Wheel.
+
+    Devolve `{class_id: (game_id, pasta_da_capa, {idioma: título})}`. As tabelas estão descritas em
+    `src/ui/acervo.rs`: `GAMEINFO` liga `game_id` ao `class_id` do applet e ao caminho da capa, e
+    `TITLETEXT` guarda o nome por idioma.
+    """
+    with zipfile.ZipFile(caminho) as zf:
+        nome = next((n for n in zf.namelist() if n.split("/")[-1] == "tt_game_info"), None)
+        if nome is None:
+            raise SystemExit(f"{caminho}: o pacote não traz o banco tt_game_info")
+        dados = zf.read(nome)
+    with tempfile.TemporaryDirectory() as pasta:
+        banco = pathlib.Path(pasta) / "tt_game_info"
+        banco.write_bytes(dados)
+        con = sqlite3.connect(str(banco))
+        titulos = {}
+        for game_id, _lang, texto in con.execute("select game_id, lang_id, titletext from TITLETEXT"):
+            titulos.setdefault(game_id, set()).add(texto)
+        fichas = {}
+        for class_id, game_id, capa, *_ in con.execute(
+            "select class_id, game_id, boxart_path, flags, size from GAMEINFO"
+        ):
+            fichas[class_id] = (game_id, capa.rstrip("/"), titulos.get(game_id, set()))
+        con.close()
+    return fichas
+
+
+def capa_da_z_wheel(caminho, class_id):
+    """A maior capa publicada para o jogo, e o nome oficial dele.
+
+    `boxartlg.jpg` é a capa grande da loja; `boxart.bmp` é a pequena. São imagens oficiais da
+    TecToy, que vêm dentro do pacote da Z-Wheel — o standalone as usa pela mesma via.
+    """
+    fichas = le_z_wheel(caminho)
+    ficha = fichas.get(class_id)
+    if ficha is None:
+        return None, None
+    game_id, pasta, titulos = ficha
+    with zipfile.ZipFile(caminho) as zf:
+        for arquivo in ("boxartlg.jpg", "boxart.bmp"):
+            alvo = f"{pasta}/{arquivo}".lstrip("./")
+            alvo = alvo if alvo.startswith("mod/") else f"mod/274755/{alvo}"
+            try:
+                dados = zf.read(alvo)
+            except KeyError:
+                continue
+            return (arquivo, dados, game_id), titulos
+    return None, titulos
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--roms", required=True, type=pathlib.Path)
@@ -238,6 +369,16 @@ def main():
     ap.add_argument("--dat", type=pathlib.Path, default=None)
     ap.add_argument("--core", default=None, help="caminho do zeebx_libretro.so para a playlist")
     ap.add_argument("--icones", action="store_true", help="grava o ícone do .mif como título")
+    ap.add_argument(
+        "--zwheel",
+        type=pathlib.Path,
+        help="pacote da Z-Wheel, para tirar as capas oficiais pelo ClassID do applet",
+    )
+    ap.add_argument(
+        "--capas-ao-lado",
+        action="store_true",
+        help="copia a capa para o lado do .zip, que é onde o frontend standalone a procura",
+    )
     args = ap.parse_args()
 
     args.saida.mkdir(parents=True, exist_ok=True)
@@ -266,6 +407,13 @@ def main():
     raiz, escritos = escreve_capas(args.saida, fichas, args.icones)
     print(f"playlist: {playlist}")
     print(f"capas: {raiz}" + (f" ({escritos} ícones gravados)" if args.icones else ""))
+    if args.zwheel:
+        raiz_box, achadas, sem_capa = escreve_capas_da_loja(
+            args.saida, fichas, args.zwheel, args.capas_ao_lado
+        )
+        print(f"capas oficiais: {achadas} de {len(fichas)} em {raiz_box}")
+        for nome, motivo in sem_capa:
+            print(f"  sem capa: {nome} ({motivo})")
 
     catalogo = args.saida / "catalogo.json"
     catalogo.write_text(

@@ -721,10 +721,38 @@ Os cinco fora do DAT são os quatro ports da Data East e um homebrew:
   pastas que o RetroArch procura, com o nome exato de cada título;
 - `catalogo.json` — hashes, verificação e o caminho do `.mod`/`.mif` de cada pacote.
 
-Com `--icones`, o ícone declarado no `.mif` (seção de imagem do manifesto) é gravado em
-`Named_Titles` como imagem provisória. **Ícone não é capa**: a capa de verdade ainda falta, e o
-caminho natural é o catálogo da Z-Wheel (`boxart_path` do `tt_game_info`) ou o repositório de
-thumbnails do Libretro.
+### As capas oficiais vêm dentro da própria Z-Wheel
+
+O pacote da Z-Wheel traz as capas da loja e o banco que as liga aos jogos:
+
+```text
+mod/274755/tt_game_info                     SQLite
+  GAMEINFO(game_id, class_id, boxart_path, ...)   -> class_id é o ClassID do applet
+  TITLETEXT(game_id, lang_id, titletext)          -> nome oficial por idioma
+mod/274755/assets/games/<game_id>/boxartlg.jpg    170x220, a maior publicada
+mod/274755/assets/games/<game_id>/boxart.bmp      160x227
+```
+
+A chave do cruzamento é o **ClassID do applet**, que o emulador já lê do `.mif` — não é nome de
+arquivo nem de pasta. Medido contra o acervo:
+
+```text
+capas oficiais gravadas: 58 de 62
+sem capa: Kingdom Hearts (homebrew, sem ClassID de applet no .mif)
+          Z-Wheel, Zeebo App e Zenonia (não têm ficha na loja)
+```
+
+`--zwheel PACOTE` liga esse caminho; `--capas-ao-lado` copia a capa para o lado do `.zip`, que é
+onde o frontend **standalone** procura (`library::cover` lê `<jogo>.png|jpg|bmp` ao lado do
+arquivo). Com `--icones`, o ícone do `.mif` vai para `Named_Titles` como provisório — ícone de menu,
+65×42 no máximo, não é capa.
+
+O que ainda falta para "fullset publicado":
+
+1. capas em resolução maior do que a da loja (170×220 é o que o pacote tem);
+2. RDB de Zeebo, para o "Scan Content" do RetroArch casar por hash;
+3. envio das capas ao repositório de thumbnails do Libretro, com o nome do sistema igual ao do
+   banco (`Mobile - Zeebo`), que é o diretório que o RetroArch procura.
 
 ### RDB
 
