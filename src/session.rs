@@ -283,6 +283,18 @@ impl Session {
     /// uma fatia minúscula de instruções, e devolver o controle regularmente é o que permite
     /// redesenhar e atender o teclado enquanto o jogo roda.
     pub fn step(&mut self, budget: Duration, speed_limit: bool) -> Step {
+        let resultado = self.passo(budget, speed_limit);
+        // **O contexto volta ao dono aqui, e só aqui.** Quando o rasterizador desenha num
+        // contexto emprestado — o da janela —, ele precisa devolver o estado que mexeu antes de
+        // a interface pintar. Fazer isso a cada desenho custava um `bind_framebuffer(None)` por
+        // submissão, que num GPU de ladrilho fecha o render pass e resolve o quadro inteiro
+        // para a memória. Uma fatia é exatamente o pedaço em que ninguém de fora toca na placa,
+        // então é o lugar certo para pagar isso uma vez.
+        self.machine.devolve_o_contexto();
+        resultado
+    }
+
+    fn passo(&mut self, budget: Duration, speed_limit: bool) -> Step {
         if self.stopped.is_some() {
             return Step::Stopped;
         }

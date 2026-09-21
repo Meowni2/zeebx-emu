@@ -640,11 +640,7 @@ impl GpuState {
                 self.anel = (capacidade, 0);
             }
             let primeiro = self.anel.1;
-            gl.buffer_sub_data_u8_slice(
-                glow::ARRAY_BUFFER,
-                primeiro as i32 * passo,
-                bytes_de_f32(&self.vertices),
-            );
+            escreve_no_anel(gl, primeiro as i32 * passo, bytes_de_f32(&self.vertices));
             self.anel.1 += quantos;
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_2D, textura);
@@ -686,7 +682,15 @@ impl GpuState {
             gl.bind_vertex_array(None);
             gl.use_program(None);
         }
-        self.devolve_o_contexto();
+        // **O contexto não é devolvido aqui.** Ele volta ao dono uma vez por fatia de execução,
+        // pelo [`Rasterizador::devolve_o_contexto`] que a `Session::step` chama no fim.
+        //
+        // Devolver a cada submissão custava um `bind_framebuffer(None)` por desenho, e esse é o
+        // preço mais alto que existe num GPU de ladrilho: desligar o anexo fecha o render pass e
+        // obriga a resolver o quadro inteiro para a memória, e o `destino()` da submissão
+        // seguinte abre outro, que precisa recarregá-lo. Um quadro com dezenas de submissões
+        // virava dezenas de resoluções completas. Num GPU imediato de desktop trocar de anexo é
+        // quase de graça, e por isso o custo só apareceu no Android.
         self.sujo = true;
     }
 
@@ -824,7 +828,7 @@ impl GpuState {
     /// de profundidade aceso com uma profundidade que não é a dele, faz a interface desaparecer.
     ///
     /// Com contexto próprio isto não custa nada porque não roda: ninguém mais o usa.
-    fn devolve_o_contexto(&self) {
+    pub fn devolve_o_contexto(&self) {
         if !self.emprestado {
             return;
         }
@@ -1014,6 +1018,48 @@ fn poe_em(destino: &mut Vec<f32>, v: &Vertex) {
     destino.extend_from_slice(&v.uv);
     destino.push(v.fog);
     destino.extend_from_slice(&v.uv1);
+}
+
+/// Escreve os vértices do lote na posição livre do anel, **sem o driver sincronizar**.
+///
+/// O `glBufferSubData` num objeto que a placa ainda pode estar lendo obriga o driver a esperar:
+/// ele não sabe que aquele pedaço está livre, e a regra do OpenGL é que a escrita só vale
+/// depois de os desenhos pendentes terminarem. Num desktop isso quase não aparece; num GPU de
+/// ladrilho, aparece inteiro. **Medido no Crash Bandicoot Nitro Kart 3D, num Anbernic RG505:
+/// 5 645 ms de 5 971 ms — 95% de todo o tempo dentro do `submete_com` — eram esta única
+/// chamada, uns 760 µs para mandar três quilobytes.** O `draw_arrays` em si era 3%.
+///
+/// O `MAP_UNSYNCHRONIZED_BIT` é a promessa de que o pedaço escrito não está em uso, e é uma
+/// promessa que o anel já cumpre: a posição livre só anda para a frente, e quando não cabe mais
+/// ele pede outro objeto inteiro ao driver — o antigo continua vivo enquanto houver desenho
+/// usando, e o novo nasce sem ninguém lendo. Nunca se escreve por cima do que a placa ainda vai
+/// ler, então não há o que sincronizar.
+///
+/// O `INVALIDATE_RANGE` completa o recado: o conteúdo anterior daquele pedaço não interessa,
+/// então o driver não precisa buscá-lo de volta para a memória mapeada.
+///
+/// A queda para o `glBufferSubData` cobre o mapeamento recusado — pouca memória, ou uma
+/// implementação que não o atenda. Ali o desenho sai igual, só mais devagar.
+///
+/// O `glUnmapBuffer` pode recusar quando o sistema recupera a memória do objeto por baixo, e
+/// aí o conteúdo se perde; o `glow` não devolve esse resultado, então o quadro seguinte é que
+/// conserta. É um caso de pressão de memória extrema, e um quadro torto nele é melhor que uma
+/// cópia a mais em todos os outros.
+fn escreve_no_anel(gl: &glow::Context, deslocamento: i32, bytes: &[u8]) {
+    unsafe {
+        let destino = gl.map_buffer_range(
+            glow::ARRAY_BUFFER,
+            deslocamento,
+            bytes.len() as i32,
+            glow::MAP_WRITE_BIT | glow::MAP_UNSYNCHRONIZED_BIT | glow::MAP_INVALIDATE_RANGE_BIT,
+        );
+        if destino.is_null() {
+            gl.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, deslocamento, bytes);
+            return;
+        }
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), destino, bytes.len());
+        gl.unmap_buffer(glow::ARRAY_BUFFER);
+    }
 }
 
 /// Os bytes de um vetor de `f32`, para o `buffer_data`.
@@ -2170,6 +2216,10 @@ impl Rasterizador for GpuState {
                 false => (sw.min(fw) + 2 * extra) as f32 / sh.min(fh).max(1) as f32,
             },
         })
+    }
+
+    fn devolve_o_contexto(&self) {
+        GpuState::devolve_o_contexto(self);
     }
 }
 
