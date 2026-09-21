@@ -1456,6 +1456,18 @@ que baste para recriar cada objeto — arquivo aberto e deslocamento, superfíci
 mídia e posição, consulta SQL e cursores. É aí que está o trabalho, e é aí que um estado parcial
 mentiria.
 
+### Item 8 — ciclo da Z-Wheel: o que já está medido
+
+A varredura **não** consegue exercitá-lo: doze segundos com e sem manche diferem em mil instruções
+de 133 milhões, e a roda não desenha nada naquele caminho (zero quadros, zero texto). A conclusão
+prática é que **só o RetroArch responde** — não vale gastar outra sessão tentando por aqui.
+
+A **precondição**, essa sim, está medida pelo caminho do core: ao abrir a Z-Wheel, o core acha
+**63 jogos** ao lado do conteúdo (o levantamento por ClassID, com deduplicação entre o `.zip` e a
+cópia extraída). Isso separa dois sintomas que se parecem: **"a roda abre vazia" não é falha de
+descoberta** — ela soube de todos os 63. O que falta verificar é o desenho e a escolha, e para isso
+é preciso controle na mão.
+
 ### Item 9 — capas e No-Intro: depende de conta
 
 Local está feito: 58 capas oficiais do Z-Wheel, playlist de 62 entradas (nenhuma sem arquivo),

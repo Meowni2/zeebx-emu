@@ -61,6 +61,15 @@ const RETROK_DOWN: u32 = 274;
 const RETROK_RIGHT: u32 = 275;
 const RETROK_LEFT: u32 = 276;
 
+/// Quantos jogos o core achou ao lado do conteúdo.
+///
+/// **É a precondição da Z-Wheel listar alguma coisa.** A roda enumera os applets instalados e pede
+/// o `.mod` de cada um por ClassID; quem sabe onde eles estão é o levantamento feito ao abrir o
+/// conteúdo. Roda vazia aqui é roda vazia na tela — e sem esta conta o sintoma "a Z-Wheel abre sem
+/// jogo nenhum" não teria onde ser medido sem janela. **Instrumento de teste, e só dele.**
+#[cfg(test)]
+static JOGOS_VISTOS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 /// A última classe que o shell pediu para abrir.
 ///
 /// **Instrumento de teste, e só dele.** O log do core sai pelo callback do frontend, que é
@@ -942,6 +951,8 @@ unsafe fn carrega(
     // fazia a tela do Double Dragon ficar branca e vazia, porque o que ele desenha ali é a
     // mensagem "Memory is insufficient. Please delete some files." em fundo branco.
     let (pasta, jogos) = biblioteca(caminho);
+    #[cfg(test)]
+    JOGOS_VISTOS.store(jogos.len() as u32, std::sync::atomic::Ordering::Relaxed);
     let fonte = prepara_fonte(storage, &jogos);
     match &fonte {
         Some(onde) => log(&format!("Zeebx: fonte do sistema em {}", onde.display())),
@@ -1498,6 +1509,7 @@ mod testes {
 
     /// Quantas amostras estéreo o core entregou ao frontend.
     static AMOSTRAS: AtomicU32 = AtomicU32::new(0);
+    /// Quantos jogos o core achou ao lado do conteúdo (ver [`JOGOS_VISTOS`]).
 
     unsafe extern "C" fn audio(_dados: *const i16, quadros: usize) -> usize {
         // Contar aqui é o que permite conferir **pelo caminho do core** que o áudio sai: o motor
@@ -1660,6 +1672,10 @@ mod testes {
         eprintln!(
             "amostras estéreo entregues ao frontend: {}",
             AMOSTRAS.load(Ordering::Relaxed)
+        );
+        eprintln!(
+            "jogos ao lado do conteúdo: {}",
+            JOGOS_VISTOS.load(Ordering::Relaxed)
         );
         let _ = std::fs::remove_dir_all(&pasta);
     }
