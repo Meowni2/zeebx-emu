@@ -504,6 +504,12 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 self.gles10_ext
             }
+            AEEIID_EGLGETPOWERLEVEL => {
+                if self.egl_get_power_level == 0 {
+                    self.egl_get_power_level = self.new_object(Interface::EglGetPowerLevel)?;
+                }
+                self.egl_get_power_level
+            }
             _ => {
                 self.unknown_classes.insert(iid);
                 if out != 0 {

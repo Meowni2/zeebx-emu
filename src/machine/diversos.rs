@@ -294,6 +294,16 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 SUCCESS
             }
+            // `int GetPowerLevel(pMe, int *ret)`. O console é portátil; o emulador não tem
+            // bateria para consultar, e "cheia" é a resposta que não faz o jogo pedir para
+            // carregar — nem abrir uma tela de aviso que ninguém pediu.
+            "GetPowerLevel" if iface == Interface::EglGetPowerLevel => {
+                let out = self.arg(1);
+                if out != 0 {
+                    self.cpu.write_u32(out, 100)?;
+                }
+                SUCCESS
+            }
             // `IGLES11Ext`: as extensões OES do OpenGL ES 1.1.
             //
             // **O Prey Evil não desenha sem elas.** O levantamento das 62 ROMs o pegou com a tela

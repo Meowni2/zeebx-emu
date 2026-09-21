@@ -709,6 +709,8 @@ const AEECLSID_GLES11EXT: u32 = 0x0103_d8eb;
 
 /// `AEEIID_GLES10EXT`, de `sdk/inc/AEEGLES10Ext.h`. O Prey Evil a pede no objeto do EGL.
 const AEEIID_GLES10EXT: u32 = 0x0103_d8de;
+/// `AEEIID_EGLGETPOWERLEVEL`, de `sdk/inc/AEEEGLGetPowerLevel.h`.
+const AEEIID_EGLGETPOWERLEVEL: u32 = 0x0103_d8f0;
 
 const AEEIID_EGL10: u32 = 0x0103_d8ed;
 const AEEIID_EGL11: u32 = 0x0103_d8ee;
@@ -2093,6 +2095,8 @@ pub struct Machine<C: CpuBackend> {
     gles11_ext: u32,
     /// O objeto do `IGLES10Ext`, pelo mesmo motivo.
     gles10_ext: u32,
+    /// O objeto do `IEGLGetPowerLevel`.
+    egl_get_power_level: u32,
     /// O retângulo em que o jogo desenha, quando ele o declara pelo `SetSurfaceScale`. Vale
     /// mais que a dedução por viewport: aqui o jogo **diz** o tamanho.
     scale_source: Option<(i32, i32)>,
@@ -2729,6 +2733,7 @@ impl<C: CpuBackend> Machine<C> {
             imageon_ext: 0,
             gles11_ext: 0,
             gles10_ext: 0,
+            egl_get_power_level: 0,
             scale_source: None,
             prefs: HashMap::new(),
             enumerations: HashMap::new(),
@@ -3477,7 +3482,8 @@ impl<C: CpuBackend> Machine<C> {
             (Interface::EglSurfaceManip, _)
             | (Interface::GlesImageonExt, _)
             | (Interface::Gles11Ext, _)
-            | (Interface::Gles10Ext, _) => {
+            | (Interface::Gles10Ext, _)
+            | (Interface::EglGetPowerLevel, _) => {
                 match self.extension_call(iface, slot)? {
                     Some(result) => result,
                     None => return Ok(None),

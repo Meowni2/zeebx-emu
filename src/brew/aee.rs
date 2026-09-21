@@ -91,6 +91,9 @@ pub enum Interface {
     Gles11Ext = 55,
     /// `AEEIID_GLES10EXT`: `QueryMatrixxOES`. Ver [`aee_slots::GLES10_EXT`].
     Gles10Ext = 56,
+    /// `AEEIID_EGLGETPOWERLEVEL`: o nível de energia do aparelho. Ver
+    /// [`aee_slots::EGL_GET_POWER_LEVEL`].
+    EglGetPowerLevel = 57,
     /// `AEECLSID_SQLMGR` do console: abre bancos SQLite. Ver [`crate::brew::sql`].
     SqlMgr = 36,
     /// Um banco aberto pelo [`Interface::SqlMgr`].
@@ -423,6 +426,7 @@ impl Interface {
             Self::GlesImageonExt => "IGLESImageonExt",
             Self::Gles11Ext => "IGLES11Ext",
             Self::Gles10Ext => "IGLES10Ext",
+            Self::EglGetPowerLevel => "IEGLGetPowerLevel",
             Self::SqlMgr => "ISQLMgr",
             Self::SqlDatabase => "ISQLDatabase",
             Self::Collection => "IColecao",
@@ -486,6 +490,7 @@ impl Interface {
             Self::GlesImageonExt => aee_slots::GLES_IMAGEON_EXT,
             Self::Gles11Ext => aee_slots::GLES11_EXT,
             Self::Gles10Ext => aee_slots::GLES10_EXT,
+            Self::EglGetPowerLevel => aee_slots::EGL_GET_POWER_LEVEL,
             Self::SqlMgr => aee_slots::SQL_MGR,
             Self::SqlDatabase => aee_slots::SQL_DATABASE,
             Self::Collection => aee_slots::COLLECTION,
@@ -564,6 +569,7 @@ impl Interface {
             34 => Self::GlesImageonExt,
             55 => Self::Gles11Ext,
             56 => Self::Gles10Ext,
+            57 => Self::EglGetPowerLevel,
             35 => Self::Probe,
             36 => Self::SqlMgr,
             37 => Self::SqlDatabase,

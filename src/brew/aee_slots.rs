@@ -477,6 +477,10 @@ pub const EGL: &[&str] = &[
 /// Um método só, e é o que o Prey Evil usa para saber que a extensão existe.
 pub const GLES10_EXT: &[&str] = &["AddRef", "Release", "QueryInterface", "QueryMatrixxOES"];
 
+/// `IEGLGetPowerLevel`: o nível de bateria. Ver `AEEEGLGetPowerLevel.h`.
+pub const EGL_GET_POWER_LEVEL: &[&str] =
+    &["AddRef", "Release", "QueryInterface", "GetPowerLevel"];
+
 pub const GLES11_EXT: &[&str] = &[
     "AddRef",
     "Release",
