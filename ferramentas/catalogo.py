@@ -275,7 +275,7 @@ def escreve_playlist(saida, fichas, core):
     return destino
 
 
-def escreve_capas_da_loja(saida, fichas, z_wheel, ao_lado):
+def escreve_capas_da_loja(saida, fichas, z_wheel, ao_lado, para_png=False):
     """Grava as capas oficiais, casadas pelo ClassID do applet.
 
     `ao_lado` copia a capa para o lado do `.zip`, que é onde o frontend standalone a procura: ele
@@ -298,6 +298,11 @@ def escreve_capas_da_loja(saida, fichas, z_wheel, ao_lado):
             continue
         arquivo, dados, game_id, titulos = capa
         extensao = pathlib.Path(arquivo).suffix.lstrip(".")
+        if para_png:
+            convertido = converte_png(dados)
+            if convertido is not None:
+                dados = convertido
+                extensao = "png"
         destino = raiz / f"{ficha['nome_no_intro']}.{extensao}"
         destino.write_bytes(dados)
         ficha["capa"] = {"arquivo": arquivo, "game_id": game_id, "bytes": len(dados)}
@@ -313,7 +318,34 @@ def escreve_capas_da_loja(saida, fichas, z_wheel, ao_lado):
     return raiz, achadas, sem_capa, ao_lado_falhou
 
 
-def escreve_capas(saida, fichas, com_icone):
+def converte_png(dados):
+    """Devolve os mesmos pixels em PNG, ou `None` se não der para converter.
+
+    **O repositório de thumbnails do RetroArch aceita só PNG**, e as capas que a Z-Wheel entrega
+    são JPEG. Converter aqui, na hora de gravar, evita a surpresa de descobrir isso no dia de
+    enviar: sem a conversão, os cinquenta e oito arquivos seriam recusados por formato.
+
+    Sem o Pillow instalado, devolve `None` e quem chama grava o original — a conversão é para a
+    publicação, e o RetroArch lê os dois formatos.
+    """
+    try:
+        import io
+
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        with Image.open(io.BytesIO(dados)) as imagem:
+            saida = io.BytesIO()
+            imagem.convert("RGBA" if imagem.mode in ("P", "LA") else "RGB").save(
+                saida, format="PNG", optimize=True
+            )
+            return saida.getvalue()
+    except Exception:
+        return None
+
+
+def escreve_capas(saida, fichas, com_icone, para_png=False):
     raiz = saida / "thumbnails" / DAT_NOME
     pastas = ["Named_Boxarts", "Named_Snaps", "Named_Titles", "Named_Logos"]
     escritos = 0
@@ -327,10 +359,15 @@ def escreve_capas(saida, fichas, com_icone):
             icone = ficha.get("icone")
             if not icone:
                 continue
+            dados, mime = icone["bytes"], icone["mime"]
+            if para_png:
+                convertido = converte_png(dados)
+                if convertido is not None:
+                    dados, mime = convertido, "image/png"
             extensao = {"image/png": "png", "image/jpeg": "jpg", "image/bmp": "bmp"}.get(
-                icone["mime"], "bin"
+                mime, "bin"
             )
-            (destino / f"{ficha['nome_no_intro']}.{extensao}").write_bytes(icone["bytes"])
+            (destino / f"{ficha['nome_no_intro']}.{extensao}").write_bytes(dados)
             escritos += 1
     return raiz, escritos
 
@@ -464,6 +501,11 @@ def main():
     ap.add_argument("--core", default=None, help="caminho do zeebx_libretro.so para a playlist")
     ap.add_argument("--icones", action="store_true", help="grava o ícone do .mif como título")
     ap.add_argument(
+        "--png",
+        action="store_true",
+        help="grava as imagens em PNG (o repositório de thumbnails do RetroArch aceita só PNG)",
+    )
+    ap.add_argument(
         "--zwheel",
         type=pathlib.Path,
         help="pacote da Z-Wheel, para tirar as capas oficiais pelo ClassID do applet",
@@ -514,12 +556,12 @@ def main():
     destino_playlist = args.playlists or (args.saida / "playlists")
     destino_playlist.mkdir(parents=True, exist_ok=True)
     playlist = escreve_playlist(destino_playlist, fichas, args.core)
-    raiz, escritos = escreve_capas(args.saida, fichas, args.icones)
+    raiz, escritos = escreve_capas(args.saida, fichas, args.icones, args.png)
     print(f"playlist: {playlist}")
     print(f"capas: {raiz}" + (f" ({escritos} ícones gravados)" if args.icones else ""))
     if args.zwheel:
         raiz_box, achadas, sem_capa, falhou = escreve_capas_da_loja(
-            args.saida, fichas, args.zwheel, args.capas_ao_lado
+            args.saida, fichas, args.zwheel, args.capas_ao_lado, args.png
         )
         print(f"capas oficiais: {achadas} de {len(fichas)} em {raiz_box}")
         if falhou:

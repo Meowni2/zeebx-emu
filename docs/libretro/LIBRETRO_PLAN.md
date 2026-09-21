@@ -1439,6 +1439,17 @@ Local está feito: 58 capas oficiais do Z-Wheel, playlist de 62 entradas (nenhum
 banco No-Intro, catálogo em JSON. O que falta é publicar no repositório de thumbnails e enviar os
 cinco títulos fora do No-Intro — os dois precisam de conta e de conferência humana.
 
+**O formato estava errado para o destino, e isso foi corrigido.** Os repositórios de thumbnails do
+RetroArch aceitam **só PNG**, e as capas que a Z-Wheel entrega são JPEG — os cinquenta e oito
+arquivos seriam recusados no dia do envio. O catálogo ganhou `--png`, que converte na hora de
+gravar (com o Pillow; sem ele, grava o original e avisa), e a geração conferida:
+
+```bash
+python3 ferramentas/catalogo.py --roms ROMS --saida saida --png --zwheel "Z-Wheel.zip"
+# capas oficiais: 58 de 62  ·  png: 58  ·  jpg: 0
+# Action Hero 3D ….png: PNG image data, 170 x 220, 8-bit/color RGB
+```
+
 ## Ordem de implementação
 
 1. Inventariar toda E/S de core e definir `StorageFs`/`GuestFile`; decidir SQLite VFS ou staging
