@@ -1297,6 +1297,13 @@ escritas: registrava "roda" com a tela apagada. Agora o relatório conta **cores
 dominante**, e a linha entra na comparação com a linha de base — uma regressão que apaga a tela sem
 quebrar a execução passa a aparecer no commit que a causou.
 
+**A varredura inteira fecha contra a linha de base commitada.** Rodadas as 62 ROMs depois de todas as
+mudanças do dia — as seis extensões, o joystick, a classe do decodificador de JPEG e o despacho por
+assinatura —, o resultado foi **zero diferença** e **zero linha de base gravada**: nenhum jogo mudou
+de resumo sem que a mudança fosse intencional e registrada (o Zuma, que passou a rodar), e nenhum
+outro se moveu. É o que o item 1 do plano pede, e agora é automático: a pasta `docs/varredura/` está
+no repositório com as 62 linhas.
+
 **A contagem entra na linha de base, então ela precisava ser estável** — uma métrica que varia
 entre execuções acusaria regressão falsa a cada varredura, e um teste que acusa sempre não é lido
 nunca. Medido com o Pac-Mania, três execuções seguidas:
