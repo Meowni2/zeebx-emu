@@ -231,6 +231,11 @@ pub struct Desempenho {
     pub cores: u32,
     /// A cor mais frequente do quadro final, em RGB565. Numa tela preta é `0x0000`.
     pub cor_dominante: u16,
+    /// Se o quadro medido veio do rasterizador da placa, e não da tela do console.
+    ///
+    /// Muda a leitura: tela preta com `quadro_na_placa` é o jogo desenhando **em outro lugar**,
+    /// e tela preta sem ele é o jogo não desenhando.
+    pub quadro_na_placa: bool,
     /// Instruções ARM executadas.
     pub instrucoes: u64,
     /// Chamadas de API atendidas.
@@ -461,8 +466,13 @@ impl Relatorio {
             // denuncia. A dominante diz *o que* ficou no lugar — preto é tela apagada, e um
             // `0xFFFF` no lugar dela é outra história.
             texto.push_str(&format!(
-                "tela: {} cor(es), dominante {:#06x}\n",
-                d.cores, d.cor_dominante
+                "tela: {} cor(es), dominante {:#06x}{}\n",
+                d.cores,
+                d.cor_dominante,
+                match d.quadro_na_placa {
+                    true => " (o quadro está na placa, não na tela de 2D)",
+                    false => "",
+                }
             ));
         }
         for (nome, linhas) in self.pendencias.secoes() {
@@ -813,6 +823,20 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     let (medida_cores, medida_dominante) = cores_do_quadro(session.screen());
     medida.cores = medida_cores;
     medida.cor_dominante = medida_dominante;
+    // **A tela do console pode não ser onde o quadro está.** Um jogo que desenha por OpenGL numa
+    // superfície de dispositivo deixa a tela de 2D preta, e o quadro dele vive no rasterizador da
+    // placa. Sem olhar os dois, a varredura acusaria tela apagada num jogo que desenha — foi o que
+    // quase aconteceu com o Prey Evil, que faz 71 mil `MatrixMode` e tem 1 cor de tela.
+    if medida.cores <= 1
+        && let Some(grande) = session.quadro_grande()
+    {
+        let (cores, dominante) = cores_do_quadro(&grande);
+        if cores > medida.cores {
+            medida.cores = cores;
+            medida.cor_dominante = dominante;
+            medida.quadro_na_placa = true;
+        }
+    }
     // O total sai da lista inteira, e só depois ela é cortada: a fatia mostrada tem de ser
     // porcentagem do que o jogo gastou, e não do punhado que coube no relatório.
     let (mut custo, custo_total) = match perfilando {
