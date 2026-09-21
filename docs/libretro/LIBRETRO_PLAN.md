@@ -1316,9 +1316,24 @@ depois: 0x0103d8eb **saiu da lista**
 ```
 
 Ou seja: **entregar uma interface move o jogo um portão adiante**, e o que ele chama em seguida é
-o ponteiro nulo de uma das outras cinco (`GLES10Ext`, `EGLGetColorBuffer`, `EGLGetPowerLevel`,
-`GLES11ExtPak`, `EGLOESSwapInterval`). O caminho para as cinco é o mesmo, uma linha cada, com a
-mesma verificação — e cada uma move o jogo para o portão seguinte.
+o ponteiro nulo de uma das outras cinco.
+
+E foi o que aconteceu, uma a uma, cada uma medida:
+
+| Portão | Interface | Slots | Depois dela |
+|---|---|---:|---|
+| 1 | `IGLES11Ext` | 15 | sai da lista; o jogo muda de fase (`sprintf`/`malloc` em volume) |
+| 2 | `IGLES10Ext` | 4 | sai da lista |
+| 3 | `IEGLGetPowerLevel` | 4 | sai da lista |
+| 4 | `IEGLOESSwapInterval` | 5 | sai da lista |
+| 5 | `IEGLGetColorBuffer` | 4 | sai da lista — **resta uma** |
+
+A verificação é sempre a mesma, e é o que torna isto um procedimento e não uma aposta: a classe sai
+da lista de "pedidas e não temos", e o jogo quebra em outro lugar — no mesmo PC enquanto é a mesma
+porta, e num PC novo quando a porta muda.
+
+**Falta a `IGLES11ExtPak`** (30 slots: a família `TexGen`, o blending de separação e os objetos de
+framebuffer/renderbuffer). É a maior das seis, e é a última porta entre este jogo e o desenho.
 
 **E o número da classe já aparece no motor por outro caminho.** No BREW, o ClassID e o IID são o
 mesmo valor: `AEEIID_GLES_IMAGEON_EXT` (`0x01058546`) já é atendido em `machine/egl.rs` pela rota de

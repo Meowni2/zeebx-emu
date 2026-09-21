@@ -481,6 +481,12 @@ pub const GLES10_EXT: &[&str] = &["AddRef", "Release", "QueryInterface", "QueryM
 pub const EGL_GET_POWER_LEVEL: &[&str] =
     &["AddRef", "Release", "QueryInterface", "GetPowerLevel"];
 
+/// `IEGLGetColorBuffer`: o buffer de cor do EGL. Ver `AEEEGLGetColorBuffer.h`.
+///
+/// É o par por interface da função `eglGetColorBufferQUALCOMM`, e as duas compartilham o cálculo.
+pub const EGL_GET_COLOR_BUFFER: &[&str] =
+    &["AddRef", "Release", "QueryInterface", "GetColorBuffer"];
+
 /// `IEGLOESSwapInterval`: o ritmo de quadro pedido pelo jogo. Ver `AEEEGLOESSwapInterval.h`.
 ///
 /// Por **função** o motor já responde `SwapIntervalOES`; aqui é a mesma resposta, pela interface.

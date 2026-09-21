@@ -10,6 +10,54 @@ const VIGIA_COLOR_BUFFER: u32 = 0;
 
 impl<C: CpuBackend> Machine<C> {
     /// Escreve `EGL_TRUE` no `AEEEGLBoolean *ret` do argumento `slot` e devolve `SUCCESS`.
+    /// O endereço do buffer de cor do EGL na memória do guest, pronto para o jogo ler.
+    ///
+    /// **Dois caminhos pedem a mesma coisa e agora compartilham o cálculo**: a função
+    /// `eglGetColorBufferQUALCOMM`, que o motor atendia sozinha, e a interface
+    /// `IEGLGetColorBuffer`, que é por onde o Prey Evil pergunta. Zero continua sendo falha.
+    pub(super) fn egl_color_da_tela(&mut self) -> Result<u32, CpuError> {
+            self.sync_egl_color_from_guest()?;
+            let (largura, altura) = match self.egl_surfaces.get(&self.egl_surface) {
+                Some(&(l, a)) => (l as usize, a as usize),
+                None => {
+                    let alvo = self.screen();
+                    (alvo.width() as usize, alvo.height() as usize)
+                }
+            };
+            // O vetor de bytes é o mesmo de uma chamada para a outra: são quatrocentos
+            // kilobytes por leitura, duas leituras por quadro, e alocar isso sessenta vezes
+            // por segundo não paga nada.
+            //
+            // Guardar o quadro convertido para servir a segunda leitura **não** funciona:
+            // medido, zero de mil e duzentas e noventa e oito leituras puderam ser
+            // reaproveitadas, porque o jogo desenha entre uma e outra.
+            let mut bytes = std::mem::take(&mut self.egl_color_bytes);
+            self.gl.frame_rgb565(largura, altura, &mut bytes);
+            if self.egl_color_buffer.1 < bytes.len() {
+                // O buffer que ficou pequeno volta para a região antes de pedir outro.
+                if self.egl_color_buffer.0 != 0 {
+                    self.solta_superficie(self.egl_color_buffer.0);
+                    self.egl_color_buffer = (0, 0);
+                }
+                match self.reserva_superficie(bytes.len() as u32) {
+                    Some((onde, _)) => {
+                        self.egl_color_buffer = (onde, bytes.len());
+                        // A faixa mudou de lugar: o watchpoint acompanha.
+                        self.cpu
+                            .watch_dirty(VIGIA_COLOR_BUFFER, onde, bytes.len() as u32)?;
+                    }
+                    None => {
+                        self.egl_color_bytes = bytes;
+                        return Ok(0);
+                    }
+                }
+            }
+            self.cpu.write_mem(self.egl_color_buffer.0, &bytes)?;
+            self.egl_color_bytes = bytes;
+            self.egl_color_dimensions = Some((largura, altura));
+            Ok(self.egl_color_buffer.0)
+    }
+
     pub(super) fn write_egl_true(&mut self, slot: usize) -> Result<u32, CpuError> {
         let out = self.arg(slot);
         if out != 0 {
@@ -358,48 +406,7 @@ impl<C: CpuBackend> Machine<C> {
             //
             // É esta função que existe porque a Z-Wheel desenha o palco num **pbuffer** e não
             // numa janela: sem um ponteiro para o resultado, não há como compor o 3D com o 2D.
-            "GetColorBufferQUALCOMM" => {
-                self.sync_egl_color_from_guest()?;
-                let (largura, altura) = match self.egl_surfaces.get(&self.egl_surface) {
-                    Some(&(l, a)) => (l as usize, a as usize),
-                    None => {
-                        let alvo = self.screen();
-                        (alvo.width() as usize, alvo.height() as usize)
-                    }
-                };
-                // O vetor de bytes é o mesmo de uma chamada para a outra: são quatrocentos
-                // kilobytes por leitura, duas leituras por quadro, e alocar isso sessenta vezes
-                // por segundo não paga nada.
-                //
-                // Guardar o quadro convertido para servir a segunda leitura **não** funciona:
-                // medido, zero de mil e duzentas e noventa e oito leituras puderam ser
-                // reaproveitadas, porque o jogo desenha entre uma e outra.
-                let mut bytes = std::mem::take(&mut self.egl_color_bytes);
-                self.gl.frame_rgb565(largura, altura, &mut bytes);
-                if self.egl_color_buffer.1 < bytes.len() {
-                    // O buffer que ficou pequeno volta para a região antes de pedir outro.
-                    if self.egl_color_buffer.0 != 0 {
-                        self.solta_superficie(self.egl_color_buffer.0);
-                        self.egl_color_buffer = (0, 0);
-                    }
-                    match self.reserva_superficie(bytes.len() as u32) {
-                        Some((onde, _)) => {
-                            self.egl_color_buffer = (onde, bytes.len());
-                            // A faixa mudou de lugar: o watchpoint acompanha.
-                            self.cpu
-                                .watch_dirty(VIGIA_COLOR_BUFFER, onde, bytes.len() as u32)?;
-                        }
-                        None => {
-                            self.egl_color_bytes = bytes;
-                            return Ok(Some(0));
-                        }
-                    }
-                }
-                self.cpu.write_mem(self.egl_color_buffer.0, &bytes)?;
-                self.egl_color_bytes = bytes;
-                self.egl_color_dimensions = Some((largura, altura));
-                (0, self.egl_color_buffer.0)
-            }
+            "GetColorBufferQUALCOMM" => (0, self.egl_color_da_tela()?),
             "CopyBuffers" => (3, gles::EGL_TRUE),
             "SurfaceAttrib" => (4, gles::EGL_TRUE),
             "BindTexImage" | "ReleaseTexImage" => (3, gles::EGL_TRUE),
@@ -509,6 +516,12 @@ impl<C: CpuBackend> Machine<C> {
                     self.egl_get_power_level = self.new_object(Interface::EglGetPowerLevel)?;
                 }
                 self.egl_get_power_level
+            }
+            AEEIID_EGLGETCOLORBUFFER => {
+                if self.egl_get_color_buffer == 0 {
+                    self.egl_get_color_buffer = self.new_object(Interface::EglGetColorBuffer)?;
+                }
+                self.egl_get_color_buffer
             }
             AEEIID_EGLOESSWAPINTERVAL => {
                 if self.egl_oes_swap_interval == 0 {

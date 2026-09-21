@@ -317,6 +317,15 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 SUCCESS
             }
+            // `int GetColorBuffer(pMe, void **ret)` — o mesmo buffer de cor que a
+            // `eglGetColorBufferQUALCOMM` entrega por função, pelo mesmo cálculo.
+            "GetColorBuffer" if iface == Interface::EglGetColorBuffer => {
+                let (out, buffer) = (self.arg(1), self.egl_color_da_tela()?);
+                if out != 0 {
+                    self.cpu.write_u32(out, buffer)?;
+                }
+                SUCCESS
+            }
             // `IGLES11Ext`: as extensões OES do OpenGL ES 1.1.
             //
             // **O Prey Evil não desenha sem elas.** O levantamento das 62 ROMs o pegou com a tela

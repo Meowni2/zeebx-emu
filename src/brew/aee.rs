@@ -97,6 +97,9 @@ pub enum Interface {
     /// `AEEIID_EGLOESSWAPINTERVAL`: o ritmo de quadro, por interface. Ver
     /// [`aee_slots::EGL_OES_SWAP_INTERVAL`].
     EglOesSwapInterval = 58,
+    /// `AEEIID_EGLGETCOLORBUFFER`: o buffer de cor do EGL, por interface. Ver
+    /// [`aee_slots::EGL_GET_COLOR_BUFFER`].
+    EglGetColorBuffer = 59,
     /// `AEECLSID_SQLMGR` do console: abre bancos SQLite. Ver [`crate::brew::sql`].
     SqlMgr = 36,
     /// Um banco aberto pelo [`Interface::SqlMgr`].
@@ -431,6 +434,7 @@ impl Interface {
             Self::Gles10Ext => "IGLES10Ext",
             Self::EglGetPowerLevel => "IEGLGetPowerLevel",
             Self::EglOesSwapInterval => "IEGLOESSwapInterval",
+            Self::EglGetColorBuffer => "IEGLGetColorBuffer",
             Self::SqlMgr => "ISQLMgr",
             Self::SqlDatabase => "ISQLDatabase",
             Self::Collection => "IColecao",
@@ -496,6 +500,7 @@ impl Interface {
             Self::Gles10Ext => aee_slots::GLES10_EXT,
             Self::EglGetPowerLevel => aee_slots::EGL_GET_POWER_LEVEL,
             Self::EglOesSwapInterval => aee_slots::EGL_OES_SWAP_INTERVAL,
+            Self::EglGetColorBuffer => aee_slots::EGL_GET_COLOR_BUFFER,
             Self::SqlMgr => aee_slots::SQL_MGR,
             Self::SqlDatabase => aee_slots::SQL_DATABASE,
             Self::Collection => aee_slots::COLLECTION,
@@ -576,6 +581,7 @@ impl Interface {
             56 => Self::Gles10Ext,
             57 => Self::EglGetPowerLevel,
             58 => Self::EglOesSwapInterval,
+            59 => Self::EglGetColorBuffer,
             35 => Self::Probe,
             36 => Self::SqlMgr,
             37 => Self::SqlDatabase,
