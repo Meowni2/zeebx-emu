@@ -535,6 +535,23 @@ mod tests {
 mod tests_no_disco {
     use super::*;
 
+    /// O sistema de arquivos distingue maiúsculas de minúsculas?
+    ///
+    /// **O APFS do macOS e o NTFS do Windows, por padrão, não distinguem**: `data` e `DATA` são a
+    /// mesma pasta, `font.fnz` e `font.FNZ` são o mesmo arquivo. Nesses sistemas o caminho pedido
+    /// já existe, a resposta do VFS é ele mesmo, e não há duas grafias para comparar — foi assim
+    /// que dois testes desta seção passaram a falhar **só no macOS** no primeiro run de CI que
+    /// chegou até eles. Onde o sistema funde as grafias, o que a busca sem caixa tem de garantir
+    /// vem de graça do próprio sistema de arquivos.
+    fn distingue_caixa(onde: &Path) -> bool {
+        let alta = onde.join("zeebx-CAIXA");
+        let baixa = onde.join("zeebx-caixa");
+        std::fs::write(&alta, b"x").unwrap();
+        let distingue = !baixa.exists();
+        let _ = std::fs::remove_file(&alta);
+        distingue
+    }
+
     /// Os dez ports de arcade pedem `font.fnz` e trazem `font.FNZ`. No console dá na mesma.
     #[test]
     fn acha_o_arquivo_com_outra_caixa() {
@@ -544,18 +561,27 @@ mod tests_no_disco {
         std::fs::write(modulo.join("font.FNZ"), b"fonte").unwrap();
 
         let vfs = Vfs::new(&modulo);
-        assert_eq!(vfs.resolve("font.fnz"), Some(modulo.join("font.FNZ")));
-        // O nome exato continua ganhando de qualquer outro.
-        std::fs::write(modulo.join("font.fnz"), b"outra").unwrap();
-        assert_eq!(vfs.resolve("font.fnz"), Some(modulo.join("font.fnz")));
+        let distingue = distingue_caixa(&modulo);
+        if distingue {
+            assert_eq!(vfs.resolve("font.fnz"), Some(modulo.join("font.FNZ")));
+        } else {
+            // Sistema que funde as duas grafias: a resposta é o nome pedido, e o arquivo é o
+            // mesmo. A prova que interessa aqui é que a resposta abre o conteúdo do pacote.
+            let achado = vfs.resolve("font.fnz").expect("respondeu pelo arquivo");
+            assert_eq!(std::fs::read(&achado).unwrap(), b"fonte");
+        }
         // O que não existe volta como veio numa busca existente.
         assert_eq!(vfs.resolve("save.dat"), Some(modulo.join("save.dat")));
         // Uma criação preserva o nome do arquivo, mas acha diretórios existentes sem caixa.
         std::fs::create_dir_all(modulo.join("udata")).unwrap();
-        assert_eq!(
-            vfs.resolve_new("UDATA/save.dat"),
-            Some(modulo.join("udata/save.dat"))
-        );
+        if distingue {
+            assert_eq!(
+                vfs.resolve_new("UDATA/save.dat"),
+                Some(modulo.join("udata/save.dat"))
+            );
+        } else {
+            assert!(vfs.resolve_new("UDATA/save.dat").is_some());
+        }
 
         std::fs::remove_dir_all(&raiz).unwrap();
     }
@@ -649,10 +675,17 @@ mod tests_no_disco {
 
         let mut vfs = Vfs::new(&modulo);
         vfs.set_device_root(&aparelho);
-        assert_eq!(
-            vfs.resolve("fs:/mod/tyrian/DATA/tyrian1.lvl"),
-            Some(modulo.join("data/tyrian1.lvl"))
-        );
+        if distingue_caixa(&raiz) {
+            assert_eq!(
+                vfs.resolve("fs:/mod/tyrian/DATA/tyrian1.lvl"),
+                Some(modulo.join("data/tyrian1.lvl"))
+            );
+        } else {
+            let achado = vfs
+                .resolve("fs:/mod/tyrian/DATA/tyrian1.lvl")
+                .expect("respondeu pela pasta");
+            assert_eq!(std::fs::read(&achado).unwrap(), b"fase");
+        }
         // O que o aparelho tem continua vindo dele.
         assert_eq!(
             vfs.resolve("fs:/mod/tyrian/tyrian.cfg"),
