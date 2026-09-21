@@ -1496,7 +1496,13 @@ mod testes {
         let _ = (largura, altura);
     }
 
+    /// Quantas amostras estéreo o core entregou ao frontend.
+    static AMOSTRAS: AtomicU32 = AtomicU32::new(0);
+
     unsafe extern "C" fn audio(_dados: *const i16, quadros: usize) -> usize {
+        // Contar aqui é o que permite conferir **pelo caminho do core** que o áudio sai: o motor
+        // tem a medida dele (pico, rms, salto), e o core tem esta — se o lote chega ao frontend.
+        AMOSTRAS.fetch_add(quadros as u32, Ordering::Relaxed);
         quadros
     }
 
@@ -1651,6 +1657,10 @@ mod testes {
         let quadros = QUADROS.load(Ordering::Relaxed);
         assert!(quadros > 0, "nenhum quadro chegou ao frontend");
         eprintln!("quadros entregues ao frontend: {quadros}");
+        eprintln!(
+            "amostras estéreo entregues ao frontend: {}",
+            AMOSTRAS.load(Ordering::Relaxed)
+        );
         let _ = std::fs::remove_dir_all(&pasta);
     }
 }
