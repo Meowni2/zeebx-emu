@@ -1322,6 +1322,18 @@ comparação cobra é que desenhem a mesma imagem, não que sejam bit a bit igua
 feita, o que falta no item 5 é o encanamento: negociar o contexto com o frontend na
 `RETRO_ENVIRONMENT_SET_HW_RENDER` e entregar o `glow::Context` que o motor já aceita.
 
+Enquanto o encanamento não existe, dá para **ver** os dois rasterizadores lado a lado pela linha de
+comando, sem interface — os mesmos dois comandos, mudando só a flag da placa:
+
+```bash
+cargo run --release -- sessao "roms/Crash.zip" --seconds=3 --dump=software.bmp
+cargo run --release -- sessao "roms/Crash.zip" --seconds=3 --placa --dump=placa.bmp
+```
+
+Os dois `.bmp` são o mesmo instante virtual do mesmo jogo, um desenhado no processador e outro na
+placa. É a conferência que qualquer pessoa faz sem escrever código, e foi ela que o teste acima
+automatizou.
+
 ### A lacuna de GL que o levantamento achou
 
 O relatório da varredura tem uma seção **"GL atendido sem fazer nada"**: chamada que o rasterizador
