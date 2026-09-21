@@ -1297,7 +1297,7 @@ texturas comprimidas, blend), não a velocidade deste acervo.
 
 O `memset` do Rolima custava 731 ms porque o `helpers` **alocava um `Vec` do tamanho pedido em cada
 chamada**. Com limpeza em blocos de um buffer de pilha: 520 ms, e o jogo de 247% para 267%.
-| Render em hardware (`SET_HW_RENDER`) | **dois terços, com prova** | o rasterizador da placa está verificado contra o de software, e o motor **já desenha no framebuffer do frontend** (ver abaixo); falta negociar o contexto com o core |
+| Render em hardware (`SET_HW_RENDER`) | **encaixado, provado até onde dá sem frontend** | rasterizador verificado contra o de software; o motor desenha no framebuffer do frontend; as features `gl`/`gpu` separadas (0 dependências de host, medido em CI nos 6 alvos); o core pede o contexto, monta o `glow::Context`, desenha no FBO e volta ao software se falhar. O desenho em si depende do RetroArch |
 
 ### O rasterizador da placa desenha o mesmo quadro, medido
 
