@@ -1367,6 +1367,47 @@ próxima vez:
    inteiro** — o run aparece como falha **sem nenhum trabalho**. `actionlint` e um leitor de YAML
    não acusam: o diagnóstico é o run vazio.
 
+## O que falta, com o mapa de cada item
+
+### Item 5 — render em hardware: só o encanamento
+
+**O que já existe:** o rasterizador da placa, verificado contra o de software (idêntico em Double
+Dragon e Crash; 2,6% de arredondamento no Peteca); o contexto fora de tela para medi-lo sem janela;
+`Session::start_with(..., placa, Some(Arc<glow::Context>), ...)`, que já aceita o contexto do
+frontend.
+
+**O que falta, em ordem:**
+
+1. `frontends/libretro`: montar o `glow::Context` a partir de `get_proc_address` do
+   `retro_hw_render_callback` e passá-lo ao `start_with`, com `placa = true`. A constante
+   `ENV_SET_HW_RENDER` já está no arquivo, com o comentário dizendo por que ela não é usada hoje.
+2. Fazer o motor desenhar **no framebuffer do frontend** em vez do próprio: hoje o caminho de placa
+   cria o FBO dele e lê de volta; no contrato do `libretro` o core desenha no FBO que
+   `get_current_framebuffer` devolve, e o frontend apresenta.
+3. Trocar o `retro_video_refresh` de quadro por `RETRO_HW_FRAME_BUFFER_VALID` — sem isso o
+   RetroArch recebe pixels que não são os do FBO.
+
+**Como verificar:** o teste `os_dois_rasterizadores_desenham_o_mesmo_quadro` continua valendo como
+régua; o que muda é por onde o quadro sai.
+
+### Item 6 — save states: por que ainda não
+
+O critério de aceite do plano é "ausência de save state é declarada corretamente, **sem estado
+parcial**", e é o que o core faz (`retro_serialize_size` devolve 0, `retro_serialize` é falso). Um
+estado parcial seria pior que nenhum: a memória do guest e os registradores voltariam, e a mesa de
+objetos do emulador não — o jogo retomaria chamando APIs com identificadores que não existem mais.
+
+**O que um estado completo exigiria:** RAM do guest e registradores (fáceis, ambos já acessíveis),
+relógio virtual, timers, e a **descrição** de cada objeto vivo (arquivo aberto e deslocamento,
+superfície e formato, fluxo de mídia, consulta SQL), num formato versionado. É trabalho de sessão
+inteira, e a verificação natural é salvar e carregar num jogo com arquivo aberto.
+
+### Item 9 — capas e No-Intro: depende de conta
+
+Local está feito: 58 capas oficiais do Z-Wheel, playlist de 62 entradas (nenhuma sem arquivo),
+banco No-Intro, catálogo em JSON. O que falta é publicar no repositório de thumbnails e enviar os
+cinco títulos fora do No-Intro — os dois precisam de conta e de conferência humana.
+
 ## Ordem de implementação
 
 1. Inventariar toda E/S de core e definir `StorageFs`/`GuestFile`; decidir SQLite VFS ou staging
