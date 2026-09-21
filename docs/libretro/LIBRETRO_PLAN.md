@@ -1395,6 +1395,13 @@ esse nulo, e para isso o relatório não bastava: é o rastreio.
 (`ZEEBX_ROM_TRACO=IFile`). Sem esta opção o rastreio existia no motor e ninguém o ligava numa
 varredura, que é onde a investigação acontece.
 
+**O `1` funciona; o filtro por família não deu resultado e fica anotado.** Com `IGL`, `IHID` e
+`IDisplay` o relatório saiu com a seção vazia, embora o jogo faça milhares de chamadas de `IGLES*`
+(módulo `MatrixMode`) e o filtro seja `contains` sobre o nome descrito — ou seja, deveria casar.
+Não investiguei até o fim porque o `1` já tinha dado o que a sessão precisava. A próxima pessoa
+começa por aqui: rodar `ZEEBX_ROM_TRACO=1` (que funciona) e comparar com `ZEEBX_ROM_TRACO=IGL` no
+mesmo jogo, para ver onde a diferença aparece.
+
 E o que ele mostrou foi o padrão exato antes da queda: uma **tabela sendo construída**, entradas de
 28 bytes (`malloc 0x1c` seguido de `memmove 0x1c`), num laço, com as origens a 28 bytes de
 distância (`0x1003869a`, `0x100386b6`, `0x100386d2`, …) — e **nenhuma chamada de API depois disso**.
