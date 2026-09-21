@@ -34,9 +34,10 @@ on:
       - ".github/workflows/libretro.yml"
   workflow_dispatch:
 
+# Ver a nota do `ci.yml`: em push, a execucao nova espera em vez de derrubar a que esta rodando.
 concurrency:
   group: libretro-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   core:

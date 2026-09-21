@@ -43,9 +43,13 @@ on:
       - "build.rs"
   workflow_dispatch:
 
+# **Push não cancela push.** Medido: quatro execuções seguidas do `ci` terminaram "cancelled" porque
+# cada push novo derrubava o build de seis alvos que estava no meio — e nenhuma delas chegou a
+# dizer se o standalone compila no Windows ou no macOS. Em PR o cancelamento continua, que é onde a
+# pressa importa.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   compila:
