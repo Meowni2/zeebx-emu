@@ -14,7 +14,8 @@ use crate::loader;
 use crate::loader::archive;
 use crate::loader::modfile::ModImage;
 use crate::machine::{AppletResult, Machine, Outcome};
-use crate::ui::library;
+use crate::storage::StoragePaths;
+use crate::library;
 use crate::video::display::Framebuffer;
 
 /// Teto de instruções por fatia entre duas chamadas de API — evita que um laço infinito no
@@ -161,9 +162,51 @@ impl Session {
         serial: Option<&Path>,
         placa: bool,
         contexto: Option<std::sync::Arc<eframe::glow::Context>>,
-        z_wheel: crate::ui::settings::ZWheel,
+        z_wheel: crate::config::ZWheel,
     ) -> Result<Self, StartError> {
         Self::start_inner(path, Some(portas), serial, placa, contexto, z_wheel)
+    }
+
+    /// Como [`Session::start_with`], mas recebe a raiz persistente explicitamente.
+    ///
+    /// É a fronteira que o frontend Libretro usará: cache de pacote e `fs:/` deixam de depender
+    /// da configuração da UI desktop.
+    #[allow(dead_code)] // consumido por `frontends/libretro`, ainda não criado.
+    pub fn start_with_storage(
+        path: &Path,
+        portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
+        serial: Option<&Path>,
+        placa: bool,
+        contexto: Option<std::sync::Arc<eframe::glow::Context>>,
+        z_wheel: crate::config::ZWheel,
+        storage: &StoragePaths,
+    ) -> Result<Self, StartError> {
+        Self::start_inner_with_storage(
+            path,
+            Some(portas),
+            serial,
+            placa,
+            contexto,
+            z_wheel,
+            storage,
+        )
+    }
+
+    /// Inicia o motor sem janela, dispositivo de áudio ou contexto gráfico do host.
+    ///
+    /// Sem chamador até `frontends/libretro` existir; o aviso de código morto está silenciado
+    /// de propósito.
+    ///
+    /// Esta é a entrada do core Libretro: vídeo, áudio e input são fornecidos por callbacks do
+    /// frontend, e o armazenamento já vem delimitado em [`StoragePaths`].
+    #[allow(dead_code)] // consumido por `frontends/libretro`, ainda não criado.
+    pub fn start_software_with_storage(
+        path: &Path,
+        portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
+        z_wheel: crate::config::ZWheel,
+        storage: &StoragePaths,
+    ) -> Result<Self, StartError> {
+        Self::start_inner_with_storage(path, Some(portas), None, false, None, z_wheel, storage)
     }
 
     /// A serial entra **antes de o módulo ser criado**, e não depois de a sessão existir.
@@ -178,12 +221,26 @@ impl Session {
         serial: Option<&Path>,
         placa: bool,
         contexto: Option<std::sync::Arc<eframe::glow::Context>>,
-        z_wheel: crate::ui::settings::ZWheel,
+        z_wheel: crate::config::ZWheel,
+    ) -> Result<Self, StartError> {
+        let storage = StoragePaths::from_root(crate::config::config_dir());
+        Self::start_inner_with_storage(path, portas, serial, placa, contexto, z_wheel, &storage)
+    }
+
+    fn start_inner_with_storage(
+        path: &Path,
+        portas: Option<[Option<crate::input::bindings::Aparelho>; crate::input::PORTAS]>,
+        serial: Option<&Path>,
+        placa: bool,
+        contexto: Option<std::sync::Arc<eframe::glow::Context>>,
+        z_wheel: crate::config::ZWheel,
+        storage: &StoragePaths,
     ) -> Result<Self, StartError> {
         let extracted;
         let path = match path.extension().and_then(|e| e.to_str()) {
             Some("zip") => {
-                extracted = archive::extract(path).map_err(StartError::Unreadable)?;
+                extracted =
+                    archive::extract_in(path, &storage.cache).map_err(StartError::Unreadable)?;
                 extracted.as_path()
             }
             _ => path,
@@ -198,13 +255,16 @@ impl Session {
         // console guarda os arquivos do título.
         let root = path.parent().map(Path::to_path_buf).unwrap_or_default();
         let cpu = DynarmicCpu::new().map_err(|e| StartError::NotLoadable(e.to_string()))?;
-        let mut machine = Machine::new(cpu, module, root);
+        let mut machine = Machine::new_with_device(cpu, module, root, &storage.device);
         // Antes de qualquer desenho: ver [`Machine::usa_placa`].
         machine.usa_placa(placa, contexto);
         machine.configura_z_wheel(z_wheel);
         // A tela com que o console abre a Z-Wheel. Ver [`SPLASH_DA_Z_WHEEL`].
         if library::applet_clsid(path) == Some(Z_WHEEL) {
-            if let Some(imagem) = path.parent().and_then(|dir| std::fs::read(dir.join(SPLASH_DA_Z_WHEEL)).ok()) {
+            if let Some(imagem) = path
+                .parent()
+                .and_then(|dir| std::fs::read(dir.join(SPLASH_DA_Z_WHEEL)).ok())
+            {
                 machine.pinta_tela_rgb565(&imagem);
             }
         }
@@ -523,7 +583,7 @@ impl Session {
                 format!("  {ms:>7} ms  {objeto:#010x}  {chamada}{repete}")
             }));
         }
-                let classes = self.machine.unknown_classes();
+        let classes = self.machine.unknown_classes();
         if !classes.is_empty() {
             linhas.push("— classes que o jogo pediu e não temos —".to_string());
             linhas.extend(classes.iter().map(|id| format!("  {id:#010x}")));
@@ -843,7 +903,8 @@ mod tests {
         // legível, porque é ele que a interface mostra.
         let path = std::env::temp_dir().join("zeebx-teste-lixo.mod");
         std::fs::write(&path, b"isto nao e um modulo").unwrap();
-        let Err(err) = Session::start_inner(&path, None, None, false, None, Default::default()) else {
+        let Err(err) = Session::start_inner(&path, None, None, false, None, Default::default())
+        else {
             panic!("um arquivo de lixo não podia virar uma sessão");
         };
         assert!(!err.to_string().is_empty());
@@ -857,7 +918,7 @@ mod tests {
 /// jogo inteiro porque um módulo secundário está corrompido seria trocar um jogo que roda em
 /// parte por um que não roda.
 pub fn extensoes_de(mod_path: &std::path::Path) -> Vec<loader::ExtensionImage> {
-    crate::ui::library::extensoes(mod_path)
+    crate::library::extensoes(mod_path)
         .into_iter()
         .filter_map(|(caminho, classes)| {
             let bytes = std::fs::read(caminho).ok()?;

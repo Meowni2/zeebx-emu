@@ -10,6 +10,7 @@ use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::config;
 use crate::loader::miffile::MifFile;
 use crate::storage::ContentId;
 
@@ -75,11 +76,9 @@ fn validate_archive<R: Read + Seek>(
     }
     Ok(())
 }
-use crate::ui::settings;
-
 /// Onde as extrações ficam.
 pub fn cache_dir() -> PathBuf {
-    settings::config_dir().join("cache")
+    config::config_dir().join("cache")
 }
 
 /// A raiz do sistema de arquivos do aparelho, comum a todos os jogos.
@@ -89,7 +88,7 @@ pub fn cache_dir() -> PathBuf {
 /// raiz por instalação faria cada jogo ver uma pasta só sua, e o F.C. concluiria — com razão,
 /// do ponto de vista dele — que o Zeeboids não está instalado.
 pub fn device_dir() -> PathBuf {
-    settings::config_dir().join("aparelho")
+    config::config_dir().join("aparelho")
 }
 
 /// A fonte do sistema, no lugar em que o console a guarda: `fs:/shared/fonts/tectoy.ttf`.
@@ -232,6 +231,11 @@ pub fn title_of(zip: &Path, module: &str) -> String {
 /// A pasta de destino é nomeada pelo hash BLAKE3 dos bytes do arquivo: trocar o conteúdo gera
 /// outra pasta, e cópia idêntica reaproveita a extração anterior sem confiar em tamanho/data.
 pub fn extract(zip: &Path) -> std::io::Result<PathBuf> {
+    extract_in(zip, &cache_dir())
+}
+
+/// Como [`extract`], mas com cache explícito para o frontend que controla sua raiz persistente.
+pub fn extract_in(zip: &Path, cache: &Path) -> std::io::Result<PathBuf> {
     // A seleção e a extração ainda precisam abrir o arquivo mais de uma vez. Conferir o digest
     // entre essas fases recusa a troca da ROM no meio da operação, em vez de pôr bytes diferentes
     // sob uma chave de conteúdo errada.
@@ -241,7 +245,7 @@ pub fn extract(zip: &Path) -> std::io::Result<PathBuf> {
     if fingerprint(zip)? != source_fingerprint {
         return Err(std::io::Error::other("o zip mudou enquanto era analisado"));
     }
-    let target = cache_dir().join(&source_fingerprint);
+    let target = cache.join(&source_fingerprint);
     let extracted = target.join(&module);
     // Já extraído com identidade forte: nada a fazer.
     if extracted.is_file() {
@@ -250,7 +254,7 @@ pub fn extract(zip: &Path) -> std::io::Result<PathBuf> {
     // A versão anterior usava nome+tamanho+mtime. Mantemos o cache antigo como leitura
     // transitória para não esconder saves que ainda vivem dentro dele; nunca escrevemos conteúdo
     // novo ali, pois aquela chave podia colidir.
-    let legacy = cache_dir().join(legacy_fingerprint(zip)?).join(&module);
+    let legacy = cache.join(legacy_fingerprint(zip)?).join(&module);
     if legacy.is_file() {
         return Ok(legacy);
     }

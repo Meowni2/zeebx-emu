@@ -24,9 +24,12 @@ pub struct StoragePaths {
 }
 
 impl StoragePaths {
-    /// Cria o layout lógico do perfil dentro de `save_dir`.
-    pub fn from_save_dir(save_dir: impl AsRef<Path>) -> Self {
-        let root = save_dir.as_ref().join("zeebx");
+    /// Cria o layout a partir de uma raiz de perfil já escolhida.
+    ///
+    /// A UI desktop atual usa sua configuração diretamente como raiz. O frontend Libretro usa
+    /// [`StoragePaths::from_save_dir`] para acrescentar a pasta `zeebx` sem escrever na ROM.
+    pub fn from_root(root: impl Into<PathBuf>) -> Self {
+        let root = root.into();
         Self {
             cache: root.join("cache"),
             device: root.join("aparelho"),
@@ -34,6 +37,11 @@ impl StoragePaths {
             metadata: root.join("metadata"),
             root,
         }
+    }
+
+    /// Cria o layout lógico do perfil dentro de `save_dir`.
+    pub fn from_save_dir(save_dir: impl AsRef<Path>) -> Self {
+        Self::from_root(save_dir.as_ref().join("zeebx"))
     }
 
     /// Onde fica o overlay privado de um conteúdo.

@@ -7,9 +7,11 @@
 
 mod audio;
 mod brew;
+mod config;
 mod cpu;
 mod input;
 mod loader;
+mod library;
 mod machine;
 mod ponte;
 mod rede;
@@ -31,7 +33,6 @@ use crate::input::bindings;
 use crate::loader::archive;
 use crate::loader::modfile::{ModImage, Variant};
 use crate::machine::{AppletResult, Machine, Outcome};
-use crate::ui::library;
 use crate::ui::window;
 use crate::video::icon;
 

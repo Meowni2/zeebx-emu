@@ -447,7 +447,7 @@ impl<C: CpuBackend> Machine<C> {
 }
 
 /// A `tectoy.cfg` com as trocas de [`Machine::configura_z_wheel`], o resto como veio.
-fn ajusta_cfg(original: &str, opcoes: crate::ui::settings::ZWheel) -> String {
+fn ajusta_cfg(original: &str, opcoes: crate::config::ZWheel) -> String {
     original
         .split_inclusive('\n')
         .map(|linha| {
@@ -469,7 +469,7 @@ fn ajusta_cfg(original: &str, opcoes: crate::ui::settings::ZWheel) -> String {
 #[cfg(test)]
 mod testes_da_cfg {
     use super::ajusta_cfg;
-    use crate::ui::settings::ZWheel;
+    use crate::config::ZWheel;
 
     const ORIGINAL: &str = "; EOL\r\nEOL=1\r\n#zeebomenu_hide - x\r\nzeebomenu_hide=1\r\nEOLX=1\r\nSlideOnceToForm=31\n";
 

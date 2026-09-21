@@ -450,7 +450,10 @@ mod tests_no_disco {
             vfs.resolve("fs:/mod/tyrian/novo.sav"),
             Some(aparelho.join("mod/tyrian/novo.sav"))
         );
-        assert_eq!(vfs.resolve_dir("fs:/mod/tyrian/data"), Some(modulo.join("data")));
+        assert_eq!(
+            vfs.resolve_dir("fs:/mod/tyrian/data"),
+            Some(modulo.join("data"))
+        );
         // E dali não se sobe para fora da instalação.
         assert_eq!(vfs.resolve("fs:/mod/../../segredo"), None);
 

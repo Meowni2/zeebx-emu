@@ -162,7 +162,10 @@ fn fold_case(units: &[u16], take: usize) -> Vec<u16> {
 /// octal e o resto é decimal. Devolve o valor e quantos bytes foram consumidos.
 fn parse_unsigned(text: &str, base: u32) -> (u32, usize) {
     // O espaço do `isspace` do C, e não o do Unicode: lido em Latin-1, o `0xA0` viraria espaço.
-    let start = text.len() - text.trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r']).len();
+    let start = text.len()
+        - text
+            .trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r'])
+            .len();
     // **O sinal vale.** A `strtoul` do C aceita `+` e `-`, e com `-` devolve o número negado. O
     // Alice no País das Maravilhas lê linhas como `-2 12 16 73 ...`: parado no `-`, o laço dele
     // contava o campo sem sair do lugar e repetia a linha até esgotar os 18 MB do pool.
@@ -1403,7 +1406,11 @@ fn decode_png(bytes: &[u8]) -> Option<DecodedImage> {
         // Meio-tom não existe numa superfície sem canal alfa: ou o pixel entra, ou não entra.
         // Numa superfície sem canal alfa, o meio-tom vira opaco ou transparente; é o `alfa`
         // que o preserva para quem desenha a imagem por cima de outra coisa.
-        let a = if has_alpha { chunk[channels - 1] } else { u8::MAX };
+        let a = if has_alpha {
+            chunk[channels - 1]
+        } else {
+            u8::MAX
+        };
         opaque.push(a >= 128);
         alfa.push(a);
     }
@@ -2141,7 +2148,7 @@ pub struct Machine<C: CpuBackend> {
     escritas_do_quadro_gl: Option<u64>,
     wheel_boot_skipped: bool,
     /// Como a Z-Wheel lê a `tectoy.cfg`. Ver [`Machine::configura_z_wheel`].
-    z_wheel: crate::ui::settings::ZWheel,
+    z_wheel: crate::config::ZWheel,
     /// O applet pediu para fechar com `ISHELL_CloseApplet`. Ver [`Machine::pediu_para_fechar`].
     applet_fechado: bool,
     /// `(raiz, formulário)` à espera do aviso de ativo. Ver [`Machine::entrega_ativacao`].
@@ -2570,12 +2577,26 @@ impl<C: CpuBackend> Machine<C> {
     ///   ela marca na primeira vez; fora dele, sempre, a não ser que esteja no `NoSlideToForm`.
     ///   A cfg traz `SlideOnceToForm=31` e o dump já vem com `HasSlidToForm=14` — Jogar,
     ///   Configurar e zeebo vistos —, então nada deslizava. Com `SlideOnceToForm=0`, tudo desliza.
-    pub fn configura_z_wheel(&mut self, opcoes: crate::ui::settings::ZWheel) {
+    pub fn configura_z_wheel(&mut self, opcoes: crate::config::ZWheel) {
         self.z_wheel = opcoes;
     }
 
     pub fn new(cpu: C, module: LoadedModule, root: impl Into<std::path::PathBuf>) -> Self {
+        Self::new_with_device(cpu, module, root, crate::loader::archive::device_dir())
+    }
+
+    /// Como [`Machine::new`], mas recebe a NAND/BREW compartilhada explicitamente.
+    ///
+    /// O construtor antigo preserva a UI desktop. Frontends isolados, como Libretro, não podem
+    /// depender de `ui::settings::config_dir()` e usam esta forma com sua raiz autorizada.
+    pub fn new_with_device(
+        cpu: C,
+        module: LoadedModule,
+        root: impl Into<std::path::PathBuf>,
+        device_root: impl Into<std::path::PathBuf>,
+    ) -> Self {
         let raiz: std::path::PathBuf = root.into();
+        let device_root: std::path::PathBuf = device_root.into();
         let heap = Heap::new(loader::HEAP_BASE, loader::HEAP_SIZE);
         // Os objetos ficam depois dos ponteiros que o carregador já reservou no começo da
         // região, para não sobrescrevê-los.
@@ -2611,7 +2632,7 @@ impl<C: CpuBackend> Machine<C> {
             vfs: {
                 let mut vfs = Vfs::new(raiz.clone());
                 // Todos os jogos compartilham o mesmo `fs:/`, como no console.
-                vfs.set_device_root(crate::loader::archive::device_dir());
+                vfs.set_device_root(device_root);
                 vfs
             },
             open_files: HashMap::new(),
@@ -2667,7 +2688,7 @@ impl<C: CpuBackend> Machine<C> {
             pending_launch: None,
             wheel_boot_skipped: false,
             escritas_do_quadro_gl: None,
-            z_wheel: crate::ui::settings::ZWheel {
+            z_wheel: crate::config::ZWheel {
                 fim_de_vida: true,
                 transicoes_sempre: false,
             },
@@ -3182,7 +3203,11 @@ impl<C: CpuBackend> Machine<C> {
             }
             (Interface::Shell, slot) if Interface::Shell.method(slot) == Some("EnumNextApplet") => {
                 let saida = self.cpu.read_reg(Reg::R1);
-                match self.modulos_instalados.get(self.enumeracao_de_applets).cloned() {
+                match self
+                    .modulos_instalados
+                    .get(self.enumeracao_de_applets)
+                    .cloned()
+                {
                     Some((classe, id)) if saida != 0 => {
                         self.enumeracao_de_applets += 1;
                         let mif = match self.mif_no_guest.get(&classe) {
