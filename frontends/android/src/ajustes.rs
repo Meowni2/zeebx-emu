@@ -201,14 +201,19 @@ impl Emulador {
             &mut graficos.scaling,
             &modos,
         );
-        mudou |= widgets::interruptor(
-            ui,
-            "keep_aspect",
-            catalogo.get("graphics.keep_aspect"),
-            None,
-            dica,
-            &mut graficos.keep_aspect,
-        );
+        // O 4:3 só tem efeito sobre "Preencher": nos outros dois modos a proporção já é
+        // mantida, e mostrar a opção ali dava um botão que não faz nada. Pior, ele era a razão
+        // de "Preencher" parecer quebrado — ligado, ele desfaz o preenchimento.
+        if graficos.scaling == Scaling::Stretch {
+            mudou |= widgets::interruptor(
+                ui,
+                "keep_aspect",
+                catalogo.get("graphics.keep_aspect"),
+                None,
+                dica,
+                &mut graficos.keep_aspect,
+            );
+        }
         mudou |= widgets::interruptor(
             ui,
             "smooth",
@@ -219,6 +224,7 @@ impl Emulador {
         );
 
         widgets::secao(ui, "3D");
+        // A névoa vale nos dois rasterizadores; o resto desta seção, só na placa.
         mudou |= widgets::interruptor(
             ui,
             "fog",
@@ -227,6 +233,20 @@ impl Emulador {
             dica,
             &mut graficos.neblina,
         );
+        mudou |= widgets::interruptor(
+            ui,
+            "gpu_rasterizer",
+            catalogo.get("graphics.gpu_rasterizer"),
+            Some(catalogo.get("graphics.gpu_rasterizer.hint")),
+            dica,
+            &mut graficos.gpu_rasterizer,
+        );
+        // **Tudo daqui para baixo é vazio no software.** O `define_proporcao`, o
+        // `define_escala`, o `define_antialias` e o anisotrópico do `Rasterizador` são funções
+        // sem corpo quando o 3D roda na CPU: só a placa sabe fazer isso. Apagá-los enquanto ela
+        // está desligada é dizer a verdade — antes eles mexiam e nada acontecia.
+        let com_placa = graficos.gpu_rasterizer;
+        ui.add_enabled_ui(com_placa, |ui| {
         mudou |= widgets::deslizante(
             ui,
             "resolucao",
@@ -271,6 +291,7 @@ impl Emulador {
             &mut graficos.proporcao,
             &proporcoes,
         );
+        });
 
         // O que se mexe agora vale no jogo que já está aberto, e não só no próximo.
         if mudou {

@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use zeebx::session::Step;
 use zeebx::ui::depuracao;
-use zeebx::ui::settings::Scaling;
+use zeebx::ui::settings::{Proporcao, Scaling};
 
 use crate::{Emulador, ORCAMENTO};
 
@@ -109,6 +109,15 @@ impl Emulador {
 
         let preto = egui::Frame::NONE.fill(egui::Color32::BLACK);
         egui::CentralPanel::default().frame(preto).show(ctx, |ui| {
+            // A proporção "a da janela" acompanha o tamanho dela, e por isso é dita a cada
+            // quadro: qualquer outra é dita uma vez, na abertura.
+            if self.settings.graphics.proporcao == Proporcao::Janela {
+                let area = ui.available_size();
+                let aspecto = area.x / area.y.max(1.0);
+                if let Some(sessao) = self.sessao.as_mut() {
+                    sessao.define_proporcao(Some(aspecto));
+                }
+            }
             if let Some(textura) = &self.textura {
                 let tamanho = coloca(
                     ui.available_size(),

@@ -32,7 +32,7 @@ e chama o `android_main` dela.
 | Arquivo | O que é |
 |---|---|
 | `src/lib.rs` | o laço de eventos, o estado do aplicativo e por onde cada tela entra |
-| `src/tela.rs` | a `ANativeWindow` virando superfície EGL, e o `egui_glow` desenhando nela |
+| `src/tela.rs` | a `ANativeWindow` virando superfície EGL, o contexto que sobrevive a ela, e o `egui_glow` |
 | `src/entrada.rs` | o evento do Android virando botão do Zeebo e ponteiro do egui |
 | `src/biblioteca.rs` | a grade de jogos, com as capas que o `library::scan` do núcleo já lê |
 | `src/ajustes.rs` | as configurações, sobre o mesmo `Settings` e o mesmo catálogo de idiomas do desktop |
@@ -76,6 +76,22 @@ os gatilhos e o "voltar".
 O mapa de botões é o mesmo que o desktop dá a um controle moderno: sul no `b1`, leste no `b2`,
 oeste no `b3`, norte no `b4`, os gatilhos superiores no `zl`/`zr`, o Start no `back` — o controle
 do Zeebo não tem Start, e quem ocupa o lugar dele é o HOME.
+
+### O 3D na placa
+
+O contexto de GL do `tela.rs` é o mesmo que a sessão recebe, então o "preencher o 3D na placa de
+vídeo" do desktop vale aqui. **E é ele que dá vida a quatro outras opções:** no rasterizador de
+software o `define_proporcao`, o `define_escala`, o `define_antialias` e o anisotrópico são
+funções de corpo vazio — só a placa sabe fazer aquilo. Com o 3D na CPU, mexer na proporção larga
+ou na resolução interna não fazia absolutamente nada, e por isso as quatro ficam apagadas
+enquanto a placa está desligada.
+
+**O contexto e a superfície têm vidas diferentes, e o `tela.rs` as separa por isso.** A janela do
+Android nasce e morre a cada troca de aplicativo; o contexto não pode ir junto, porque o
+rasterizador guarda nele texturas, buffers e programas. Destruí-lo ao ir para o segundo plano
+deixaria a sessão com nomes de objetos que não existem mais, e o primeiro desenho na volta seria
+uma falha dentro do driver. Então a `Placa` nasce com a primeira janela e vive até o fim; a
+`Tela` é só a superfície, refeita a cada janela.
 
 ### A pasta de ROMs
 
@@ -126,9 +142,6 @@ os põe no caminho do ligador: ele acha o nome, não acha símbolo nenhum, e seg
 
 ## O que ainda não está aqui
 
-- **A placa.** A sessão abre com `placa: false`, no rasterizador de software. O contexto de GL
-  agora existe — é o do `tela.rs` —, então ligá-la é passá-lo à sessão; o passo seguinte, depois
-  de medir.
 - **Som.** O `cpal` tem backend de AAudio e já compila, mas ninguém o liga ainda.
 - **Controle remapeável.** O mapa de botões é fixo no `entrada.rs`. O `input::bindings`, que é
   quem o desktop usa para deixar o usuário remapear, ainda não está ligado aqui.

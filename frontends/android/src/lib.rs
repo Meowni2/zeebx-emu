@@ -14,8 +14,9 @@
 //! textos e as opções saem do próprio núcleo: o mesmo `Settings` do desktop, o mesmo catálogo
 //! de idiomas, o mesmo painel de depuração.
 //!
-//! **A imagem é a do rasterizador de software.** O caminho da placa (`placa: true`) pede um
-//! contexto de GL emprestado, e agora ele existe — ligá-lo é o passo seguinte, depois de medir.
+//! **O 3D pode rodar na placa.** O contexto de GL da [`tela`] é o mesmo que a sessão recebe, o
+//! que liga aqui o `gpu_rasterizer` do desktop — e com ele a resolução interna, o antialias, o
+//! anisotrópico e a proporção larga, que no rasterizador de software são funções vazias.
 
 mod ajustes;
 mod biblioteca;
@@ -40,7 +41,7 @@ use zeebx::ui::library::{self, Game};
 use zeebx::ui::settings::Settings;
 
 use entrada::Entrada;
-use tela::Tela;
+use tela::{Placa, Tela};
 
 /// Quanto tempo real o jogo pode tomar num quadro da interface. O mesmo teto do desktop: se o
 /// jogo não acompanha, o que se perde é velocidade do jogo, não a resposta da tela.
@@ -123,6 +124,9 @@ fn gira(app: AndroidApp, emulador: &mut Emulador) {
     tema::aplica(&ctx);
 
     let mut entrada = Entrada::nova(pontos_por_pixel);
+    // A placa nasce com a primeira janela e não morre mais: ver [`tela::Placa`]. A tela é a
+    // superfície, e essa vai e vem.
+    let mut placa: Option<Placa> = None;
     let mut tela: Option<Tela> = None;
     let mut visivel = false;
     let mut sair = false;
@@ -138,22 +142,34 @@ fn gira(app: AndroidApp, emulador: &mut Emulador) {
         };
 
         app.poll_events(espera, |evento| match evento {
-            PollEvent::Main(MainEvent::InitWindow { .. }) => match Tela::nova(&app) {
-                Ok(nova) => tela = Some(nova),
-                Err(erro) => log::error!("a tela não subiu: {erro}"),
-            },
+            PollEvent::Main(MainEvent::InitWindow { .. }) => {
+                let feita = match &placa {
+                    // A segunda janela em diante reaproveita o contexto: é o que mantém vivos
+                    // os objetos de GL que a sessão criou.
+                    Some(placa) => placa.refaz_a_tela(&app),
+                    None => Placa::nova(&app).map(|(nova, primeira)| {
+                        emulador.gl = Some(nova.gl.clone());
+                        placa = Some(nova);
+                        primeira
+                    }),
+                };
+                match feita {
+                    Ok(nova) => tela = Some(nova),
+                    Err(erro) => log::error!("a tela não subiu: {erro}"),
+                }
+            }
             PollEvent::Main(MainEvent::TerminateWindow { .. }) => tela = None,
             PollEvent::Main(MainEvent::WindowResized { .. })
             | PollEvent::Main(MainEvent::ContentRectChanged { .. })
             | PollEvent::Main(MainEvent::ConfigChanged { .. }) => {
-                if let Some(tela) = &mut tela {
-                    tela.redimensiona(&app);
+                if let (Some(placa), Some(tela)) = (&placa, &mut tela) {
+                    placa.redimensiona(tela, &app);
                 }
             }
             PollEvent::Main(MainEvent::Resume { .. }) | PollEvent::Main(MainEvent::GainedFocus) => {
                 visivel = true;
-                if let Some(tela) = &tela {
-                    tela.retoma();
+                if let (Some(placa), Some(tela)) = (&placa, &tela) {
+                    placa.retoma(tela);
                 }
             }
             PollEvent::Main(MainEvent::Pause) | PollEvent::Main(MainEvent::LostFocus) => {
@@ -181,7 +197,7 @@ fn gira(app: AndroidApp, emulador: &mut Emulador) {
             emulador.voltar();
         }
 
-        let Some(tela) = tela.as_mut() else {
+        let (Some(placa), Some(tela)) = (placa.as_mut(), tela.as_ref()) else {
             continue;
         };
         if !visivel {
@@ -200,14 +216,14 @@ fn gira(app: AndroidApp, emulador: &mut Emulador) {
             time: Some(comeco.elapsed().as_secs_f64()),
             // O limite da GPU do aparelho, e não o palpite do egui: é ele que decide até onde o
             // atlas de fontes pode crescer.
-            max_texture_side: Some(tela.pincel.max_texture_side()),
+            max_texture_side: Some(placa.pincel.max_texture_side()),
             events: std::mem::take(&mut entrada.eventos),
             ..Default::default()
         };
 
         let saida = ctx.run(cru, |ctx| emulador.desenha(ctx));
         let primitivas = ctx.tessellate(saida.shapes, saida.pixels_per_point);
-        tela.pinta(&primitivas, &saida.textures_delta, saida.pixels_per_point);
+        placa.pinta(tela, &primitivas, &saida.textures_delta, saida.pixels_per_point);
     }
 
     log::info!("Zeebx encerrando");
@@ -244,6 +260,9 @@ pub struct Emulador {
     minha_pasta: PathBuf,
     /// A ponte para a atividade: é por ela que se pergunta e se pede a permissão.
     app: AndroidApp,
+    /// O contexto de GL da tela, quando ela já subiu. É o que a sessão usa para preencher o 3D
+    /// na placa; sem ele, o 3D é da CPU.
+    gl: Option<std::sync::Arc<glow::Context>>,
     /// Os jogos da pasta escolhida, com título e capa, lidos pelo mesmo `library::scan` do
     /// desktop.
     jogos: Vec<Game>,
@@ -313,6 +332,7 @@ impl Emulador {
             dica: None,
             minha_pasta,
             app,
+            gl: None,
             arquivo,
             settings,
             catalogo,
@@ -369,14 +389,15 @@ impl Emulador {
     fn abre(&mut self, caminho: &std::path::Path) {
         self.erro = None;
         let graficos = self.settings.graphics.clone();
+        // O 3D na placa vale só se houver placa: antes da primeira janela não há contexto, e a
+        // sessão aberta sem ele cai no rasterizador de software sozinha.
+        let na_placa = graficos.gpu_rasterizer && self.gl.is_some();
         match Session::start_with(
             caminho,
             zeebx::PORTAS_PADRAO,
             None,
-            // A placa ainda não entrega o quadro aqui: o contexto existe, mas quem o põe na
-            // tela é o `egui_glow`, e o caminho de `PaintCallback` não está montado.
-            false,
-            None,
+            na_placa,
+            self.gl.clone().filter(|_| na_placa),
             self.settings.z_wheel,
         ) {
             Ok(mut sessao) => {
