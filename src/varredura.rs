@@ -222,6 +222,15 @@ pub struct Desempenho {
     /// Escritas na tela. Um jogo 2D pode não apresentar quadro nenhum em poucos segundos e
     /// ainda assim estar desenhando — é o que separa "abriu" de "tela preta".
     pub pixels: u64,
+    /// **Cores distintas** no quadro final, e a que mais aparece.
+    ///
+    /// O `pixels` conta escritas, e um jogo que pinta 307.200 pixels de preto tem `pixels` alto e
+    /// tela preta: contar escritas **não** separa "desenhou" de "desenhou nada". Contar cores
+    /// separa. É o número que faltava para a linha de base cobrar uma regressão que apaga a tela
+    /// sem quebrar a execução — o sintoma mais fácil de passar despercebido numa varredura.
+    pub cores: u32,
+    /// A cor mais frequente do quadro final, em RGB565. Numa tela preta é `0x0000`.
+    pub cor_dominante: u16,
     /// Instruções ARM executadas.
     pub instrucoes: u64,
     /// Chamadas de API atendidas.
@@ -446,6 +455,16 @@ impl Relatorio {
         if let Some(motivo) = &self.motivo {
             texto.push_str(&format!("motivo: {motivo}\n"));
         }
+        if let Some(d) = &self.desempenho {
+            // **A linha que impede uma tela preta de passar.** Um jogo que apaga tudo continua
+            // apresentando quadro, executando instrução e respondendo API: só o número de cores
+            // denuncia. A dominante diz *o que* ficou no lugar — preto é tela apagada, e um
+            // `0xFFFF` no lugar dela é outra história.
+            texto.push_str(&format!(
+                "tela: {} cor(es), dominante {:#06x}\n",
+                d.cores, d.cor_dominante
+            ));
+        }
         for (nome, linhas) in self.pendencias.secoes() {
             if linhas.is_empty() {
                 continue;
@@ -608,6 +627,32 @@ fn estado_da_falha(session: &Session) -> Option<String> {
     Some(texto)
 }
 
+/// Quantas cores distintas tem o quadro, e qual a mais frequente.
+///
+/// Um quadro de 640×480 são 307.200 pixels: contar cores distintas com um conjunto é barato, e a
+/// contagem da dominante cabe num vetor de 65.536 posições — duas passadas simples, sem alocação
+/// grande por jogo.
+fn cores_do_quadro(tela: &crate::video::display::Framebuffer) -> (u32, u16) {
+    let mut bytes = Vec::new();
+    tela.write_rgb565_into(&mut bytes);
+    let mut contagem = vec![0u32; 1 << 16];
+    let mut distintas = 0u32;
+    for par in bytes.chunks_exact(2) {
+        let cor = u16::from_le_bytes([par[0], par[1]]);
+        if contagem[cor as usize] == 0 {
+            distintas += 1;
+        }
+        contagem[cor as usize] += 1;
+    }
+    let dominante = contagem
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, vezes)| *vezes)
+        .map(|(cor, _)| cor as u16)
+        .unwrap_or(0);
+    (distintas, dominante)
+}
+
 /// Quanto tempo virtual passou desde `base`, para o roteiro de controle.
 fn agora_ms(agora: u32, base: u32) -> u64 {
     u64::from(agora.wrapping_sub(base))
@@ -765,6 +810,9 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     log.drain(..sobra);
 
     medida.pixels = session.screen().escritas();
+    let (medida_cores, medida_dominante) = cores_do_quadro(session.screen());
+    medida.cores = medida_cores;
+    medida.cor_dominante = medida_dominante;
     // O total sai da lista inteira, e só depois ela é cortada: a fatia mostrada tem de ser
     // porcentagem do que o jogo gastou, e não do punhado que coube no relatório.
     let (mut custo, custo_total) = match perfilando {
@@ -1152,6 +1200,40 @@ fn exige_espaco(dirs: &[PathBuf]) {
         ] {
             assert!(!categoria.passa(), "{categoria:?} não devia passar");
         }
+    }
+
+    /// **Uma tela de uma cor só é tela apagada, e o número de cores diz isso.**
+    ///
+    /// É o que o `pixels` não fazia: um jogo que pinta 307.200 pixels de preto conta 307.200
+    /// escritas e passava como se estivesse desenhando. Contando cores, ele fica com uma.
+    #[test]
+    fn um_quadro_de_uma_cor_so_tem_uma_cor() {
+        use crate::video::display::{Framebuffer, Rgb};
+
+        let preto = Framebuffer::new(64, 48);
+        assert_eq!(cores_do_quadro(&preto), (1, 0x0000), "tela preta é uma cor");
+
+        let mut branco = Framebuffer::new(64, 48);
+        branco.fill_rect(
+            crate::video::display::Rect {
+                x: 0,
+                y: 0,
+                width: 64,
+                height: 48,
+            },
+            Rgb {
+                r: 255,
+                g: 255,
+                b: 255,
+            },
+        );
+        assert_eq!(cores_do_quadro(&branco), (1, 0xffff), "branco também é uma");
+
+        let mut duas = Framebuffer::new(64, 48);
+        duas.set_pixel(0, 0, Rgb { r: 255, g: 0, b: 0 });
+        let (distintas, dominante) = cores_do_quadro(&duas);
+        assert_eq!(distintas, 2, "dois pixels diferentes são duas cores");
+        assert_eq!(dominante, 0x0000, "e a dominante é a que ocupa o resto");
     }
 
     /// **O roteiro de controle é lido no relógio virtual, e por nome de botão.**
