@@ -1267,6 +1267,29 @@ nenhum. A conferência valeu por dois motivos: confirmou que as mudanças de hoj
 nenhum, e mostrou que **a métrica de cores trocou um rótulo falso por um verdadeiro** — que é o
 serviço dela.
 
+### O Zuma: o decodificador só sabia PNG
+
+A classe `AEECLSID_JPEGDecoderBREW` entrou na fábrica (uma linha), e o jogo **avançou um portão** —
+a lista de classes faltantes ficou vazia e a falha mudou de `0x1a6b8` para `0x1a72c`. O rastreio,
+ligado logo depois, entregou a causa da segunda:
+
+```text
+IImageDecoder::QueryInterface  → 0    (SUCCESS)
+IForceFeed::Reset / Write      → 0    (o jogo alimentou o decodificador, com 16 KB de dados)
+IImageDecoder::GetBitmap       → 0x1  ← FALHOU, e o jogo segue com o bitmap nulo
+```
+
+E o motivo está em `machine/image.rs`: `decoded_bitmap` chama **`decode_png`** e, quando os bytes
+não são PNG, registra a hipótese "um decodificador recebeu dados que não são um PNG" e devolve 0.
+O jogo pediu o decodificador de **JPEG** e alimentou um JPEG.
+
+**A correção é curta e o despachante já existe**: `video::icon::decode(&bytes)` escolhe o formato
+**pela assinatura** — PNG, BMP ou JPEG — e é o mesmo que o emulador usa para os ícones dos módulos.
+Falta ligar esse caminho ao decodificador do guest, convertendo a imagem para a estrutura que o
+`decoded_bitmap` publica (o `DecodedImage`, com o DIB em 24 ou 32 bits que o `publica_dib_do_png`
+já sabe montar). É a próxima peça, e é a mesma receita que fechou sete portões hoje: medir, estreitar
+a lista, corrigir o que falta — e a varredura diz se andou.
+
 ### A tela que a varredura não olhava
 
 A varredura contava **escritas** na tela, e um jogo que pinta 307.200 pixels de preto conta 307.200
