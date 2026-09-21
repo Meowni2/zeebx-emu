@@ -751,15 +751,52 @@ arquivo). Com `--icones`, o ícone do `.mif` vai para `Named_Titles` como provis
 O que ainda falta para "fullset publicado":
 
 1. capas em resolução maior do que a da loja (170×220 é o que o pacote tem);
-2. RDB de Zeebo, para o "Scan Content" do RetroArch casar por hash;
+2. ~~RDB de Zeebo~~ — **feito**, e o "Scan Content" do RetroArch casa por hash;
 3. envio das capas ao repositório de thumbnails do Libretro, com o nome do sistema igual ao do
-   banco (`Mobile - Zeebo`), que é o diretório que o RetroArch procura.
+   banco (`Mobile - Zeebo`), que é o diretório que o RetroArch procura — as capas **já estão** no
+   formato e no nome certos, prontas para subir.
 
 ### RDB
 
-RetroArch casa banco por hash do **arquivo de conteúdo** que recebe. O RDB de Zeebo não existe em
-nenhum lugar (135 RDBs instalados aqui, nenhum de Zeebo), e o core ainda não tem varredura de
-biblioteca para gerar um. Enquanto isso, a playlist resolve nome e capa sem depender de RDB.
+**Resolvido.** O RDB de Zeebo não existia em lugar nenhum (135 RDBs instalados, nenhum de Zeebo) e
+agora existe, gerado por `ferramentas/rdb.py` a partir do formato do próprio RetroArch
+(`libretro-db/libretrodb.c` e `database_info.c`), conferido contra os RDBs oficiais:
+
+```text
+16 bytes     "RARCHDB\0" + uint64 **big-endian** com o offset dos metadados
+registros    mapas msgpack em sequência, um por jogo
+1 byte       0xC0, sentinela de fim
+metadados    mapa msgpack { "count": N }
+```
+
+Campos de cada registro, iguais aos dos RDBs oficiais: `name`, `description`, `rom_name`, `size`,
+`crc` (binário de 4 bytes, big-endian), `md5`, `sha1`.
+
+Cada jogo entra **duas vezes**: com o CRC do `.zip` e com o CRC do arquivo que o No-Intro hasheia
+dentro dele. O scanner consulta `crc:or(b"<arquivo de dentro>", b"<pacote>")`, então o acervo casa
+pelo pacote e também pelo ROM interno — este último sobrevive a recompactar o zip.
+
+Medido, com o core instalado:
+
+```text
+[Scanner]: Add "Double Dragon (Brazil) (Es,Pt)" to "Mobile - Zeebo.lpl"
+[Scanner]: Add "Zeebo Sports Peteca (Brazil) (Es,Pt)" to "Mobile - Zeebo.lpl"
+```
+
+Duas condições para o scan achar o banco, e as duas são fáceis de esquecer:
+
+1. o banco precisa ser o `<nome do database>.rdb` dentro de `content_database_path` (na config do
+   usuário: `~/.config/retroarch/database/rdb`), com o nome igual ao campo `database` do `.info`;
+2. o scanner padrão exige que o conteúdo já case com um **core instalado**
+   (`scan_without_core_match = "false"`). Sem o core na pasta de cores, ele nem entra na fase de
+   banco e marca `??` em tudo. Com o core instalado funciona; se ainda assim não casar, ligue
+   `scan_without_core_match`.
+
+### Playlist
+
+O RetroArch 1.20 grava playlist como **um documento JSON** com cabeçalho e `items` — não o formato
+antigo de um JSON por linha. O `crc32` leva o sufixo `|crc` e o `db_name` leva `.lpl`. A ferramenta
+copia o formato de quem lê, em vez de inventar.
 
 ## Desfecho de um jogo
 

@@ -35,6 +35,8 @@ import urllib.request
 import zipfile
 import zlib
 
+import rdb
+
 DAT_URL = (
     "https://raw.githubusercontent.com/libretro/libretro-database/master/"
     "metadat/no-intro/Mobile%20-%20Zeebo.dat"
@@ -186,6 +188,7 @@ def analisa(zip_path, tabela):
         }
         # O hash do pacote é streamado: ler dois arquivos inteiros na memória só para somar dois
         # hashes custava, no acervo inteiro, duas passadas de 1,6 GB.
+        ficha["tamanho_zip"] = zip_path.stat().st_size
         ficha["crc_zip"] = f"{crc_do_arquivo(zip_path):08X}"
         ficha["sha1_zip"] = sha1_do_arquivo(zip_path)
         if esperado:
@@ -236,19 +239,39 @@ def analisa(zip_path, tabela):
 
 
 def escreve_playlist(saida, fichas, core):
-    linhas = []
+    """Playlist do RetroArch, no formato que o próprio RetroArch grava.
+
+    Não é "um JSON por linha" (o formato antigo): a 1.20 grava **um documento** com cabeçalho e a
+    lista em `items`. O `crc32` leva o sufixo `|crc` e o `db_name` leva a extensão `.lpl`, como o
+    scanner escreve — copiar o formato de quem lê é o que evita a playlist abrir vazia.
+    """
+    itens = []
     for ficha in fichas:
-        entrada = {
-            "path": str(ficha["caminho"]),
-            "label": ficha["nome_no_intro"],
-            "core_path": core or "DETECT",
-            "core_name": "Zeebx",
-            "crc32": ficha["crc_zip"],
-            "db_name": DAT_NOME,
-        }
-        linhas.append(json.dumps(entrada, ensure_ascii=False))
+        itens.append(
+            {
+                "path": str(ficha["caminho"]),
+                "label": ficha["nome_no_intro"],
+                "core_path": core or "DETECT",
+                "core_name": "Zeebx" if core else "DETECT",
+                "crc32": f"{ficha['crc_zip']}|crc",
+                "db_name": f"{DAT_NOME}.lpl",
+            }
+        )
+    documento = {
+        "version": "1.5",
+        "default_core_path": core or "",
+        "default_core_name": "Zeebx" if core else "",
+        "label_display_mode": 0,
+        "right_thumbnail_mode": 0,
+        "left_thumbnail_mode": 0,
+        "thumbnail_match_mode": 0,
+        "sort_mode": 0,
+        "items": itens,
+    }
     destino = saida / f"{DAT_NOME}.lpl"
-    destino.write_text("\n".join(linhas) + "\n", encoding="utf-8")
+    destino.write_text(
+        json.dumps(documento, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return destino
 
 
@@ -392,10 +415,51 @@ def capas_por_classe(caminho):
     return capas
 
 
+def escreve_rdb(saida, fichas):
+    """O RDB do RetroArch, com uma entrada por pacote **e** uma pelo ROM interno.
+
+    O scanner consulta `crc:or(b"<arquivo de dentro>", b"<pacote>")`. Registrar as duas formas faz
+    o acervo casar pelo `.zip` e também pelo arquivo que o No-Intro hasheia — que é o que sobrevive
+    a recompactar o pacote.
+    """
+    registros = []
+    for ficha in fichas:
+        nome = ficha["nome_no_intro"]
+        registros.append(
+            rdb.registro(
+                nome,
+                nome,
+                ficha["zip"],
+                ficha["tamanho_zip"],
+                int(ficha["crc_zip"], 16),
+            )
+        )
+        hash_interno = ficha.get("hash")
+        if hash_interno:
+            arquivo = ficha.get("arquivo_do_dat", ficha["zip"])
+            # O nome do ROM no formato do No-Intro: o caminho de dentro sem as barras.
+            rom_name = arquivo.replace("\\", "/").replace("/", "").lstrip(".")
+            registros.append(
+                rdb.registro(
+                    nome,
+                    nome,
+                    rom_name,
+                    int(hash_interno["tamanho"]),
+                    int(hash_interno["crc32"], 16),
+                    bytes.fromhex(hash_interno["md5"]),
+                    bytes.fromhex(hash_interno["sha1"]),
+                )
+            )
+    return rdb.escreve(saida, registros), len(registros)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--roms", required=True, type=pathlib.Path)
-    ap.add_argument("--saida", required=True, type=pathlib.Path)
+    ap.add_argument("--saida", required=True, type=pathlib.Path,
+                    help="onde ficam catálogo, capas e (por padrão) a playlist")
+    ap.add_argument("--playlists", type=pathlib.Path, default=None,
+                    help="pasta de playlists do RetroArch (padrão: <saída>/playlists)")
     ap.add_argument("--dat", type=pathlib.Path, default=None)
     ap.add_argument("--core", default=None, help="caminho do zeebx_libretro.so para a playlist")
     ap.add_argument("--icones", action="store_true", help="grava o ícone do .mif como título")
@@ -403,6 +467,17 @@ def main():
         "--zwheel",
         type=pathlib.Path,
         help="pacote da Z-Wheel, para tirar as capas oficiais pelo ClassID do applet",
+    )
+    ap.add_argument(
+        "--catalogo",
+        type=pathlib.Path,
+        default=None,
+        help="arquivo do catálogo em JSON (padrão: <saída>/catalogo.json)",
+    )
+    ap.add_argument(
+        "--rdb",
+        type=pathlib.Path,
+        help="grava o RDB do RetroArch neste caminho",
     )
     ap.add_argument(
         "--capas-ao-lado",
@@ -433,7 +508,9 @@ def main():
     for ficha in divergentes:
         print(f"  {ficha['nome_no_intro']}: {ficha.get('erro', 'hash diferente')}")
 
-    playlist = escreve_playlist(args.saida, fichas, args.core)
+    destino_playlist = args.playlists or (args.saida / "playlists")
+    destino_playlist.mkdir(parents=True, exist_ok=True)
+    playlist = escreve_playlist(destino_playlist, fichas, args.core)
     raiz, escritos = escreve_capas(args.saida, fichas, args.icones)
     print(f"playlist: {playlist}")
     print(f"capas: {raiz}" + (f" ({escritos} ícones gravados)" if args.icones else ""))
@@ -447,7 +524,11 @@ def main():
         for nome, motivo in sem_capa:
             print(f"  sem capa: {nome} ({motivo})")
 
-    catalogo = args.saida / "catalogo.json"
+    if args.rdb:
+        destino, quantos = escreve_rdb(args.rdb, fichas)
+        print(f"rdb: {destino} ({quantos} entradas)")
+
+    catalogo = args.catalogo or (args.saida / "catalogo.json")
     catalogo.write_text(
         json.dumps(
             [
