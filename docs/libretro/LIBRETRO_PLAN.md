@@ -825,7 +825,7 @@ Libretro isso tem duas formas possíveis, e elas não são equivalentes:
 | Caminho | Como funciona | Estado |
 |---|---|---|
 | Frontend encerra o conteúdo | o core chama `RETRO_ENVIRONMENT_SHUTDOWN` (7) | **implementado** |
-| Core carrega a Z-Wheel | o próprio core inicia outra `Session` com o `.mod` da Z-Wheel e segue apresentando | planejado |
+| Core carrega a Z-Wheel | o próprio core inicia outra `Session` com o `.mod` da Z-Wheel e segue apresentando | **implementado** |
 
 O motor já sabe que o shell pediu outro applet: `Machine::pending_launch`, exposto por
 `Session::take_launch_request()`, é o que a UI desktop usa para voltar à Z-Wheel. O que **não**

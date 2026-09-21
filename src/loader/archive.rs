@@ -101,16 +101,29 @@ pub fn device_dir() -> PathBuf {
 /// sistema do console, então quando o aparelho ainda não o tem e a Z-Wheel já foi aberta alguma
 /// vez, ele é instalado a partir dela — o mesmo que a Z-Wheel fazia no console.
 pub fn fonte_do_sistema() -> Option<PathBuf> {
-    let destino = device_dir().join("shared").join("fonts").join("tectoy.ttf");
+    fonte_do_sistema_em(&cache_dir(), &device_dir())
+}
+
+/// Como [`fonte_do_sistema`], mas com o cache e a raiz do aparelho que o frontend forneceu.
+///
+/// A versão sem argumentos é o caminho do desktop, que lê a configuração do usuário. Um frontend
+/// como o Libretro extrai o pacote no **cache dele** e escreve o `fs:/` na raiz dele: procurar no
+/// lugar do desktop devolvia `None` mesmo com o `tectoy.ttf` dentro do pacote da Z-Wheel — e sem
+/// fonte o jogo não desenha texto nenhum, que foi o caso do Double Dragon.
+pub fn fonte_do_sistema_em(cache: &Path, device: &Path) -> Option<PathBuf> {
+    let destino = device.join("shared").join("fonts").join("tectoy.ttf");
     if destino.is_file() {
         return Some(destino);
     }
-    let origem = std::fs::read_dir(cache_dir())
+    let origem = std::fs::read_dir(cache)
         .ok()?
         .filter_map(Result::ok)
-        .filter_map(|pacote| std::fs::read_dir(pacote.path().join("mod")).ok())
-        .flatten()
-        .filter_map(Result::ok)
+        .flat_map(|pacote| {
+            std::fs::read_dir(pacote.path().join("mod"))
+                .into_iter()
+                .flatten()
+                .flatten()
+        })
         .map(|modulo| modulo.path().join("tectoy.ttf"))
         .find(|ttf| ttf.is_file())?;
     std::fs::create_dir_all(destino.parent()?).ok()?;

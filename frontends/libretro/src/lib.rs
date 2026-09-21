@@ -10,7 +10,7 @@
 //! guest ainda não existem e são declarados como ausentes.
 
 use std::ffi::{CStr, CString, c_char, c_void};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use zeebx::audio::Mixer;
@@ -35,6 +35,22 @@ const PIXEL_FORMAT_RGB565: u32 = 2;
 /// Comandos de ambiente usados.
 /// Pede ao frontend que descarregue o conteúdo e volte ao menu dele.
 const ENV_SHUTDOWN: u32 = 7;
+
+/// Recebe as teclas do frontend. É por aqui que a Z-Wheel navega: ela pede `AVK_0` e `AVK_CLR`,
+/// que não existem no RetroPad.
+const ENV_SET_KEYBOARD_CALLBACK: u32 = 12;
+
+/// Códigos de tecla da ABI (`enum retro_key`), que seguem os do SDL 1.2.
+const RETROK_BACKSPACE: u32 = 8;
+const RETROK_RETURN: u32 = 13;
+const RETROK_ESCAPE: u32 = 27;
+const RETROK_ASTERISK: u32 = 42;
+const RETROK_HASH: u32 = 35;
+const RETROK_0: u32 = 48;
+const RETROK_UP: u32 = 273;
+const RETROK_DOWN: u32 = 274;
+const RETROK_RIGHT: u32 = 275;
+const RETROK_LEFT: u32 = 276;
 
 /// Pergunta se o frontend aceita receber quadro nulo quando nada mudou.
 const ENV_GET_CAN_DUPE: u32 = 3;
@@ -70,6 +86,12 @@ const DEVICE_ZPAD: u32 = ((1 + 1) << 8) | DEVICE_JOYPAD;
 const DEVICE_BOOMERANG: u32 = ((2 + 1) << 8) | DEVICE_JOYPAD;
 
 type EnvironmentFn = unsafe extern "C" fn(cmd: u32, data: *mut c_void) -> bool;
+type KeyboardEventFn = unsafe extern "C" fn(down: bool, keycode: u32, character: u32, modifiers: u16);
+
+#[repr(C)]
+struct RetroKeyboardCallback {
+    callback: Option<KeyboardEventFn>,
+}
 type VideoRefreshFn =
     unsafe extern "C" fn(data: *const c_void, width: u32, height: u32, pitch: usize);
 type AudioSampleBatchFn = unsafe extern "C" fn(data: *const i16, frames: usize) -> usize;
@@ -173,6 +195,17 @@ struct Core {
     audio: Vec<i16>,
     /// Caminho do conteúdo, para o `retro_reset`.
     path: PathBuf,
+    /// As raízes do perfil, para trocar de applet sem perder saves nem cache.
+    storage: StoragePaths,
+    /// Os jogos encontrados ao lado do conteúdo: ClassID do applet e o que carregar.
+    ///
+    /// É o que permite atender o pedido de lançamento do shell: a Z-Wheel pede uma classe, e aqui
+    /// se sabe qual `.mod` ou `.zip` responde por ela.
+    jogos: Vec<(u32, PathBuf)>,
+    /// O conteúdo da Z-Wheel, para voltar a ela quando um jogo que ela abriu termina.
+    z_wheel: Option<PathBuf>,
+    /// Se a sessão atual foi aberta pela Z-Wheel — a volta é para ela, como no console.
+    aberto_pela_z_wheel: bool,
     /// Se o frontend aceita quadro nulo quando a tela não mudou.
     aceita_dupe: bool,
     /// Assinatura do último quadro entregue.
@@ -181,6 +214,8 @@ struct Core {
     ultimo_relogio_ms: u32,
     /// Amostras que o frontend não aceitou e ficam para a chamada seguinte.
     audio_pendente: Vec<i16>,
+    /// Estado anterior do Select do RetroPad, para o atalho de `AVK_CLR`.
+    select_antes: bool,
     /// Quantos quadros já foram apresentados depois da parada.
     ///
     /// A tela final fica à mostra por um instante antes de o frontend ser dispensado: sem isso o
@@ -208,6 +243,48 @@ struct EstadoDoCore(Core);
 
 // SAFETY: ver o comentário acima — o core nunca é movido para outra thread.
 unsafe impl Send for EstadoDoCore {}
+
+/// Fila de teclas do frontend.
+///
+/// O callback não executa guest: ele **enfileira**, e `retro_run` entrega as teclas ao motor na
+/// thread normal do core. Executar o emulador de dentro do callback seria reentrância em cima do
+/// estado que `retro_run` está usando.
+fn teclas() -> &'static Mutex<std::collections::VecDeque<(u32, bool)>> {
+    static TECLAS: OnceLock<Mutex<std::collections::VecDeque<(u32, bool)>>> = OnceLock::new();
+    TECLAS.get_or_init(|| Mutex::new(std::collections::VecDeque::new()))
+}
+
+/// Traduz uma tecla do frontend para o código virtual do BREW, quando existe.
+///
+/// `Esc` e `P` ficam de fora de propósito: são as teclas da interface do frontend, não do jogo.
+fn avk_da_tecla(keycode: u32) -> Option<u32> {
+    use zeebx::input::avk;
+    Some(match keycode {
+        RETROK_UP => avk::UP,
+        RETROK_DOWN => avk::DOWN,
+        RETROK_LEFT => avk::LEFT,
+        RETROK_RIGHT => avk::RIGHT,
+        RETROK_RETURN => avk::SELECT,
+        RETROK_BACKSPACE | RETROK_ESCAPE => avk::CLR,
+        RETROK_ASTERISK => avk::STAR,
+        RETROK_HASH => avk::POUND,
+        RETROK_0..=57 => avk::ZERO + (keycode - RETROK_0),
+        _ => return None,
+    })
+}
+
+/// O callback de teclado do frontend: só enfileira.
+unsafe extern "C" fn tecla_recebida(down: bool, keycode: u32, _character: u32, _modifiers: u16) {
+    let Some(avk) = avk_da_tecla(keycode) else {
+        return;
+    };
+    if let Ok(mut fila) = teclas().lock() {
+        // Um teto evita que uma tecla presa (ou um frontend repetindo sem parar) cresça sem fim.
+        if fila.len() < 1024 {
+            fila.push_back((avk, down));
+        }
+    }
+}
 
 fn core() -> &'static Mutex<Option<EstadoDoCore>> {
     static CORE: OnceLock<Mutex<Option<EstadoDoCore>>> = OnceLock::new();
@@ -249,6 +326,19 @@ fn aparelho_do_dispositivo(device: u32) -> Option<Aparelho> {
         DEVICE_ZPAD => Some(Aparelho::ZPad),
         DEVICE_BOOMERANG => Some(Aparelho::Boomerang),
         _ => Some(Aparelho::Controle),
+    }
+}
+
+/// Se o Select do RetroPad está apertado na porta dada.
+fn le_select(porta: u32) -> bool {
+    let frente = callbacks();
+    let (Some(poll), Some(state)) = (frente.input_poll, frente.input_state) else {
+        return false;
+    };
+    // SAFETY: callbacks do frontend, chamados na thread de `retro_run`.
+    unsafe {
+        poll();
+        state(porta, DEVICE_JOYPAD, 0, ID_SELECT) != 0
     }
 }
 
@@ -562,6 +652,16 @@ pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
         storage.saves.display(),
         storage.cache.display()
     ));
+    // Teclado: a Z-Wheel navega por `AVK_*`, que o RetroPad não produz.
+    static TECLADO: RetroKeyboardCallback = RetroKeyboardCallback {
+        callback: Some(tecla_recebida),
+    };
+    unsafe {
+        environ(
+            ENV_SET_KEYBOARD_CALLBACK,
+            &TECLADO as *const RetroKeyboardCallback as *mut c_void,
+        );
+    }
     // O formato de vídeo é negociado antes de rodar: sem ele não há como entregar quadro.
     let mut formato = PIXEL_FORMAT_RGB565;
     let alvo = &mut formato as *mut u32 as *mut c_void;
@@ -607,6 +707,52 @@ unsafe fn carrega(
     )?;
     let mut session = session;
     let mixer = session.grava_audio(SAMPLE_RATE);
+    // A biblioteca ao lado do conteúdo é o que responde ao pedido de lançamento do shell: a
+    // Z-Wheel pede uma classe, e aqui se sabe qual arquivo carregar. Sem isto ela abre vazia,
+    // porque enumera os applets instalados e não encontra nenhum.
+    let pasta = std::path::Path::new(caminho)
+        .parent()
+        .map(std::path::Path::to_path_buf);
+    let mut jogos: Vec<(u32, PathBuf)> = Vec::new();
+    let mut vistas: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    for jogo in pasta.as_deref().map(zeebx::library::scan).unwrap_or_default() {
+        let Some(classe) = jogo.clsid else {
+            continue;
+        };
+        // A mesma pasta pode ter o `.zip` e uma cópia já extraída (um `debug_nand`, por exemplo):
+        // sem deduplicar por ClassID, a Z-Wheel lista cada jogo duas vezes.
+        if vistas.insert(classe) {
+            jogos.push((classe, jogo.path));
+        }
+    }
+    if !jogos.is_empty() {
+        session.set_installed_applets(
+            jogos
+                .iter()
+                .filter_map(|(classe, caminho)| {
+                    Some((*classe, zeebx::library::id_do_modulo(caminho)?))
+                }),
+        );
+        log(&format!(
+            "Zeebx: {} jogo(s) instalados a partir de {}",
+            jogos.len(),
+            pasta.as_deref().unwrap_or(std::path::Path::new(".")).display()
+        ));
+    }
+    // A Z-Wheel é o shell: quando ela é o conteúdo, guardar o caminho é o que permite voltar a
+    // ela depois que um jogo termina — o que o console faz.
+    let z_wheel = match session.classe() == zeebx::session::Z_WHEEL {
+        true => Some(path.clone()),
+        false => None,
+    };
+    if z_wheel.is_some() {
+        // A fonte do sistema mora dentro do pacote da Z-Wheel; instalá-la agora, quando ela está
+        // em cache, evita o jogo abrir depois sem fonte nenhuma para desenhar texto.
+        match zeebx::loader::archive::fonte_do_sistema_em(&storage.cache, &storage.device) {
+            Some(onde) => log(&format!("Zeebx: fonte do sistema em {}", onde.display())),
+            None => log("Zeebx: sem tectoy.ttf no pacote; texto do sistema ficará sem fonte"),
+        }
+    }
     // O cache guarda a extração de **todo** jogo já aberto; sem poda, um acervo inteiro acaba
     // dentro da pasta de saves do frontend. A extração em uso nunca sai.
     match zeebx::loader::archive::prune_cache(
@@ -628,13 +774,51 @@ unsafe fn carrega(
         frame: Vec::new(),
         audio: Vec::new(),
         path,
+        storage: storage.clone(),
+        jogos,
+        z_wheel,
+        aberto_pela_z_wheel: false,
         aceita_dupe: false,
         ultima_assinatura: None,
         ultimo_relogio_ms: 0,
         audio_pendente: Vec::new(),
+        select_antes: false,
         quadros_apos_parar: 0,
         parou: false,
     })
+}
+
+/// Troca o applet em execução dentro do mesmo core.
+///
+/// É o que o console faz quando a Z-Wheel abre um jogo e quando o jogo fecha: o shell continua
+/// sendo o shell. O frontend não participa — para ele, `retro_run` só devolveu outro quadro.
+fn troca_para(estado: &mut Core, caminho: &Path, aberto_pela_z_wheel: bool) -> Result<(), StartError> {
+    let mut session = Session::start_software_with_storage(
+        caminho,
+        estado.portas,
+        ZWheel::default(),
+        &estado.storage,
+    )?;
+    // O novo applet nasce sem lista de instalados: sem isto a Z-Wheel volta vazia.
+    session.set_installed_applets(
+        estado
+            .jogos
+            .iter()
+            .filter_map(|(classe, caminho)| {
+                Some((*classe, zeebx::library::id_do_modulo(caminho)?))
+            }),
+    );
+    let mixer = session.grava_audio(SAMPLE_RATE);
+    estado.session = session;
+    estado.mixer = mixer;
+    estado.path = caminho.to_path_buf();
+    estado.aberto_pela_z_wheel = aberto_pela_z_wheel;
+    estado.parou = false;
+    estado.quadros_apos_parar = 0;
+    estado.ultima_assinatura = None;
+    estado.select_antes = false;
+    estado.ultimo_relogio_ms = estado.session.clock_ms();
+    Ok(())
 }
 
 /// `retro_run`: um quadro virtual, um quadro de vídeo e o áudio correspondente.
@@ -650,6 +834,47 @@ pub extern "C" fn retro_run() {
         let Some(EstadoDoCore(estado)) = guard.as_mut() else {
             return;
         };
+        // Teclas que o frontend entregou desde o último quadro. O callback só enfileira; aqui
+        // elas entram no guest, na thread normal do core.
+        if let Ok(mut fila) = teclas().lock() {
+            while let Some((avk, down)) = fila.pop_front() {
+                estado.session.set_key(avk, down);
+            }
+        }
+        // O shell pediu outro applet — a Z-Wheel escolheu um jogo, ou o jogo mandou voltar. O
+        // pedido vive **dentro** do motor (`Machine::pending_launch`), e a UI desktop já o atende
+        // assim; aqui ele troca de sessão sem o frontend saber.
+        if let Some(classe) = estado.session.take_launch_request() {
+            let alvo = estado
+                .jogos
+                .iter()
+                .find(|(c, _)| *c == classe)
+                .map(|(_, caminho)| caminho.clone());
+            match alvo {
+                Some(caminho) => {
+                    let e_z_wheel = classe == zeebx::session::Z_WHEEL;
+                    match troca_para(estado, &caminho, !e_z_wheel) {
+                        Ok(()) => log(&format!(
+                            "Zeebx: o shell pediu {classe:#010x}; abrindo {}",
+                            caminho.display()
+                        )),
+                        Err(erro) => log(&format!(
+                            "Zeebx: o shell pediu {classe:#010x} e não deu para abrir: {erro}"
+                        )),
+                    }
+                }
+                None => log(&format!(
+                    "Zeebx: o shell pediu {classe:#010x}, que não está na pasta de jogos"
+                )),
+            }
+        }
+        // Atalho: o Select do RetroPad vale como `AVK_CLR`, que é o "voltar" do console. Sem ele
+        // a Z-Wheel fica presa na abertura em quem não tem teclado mapeado no frontend.
+        let select = le_select(0);
+        if select != estado.select_antes {
+            estado.select_antes = select;
+            estado.session.set_key(zeebx::input::avk::CLR, select);
+        }
         // Entrada primeiro: o guest lê o controle dentro do quadro que vai rodar.
         for porta in 0..zeebx::input::PORTAS {
             if estado.portas[porta].is_none() {
@@ -749,7 +974,26 @@ pub extern "C" fn retro_run() {
             if estado.parou {
                 estado.quadros_apos_parar += 1;
                 // Dois segundos de tela parada bastam para ver o desfecho e o log.
-                dispensar = estado.quadros_apos_parar == 120;
+                if estado.quadros_apos_parar == 120 {
+                    // **A volta para a Z-Wheel.** No console, fechar um jogo devolve o controle ao
+                    // shell, e o shell é outro applet instalado — então aqui se troca de sessão,
+                    // como a UI desktop já faz. Sem Z-Wheel disponível, o desfecho possível é
+                    // pedir ao frontend que encerre o conteúdo.
+                    let voltar = estado.z_wheel.clone().filter(|_| {
+                        estado.aberto_pela_z_wheel
+                            || estado.session.classe() == zeebx::session::Z_WHEEL
+                    });
+                    match voltar {
+                        Some(caminho) => match troca_para(estado, &caminho, false) {
+                            Ok(()) => log("Zeebx: fim do jogo; de volta à Z-Wheel"),
+                            Err(erro) => {
+                                log(&format!("Zeebx: não deu para voltar à Z-Wheel: {erro}"));
+                                dispensar = true;
+                            }
+                        },
+                        None => dispensar = true,
+                    }
+                }
             }
         }
     }
