@@ -61,6 +61,14 @@ const CHAMADAS_MOSTRADAS: usize = 12;
 /// que interessa num jogo que quebrou é o que ele dizia pouco antes.
 const LOG_MOSTRADO: usize = 20;
 
+/// O erro do sistema é "acabou o espaço"?
+///
+/// Vale o número cru e não o `ErrorKind`: 28 (`ENOSPC`) no Unix e 112 (`ERROR_DISK_FULL`) no
+/// Windows, que é o que o `raw_os_error` devolve em cada um.
+fn sem_espaco(erro: &std::io::Error) -> bool {
+    matches!(erro.raw_os_error(), Some(28) | Some(112))
+}
+
 /// Em que estado a ROM ficou, nos mesmos baldes do levantamento de compatibilidade.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Categoria {
@@ -81,6 +89,9 @@ pub enum Categoria {
     LentoDemais,
     /// O jogo terminou sozinho antes do tempo pedido — sem timer armado e sem trabalho.
     Terminou,
+    /// O disco acabou no meio da varredura. **Não é defeito do jogo, é o ambiente**: a extração
+    /// da ROM para o cache não coube, e o que veio depois disso não vale como medição.
+    SemEspaco,
     /// Cumpriu o tempo virtual pedido, de pé.
     Roda,
 }
@@ -104,6 +115,7 @@ impl Categoria {
             Self::QuebrouNoLaco => "quebrou no laço de quadros",
             Self::LentoDemais => "lento demais",
             Self::Terminou => "terminou sozinho",
+            Self::SemEspaco => "sem espaço em disco",
             Self::Roda => "roda",
         }
     }
@@ -398,6 +410,9 @@ impl Relatorio {
         let categoria = match erro {
             StartError::NoApplet | StartError::Refused(_) => Categoria::SemApplet,
             StartError::Stopped(_) => Categoria::QuebrouAntesDoApplet,
+            // A falta de espaço chega como erro de leitura, e é a única dessa lista que **não** diz
+            // nada sobre o jogo: separá-la evita registrar defeito onde havia disco cheio.
+            StartError::Unreadable(erro) if sem_espaco(erro) => Categoria::SemEspaco,
             StartError::Unreadable(_) | StartError::NotAModule(_) | StartError::NotLoadable(_) => {
                 Categoria::NaoCarrega
             }
@@ -623,7 +638,23 @@ mod tests {
         Some(caminho)
     }
 
-    /// Nome de arquivo para o título de um jogo, sem depender do sistema de arquivos do host.
+    /// A varredura gasta perto de 1 GB extraindo as ROMs para o cache, e sem espaço ela passa a
+/// acusar jogos que estão certos.
+///
+/// A prova roda no começo e custa um instante; a alternativa é descobrir depois de uma hora de
+/// varredura que a segunda metade do placar não valia.
+fn exige_espaco(dirs: &[PathBuf]) {
+    const PROVA: usize = 64 * 1024 * 1024;
+    for dir in dirs {
+        if let Err(erro) = crate::scratch::cabe_escrever(dir, PROVA) {
+            panic!(
+                "sem espaço em disco para a varredura: {erro}. A varredura extrai cada ROM para o                  cache e gasta perto de 1 GB; libere espaço e rode de novo."
+            );
+        }
+    }
+}
+
+/// Nome de arquivo para o título de um jogo, sem depender do sistema de arquivos do host.
     fn arquivo_do_titulo(titulo: &str) -> String {
         let limpo: String = titulo
             .chars()
@@ -657,6 +688,18 @@ mod tests {
                     falhas.push(erro);
                 }
             }
+        }
+        // Disco cheio invalida o placar inteiro, inclusive os jogos que passaram, e quem lê precisa
+        // saber disso antes de olhar qualquer outro número.
+        if falhas
+            .iter()
+            .any(|falha| falha.contains(Categoria::SemEspaco.rotulo()))
+        {
+            eprintln!(
+                "\n**O DISCO ENCHEU NO MEIO DA VARREDURA.** Os números a partir daí não valem — nem \
+                 os que passaram —, porque a extração de cada ROM precisa de espaço. Libere espaço e \
+                 rode de novo."
+            );
         }
         assert!(
             falhas.is_empty(),
@@ -746,6 +789,8 @@ mod tests {
     /// gastar os seis segundos virtuais que eles nunca vão chegar a rodar.
     #[test]
     fn a_rom_indicada_abre() {
+        // A prova de espaço vale para os dois testes: os dois extraem a ROM para o cache.
+        exige_espaco(&[crate::config::config_dir()]);
         com_cada_rom("a_rom_indicada_abre", |rom| {
             let titulo = crate::library::title_for(rom);
             match abre(rom) {
@@ -766,6 +811,9 @@ mod tests {
         let teto = Duration::from_secs(numero("ZEEBX_ROM_TETO", TETO_PADRAO));
         let saida = diretorio("ZEEBX_ROM_SAIDA");
         let base = diretorio("ZEEBX_ROM_BASE");
+        let mut onde_prova = vec![crate::config::config_dir()];
+        onde_prova.extend(saida.iter().cloned());
+        exige_espaco(&onde_prova);
         com_cada_rom("a_rom_indicada_avanca", |rom| {
             let relatorio = examina(rom, ms, teto);
             println!("\n===== {} =====\n{}", rom.display(), relatorio.completo());
@@ -867,6 +915,23 @@ mod tests {
         ] {
             assert!(!categoria.passa(), "{categoria:?} não devia passar");
         }
+    }
+
+    /// **Disco cheio não é defeito de jogo.**
+    ///
+    /// A varredura das 62 ROMs, rodada com o disco cheio, registrou dois jogos como "não carrega"
+    /// com `No space left on device` — o placar acusou os jogos, e o problema era o ambiente. A
+    /// falta de espaço chega como erro de leitura, então é aqui que ela precisa ser separada.
+    #[test]
+    fn a_falta_de_espaco_nao_vira_jogo_quebrado() {
+        let caso = |codigo| {
+            let erro = std::io::Error::from_raw_os_error(codigo);
+            Relatorio::recusado(Path::new("/tmp/x.mod"), &StartError::Unreadable(erro)).categoria
+        };
+        assert_eq!(caso(28), Categoria::SemEspaco, "ENOSPC no Unix");
+        assert_eq!(caso(112), Categoria::SemEspaco, "ERROR_DISK_FULL no Windows");
+        assert_eq!(caso(2), Categoria::NaoCarrega, "arquivo que falta é outra coisa");
+        assert!(!Categoria::SemEspaco.passa());
     }
 
     /// A recusa é classificada pelo que ela diz do jogo, não pela etapa em que aconteceu.
