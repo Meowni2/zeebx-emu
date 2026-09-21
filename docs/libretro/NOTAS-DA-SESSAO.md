@@ -96,6 +96,37 @@ investigação inteira dentro do jogo.
   segundos com e sem manche diferem em mil instruções de 133 milhões. Só o RetroArch responde.
 - **Item 9** (capas e No-Intro): local pronto; falta publicar.
 
+## Como capturar o que o core diz
+
+O core escreve em dois lugares, e os dois servem para diagnosticar sem abrir depurador:
+
+- **na tela**, por `RETRO_ENVIRONMENT_SET_MESSAGE`: recusa de render em hardware, falha ao abrir
+  jogo, avisos de acervo. Três segundos, tempo de ler sem atrapalhar quem joga;
+- **no log do RetroArch**, por `RETRO_ENVIRONMENT_GET_LOG_INTERFACE`: a mesma informação e mais
+  (quantos jogos achou, se desenha na placa, que applet o shell pediu).
+
+Para ver o log sem mexer nas preferências:
+
+```bash
+retroarch --verbose 2>&1 | grep -i zeebx
+```
+
+O que procurar, em ordem de importância para o item 5:
+
+```text
+Zeebx: o frontend aceitou render em hardware (OpenGL 3.3); o desenho passa a ser na placa
+Zeebx: desenhando na placa
+```
+
+ou, se a tentativa falhar — e aí o jogo continua rodando no processador:
+
+```text
+Zeebx: o render em hardware falhou (…); seguindo no processador
+```
+
+Qualquer uma das duas linhas é resultado: a primeira diz que o encaixe fechou, a segunda diz onde
+ele não fechou.
+
 ## Ferramentas que nasceram aqui
 
 ```bash
