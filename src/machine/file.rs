@@ -212,11 +212,40 @@ impl<C: CpuBackend> Machine<C> {
                 }
             }
             // uint32 GetFreeSpace(IFileMgr *, uint32 *pdwTotal)
-            "GetFreeSpace" | "GetFreeSpaceEx" => {
+            //
+            // Devolve o **livre** e escreve o **total** no ponteiro, se houver.
+            "GetFreeSpace" => {
                 if a1 != 0 {
                     self.cpu.write_u32(a1, FS_TOTAL_BYTES)?;
                 }
                 FS_FREE_BYTES
+            }
+            // int GetFreeSpaceEx(IFileMgr *, const char *cpszPath, uint32 *pdwTotal,
+            //                    uint32 *pdwFree)
+            //
+            // **Não é o mesmo método.** Tem quatro argumentos, e o primeiro deles **não é um
+            // ponteiro de saída**: é o caminho do sistema de arquivos perguntado. Tratando os dois
+            // igual, o total era escrito por cima da string do jogo e os dois ponteiros de saída
+            // ficavam sem resposta — e o Double Dragon, que pergunta o espaço antes de abrir os
+            // dados, concluía que não havia memória e mostrava "Memory is insufficient. Please
+            // delete some files." em vez do jogo.
+            "GetFreeSpaceEx" => {
+                let caminho = self.cpu.read_cstring(a1, MAX_STRING);
+                let out_total = a2;
+                let out_livre = self.cpu.read_reg(Reg::R3);
+                // Cartão periférico não existe neste aparelho: o Zeebo guarda tudo na NAND, e
+                // `fs:/card0/` é a forma de o jogo perguntar por um. `EUNSUPPORTED` é a resposta
+                // documentada, e é o que faz o jogo usar o sistema principal.
+                if !caminho.is_empty() && !caminho.starts_with("fs:/") {
+                    return Ok(Some(EUNSUPPORTED));
+                }
+                if out_total != 0 {
+                    self.cpu.write_u32(out_total, FS_TOTAL_BYTES)?;
+                }
+                if out_livre != 0 {
+                    self.cpu.write_u32(out_livre, FS_FREE_BYTES)?;
+                }
+                SUCCESS
             }
             // int EnumInit(IFileMgr *, const char *pszDir, boolean bDirs)
             //

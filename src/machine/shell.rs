@@ -558,6 +558,10 @@ impl<C: CpuBackend> Machine<C> {
     pub(super) fn shell_create_instance(&mut self) -> Result<u32, CpuError> {
         let clsid = self.cpu.read_reg(Reg::R1);
         let out = self.cpu.read_reg(Reg::R2);
+        // Toda classe pedida entra no relatório, e não só a que não soubemos atender: sem a lista
+        // completa não há como ver que o jogo pediu uma classe que respondemos com a **interface
+        // errada** — que foi o caso das fontes do sistema.
+        *self.classes_pedidas.entry(clsid).or_insert(0) += 1;
         if self.serial.is_some() {
             self.registra_serial(format!("<classe {clsid:#010x}>"));
         }
@@ -596,7 +600,17 @@ impl<C: CpuBackend> Machine<C> {
             AEECLSID_28E3C => Interface::Classe28e3c,
             AEECLSID_CM => Interface::Cm,
             AEECLSID_SYSTEMCTL => Interface::SystemCtl,
-            AEECLSID_TYPEFACE | AEECLSID_ROLLER_FONT => Interface::Typeface,
+            // **`IFont`, não `ITypeface`.** O `AEECLSID_ROLLER_FONT` (0x0102f67c) é o
+            // `FONT_STANDARD18B`, uma fonte do sistema — estava mapeado para o `ITypeface`, que é
+            // outra interface, com outros métodos.
+            _ if crate::machine::font::CLASSES_DE_FONTE.contains(&clsid) => {
+                let resultado = self.cria_fonte(clsid, out)?;
+                if resultado != SUCCESS {
+                    self.unknown_classes.insert(clsid);
+                }
+                return Ok(resultado);
+            }
+            AEECLSID_TYPEFACE => Interface::Typeface,
             AEECLSID_MD5 => Interface::Hash,
             AEECLSID_CIPHER_FACTORY => Interface::CipherFactory,
             AEECLSID_MEDIA | AEECLSID_MEDIAMIDI | AEECLSID_MEDIAMP3 | AEECLSID_MEDIAMIDIOUTMSG

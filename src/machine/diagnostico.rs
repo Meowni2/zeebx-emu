@@ -238,6 +238,16 @@ impl<C: CpuBackend> Machine<C> {
     }
 
     /// ClassIDs pedidos que ainda não sabemos instanciar.
+    /// As classes que o jogo pediu, com quantas vezes — conhecidas e desconhecidas.
+    ///
+    /// A lista das **desconhecidas** não basta para achar um defeito de interface: o Double Dragon
+    /// pedia `AEECLSID_FONT_STANDARD*`, nós respondíamos "classe desconhecida", e o sintoma era uma
+    /// tela de falta de memória. Depois de atender as fontes, o pedido saiu da lista — e sem esta
+    /// lista completa não dá para ver que a classe foi atendida com a **interface errada**.
+    pub fn requested_classes(&self) -> Vec<(u32, u32)> {
+        self.classes_pedidas.iter().map(|(c, n)| (*c, *n)).collect()
+    }
+
     pub fn unknown_classes(&self) -> Vec<u32> {
         self.unknown_classes.iter().copied().collect()
     }

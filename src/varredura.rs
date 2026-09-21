@@ -178,6 +178,15 @@ pub struct Pendencias {
     pub hipoteses: Vec<String>,
     /// Acessos inválidos que aconteceram dentro de um callback e não derrubaram a execução.
     pub falhas: Vec<String>,
+    /// Todas as classes que o jogo pediu, com quantas vezes.
+    pub classes_pedidas: Vec<String>,
+    /// O texto que o jogo desenhou, com o instante virtual — o que está escrito na tela.
+    pub desenhados: Vec<String>,
+    /// Alocações que o heap recusou, como `tamanho em quem pediu (lr)`.
+    ///
+    /// É a pista que faltava quando um jogo mostrasse a tela de falta de memória sem nada no
+    /// relatório: o `malloc` devolve zero em silêncio.
+    pub alocacoes: Vec<String>,
     /// Texto que o jogo mandou desenhar e não soubemos desenhar.
     pub texto: Vec<String>,
     /// Chamadas de GL atendidas sem fazer nada.
@@ -211,6 +220,27 @@ impl Pendencias {
                     .collect(),
             ),
             falhas: ordenar(machine.swallowed_faults()),
+            classes_pedidas: machine
+                .requested_classes()
+                .into_iter()
+                .map(|(classe, vezes)| format!("{classe:#010x}  ({vezes}x)"))
+                .collect(),
+            desenhados: machine
+                .drawn_text()
+                .map(|(ms, x, y, texto)| format!("{ms:>7} ms  ({x}, {y})  {texto}"))
+                .collect(),
+            alocacoes: ordenar(
+                machine
+                    .refused_allocations()
+                    .into_iter()
+                    .map(|(tamanho, pc)| format!("malloc de {tamanho} bytes, pedido de {pc:#010x}"))
+                    .chain(machine.refused_availability_checks().into_iter().map(
+                        |(tamanho, pc)| {
+                            format!("CheckAvail de {tamanho} bytes, perguntado em {pc:#010x}")
+                        },
+                    ))
+                    .collect(),
+            ),
             texto: ordenar(machine.pending_text().to_vec()),
             gl_ignorado: ordenar(machine.ignored_gl().iter().map(|s| s.to_string()).collect()),
         }
@@ -221,14 +251,17 @@ impl Pendencias {
     }
 
     /// As seções, na ordem em que valem a pena ser lidas — a mesma do relatório do `run`.
-    fn secoes(&self) -> [(&'static str, &Vec<String>); 8] {
+    fn secoes(&self) -> [(&'static str, &Vec<String>); 11] {
         [
             ("APIs que faltaram", &self.apis),
             ("classes que o jogo pediu e não temos", &self.classes),
+            ("classes pedidas", &self.classes_pedidas),
             ("arquivos não encontrados", &self.arquivos),
             ("acessos inválidos que o jogo seguiu por cima", &self.falhas),
             ("ponteiros recusados", &self.ponteiros),
             ("APIs atendidas por hipótese", &self.hipoteses),
+            ("texto desenhado na tela", &self.desenhados),
+            ("alocações recusadas pelo heap", &self.alocacoes),
             ("texto que não soubemos desenhar", &self.texto),
             ("GL atendido sem fazer nada", &self.gl_ignorado),
         ]

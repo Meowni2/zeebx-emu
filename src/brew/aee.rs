@@ -264,6 +264,10 @@ pub enum Interface {
     /// desenha texto com a `tectoy.ttf` que o próprio pacote traz, então o caminho de
     /// renderização não passa por este objeto.
     Typeface = 49,
+    /// `IFont` — a fonte de bitmap do sistema, criada pelas classes `AEECLSID_FONT_*`.
+    ///
+    /// Ver [`crate::brew::aee_slots::FONT`] e [`crate::machine::font`].
+    Font = 54,
     /// `0x01006c01`, o `LCT_SIMCardCtl` — o controle do cartão SIM do console.
     ///
     /// **Está implementada e não é oferecida, e o motivo é o jogo.** A `0x78544` cria esta
@@ -427,6 +431,7 @@ impl Interface {
             Self::Cm => "ICM",
             Self::SystemCtl => "ILCTSystemCtl",
             Self::Typeface => "ITypeface",
+            Self::Font => "IFont",
             Self::SimCardCtl => "ILCTSimCardCtl",
             Self::Probe => "ClasseDesconhecida",
             Self::Helpers => "AEEHelpers",
@@ -487,6 +492,7 @@ impl Interface {
             Self::Cm => aee_slots::CM,
             Self::SystemCtl => aee_slots::SYSTEM_CTL,
             Self::Typeface => aee_slots::TYPEFACE,
+            Self::Font => aee_slots::FONT,
             Self::SimCardCtl => aee_slots::SIM_CARD_CTL,
             // A sonda não tem tabela: `method` responde por ela antes de chegar aqui.
             Self::Probe => &[],
@@ -560,6 +566,7 @@ impl Interface {
             47 => Self::Cm,
             48 => Self::SystemCtl,
             49 => Self::Typeface,
+            54 => Self::Font,
             50 => Self::SimCardCtl,
             51 => Self::Control,
             52 => Self::Transform,

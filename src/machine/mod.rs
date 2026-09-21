@@ -33,6 +33,7 @@ mod display;
 mod diversos;
 mod egl;
 mod file;
+mod font;
 mod gl;
 mod helper;
 mod hid;
@@ -833,6 +834,8 @@ const AEEIID_IBITMAP: u32 = 0x0100_1021;
 const MAX_POLYGON_POINTS: usize = 4096;
 /// `AEE_MAX_FILE_NAME`.
 const MAX_FILE_NAME: usize = 64;
+/// Quantas linhas de texto desenhado o relatório guarda.
+const MAX_TEXTOS_DESENHADOS: usize = 64;
 /// Espaço que reportamos no cartão. O Zeebo tem 1 GB de NAND; anunciamos algo dessa ordem
 /// para que nenhum jogo se recuse a salvar por falta de espaço.
 const FS_TOTAL_BYTES: u32 = 512 * 1024 * 1024;
@@ -1056,6 +1059,10 @@ const FAMILIA_DOS_WIDGETS: [u32; 10] = [
 /// `0x01035156`, a fonte TrueType do console. Ver [`Interface::Typeface`].
 const AEECLSID_TYPEFACE: u32 = 0x0103_5156;
 /// Classe concreta de fonte usada pelo roller da Z-Wheel.
+/// A fonte com que a Z-Wheel desenha o rolo de capas. **É uma fonte do sistema**: `0x0102f67c` é o
+/// `AEECLSID_FONT_STANDARD18B`, atendido por [`crate::machine::font`]. O nome fica porque é assim
+/// que a Z-Wheel o chama.
+#[allow(dead_code)]
 const AEECLSID_ROLLER_FONT: u32 = 0x0102_f67c;
 
 /// `0x01006c01`, o controle do cartão SIM. Ver [`Interface::SimCardCtl`].
@@ -1996,6 +2003,8 @@ pub struct Machine<C: CpuBackend> {
     module: LoadedModule,
     heap: Heap,
     objects: ObjectStore,
+    /// Quantas vezes o jogo pediu cada classe, conhecida ou não.
+    classes_pedidas: BTreeMap<u32, u32>,
     /// ClassIDs que o jogo pediu e não sabemos criar — a lista do que falta.
     unknown_classes: BTreeSet<u32>,
     /// ClassIDs que o `--sonda` manda atender com um objeto de observação.
@@ -2003,6 +2012,22 @@ pub struct Machine<C: CpuBackend> {
     web_requests: BTreeSet<String>,
     /// As coleções vivas, cada uma com os itens e onde o cursor está.
     collections: HashMap<u32, (Vec<u32>, usize)>,
+    /// O texto que o jogo mandou desenhar, com o instante e a posição, para o relatório.
+    ///
+    /// É o que responde "o que está escrito na tela agora?": a lista de texto *pendente* só existe
+    /// quando falta a fonte, e um jogo que desenha várias telas de aviso ao longo da execução
+    /// aparece no relatório como uma sopa de mensagens sem dono.
+    textos_desenhados: std::collections::VecDeque<(u32, i32, i32, String)>,
+    /// Alocações que o heap recusou, por tamanho pedido e por quem pediu.
+    ///
+    /// O `malloc` do BREW devolve zero quando não cabe, e um jogo que não distingue "não cabe" de
+    /// qualquer outra falha mostra uma mensagem genérica — foi assim que o Double Dragon foi parar
+    /// na tela "Memory is insufficient" sem nada no relatório que apontasse para o pedido recusado.
+    alocacoes_recusadas: BTreeSet<(u32, u32)>,
+    /// Perguntas de `IHeap::CheckAvail` respondidas com "não cabe", pelo mesmo motivo.
+    checagens_recusadas: BTreeSet<(u32, u32)>,
+    /// As fontes do sistema vivas, por objeto `IFont`, com as métricas da classe que as criou.
+    fontes: std::collections::HashMap<u32, crate::machine::font::Metricas>,
     /// Os bancos SQLite abertos, por objeto `ISQLDatabase`.
     databases: HashMap<u32, crate::brew::sql::Database>,
     probe_classes: BTreeSet<u32>,
@@ -2629,9 +2654,14 @@ impl<C: CpuBackend> Machine<C> {
             module,
             heap,
             objects,
+            classes_pedidas: BTreeMap::new(),
             unknown_classes: BTreeSet::new(),
             web_requests: BTreeSet::new(),
             collections: HashMap::new(),
+            textos_desenhados: std::collections::VecDeque::new(),
+            alocacoes_recusadas: BTreeSet::new(),
+            checagens_recusadas: BTreeSet::new(),
+            fontes: std::collections::HashMap::new(),
             databases: HashMap::new(),
             probe_classes: BTreeSet::new(),
             probe_answers: HashMap::new(),
@@ -3482,6 +3512,10 @@ impl<C: CpuBackend> Machine<C> {
                 None => return Ok(None),
             },
             (Interface::Classe28e3c, _) => match self.modelo_de_valor_call(slot)? {
+                Some(result) => result,
+                None => return Ok(None),
+            },
+            (Interface::Font, _) => match self.font_call(slot)? {
                 Some(result) => result,
                 None => return Ok(None),
             },

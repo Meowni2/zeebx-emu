@@ -258,7 +258,16 @@ impl<C: CpuBackend> Machine<C> {
                 ptr
             }
             // `boolean`: cabe se ainda há esse tanto livre no heap do guest.
-            "CheckAvail" => u32::from(self.heap_available() >= a1 as u64),
+            "CheckAvail" => {
+                let cabe = self.heap_available() >= a1 as u64;
+                if !cabe {
+                    // Um "não cabe" é o gatilho da tela "Memory is insufficient" em mais de um
+                    // jogo, e sem registrar o pedido não há como saber quanto ele queria.
+                    self.checagens_recusadas
+                        .insert((a1, self.cpu.read_reg(Reg::Lr)));
+                }
+                u32::from(cabe)
+            }
             // A documentação é explícita: o que sai daqui é o total **em uso**, e o total do
             // aparelho vem do `ISHELL_GetDeviceInfo`.
             "GetMemStats" => self.heap.used(),
@@ -316,6 +325,10 @@ impl<C: CpuBackend> Machine<C> {
         let zero = size & ALLOC_NO_ZMEM == 0;
         let size = size & !ALLOC_NO_ZMEM;
         let Some(addr) = self.heap.alloc(size) else {
+            // Registrado: uma recusa silenciosa vira "o jogo não funciona" sem pista nenhuma no
+            // relatório. `lr` diz quem pediu.
+            self.alocacoes_recusadas
+                .insert((size, self.cpu.read_reg(Reg::Lr)));
             return Ok(0);
         };
         // Blocos reaproveitados carregam lixo do dono anterior; zeramos quando pedido.
@@ -323,6 +336,16 @@ impl<C: CpuBackend> Machine<C> {
             self.cpu.write_mem(addr, &vec![0u8; size as usize])?;
         }
         Ok(addr)
+    }
+
+    /// As alocações que o heap recusou, com o tamanho e quem pediu.
+    pub fn refused_allocations(&self) -> Vec<(u32, u32)> {
+        self.alocacoes_recusadas.iter().copied().collect()
+    }
+
+    /// As perguntas de `CheckAvail` respondidas com "não cabe".
+    pub fn refused_availability_checks(&self) -> Vec<(u32, u32)> {
+        self.checagens_recusadas.iter().copied().collect()
     }
 
     pub fn heap_used(&self) -> u32 {

@@ -1157,6 +1157,28 @@ pub const CLASSE_28E3C: &[&str] = &[
 /// [`crate::brew::aee::Interface::Typeface`].
 pub const TYPEFACE: &[&str] = &["AddRef", "Release", "slot2", "slot3", "CriarFonte"];
 
+/// Métodos do `IFont` — a fonte de bitmap do sistema.
+///
+/// A ordem é a do código de referência que já implementa esta interface
+/// (`zeebo-emulator/.../zeemu/brew/BrewFont.cpp`) e a dos seis `#define` do `AEEFont.h`:
+///
+/// ```text
+/// AddRef(0)  Release(1)  QueryInterface(2)  DrawText(3)  GetInfo(4)  MeasureText(5)
+/// ```
+///
+/// **Isto não é o `ITypeface`**, e a diferença é o motivo desta interface existir: o `ITypeface`
+/// cria fontes a partir de um TTF, e o `IFont` **já é** a fonte desenhável. O Double Dragon, o
+/// Resident Evil 4 e os ports da Data East pedem as classes de fonte do sistema; respondê-las como
+/// desconhecidas fazia o jogo cair na tela de aviso "Memory is insufficient".
+pub const FONT: &[&str] = &[
+    "AddRef",
+    "Release",
+    "QueryInterface",
+    "DrawText",
+    "GetInfo",
+    "MeasureText",
+];
+
 /// Métodos da lista genérica da Z-Wheel (`0x01028e35`).
 ///
 /// Ver [`crate::brew::aee::Interface::Vetor`] para onde cada nome foi lido. Os seis sem nome nunca
