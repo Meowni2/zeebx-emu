@@ -872,6 +872,28 @@ O caminho do core-carrega-a-Z-Wheel exige resolver o ClassID para um pacote inst
 não tem varredura de biblioteca — e decidir a política de "próximo conteúdo" com o frontend. Fica
 como feature, com o motor já pronto para iniciar uma sessão nova.
 
+### Instalação e CI
+
+- `ferramentas/instala_core.py` copia o `.so` **e** o `.info` **juntos**. Os dois andam em par: um
+  `.info` velho ao lado de um core novo quebra o scan pela interface, sem dizer nada — já aconteceu
+  aqui. O script avisa quando o `.info` de destino era diferente do que vai entrar;
+- `.github/workflows/libretro.yml` compila os dois alvos — **x86_64** e **AArch64 em runner ARM64
+  nativo**, porque cross-build de `unicorn`/`dynarmic` exigiria toolchain e sysroot que ninguém quer
+  manter só para empacotar — e confere três coisas, nenhuma delas "compilou":
+  1. os 25 símbolos `retro_*` estão exportados (`nm -D`);
+  2. o `.so` não puxa `libX11`, Wayland, EGL, ALSA, udev nem GTK (`ldd`);
+  3. o pacote publicado leva o `.info` com o campo `database`.
+
+### Avisos ao jogador e leitura de botões
+
+- `SET_MESSAGE` mostra avisos na tela do frontend ("sem `tectoy.ttf`", "o shell pediu uma classe que
+  não está na pasta"), além de registrá-los no log — nem todo frontend exibe mensagem, e aviso que
+  ninguém vê não serve;
+- os botões são lidos por **máscara de bits** quando o frontend anuncia suporte
+  (`GET_INPUT_BITMASKS`), o que reduz doze consultas por quadro a uma. **O RetroArch 1.20 devolve
+  falso**, então na prática ele usa consulta individual; o caminho da máscara fica para frontends
+  que o anunciem. O log diz qual dos dois está em uso, em vez de deixar isso invisível.
+
 ## Save states
 
 Save states exigem snapshot pointer-free e versionado de:

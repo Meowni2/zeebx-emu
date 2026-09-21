@@ -1,0 +1,110 @@
+# Compila o core Libretro nos dois alvos e confere o que sai.
+#
+# O core é um pacote separado (`frontends/libretro`), e o build dele **não** usa nenhuma biblioteca
+# de interface: sem ALSA, sem udev, sem Wayland ou X11. O trabalho tem três provas, e nenhuma é
+# "compilou":
+#
+# 1. os 25 símbolos `retro_*` estão exportados;
+# 2. o `.so` não puxa biblioteca de janela, áudio ou controle do host;
+# 3. o artefato publicado é o `.so` **com** o `.info` ao lado — um `.info` velho ao lado de um core
+#    novo quebra o scan pela interface sem dizer nada.
+#
+# O AArch64 roda em runner ARM64 nativo: cross-build do `unicorn-engine`/`dynarmic` exigiria
+# toolchain e sysroot que a gente não quer manter só para empacotar.
+
+name: libretro
+
+on:
+  push:
+    paths:
+      - "frontends/libretro/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/libretro.yml"
+  pull_request:
+    paths:
+      - "frontends/libretro/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  workflow_dispatch:
+
+jobs:
+  core:
+    name: ${{ matrix.nome }}
+    runs-on: ${{ matrix.sistema }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nome: linux-x86_64
+            sistema: ubuntu-24.04
+            arquitetura: x86_64
+          - nome: linux-aarch64
+            sistema: ubuntu-24.04-arm
+            arquitetura: aarch64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: libretro-${{ matrix.arquitetura }}
+
+      # As duas dependências nativas: o `unicorn-engine` compila o QEMU em C e usa o `bindgen`
+      # (que carrega o `libclang`), e o `dynarmic` compila C++20 com CMake e Ninja.
+      - name: Dependências do build nativo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config python3 \
+            libclang-dev libglib2.0-dev
+
+      # Sem debuginfo o `dynarmic` sai de mais de 5 GiB para algumas centenas de MB: o mesmo
+      # motivo que fez o build local encher o disco mais de uma vez.
+      - name: Compila o core
+        env:
+          CARGO_PROFILE_DEV_DEBUG: "0"
+        run: cargo build --release --locked -p zeebx-libretro
+
+      - name: Os símbolos da ABI estão todos lá
+        run: |
+          esperados="retro_api_version retro_cheat_reset retro_cheat_set retro_deinit \
+            retro_get_memory_data retro_get_memory_size retro_get_region \
+            retro_get_system_av_info retro_get_system_info retro_init retro_load_game \
+            retro_load_game_special retro_reset retro_run retro_serialize \
+            retro_serialize_size retro_set_audio_sample retro_set_audio_sample_batch \
+            retro_set_controller_port_device retro_set_environment retro_set_input_poll \
+            retro_set_input_state retro_set_video_refresh retro_unload_game retro_unserialize"
+          faltando=0
+          for simbolo in $esperados; do
+            if ! nm -D --defined-only target/release/libzeebx_libretro.so | grep -q " T $simbolo$"; then
+              echo "FALTA: $simbolo"
+              faltando=1
+            fi
+          done
+          test "$faltando" = "0"
+          echo "os símbolos da ABI estão exportados"
+
+      - name: O core não depende de biblioteca de host
+        run: |
+          ldd target/release/libzeebx_libretro.so
+          if ldd target/release/libzeebx_libretro.so | grep -qiE 'libX11|wayland|EGL|libGL|asound|libudev|gtk'; then
+            echo "o core puxou biblioteca de interface: vídeo, áudio e entrada são do frontend"
+            exit 1
+          fi
+          echo "só libc, libm, libstdc++ e libgcc"
+
+      - name: Monta o pacote do core
+        run: |
+          mkdir -p pacote
+          cp target/release/libzeebx_libretro.so pacote/zeebx_libretro.so
+          cp frontends/libretro/zeebx_libretro.info pacote/
+          grep -q '^database = "Mobile - Zeebo"' pacote/zeebx_libretro.info
+          ls -la pacote/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeebx_libretro_${{ matrix.nome }}
+          path: pacote/

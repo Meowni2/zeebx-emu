@@ -36,6 +36,15 @@ const PIXEL_FORMAT_RGB565: u32 = 2;
 /// Pede ao frontend que descarregue o conteúdo e volte ao menu dele.
 const ENV_SHUTDOWN: u32 = 7;
 
+/// Mostra um aviso ao jogador, na tela do próprio frontend.
+const ENV_SET_MESSAGE: u32 = 6;
+
+/// Pergunta se o frontend entrega todos os botões numa palavra só.
+const ENV_GET_INPUT_BITMASKS: u32 = 51;
+
+/// Identificador especial do RetroPad que devolve os botões como máscara de bits.
+const ID_JOYPAD_MASK: u32 = 256;
+
 /// Recebe as teclas do frontend. É por aqui que a Z-Wheel navega: ela pede `AVK_0` e `AVK_CLR`,
 /// que não existem no RetroPad.
 const ENV_SET_KEYBOARD_CALLBACK: u32 = 12;
@@ -87,6 +96,12 @@ const DEVICE_BOOMERANG: u32 = ((2 + 1) << 8) | DEVICE_JOYPAD;
 
 type EnvironmentFn = unsafe extern "C" fn(cmd: u32, data: *mut c_void) -> bool;
 type KeyboardEventFn = unsafe extern "C" fn(down: bool, keycode: u32, character: u32, modifiers: u16);
+
+#[repr(C)]
+struct RetroMessage {
+    msg: *const c_char,
+    frames: u32,
+}
 
 #[repr(C)]
 struct RetroKeyboardCallback {
@@ -206,6 +221,8 @@ struct Core {
     z_wheel: Option<PathBuf>,
     /// Se a sessão atual foi aberta pela Z-Wheel — a volta é para ela, como no console.
     aberto_pela_z_wheel: bool,
+    /// Se o frontend entrega os botões do RetroPad numa máscara de bits.
+    bitmasks: bool,
     /// Se o frontend aceita quadro nulo quando a tela não mudou.
     aceita_dupe: bool,
     /// Assinatura do último quadro entregue.
@@ -298,6 +315,26 @@ fn callbacks() -> Frontend {
     frontend().lock().map(|guard| *guard).unwrap_or_default()
 }
 
+/// Avança um aviso ao jogador. Também vai para o log, porque nem todo frontend mostra mensagem
+/// — e um aviso que ninguém vê não serve para nada.
+fn aviso(texto: &str) {
+    let Ok(texto_c) = CString::new(texto) else {
+        return;
+    };
+    let mensagem = RetroMessage {
+        // Três segundos a 60 Hz: tempo de ler sem atrapalhar quem está jogando.
+        msg: texto_c.as_ptr(),
+        frames: 180,
+    };
+    unsafe {
+        environ(
+            ENV_SET_MESSAGE,
+            &mensagem as *const RetroMessage as *mut c_void,
+        );
+    }
+    log(&format!("Zeebx: {texto}"));
+}
+
 unsafe fn environ(cmd: u32, data: *mut c_void) -> bool {
     let Some(callback) = callbacks().environ else {
         return false;
@@ -345,16 +382,27 @@ fn le_select(porta: u32) -> bool {
 }
 
 /// Lê o RetroPad e monta o estado que o console enxerga.
-fn le_pad(porta: u32) -> Pad {
+///
+/// Com `bitmasks`, os doze botões vêm numa palavra só — uma chamada ao frontend por quadro em vez
+/// de doze. O `id` especial `ID_JOYPAD_MASK` devolve os bits na ordem dos `RETRO_DEVICE_ID_JOYPAD_*`.
+fn le_pad(porta: u32, bitmasks: bool) -> Pad {
     let frente = callbacks();
     let (Some(poll), Some(state)) = (frente.input_poll, frente.input_state) else {
         return Pad::default();
     };
     // SAFETY: os callbacks vêm do frontend e são chamados na thread de `retro_run`.
     unsafe { poll() };
-    let botao = |id: u32| -> bool {
+    let mascara = match bitmasks {
         // SAFETY: consulta de estado do próprio frontend.
-        unsafe { state(porta, DEVICE_JOYPAD, 0, id) != 0 }
+        true => unsafe { state(porta, DEVICE_JOYPAD, 0, ID_JOYPAD_MASK) as u32 },
+        false => 0,
+    };
+    let botao = |id: u32| -> bool {
+        match bitmasks {
+            true => mascara & (1 << id) != 0,
+            // SAFETY: consulta de estado do próprio frontend.
+            false => unsafe { state(porta, DEVICE_JOYPAD, 0, id) != 0 },
+        }
     };
     let mut pad = Pad::default();
     let mapa = [
@@ -673,6 +721,15 @@ pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
         log("Zeebx: o frontend não aceita RGB565.");
         return false;
     }
+    // Uma chamada por quadro em vez de doze, quando o frontend entrega a máscara.
+    let bitmasks = unsafe { environ(ENV_GET_INPUT_BITMASKS, std::ptr::null_mut()) };
+    log(&format!(
+        "Zeebx: botões por {}",
+        match bitmasks {
+            true => "máscara de bits",
+            false => "consulta individual",
+        }
+    ));
     // O quadro repetido pode ir como nulo: economiza uma cópia de 600 KB por quadro e evita
     // ocupar o frontend com trabalho que não muda nada na tela.
     let mut aceita_dupe = false;
@@ -682,6 +739,7 @@ pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
     let resultado = unsafe { carrega(&caminho, &storage, portas, PathBuf::from(&caminho)) };
     match resultado {
         Ok(mut novo) => {
+            novo.bitmasks = bitmasks;
             novo.aceita_dupe = aceita_dupe;
             novo.ultimo_relogio_ms = novo.session.clock_ms();
             if let Ok(mut guard) = core().lock() {
@@ -781,8 +839,8 @@ unsafe fn carrega(
             let tem_z_wheel = jogos
                 .iter()
                 .any(|(classe, _)| *classe == zeebx::session::Z_WHEEL);
-            log(&format!(
-                "Zeebx: sem tectoy.ttf no acervo ({} jogos, Z-Wheel no acervo: {tem_z_wheel}); texto do sistema ficará sem fonte",
+            aviso(&format!(
+                "Sem tectoy.ttf no acervo ({} jogos, Z-Wheel presente: {tem_z_wheel}): o texto do sistema não será desenhado",
                 jogos.len()
             ));
         }
@@ -812,6 +870,7 @@ unsafe fn carrega(
         jogos,
         z_wheel,
         aberto_pela_z_wheel: false,
+        bitmasks: false,
         aceita_dupe: false,
         ultima_assinatura: None,
         ultimo_relogio_ms: 0,
@@ -900,8 +959,8 @@ pub extern "C" fn retro_run() {
                         )),
                     }
                 }
-                None => log(&format!(
-                    "Zeebx: o shell pediu {classe:#010x}, que não está na pasta de jogos"
+                None => aviso(&format!(
+                    "O shell pediu {classe:#010x}, que não está na pasta de jogos"
                 )),
             }
         }
@@ -917,7 +976,7 @@ pub extern "C" fn retro_run() {
             if estado.portas[porta].is_none() {
                 continue;
             }
-            let pad = le_pad(porta as u32);
+            let pad = le_pad(porta as u32, estado.bitmasks);
             estado.session.set_port_pad(porta, pad);
         }
         if let Step::Stopped = estado.session.run_frame() {
