@@ -41,6 +41,65 @@ Rust 1.88 ou mais novo.
 cargo build --release
 ```
 
+### O que mais precisa estar instalado
+
+O `cargo` sozinho não basta: duas dependências compilam **código nativo na hora**, e é aí que o
+build falha em máquina limpa.
+
+| Dependência | O que ela constrói | O que ela exige |
+|---|---|---|
+| `unicorn-engine` | o QEMU inteiro, em C | compilador C, `make`, `pkg-config`, Python 3, `glib-2.0` e **`libclang`** (o `bindgen` carrega a biblioteca para gerar os vínculos) |
+| `dynarmic` | um JIT ARM em C++20, com CMake | `cmake`, `ninja` e compilador **C++20** |
+
+Debian, Ubuntu e derivados:
+
+```bash
+sudo apt install build-essential cmake ninja-build pkg-config python3 \
+    libclang-dev libglib2.0-dev \
+    libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+```
+
+Arch:
+
+```bash
+sudo pacman -S --needed base-devel cmake ninja pkgconf python clang glib2 \
+    alsa-lib systemd-libs wayland libxkbcommon
+```
+
+Fedora:
+
+```bash
+sudo dnf install gcc-c++ cmake ninja-build pkgconf-pkg-config python3 clang-devel \
+    glib2-devel alsa-lib-devel systemd-devel wayland-devel libxkbcommon-devel
+```
+
+As cinco últimas linhas de cada lista são da **interface**: áudio (ALSA), controles (udev), janela
+(Wayland, X11 e xkbcommon). Quem só quer o **core Libretro** não precisa delas — o motor compila sem
+nenhuma dessas bibliotecas:
+
+```bash
+cargo build --release -p zeebx-libretro
+```
+
+Para conferir a máquina antes de tentar (e saber **o que** falta, em vez de ler "failed to run
+custom build command" sem causa):
+
+```bash
+python3 ferramentas/prepara_build.py
+```
+
+### Quando o build falha
+
+`failed to run custom build command for dynarmic` ou `for unicorn-engine-sys` é só o topo da
+mensagem: a causa está no bloco `--- stderr` logo acima dela. As quatro que aparecem:
+
+| Sintoma | Causa |
+|---|---|
+| `Unable to find libclang` | falta a biblioteca do `libclang` (pacote acima) |
+| `ninja: command not found` / erro de gerador do CMake | falta `ninja` — o `dynarmic` pede `Ninja` explicitamente |
+| `GLIB_2.0 not found` ou erro de `pkg-config` | falta `glib2` de desenvolvimento |
+| `No space left on device`, no meio de centenas de alvos do CMake | o `dynarmic` sozinho passa de 5 GiB com debuginfo. Use `CARGO_PROFILE_DEV_DEBUG=0 CARGO_BUILD_JOBS=1` e libere espaço |
+
 ### Instaladores e releases
 
 Os instaladores saem do [cargo-packager](https://github.com/crabnebula-dev/cargo-packager), com a
