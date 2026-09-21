@@ -420,16 +420,17 @@ impl<C: CpuBackend> Machine<C> {
         // e trilha não tocava em jogo nenhum.
         let som = match crate::audio::wav::parse(bytes) {
             Ok(sound) => Some(sound),
-            Err(err) => match crate::audio::mp3::decode(bytes).or_else(|| {
-                crate::audio::midi::decode(bytes).inspect(|_| {
-                    self.assumptions.insert(concat!(
-                        "a música MIDI é sintetizada aqui, com timbre aproximado — ",
-                        "o banco de instrumentos do console está no firmware que ainda não lemos"
-                    ));
-                })
-            }) {
-                Some(sound) => Some(sound),
-                None => {
+            Err(sem_wav) => match crate::audio::mp3::decode_detalhado(bytes) {
+                Ok(sound) => Some(sound),
+                Err(porque) => match crate::audio::midi::decode(bytes) {
+                    Some(sound) => {
+                        self.assumptions.insert(concat!(
+                            "a música MIDI é sintetizada aqui, com timbre aproximado — ",
+                            "o banco de instrumentos do console está no firmware que ainda não lemos"
+                        ));
+                        Some(sound)
+                    }
+                    None => {
                     // Dizer *qual* formato chegou é o que permite saber o que implementar
                     // depois — e "não é um RIFF/WAVE" não diz. O que diz é a assinatura do
                     // próprio bloco: é assim que se soube que a trilha do Tekken 2 é MP3 sem
@@ -446,12 +447,16 @@ impl<C: CpuBackend> Machine<C> {
                         .map(|b| format!("{b:02x}"))
                         .collect::<Vec<_>>()
                         .join(" ");
-                    self.bad_pointers.insert(format!(
-                        "som recusado ({formato}, {} bytes, {assinatura}): {err}",
-                        bytes.len()
-                    ));
-                    None
-                }
+                        // **Os dois motivos**, e não só o do WAV: "não é um RIFF/WAVE" é
+                        // verdade e não ajuda — a pergunta é o que o decodificador de música
+                        // recusou. Foi vendo os dois que se descobriu o Ogg do Turma da Mônica.
+                        self.bad_pointers.insert(format!(
+                            "som recusado ({formato}, {} bytes, {assinatura}): {sem_wav} / {porque}",
+                            bytes.len()
+                        ));
+                        None
+                    }
+                },
             },
         };
         let silencio_us = match som {
