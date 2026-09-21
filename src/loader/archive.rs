@@ -6,10 +6,75 @@
 //! não é coisa que se queira fazer; extrair resolve isso de graça e deixa o resto do emulador
 //! sem saber que o zip existe.
 
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::loader::miffile::MifFile;
+use crate::storage::ContentId;
+
+/// Limites antes de descompactar conteúdo não confiável. São generosos para não rejeitar jogos
+/// legítimos, mas impedem que um ZIP com metadados maliciosos consuma espaço/memória sem teto.
+const MAX_ENTRIES: usize = 20_000;
+const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_TOTAL_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Um `.mif` é metadado pequeno; teto próprio evita alocar centenas de MiB só para escolher módulo.
+const MAX_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
+
+#[derive(Clone, Copy)]
+struct ArchiveLimits {
+    entries: usize,
+    file_bytes: u64,
+    total_bytes: u64,
+}
+
+const ARCHIVE_LIMITS: ArchiveLimits = ArchiveLimits {
+    entries: MAX_ENTRIES,
+    file_bytes: MAX_FILE_BYTES,
+    total_bytes: MAX_TOTAL_BYTES,
+};
+
+/// Impede que duas aberturas no mesmo processo apaguem o diretório parcial uma da outra.
+static NEXT_PARTIAL: AtomicU64 = AtomicU64::new(0);
+
+fn partial_dir(target: &Path) -> PathBuf {
+    let serial = NEXT_PARTIAL.fetch_add(1, Ordering::Relaxed);
+    target.with_extension(format!("partial-{}-{serial}", std::process::id()))
+}
+
+/// Confere metadados antes de ler qualquer payload. `enclosed_name` é conferido outra vez no
+/// ponto de extração, porque é ele que decide o caminho de saída.
+fn validate_archive<R: Read + Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    limits: ArchiveLimits,
+) -> std::io::Result<()> {
+    if archive.len() > limits.entries {
+        return Err(std::io::Error::other("o zip tem entradas demais"));
+    }
+    let mut total = 0u64;
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index).map_err(std::io::Error::other)?;
+        if entry.enclosed_name().is_none() {
+            return Err(std::io::Error::other("o zip contém caminho inseguro"));
+        }
+        if entry.is_symlink() {
+            return Err(std::io::Error::other("o zip contém link simbólico"));
+        }
+        if entry.is_dir() {
+            continue;
+        }
+        if entry.size() > limits.file_bytes {
+            return Err(std::io::Error::other("o zip contém arquivo grande demais"));
+        }
+        total = total
+            .checked_add(entry.size())
+            .ok_or_else(|| std::io::Error::other("o zip tem tamanho inválido"))?;
+        if total > limits.total_bytes {
+            return Err(std::io::Error::other("o zip descompacta bytes demais"));
+        }
+    }
+    Ok(())
+}
 use crate::ui::settings;
 
 /// Onde as extrações ficam.
@@ -68,6 +133,7 @@ pub fn fonte_do_sistema() -> Option<PathBuf> {
 pub fn find_module(zip: &Path) -> Option<String> {
     let file = std::fs::File::open(zip).ok()?;
     let mut archive = zip::ZipArchive::new(file).ok()?;
+    validate_archive(&mut archive, ARCHIVE_LIMITS).ok()?;
     let mut candidates: Vec<(bool, usize, String)> = Vec::new();
     for i in 0..archive.len() {
         let entry = archive.by_index(i).ok()?;
@@ -109,6 +175,7 @@ pub fn find_module(zip: &Path) -> Option<String> {
 pub fn find_manifest(zip: &Path, module: &str) -> Option<Vec<u8>> {
     let file = std::fs::File::open(zip).ok()?;
     let mut archive = zip::ZipArchive::new(file).ok()?;
+    validate_archive(&mut archive, ARCHIVE_LIMITS).ok()?;
     // `<Título>/mod/<id>/x.mod` -> o identificador é a pasta que contém o módulo.
     let parts: Vec<&str> = module.split('/').collect();
     let id = parts.get(parts.len().checked_sub(2)?).copied();
@@ -130,9 +197,16 @@ pub fn find_manifest(zip: &Path, module: &str) -> Option<Vec<u8>> {
         best.get_or_insert(i);
     }
     let mut entry = archive.by_index(best?).ok()?;
-    let mut data = Vec::new();
-    entry.read_to_end(&mut data).ok()?;
-    Some(data)
+    if entry.size() > MAX_MANIFEST_BYTES {
+        return None;
+    }
+    let mut data = Vec::with_capacity(entry.size() as usize);
+    entry
+        .by_ref()
+        .take(MAX_MANIFEST_BYTES + 1)
+        .read_to_end(&mut data)
+        .ok()?;
+    (data.len() as u64 <= MAX_MANIFEST_BYTES).then_some(data)
 }
 
 /// O título que o zip anuncia.
@@ -155,44 +229,102 @@ pub fn title_of(zip: &Path, module: &str) -> String {
 
 /// Extrai o zip para o cache e devolve o caminho do `.mod`.
 ///
-/// A pasta de destino é nomeada pelo arquivo e pelo que ele tem de tamanho e data: trocar o zip
-/// por outro gera outra pasta, e reabrir o mesmo jogo reaproveita a extração anterior.
+/// A pasta de destino é nomeada pelo hash BLAKE3 dos bytes do arquivo: trocar o conteúdo gera
+/// outra pasta, e cópia idêntica reaproveita a extração anterior sem confiar em tamanho/data.
 pub fn extract(zip: &Path) -> std::io::Result<PathBuf> {
+    // A seleção e a extração ainda precisam abrir o arquivo mais de uma vez. Conferir o digest
+    // entre essas fases recusa a troca da ROM no meio da operação, em vez de pôr bytes diferentes
+    // sob uma chave de conteúdo errada.
+    let source_fingerprint = fingerprint(zip)?;
     let module = find_module(zip)
         .ok_or_else(|| std::io::Error::other("o zip não contém nenhum arquivo .mod"))?;
-    let target = cache_dir().join(fingerprint(zip)?);
+    if fingerprint(zip)? != source_fingerprint {
+        return Err(std::io::Error::other("o zip mudou enquanto era analisado"));
+    }
+    let target = cache_dir().join(&source_fingerprint);
     let extracted = target.join(&module);
-    // Já extraído antes: nada a fazer.
+    // Já extraído com identidade forte: nada a fazer.
     if extracted.is_file() {
         return Ok(extracted);
     }
+    // A versão anterior usava nome+tamanho+mtime. Mantemos o cache antigo como leitura
+    // transitória para não esconder saves que ainda vivem dentro dele; nunca escrevemos conteúdo
+    // novo ali, pois aquela chave podia colidir.
+    let legacy = cache_dir().join(legacy_fingerprint(zip)?).join(&module);
+    if legacy.is_file() {
+        return Ok(legacy);
+    }
 
-    let file = std::fs::File::open(zip)?;
-    let mut archive = zip::ZipArchive::new(file).map_err(std::io::Error::other)?;
-    for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(std::io::Error::other)?;
-        let Some(name) = entry.enclosed_name() else {
-            continue;
-        };
-        let out = target.join(name);
-        if entry.is_dir() {
-            std::fs::create_dir_all(&out)?;
-            continue;
+    // Nunca deixamos um cache parcialmente extraído parecer utilizável. Uma queda no meio da
+    // cópia fica em `.partial`, que a próxima abertura remove antes de tentar de novo.
+    let partial = partial_dir(&target);
+    let result = (|| -> std::io::Result<()> {
+        let file = std::fs::File::open(zip)?;
+        let mut archive = zip::ZipArchive::new(file).map_err(std::io::Error::other)?;
+        validate_archive(&mut archive, ARCHIVE_LIMITS)?;
+        let mut extracted_bytes = 0u64;
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).map_err(std::io::Error::other)?;
+            let Some(name) = entry.enclosed_name() else {
+                continue;
+            };
+            let out = partial.join(name);
+            if entry.is_dir() {
+                std::fs::create_dir_all(&out)?;
+                continue;
+            }
+            if let Some(dir) = out.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            // Não aloca um Vec do tamanho declarado pelo ZIP. Além da pré-checagem de
+            // metadados, limita o fluxo real: um cabeçalho mentiroso não pode escrever além do
+            // teto durante a descompressão.
+            let remaining = MAX_TOTAL_BYTES
+                .checked_sub(extracted_bytes)
+                .ok_or_else(|| std::io::Error::other("o zip descompacta bytes demais"))?;
+            let allowed = MAX_FILE_BYTES.min(remaining);
+            let mut output = std::fs::File::create(&out)?;
+            let written = std::io::copy(&mut entry.by_ref().take(allowed + 1), &mut output)?;
+            if written > allowed {
+                return Err(std::io::Error::other(
+                    "o zip ultrapassou o limite ao descompactar",
+                ));
+            }
+            extracted_bytes = extracted_bytes
+                .checked_add(written)
+                .ok_or_else(|| std::io::Error::other("o zip tem tamanho inválido"))?;
         }
-        if let Some(dir) = out.parent() {
-            std::fs::create_dir_all(dir)?;
+        if fingerprint(zip)? != source_fingerprint {
+            return Err(std::io::Error::other("o zip mudou durante a extração"));
         }
-        let mut bytes = Vec::with_capacity(entry.size() as usize);
-        entry.read_to_end(&mut bytes)?;
-        std::fs::write(&out, bytes)?;
+        escrever_manifesto(zip, &partial)?;
+        if fingerprint(zip)? != source_fingerprint {
+            return Err(std::io::Error::other("o zip mudou durante a extração"));
+        }
+        if !partial.join(&module).is_file() {
+            return Err(std::io::Error::other(
+                "o .mod não apareceu depois de extrair o zip",
+            ));
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if let Err(error) = std::fs::rename(&partial, &target) {
+            // Outro processo pode ter publicado o mesmo hash primeiro. Se a publicação dele é
+            // completa, ela é equivalente à nossa; caso contrário, não escondemos o erro.
+            if target.join(&module).is_file() {
+                let _ = std::fs::remove_dir_all(&partial);
+            } else {
+                return Err(error);
+            }
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&partial);
     }
-    escrever_manifesto(zip, &target)?;
-    match extracted.is_file() {
-        true => Ok(extracted),
-        false => Err(std::io::Error::other(
-            "o .mod não apareceu depois de extrair o zip",
-        )),
-    }
+    result?;
+    Ok(extracted)
 }
 
 /// O nome do arquivo que lista o que veio do pacote.
@@ -210,6 +342,7 @@ pub const MANIFESTO: &str = ".zeebx-pacote";
 pub fn escrever_manifesto(zip: &Path, destino: &Path) -> std::io::Result<()> {
     let file = std::fs::File::open(zip)?;
     let mut archive = zip::ZipArchive::new(file).map_err(std::io::Error::other)?;
+    validate_archive(&mut archive, ARCHIVE_LIMITS)?;
     let mut nomes = Vec::new();
     for i in 0..archive.len() {
         let entry = archive.by_index(i).map_err(std::io::Error::other)?;
@@ -234,32 +367,55 @@ pub fn cache_de(zip: &Path) -> std::io::Result<PathBuf> {
 /// reconstruído do zip, que continua ali.
 pub fn completar_manifesto(zip: &Path) -> std::io::Result<()> {
     let destino = cache_de(zip)?;
-    if !destino.is_dir() || destino.join(MANIFESTO).is_file() {
+    if destino.is_dir() {
+        if !destino.join(MANIFESTO).is_file() {
+            escrever_manifesto(zip, &destino)?;
+        }
         return Ok(());
     }
-    escrever_manifesto(zip, &destino)
+    // Ver `extract`: caches antigos podiam conter saves relativos. Ainda que a chave velha não
+    // seja usada para conteúdo novo, reconstituir seu manifesto mantém esses saves visíveis na UI.
+    let legado = cache_dir().join(legacy_fingerprint(zip)?);
+    if legado.is_dir() && !legado.join(MANIFESTO).is_file() {
+        escrever_manifesto(zip, &legado)?;
+    }
+    Ok(())
 }
 
-/// Um nome de pasta que muda quando o arquivo muda.
+/// Um nome de pasta que identifica o conteúdo, não onde/quando ele foi copiado.
+///
+/// O título é só rótulo humano para o gerenciador de saves; a chave que impede colisão é o digest
+/// BLAKE3 completo no fim. Duas cópias com o mesmo nome e bytes vão para o mesmo cache.
 fn fingerprint(zip: &Path) -> std::io::Result<String> {
+    let content = ContentId::from_reader(std::fs::File::open(zip)?)?;
+    Ok(format!("{}-{}", cache_label(zip), content.as_str()))
+}
+
+fn cache_label(zip: &Path) -> String {
+    zip.file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("jogo")
+        .chars()
+        .map(|character| {
+            if character.is_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// A chave de cache anterior, só para manter leitura de saves/cache já criados pela versão velha.
+fn legacy_fingerprint(zip: &Path) -> std::io::Result<String> {
     let meta = std::fs::metadata(zip)?;
     let stamp = meta
         .modified()
         .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs())
         .unwrap_or(0);
-    let stem: String = zip
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("jogo")
-        .chars()
-        .map(|c| match c.is_alphanumeric() {
-            true => c,
-            false => '-',
-        })
-        .collect();
-    Ok(format!("{stem}-{}-{stamp}", meta.len()))
+    Ok(format!("{}-{}-{stamp}", cache_label(zip), meta.len()))
 }
 
 #[cfg(test)]
@@ -320,6 +476,36 @@ mod tests {
             title_of(Path::new("/baixados/peteca.zip"), "zeebopeteca.mod"),
             "peteca"
         );
+    }
+
+    #[test]
+    fn fingerprint_e_dos_bytes_nao_de_data() {
+        let first = make_zip("hash-origem", &["mod/1/jogo.mod"]);
+        let dir = std::env::temp_dir().join("zeebx-teste-hash-copia");
+        std::fs::create_dir_all(&dir).unwrap();
+        let second = dir.join("zeebx-teste-hash-origem.zip");
+        std::fs::copy(&first, &second).unwrap();
+        assert_eq!(fingerprint(&first).unwrap(), fingerprint(&second).unwrap());
+        let _ = std::fs::remove_file(first);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn limite_de_entradas_e_recusado_antes_da_extracao() {
+        let zip = make_zip("limite", &["a", "b", "c"]);
+        let file = std::fs::File::open(&zip).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let err = validate_archive(
+            &mut archive,
+            ArchiveLimits {
+                entries: 2,
+                file_bytes: MAX_FILE_BYTES,
+                total_bytes: MAX_TOTAL_BYTES,
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("entradas"));
+        let _ = std::fs::remove_file(zip);
     }
 
     #[test]

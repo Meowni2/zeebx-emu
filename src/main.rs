@@ -14,6 +14,8 @@ mod machine;
 mod ponte;
 mod rede;
 mod session;
+#[allow(dead_code)]
+mod storage;
 mod ui;
 mod video;
 

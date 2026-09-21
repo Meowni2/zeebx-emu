@@ -130,7 +130,10 @@ impl Vfs {
     /// É para quem vai **criar** um nome, não abrir um existente: renomear para `save.dat`
     /// quando existe um `SAVE.DAT` tem de criar o primeiro, não sobrescrever o segundo.
     pub fn resolve_new(&self, guest_path: &str) -> Option<PathBuf> {
-        self.resolve_inner(guest_path, false)
+        // O nome novo fica exatamente como o guest escreveu, mas os diretórios que já existem
+        // continuam seguindo a semântica sem caixa do console. Sem isto, `UDATA/save.dat`
+        // criaria uma segunda pasta ao lado de `udata/` num host Linux.
+        self.resolve_inner(guest_path, false).map(match_case_parent)
     }
 
     /// Como [`Vfs::resolve`], mas aceita o próprio diretório do módulo.
@@ -218,6 +221,14 @@ impl Vfs {
         }
         Some(resolved)
     }
+}
+
+/// Resolve só os diretórios de um caminho novo, preservando o último componente para criação.
+fn match_case_parent(path: PathBuf) -> PathBuf {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return path;
+    };
+    match_case(parent.to_path_buf()).join(name)
 }
 
 /// O mesmo caminho, com a caixa que os arquivos têm de verdade no disco.
@@ -399,8 +410,14 @@ mod tests_no_disco {
         // O nome exato continua ganhando de qualquer outro.
         std::fs::write(modulo.join("font.fnz"), b"outra").unwrap();
         assert_eq!(vfs.resolve("font.fnz"), Some(modulo.join("font.fnz")));
-        // O que não existe volta como veio: é assim que um arquivo novo é criado.
+        // O que não existe volta como veio numa busca existente.
         assert_eq!(vfs.resolve("save.dat"), Some(modulo.join("save.dat")));
+        // Uma criação preserva o nome do arquivo, mas acha diretórios existentes sem caixa.
+        std::fs::create_dir_all(modulo.join("udata")).unwrap();
+        assert_eq!(
+            vfs.resolve_new("UDATA/save.dat"),
+            Some(modulo.join("udata/save.dat"))
+        );
 
         std::fs::remove_dir_all(&raiz).unwrap();
     }
