@@ -236,6 +236,8 @@ impl Session {
         z_wheel: crate::config::ZWheel,
         storage: &StoragePaths,
     ) -> Result<Self, StartError> {
+        // Caminho escolhido no frontend, antes de extrair: é ele que identifica o conteúdo.
+        let conteudo = path;
         let extracted;
         let path = match path.extension().and_then(|e| e.to_str()) {
             Some("zip") => {
@@ -254,8 +256,20 @@ impl Session {
         // A raiz do sistema de arquivos do jogo é o diretório onde o `.mod` está: é lá que o
         // console guarda os arquivos do título.
         let root = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        // O overlay é por conteúdo: o mesmo jogo extraído de novo continua lendo o mesmo save, e
+        // um pacote diferente não herda o save do outro. O hash é do arquivo escolhido pelo
+        // frontend (`.zip` ou `.mod`), antes de qualquer extração.
+        let save_root = match storage.overlay {
+            true => {
+                let id = storage
+                    .content_id(conteudo)
+                    .map_err(|e| StartError::Unreadable(e))?;
+                Some(storage.save_for(&id))
+            }
+            false => None,
+        };
         let cpu = DynarmicCpu::new().map_err(|e| StartError::NotLoadable(e.to_string()))?;
-        let mut machine = Machine::new_with_device(cpu, module, root, &storage.device);
+        let mut machine = Machine::new_with_storage(cpu, module, root, storage, save_root);
         // Antes de qualquer desenho: ver [`Machine::usa_placa`].
         machine.usa_placa(placa, contexto);
         machine.configura_z_wheel(z_wheel);

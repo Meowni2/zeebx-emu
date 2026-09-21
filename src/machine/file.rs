@@ -346,19 +346,44 @@ impl<C: CpuBackend> Machine<C> {
             }
             Some(path)
         } else {
-            self.vfs.resolve(guest_path)
+            None
         };
-        let Some(path) = path else {
+        if let Some(cfg) = path {
+            // Arquivo de perfil do emulador: mesma semântica de modo do caminho comum.
+            return self.open_resolved(guest_path, cfg, Self::open_options(mode));
+        }
+        // A partir daqui vale a resolução do VFS, que decide entre conteúdo e overlay e diz se
+        // o arquivo do pacote precisa ser copiado antes de receber escrita.
+        let intent = match (mode & OFM_CREATE != 0, mode & (OFM_READWRITE | OFM_APPEND) != 0) {
+            (true, _) => crate::brew::vfs::OpenIntent::Create,
+            (false, true) if mode & OFM_APPEND != 0 => crate::brew::vfs::OpenIntent::Append,
+            (false, true) => crate::brew::vfs::OpenIntent::ReadWrite,
+            (false, false) => crate::brew::vfs::OpenIntent::Read,
+        };
+        let Some(alvo) = self.vfs.open_target(guest_path, intent) else {
             self.file_error = EFAILED;
             return Ok(0);
         };
-        let mut options = std::fs::OpenOptions::new();
-        if mode & OFM_CREATE != 0 {
-            // No console o diretório do módulo já vem pronto do instalador; aqui ele só existe
-            // se o jogo o criar, e vários jogos abrem `udata\algo` sem chamar `MkDir` antes.
+        let path = alvo.path;
+        // O pacote nunca é alterado: a primeira escrita copia o recurso para o overlay.
+        if let Some(origem) = alvo.copy_from {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
+            if std::fs::copy(&origem, &path).is_err() {
+                self.file_error = EFAILED;
+                return Ok(0);
+            }
+        }
+        let options = Self::open_options(mode);
+
+        self.open_resolved(guest_path, path, options)
+    }
+
+    /// As opções de abertura equivalentes ao modo do BREW.
+    fn open_options(mode: u32) -> std::fs::OpenOptions {
+        let mut options = std::fs::OpenOptions::new();
+        if mode & OFM_CREATE != 0 {
             options.create(true).read(true).write(true);
         } else if mode & (OFM_READWRITE | OFM_APPEND) != 0 {
             options.read(true).write(true);
@@ -368,7 +393,16 @@ impl<C: CpuBackend> Machine<C> {
         if mode & OFM_APPEND != 0 {
             options.append(true);
         }
+        options
+    }
 
+    /// Abre `path` já resolvido e registra o `IFile`.
+    fn open_resolved(
+        &mut self,
+        guest_path: &str,
+        path: std::path::PathBuf,
+        options: std::fs::OpenOptions,
+    ) -> Result<u32, CpuError> {
         let Ok(file) = options.open(&path) else {
             self.file_error = EFAILED;
             self.missing_files.insert(guest_path.to_string());

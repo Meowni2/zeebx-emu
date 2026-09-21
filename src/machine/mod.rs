@@ -2582,21 +2582,24 @@ impl<C: CpuBackend> Machine<C> {
     }
 
     pub fn new(cpu: C, module: LoadedModule, root: impl Into<std::path::PathBuf>) -> Self {
-        Self::new_with_device(cpu, module, root, crate::loader::archive::device_dir())
+        let storage = crate::storage::StoragePaths::from_root(crate::config::config_dir());
+        Self::new_with_storage(cpu, module, root, &storage, None)
     }
 
-    /// Como [`Machine::new`], mas recebe a NAND/BREW compartilhada explicitamente.
+    /// Como [`Machine::new`], mas recebe as raízes persistentes do frontend.
     ///
     /// O construtor antigo preserva a UI desktop. Frontends isolados, como Libretro, não podem
-    /// depender de `ui::settings::config_dir()` e usam esta forma com sua raiz autorizada.
-    pub fn new_with_device(
+    /// depender de `ui::settings::config_dir()` e usam esta forma com sua raiz autorizada: a NAND
+    /// compartilhada e, quando o perfil pede, o overlay gravável do título.
+    pub fn new_with_storage(
         cpu: C,
         module: LoadedModule,
         root: impl Into<std::path::PathBuf>,
-        device_root: impl Into<std::path::PathBuf>,
+        storage: &crate::storage::StoragePaths,
+        save_root: Option<std::path::PathBuf>,
     ) -> Self {
         let raiz: std::path::PathBuf = root.into();
-        let device_root: std::path::PathBuf = device_root.into();
+        let device_root: std::path::PathBuf = storage.device.clone();
         let heap = Heap::new(loader::HEAP_BASE, loader::HEAP_SIZE);
         // Os objetos ficam depois dos ponteiros que o carregador já reservou no começo da
         // região, para não sobrescrevê-los.
@@ -2633,6 +2636,9 @@ impl<C: CpuBackend> Machine<C> {
                 let mut vfs = Vfs::new(raiz.clone());
                 // Todos os jogos compartilham o mesmo `fs:/`, como no console.
                 vfs.set_device_root(device_root);
+                if let Some(save) = save_root {
+                    vfs.set_save_root(save);
+                }
                 vfs
             },
             open_files: HashMap::new(),

@@ -21,6 +21,11 @@ pub struct StoragePaths {
     pub saves: PathBuf,
     /// Manifestos e metadados de conteúdo.
     pub metadata: PathBuf,
+    /// Se o perfil usa overlay gravável por título.
+    ///
+    /// Falso no desktop histórico, onde o jogo grava ao lado do `.mod`; verdadeiro quando o
+    /// frontend delimita a raiz de saves e o pacote precisa ficar intacto.
+    pub overlay: bool,
 }
 
 impl StoragePaths {
@@ -36,12 +41,28 @@ impl StoragePaths {
             saves: root.join("saves"),
             metadata: root.join("metadata"),
             root,
+            // O desktop histórico grava dentro do próprio jogo; só um frontend que delimita a
+            // raiz pede overlay.
+            overlay: false,
         }
     }
 
     /// Cria o layout lógico do perfil dentro de `save_dir`.
+    ///
+    /// É a raiz que um frontend Libretro fornece: pasta `zeebx` própria, nunca ao lado da ROM.
     pub fn from_save_dir(save_dir: impl AsRef<Path>) -> Self {
-        Self::from_root(save_dir.as_ref().join("zeebx"))
+        Self {
+            overlay: true,
+            ..Self::from_root(save_dir.as_ref().join("zeebx"))
+        }
+    }
+
+    /// Identidade do conteúdo, para nomear overlay e cache.
+    ///
+    /// O hash é dos bytes do arquivo escolhido no frontend — o `.zip` quando é pacote, o `.mod`
+    /// quando é módulo solto. É o que separa o save de duas versões do mesmo título.
+    pub fn content_id(&self, path: &Path) -> std::io::Result<ContentId> {
+        ContentId::from_reader(std::fs::File::open(path)?)
     }
 
     /// Onde fica o overlay privado de um conteúdo.
@@ -106,6 +127,12 @@ mod tests {
         assert_eq!(paths.device, PathBuf::from("/saves/zeebx/aparelho"));
         assert_eq!(paths.saves, PathBuf::from("/saves/zeebx/saves"));
         assert_eq!(paths.metadata, PathBuf::from("/saves/zeebx/metadata"));
+    }
+
+    #[test]
+    fn raiz_de_frontend_liga_overlay_e_o_desktop_nao() {
+        assert!(StoragePaths::from_save_dir("/saves").overlay);
+        assert!(!StoragePaths::from_root("/config/zeebx").overlay);
     }
 
     #[test]
