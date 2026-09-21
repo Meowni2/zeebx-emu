@@ -472,6 +472,11 @@ pub const EGL: &[&str] = &[
 /// **O Prey Evil pede esta interface por `CreateInstance` e para de desenhar sem ela**: o
 /// levantamento das 62 ROMs mostrou onze métodos de GL, nenhum desenho e tela preta. Os
 /// `DrawTex*` são os que importam para um jogo que monta o quadro numa textura.
+/// `IGLES10Ext`: uma extensão do OpenGL ES 1.0. Ver `AEEGLES10Ext.h`.
+///
+/// Um método só, e é o que o Prey Evil usa para saber que a extensão existe.
+pub const GLES10_EXT: &[&str] = &["AddRef", "Release", "QueryInterface", "QueryMatrixxOES"];
+
 pub const GLES11_EXT: &[&str] = &[
     "AddRef",
     "Release",

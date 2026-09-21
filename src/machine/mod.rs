@@ -707,6 +707,9 @@ const AEEIID_GLES_IMAGEON_EXT: u32 = 0x0105_8546;
 /// quando recebe nulo: sem ela, o levantamento o pega com onze métodos de GL e nenhum desenho.
 const AEECLSID_GLES11EXT: u32 = 0x0103_d8eb;
 
+/// `AEEIID_GLES10EXT`, de `sdk/inc/AEEGLES10Ext.h`. O Prey Evil a pede no objeto do EGL.
+const AEEIID_GLES10EXT: u32 = 0x0103_d8de;
+
 const AEEIID_EGL10: u32 = 0x0103_d8ed;
 const AEEIID_EGL11: u32 = 0x0103_d8ee;
 /// Identificador do display do EGL. Só existe um, e o valor é arbitrário — o que não pode é
@@ -2088,6 +2091,8 @@ pub struct Machine<C: CpuBackend> {
     imageon_ext: u32,
     /// O objeto do `IGLES11Ext`, criado na primeira vez que o pedem. Ver o slot 2 da vtable do EGL.
     gles11_ext: u32,
+    /// O objeto do `IGLES10Ext`, pelo mesmo motivo.
+    gles10_ext: u32,
     /// O retângulo em que o jogo desenha, quando ele o declara pelo `SetSurfaceScale`. Vale
     /// mais que a dedução por viewport: aqui o jogo **diz** o tamanho.
     scale_source: Option<(i32, i32)>,
@@ -2723,6 +2728,7 @@ impl<C: CpuBackend> Machine<C> {
             surface_manip: 0,
             imageon_ext: 0,
             gles11_ext: 0,
+            gles10_ext: 0,
             scale_source: None,
             prefs: HashMap::new(),
             enumerations: HashMap::new(),
@@ -3470,7 +3476,8 @@ impl<C: CpuBackend> Machine<C> {
             },
             (Interface::EglSurfaceManip, _)
             | (Interface::GlesImageonExt, _)
-            | (Interface::Gles11Ext, _) => {
+            | (Interface::Gles11Ext, _)
+            | (Interface::Gles10Ext, _) => {
                 match self.extension_call(iface, slot)? {
                     Some(result) => result,
                     None => return Ok(None),

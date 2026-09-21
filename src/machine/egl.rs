@@ -496,6 +496,14 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 self.gles11_ext
             }
+            // `IGLES10Ext`: o `QueryMatrixxOES`. Uma extensão por vez foi o que aprendeu a lição
+            // de ontem — cada registro move o jogo um portão, e cada portão é medido.
+            AEEIID_GLES10EXT => {
+                if self.gles10_ext == 0 {
+                    self.gles10_ext = self.new_object(Interface::Gles10Ext)?;
+                }
+                self.gles10_ext
+            }
             _ => {
                 self.unknown_classes.insert(iid);
                 if out != 0 {

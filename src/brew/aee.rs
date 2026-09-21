@@ -89,6 +89,8 @@ pub enum Interface {
     /// O Prey Evil só desenha se ela existir: sem a interface, ele monta matrizes e texturas e
     /// para — onze métodos de GL no relatório, nenhum `Draw` e tela preta.
     Gles11Ext = 55,
+    /// `AEEIID_GLES10EXT`: `QueryMatrixxOES`. Ver [`aee_slots::GLES10_EXT`].
+    Gles10Ext = 56,
     /// `AEECLSID_SQLMGR` do console: abre bancos SQLite. Ver [`crate::brew::sql`].
     SqlMgr = 36,
     /// Um banco aberto pelo [`Interface::SqlMgr`].
@@ -420,6 +422,7 @@ impl Interface {
             Self::EglSurfaceManip => "IEGLSurfaceManip",
             Self::GlesImageonExt => "IGLESImageonExt",
             Self::Gles11Ext => "IGLES11Ext",
+            Self::Gles10Ext => "IGLES10Ext",
             Self::SqlMgr => "ISQLMgr",
             Self::SqlDatabase => "ISQLDatabase",
             Self::Collection => "IColecao",
@@ -482,6 +485,7 @@ impl Interface {
             Self::EglSurfaceManip => aee_slots::EGL_SURFACE_MANIP,
             Self::GlesImageonExt => aee_slots::GLES_IMAGEON_EXT,
             Self::Gles11Ext => aee_slots::GLES11_EXT,
+            Self::Gles10Ext => aee_slots::GLES10_EXT,
             Self::SqlMgr => aee_slots::SQL_MGR,
             Self::SqlDatabase => aee_slots::SQL_DATABASE,
             Self::Collection => aee_slots::COLLECTION,
@@ -559,6 +563,7 @@ impl Interface {
             33 => Self::EglSurfaceManip,
             34 => Self::GlesImageonExt,
             55 => Self::Gles11Ext,
+            56 => Self::Gles10Ext,
             35 => Self::Probe,
             36 => Self::SqlMgr,
             37 => Self::SqlDatabase,

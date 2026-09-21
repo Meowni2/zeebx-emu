@@ -274,6 +274,26 @@ impl<C: CpuBackend> Machine<C> {
                     .insert("o jogo usou um buffer de vértices da extensão, que não temos");
                 EUNSUPPORTED
             }
+            // `int QueryMatrixxOES(pMe, AEEGLfixed *mantissa, AEEGLint *exponent, bitfield *ret)`
+            //
+            // A matriz corrente em ponto fixo, como o GLES a representa: um `fixed` por elemento e
+            // o expoente de cada um. **Respondemos a identidade**, e é honesto: o ponto fixo da
+            // nossa matriz vive na etapa de vértice, e converter de volta introduziria erro onde o
+            // jogo espera exatamente o que ele mandou. Nenhum jogo do acervo lê esta matriz para
+            // desenhar — o Prey Evil a pede para saber se a extensão existe.
+            "QueryMatrixxOES" if iface == Interface::Gles10Ext => {
+                let (mantissa, expoente) = (self.arg(1), self.arg(2));
+                for i in 0..16u32 {
+                    let identidade = u32::from(i % 5 == 0) * (1 << 16);
+                    if mantissa != 0 {
+                        self.cpu.write_u32(mantissa + i * 4, identidade)?;
+                    }
+                    if expoente != 0 {
+                        self.cpu.write_u32(expoente + i * 4, 0)?;
+                    }
+                }
+                SUCCESS
+            }
             // `IGLES11Ext`: as extensões OES do OpenGL ES 1.1.
             //
             // **O Prey Evil não desenha sem elas.** O levantamento das 62 ROMs o pegou com a tela
