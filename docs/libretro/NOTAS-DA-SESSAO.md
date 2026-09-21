@@ -96,6 +96,26 @@ investigação inteira dentro do jogo.
   segundos com e sem manche diferem em mil instruções de 133 milhões. Só o RetroArch responde.
 - **Item 9** (capas e No-Intro): local pronto; falta publicar.
 
+## O que o teste headless já responde sobre a Z-Wheel
+
+Eu tinha escrito que a roda **não responde** sem frontend. Isso estava errado, e o erro era do
+teste: ele parava no primeiro botão que não mudava a imagem e concluía "nada responde". Medindo
+botão por botão, com o teste que conta imagens distintas:
+
+```text
+botao 3 (START):  1 imagem
+botao 8:          1 imagem
+botao 0:          1 imagem
+botao 2 (SELECT): 2 imagens   ← a roda reagiu
+manche x e y:     1 imagem    (não moveu)
+```
+
+**A roda responde ao Select**, então o caminho de entrada dela funciona pelo core — e o ciclo é
+verificável sem frontend, ao menos em parte. O que falta descobrir é a sequência que **abre um
+jogo**: o manche não a moveu neste arranjo (o aparelho da porta é escolhido por outra variável de
+ambiente, e a roda é navegada pelo manche), e é a próxima medição — agora com um teste que diz
+**qual** entrada mudou a tela, em vez de parar na primeira que não mudou.
+
 ## Como fechar o item 8 (o ciclo da Z-Wheel)
 
 É a única coisa que nenhum teste daqui alcança: a roda **não desenha** no caminho da varredura

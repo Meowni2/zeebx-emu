@@ -1544,6 +1544,33 @@ mod testes {
                     break;
                 }
             }
+            // **O manche**, que é como a Z-Wheel e os menus são navegados.
+            for (qual, valor) in [("x", 0x7fff), ("x", -0x8000), ("y", 0x7fff), ("y", -0x8000)] {
+                if let Ok(mut vistos) = ASSINATURAS.lock() {
+                    vistos.clear();
+                }
+                let alvo = match qual {
+                    "x" => &EIXO_X,
+                    _ => &EIXO_Y,
+                };
+                alvo.store(valor, Ordering::Relaxed);
+                for _ in 0..40 {
+                    retro_run();
+                }
+                alvo.store(0, Ordering::Relaxed);
+                for _ in 0..20 {
+                    retro_run();
+                }
+                let distintas = ASSINATURAS
+                    .lock()
+                    .map(|v| v.iter().collect::<std::collections::BTreeSet<_>>().len())
+                    .unwrap_or(0);
+                eprintln!("manche {qual}={valor}: {distintas} imagem(ns) distinta(s)");
+                if distintas > 1 {
+                    reagiu = Some(0x100 + valor as u32);
+                    break;
+                }
+            }
             retro_unload_game();
             retro_deinit();
         }
@@ -1551,8 +1578,9 @@ mod testes {
         eprintln!(
             "entrada: {}",
             match reagiu {
+                Some(botao) if botao >= 0x100 => "chegou — o manche mudou a imagem".to_string(),
                 Some(botao) => format!("chegou — o botao {botao} mudou a imagem"),
-                None => "nenhum dos quatro botoes mudou a imagem".to_string(),
+                None => "nem os quatro botoes nem o manche mudaram a imagem".to_string(),
             }
         );
     }
@@ -1649,7 +1677,22 @@ mod testes {
         quadros
     }
 
-    unsafe extern "C" fn entrada(_porta: u32, _dispositivo: u32, _indice: u32, id: u32) -> i16 {
+    /// O eixo que o teste está empurrando, na faixa do RetroPad (`-0x8000..=0x7fff`).
+    ///
+    /// A Z-Wheel é navegada **pelo manche**, então um teste que só aperta botão não a move — e a
+    /// pergunta "a entrada chega?" ficava sem resposta para ela.
+    static EIXO_X: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+    static EIXO_Y: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+    unsafe extern "C" fn entrada(_porta: u32, dispositivo: u32, _indice: u32, id: u32) -> i16 {
+        if dispositivo == DEVICE_ANALOG {
+            // No RetroPad, `0` é o X do analógico esquerdo e `1` é o Y.
+            let valor = match id {
+                0 => EIXO_X.load(Ordering::Relaxed),
+                _ => EIXO_Y.load(Ordering::Relaxed),
+            };
+            return valor.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+        }
         // O core pergunta pelo estado de cada botão, um a um.
         (BOTAO.load(Ordering::Relaxed) == id) as i16
     }
