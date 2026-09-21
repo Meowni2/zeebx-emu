@@ -15,7 +15,7 @@ use dynarmic::a32::{ArchVersion, Callbacks, Dynarmic as Jit, VAddr};
 use dynarmic::{CallbackImpl, GuestInt, HaltReason};
 
 use super::mem::GuestMemory;
-use super::unicorn::{API_BASE, API_SIZE, RETURN_MAGIC};
+use super::{API_BASE, API_SIZE, RETURN_MAGIC};
 use super::{CpuBackend, CpuError, Reg, StopReason};
 
 /// `CPSR` de modo usuário do ARM. A extensão da Superscape confere este campo antes de tocar

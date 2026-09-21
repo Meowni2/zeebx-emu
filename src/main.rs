@@ -12,7 +12,7 @@ use zeebx::{audio, cpu, input, library, loader, machine, session, ui};
 use std::process::ExitCode;
 
 use zeebx::brew::aee;
-use zeebx::cpu::{CpuBackend, dynarmic::DynarmicCpu, unicorn::UnicornCpu};
+use zeebx::cpu::{BackendPadrao, CpuBackend, dynarmic::DynarmicCpu};
 use zeebx::input::bindings;
 use zeebx::loader::archive;
 use zeebx::loader::modfile::{ModImage, Variant};
@@ -783,7 +783,7 @@ fn run(path: &str, options: Options) -> Result<(), Box<dyn std::error::Error>> {
         .parent()
         .map(std::path::Path::to_path_buf)
         .unwrap_or_default();
-    let mut machine = Machine::new(UnicornCpu::new()?, module, root);
+    let mut machine = Machine::new(BackendPadrao::new()?, module, root);
     println!("arquivos:  {}", machine.file_root().display());
     machine.set_tracing(tracing);
     machine.set_trace_filter(trace_filter);
@@ -1589,7 +1589,7 @@ fn sessao_sem_janela(
 /// a tabela de sons dele antes de o applet existir, e é nessa tabela que está a resposta de por
 /// que ele para.
 fn despeja_memoria(
-    machine: &machine::Machine<UnicornCpu>,
+    machine: &machine::Machine<BackendPadrao>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write(
         "heap.bin",
@@ -1633,7 +1633,7 @@ fn despeja_superficies<C: cpu::CpuBackend>(
 /// O Need For Speed queima os 500 milhões de instruções dentro do `CreateInstance`, e enquanto
 /// esta impressão vivia só no laço de quadros o `--profile` dele saía vazio — justamente no caso
 /// em que a pergunta "onde?" é a única que importa.
-fn mostra_perfil(machine: &Machine<UnicornCpu>) {
+fn mostra_perfil(machine: &Machine<BackendPadrao>) {
     let api = machine.api_profile();
     let total_api: u64 = api.iter().map(|(_, ns)| ns).sum();
     if total_api > 0 {
@@ -1717,7 +1717,7 @@ fn describe_outcome(outcome: &Outcome) {
 /// pendente, nada mais vai acontecer.
 #[allow(clippy::too_many_arguments)]
 fn run_frames(
-    machine: &mut Machine<UnicornCpu>,
+    machine: &mut Machine<BackendPadrao>,
     rounds: u32,
     seconds: Option<u32>,
     path: &str,

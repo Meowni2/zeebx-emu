@@ -60,7 +60,6 @@ png = "0.18.1"
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"], optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-unicorn-engine = "2.1.5"
 # JIT ARM alternativo ao TCG do Unicorn. Fica opt-in enquanto os dois backends são
 # comparados jogo a jogo; o KH precisa dele porque a extensão 3D roda o próprio
 # rasterizador ARM por milhões de pixels.
@@ -89,6 +88,15 @@ zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }
 symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
 discord-rich-presence = { version = "1.1", optional = true }
 ureq = "3"
+
+# Tudo o que existe **só onde o unicorn compila**, como as dependências de sistema abaixo.
+#
+# O `unicorn-engine` traz o QEMU em C, e o QEMU do Windows monta `setjmp-wrapper-win32.asm` com o
+# `ml` do MSVC — que só existe para x86 e x64. Não há montador MASM para ARM64, então naquele alvo
+# o `unicorn-engine-sys` nem chega a compilar (o `ml` não é encontrado). Onde ele falta, o motor
+# usa o `dynarmic`, que recompila os blocos A32 e sustenta o mesmo contrato de `CpuBackend`.
+[target.'cfg(not(all(target_os = "windows", target_arch = "aarch64")))'.dependencies]
+unicorn-engine = "2.1.5"
 
 # O `ioctl` que lê a escala dos sensores de movimento em `/dev/input`. Já vinha na árvore por
 # várias dependências, então não acrescenta build nenhuma.

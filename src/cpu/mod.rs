@@ -213,7 +213,45 @@ impl std::fmt::Display for CpuError {
 impl std::error::Error for CpuError {}
 
 pub mod dynarmic;
+
+/// O backend de CPU do `unicorn` (QEMU/TCG), que **não** existe no Windows ARM64.
+///
+/// O QEMU monta `qemu/util/setjmp-wrapper-win32.asm` com o `ml` do MSVC, e o MASM só existe para x86
+/// e x64: não há montador para ARM64, então o `unicorn-engine-sys` nem compila naquele alvo. A
+/// ausência é declarada aqui, e não num monte de `cfg` espalhados, porque o resto do código só
+/// precisa saber **qual** backend usar.
+#[cfg(not(all(target_os = "windows", target_arch = "aarch64")))]
 pub mod unicorn;
+
+/// O alias que o resto do código usa para pedir "o backend padrão".
+///
+/// Com o `unicorn` disponível, é ele: o QEMU/TCG é o núcleo de referência, com a parada nas vtables
+/// do BREW mais fiel. No Windows ARM64, onde ele não compila, o padrão passa a ser o `dynarmic`, que
+/// recompila os blocos A32 para o código nativo do host e sustenta o mesmo contrato de
+/// [`CpuBackend`] — inclusive a parada nas faixas não mapeadas.
+#[cfg(not(all(target_os = "windows", target_arch = "aarch64")))]
+pub type BackendPadrao = unicorn::UnicornCpu;
+#[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+pub type BackendPadrao = dynarmic::DynarmicCpu;
+
+// As constantes da faixa de vtables do BREW valem para os dois backends e não podem morar no
+// `unicorn`, que falta no Windows ARM64: o `dynarmic` as usa para parar no mesmo lugar.
+pub use faixas_do_brew::{API_BASE, API_SIZE, RETURN_MAGIC};
+
+/// As três constantes da faixa reservada às vtables do BREW.
+///
+/// Ficam num módulo próprio porque são **do contrato**, não de um backend: o `unicorn` as usa para
+/// abortar a execução, o `dynarmic` para parar o bloco, e os dois têm de concordar — é assim que o
+/// despachante Rust descobre qual API o jogo chamou. Antes viviam dentro do `unicorn.rs`, o que
+/// fazia o `dynarmic` depender de um módulo que não existe no Windows ARM64.
+mod faixas_do_brew {
+    /// Base da faixa reservada às vtables do BREW.
+    pub const API_BASE: u32 = 0xf000_0000;
+    /// Tamanho da faixa.
+    pub const API_SIZE: u32 = 0x0100_0000;
+    /// Endereço-sentinela que o `lr` recebe para marcar "voltou da API".
+    pub const RETURN_MAGIC: u32 = 0xfff0_0000;
+}
 
 /// Quanto do log por semihosting fica guardado, em bytes.
 const MAX_SEMIHOSTING: usize = 256 * 1024;

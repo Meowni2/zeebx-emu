@@ -11,12 +11,9 @@ use unicorn_engine::{Arch, ArmCpuModel, HookType, Mode, Prot, RegisterARM, Unico
 use super::{CpuBackend, CpuError, Reg, StopReason};
 use crate::cpu::mem::GuestMemory;
 
-/// Base da faixa reservada às vtables do BREW. Nunca é mapeada.
-pub const API_BASE: u32 = 0xf000_0000;
-/// Tamanho da faixa reservada às vtables.
-pub const API_SIZE: u32 = 0x0100_0000;
-/// Endereço-sentinela colocado em `lr`: chegar aqui significa que o módulo retornou.
-pub const RETURN_MAGIC: u32 = 0xfff0_0000;
+/// As três constantes da faixa de vtables: são do contrato entre backend e despachante, e moram em
+/// [`crate::cpu`] desde que o `dynarmic` passou a usá-las sem o unicorn presente.
+pub use crate::cpu::{API_BASE, API_SIZE, RETURN_MAGIC};
 
 /// Alinhamento exigido pelo `mem_map` do unicorn.
 const PAGE: u64 = 0x1000;
