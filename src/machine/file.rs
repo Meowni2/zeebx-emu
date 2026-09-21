@@ -149,9 +149,18 @@ impl<C: CpuBackend> Machine<C> {
             }
             "Remove" => {
                 let guest_path = self.cpu.read_cstring(a1, MAX_STRING);
-                match self.vfs.resolve(&guest_path) {
-                    Some(path) if std::fs::remove_file(&path).is_ok() => SUCCESS,
-                    _ => EFAILED,
+                // Com overlay, só o que o jogo gravou pode ser apagado: o recurso do pacote é
+                // imutável, e apagá-lo alteraria o conteúdo original.
+                let alvo = match self.vfs.overlay_path(&guest_path) {
+                    Some(caminho) => caminho,
+                    None => match self.vfs.resolve(&guest_path) {
+                        Some(caminho) => caminho,
+                        None => return Ok(Some(EFAILED)),
+                    },
+                };
+                match std::fs::remove_file(&alvo) {
+                    Ok(()) => SUCCESS,
+                    Err(_) => EFAILED,
                 }
             }
             // int IFILEMGR_Rename(IFileMgr *, const char *pszSrc, const char *pszDest)
@@ -162,8 +171,29 @@ impl<C: CpuBackend> Machine<C> {
             "Rename" => {
                 let origem = self.cpu.read_cstring(a1, MAX_STRING);
                 let destino = self.cpu.read_cstring(a2, MAX_STRING);
-                match (self.vfs.resolve(&origem), self.vfs.resolve_new(&destino)) {
-                    (Some(de), Some(para)) if std::fs::rename(&de, &para).is_ok() => SUCCESS,
+                // O destino novo vai para o overlay quando ele existe; a origem pode estar no
+                // pacote, e nesse caso o rename a tira de lá — o que já é o comportamento sem
+                // overlay e continua valendo com ele.
+                let para = self
+                    .vfs
+                    .overlay_path(&destino)
+                    .or_else(|| self.vfs.resolve_new(&destino));
+                match (self.vfs.resolve(&origem), para) {
+                    (Some(de), Some(para)) => {
+                        if let Some(pai) = para.parent() {
+                            let _ = std::fs::create_dir_all(pai);
+                        }
+                        // Origem no pacote: ela é imutável, então o destino nasce no overlay e a
+                        // origem permanece. Origem no overlay: o arquivo é movido de verdade.
+                        let resultado = match self.vfs.is_overlay_path(&de) {
+                            true => std::fs::rename(&de, &para),
+                            false => std::fs::copy(&de, &para).map(|_| ()),
+                        };
+                        match resultado {
+                            Ok(()) => SUCCESS,
+                            Err(_) => EFAILED,
+                        }
+                    }
                     _ => EFAILED,
                 }
             }

@@ -3231,14 +3231,14 @@ mod tests {
         let b1 = Pad::button_by_name("b1").unwrap();
         agora.press(b1, true);
         assert_eq!(
-            App::teclas_do_controle(&antes, &agora),
+            input::teclas_do_controle(&antes, &agora),
             vec![(crate::input::avk::CONFIRMA, true)]
         );
         antes = agora;
-        assert!(App::teclas_do_controle(&antes, &agora).is_empty());
+        assert!(input::teclas_do_controle(&antes, &agora).is_empty());
         agora.press(b1, false);
         assert_eq!(
-            App::teclas_do_controle(&antes, &agora),
+            input::teclas_do_controle(&antes, &agora),
             vec![(crate::input::avk::CONFIRMA, false)]
         );
     }
@@ -3256,12 +3256,12 @@ mod tests {
         ] {
             let mut agora = Pad::default();
             agora.press(Pad::button_by_name(nome).unwrap(), true);
-            assert_eq!(App::teclas_do_controle(&antes, &agora), vec![(esperado, true)]);
+            assert_eq!(input::teclas_do_controle(&antes, &agora), vec![(esperado, true)]);
         }
         let mut voltar = Pad::default();
         voltar.press(Pad::button_by_name("b2").unwrap(), true);
         assert_eq!(
-            App::teclas_do_controle(&antes, &voltar),
+            input::teclas_do_controle(&antes, &voltar),
             vec![(crate::input::avk::CLR, true)]
         );
     }

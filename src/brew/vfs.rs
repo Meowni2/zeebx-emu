@@ -212,6 +212,24 @@ impl Vfs {
         }
     }
 
+    /// Se o caminho já está dentro do overlay gravável.
+    pub fn is_overlay_path(&self, path: &Path) -> bool {
+        self.save
+            .as_deref()
+            .is_some_and(|save| path.starts_with(save))
+    }
+
+    /// O caminho equivalente no overlay, exista ele ou não.
+    ///
+    /// É o par de [`Vfs::overlay_dir`] para quem vai **remover** ou **renomear**: um caminho do
+    /// pacote não pode ser apagado nem movido, porque o pacote é imutável.
+    pub fn overlay_path(&self, guest_path: &str) -> Option<PathBuf> {
+        let save = self.save.as_deref()?;
+        let base = self.resolve_inner(guest_path, false)?;
+        let relativo = base.strip_prefix(&self.root).ok()?;
+        Some(match_case_parent(save.join(relativo)))
+    }
+
     /// O diretório equivalente no overlay, quando ele existe.
     ///
     /// Serve à listagem: o jogo precisa enxergar os arquivos que ele mesmo gravou, e não só os
@@ -586,6 +604,33 @@ mod tests_no_disco {
             .open_target("fs:/zeeboiddata/zeeboid.db", OpenIntent::Create)
             .unwrap();
         assert_eq!(dispositivo.path, aparelho.join("zeeboiddata/zeeboid.db"));
+
+        std::fs::remove_dir_all(&raiz).unwrap();
+    }
+
+    /// Com overlay, o que o jogo gravou pode ser apagado e renomeado; o pacote não.
+    #[test]
+    fn overlay_protege_o_pacote_de_remocao_e_renomeio() {
+        let raiz = std::env::temp_dir().join(format!("zeebx-vfs-rm-{}", std::process::id()));
+        let modulo = raiz.join("jogo/mod/1");
+        let save = raiz.join("saves/abc");
+        std::fs::create_dir_all(&modulo).unwrap();
+        std::fs::create_dir_all(&save).unwrap();
+        std::fs::write(modulo.join("recurso.pak"), b"do pacote").unwrap();
+
+        let mut vfs = Vfs::new(&modulo);
+        vfs.set_save_root(&save);
+
+        // O alvo de remoção de um recurso do pacote é o caminho do overlay, não o do pacote.
+        assert_eq!(
+            vfs.overlay_path("recurso.pak"),
+            Some(save.join("recurso.pak"))
+        );
+        assert!(!vfs.is_overlay_path(&modulo.join("recurso.pak")));
+
+        // Depois de copiado para o overlay, o alvo passa a ser dele.
+        std::fs::write(save.join("recurso.pak"), b"do save").unwrap();
+        assert!(vfs.is_overlay_path(&vfs.resolve("recurso.pak").unwrap()));
 
         std::fs::remove_dir_all(&raiz).unwrap();
     }
