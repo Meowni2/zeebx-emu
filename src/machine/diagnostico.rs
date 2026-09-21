@@ -238,6 +238,15 @@ impl<C: CpuBackend> Machine<C> {
     }
 
     /// ClassIDs pedidos que ainda não sabemos instanciar.
+    /// As chamadas ao `IFileMgr`, em ordem, com o caminho e o retorno.
+    ///
+    /// Existe porque uma tela de erro do jogo não diz **qual** verificação falhou: o Double Dragon
+    /// mostra "Memory is insufficient" quando qualquer consulta de espaço ou de arquivo não
+    /// responde o que ele espera, e sem esta lista não há como saber o que ele perguntou.
+    pub fn fs_log(&self) -> impl Iterator<Item = &String> {
+        self.fs_log.iter()
+    }
+
     /// As classes que o jogo pediu, com quantas vezes — conhecidas e desconhecidas.
     ///
     /// A lista das **desconhecidas** não basta para achar um defeito de interface: o Double Dragon

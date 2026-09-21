@@ -41,6 +41,16 @@ impl<C: CpuBackend> Machine<C> {
             self.cpu.read_reg(Reg::R2),
             self.cpu.read_reg(Reg::R3),
         );
+        // O que o jogo perguntou ao sistema de arquivos, com o retorno: é o instrumento para a
+        // classe de problema em que a tela de erro do jogo não diz qual chamada falhou — o
+        // Double Dragon mostra "Memory is insufficient" quando qualquer verificação de espaço ou
+        // de arquivo não responde o que ele espera.
+        let anotar = |maquina: &mut Self, linha: String| {
+            if maquina.fs_log.len() >= MAX_FS_LOG {
+                maquina.fs_log.pop_front();
+            }
+            maquina.fs_log.push_back(linha);
+        };
         let result = match name {
             "AddRef" => self.objects.add_ref(this),
             "Release" => {
@@ -365,6 +375,20 @@ impl<C: CpuBackend> Machine<C> {
             "Cancel" => SUCCESS,
             _ => return Ok(None),
         };
+        // O caminho entra na linha quando a chamada tem um: `Test`, `OpenFile`, `MkDir`, `Remove`,
+        // `Rename` e `EnumInit` são as que decidem onde o jogo escreve.
+        let tem_caminho = matches!(
+            name,
+            "Test" | "OpenFile" | "MkDir" | "Remove" | "Rename" | "EnumInit" | "GetFreeSpaceEx"
+        );
+        let caminho = match tem_caminho && a1 != 0 {
+            true => format!(" \"{}\"", self.cpu.read_cstring(a1, MAX_STRING)),
+            false => String::new(),
+        };
+        anotar(
+            self,
+            format!("{name}{caminho}  ({a1:#x} {a2:#x} {a3:#x}) -> {result}"),
+        );
         Ok(Some(result))
     }
 
@@ -434,6 +458,15 @@ impl<C: CpuBackend> Machine<C> {
                 return Ok(0);
             }
         }
+        // **O diretório do módulo já vem pronto no console; aqui não.** Vários jogos abrem
+        // `udata/algo` com `OFM_CREATE` sem chamar `MkDir` antes — o Double Dragon é um deles, e
+        // quando a criação do diretório se perdeu num refactor, ele falhava ao abrir o save e
+        // mostrava a tela "Memory is insufficient. Please delete some files." em vez do jogo.
+        if mode & OFM_CREATE != 0
+            && let Some(parent) = path.parent()
+        {
+            let _ = std::fs::create_dir_all(parent);
+        }
         let options = Self::open_options(mode);
 
         self.open_resolved(guest_path, path, options)
@@ -463,6 +496,17 @@ impl<C: CpuBackend> Machine<C> {
         options: std::fs::OpenOptions,
     ) -> Result<u32, CpuError> {
         let Ok(file) = options.open(&path) else {
+            // O caminho do host e o erro do sistema entram no registro: "o jogo não conseguiu
+            // abrir o save" não diz se o problema é o caminho resolvido, a permissão ou o modo.
+            let erro = options.open(&path).err().map(|e| e.to_string());
+            if self.fs_log.len() >= MAX_FS_LOG {
+                self.fs_log.pop_front();
+            }
+            self.fs_log.push_back(format!(
+                "open falhou: {} ({})",
+                path.display(),
+                erro.unwrap_or_else(|| "sem motivo".into())
+            ));
             self.file_error = EFAILED;
             self.missing_files.insert(guest_path.to_string());
             return Ok(0);

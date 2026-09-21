@@ -178,6 +178,8 @@ pub struct Pendencias {
     pub hipoteses: Vec<String>,
     /// Acessos inválidos que aconteceram dentro de um callback e não derrubaram a execução.
     pub falhas: Vec<String>,
+    /// O que o jogo perguntou ao `IFileMgr`, com caminho e retorno, em ordem.
+    pub arquivos_chamados: Vec<String>,
     /// Todas as classes que o jogo pediu, com quantas vezes.
     pub classes_pedidas: Vec<String>,
     /// O texto que o jogo desenhou, com o instante virtual — o que está escrito na tela.
@@ -220,6 +222,7 @@ impl Pendencias {
                     .collect(),
             ),
             falhas: ordenar(machine.swallowed_faults()),
+            arquivos_chamados: machine.fs_log().cloned().collect(),
             classes_pedidas: machine
                 .requested_classes()
                 .into_iter()
@@ -251,11 +254,12 @@ impl Pendencias {
     }
 
     /// As seções, na ordem em que valem a pena ser lidas — a mesma do relatório do `run`.
-    fn secoes(&self) -> [(&'static str, &Vec<String>); 11] {
+    fn secoes(&self) -> [(&'static str, &Vec<String>); 12] {
         [
             ("APIs que faltaram", &self.apis),
             ("classes que o jogo pediu e não temos", &self.classes),
             ("classes pedidas", &self.classes_pedidas),
+            ("chamadas ao sistema de arquivos", &self.arquivos_chamados),
             ("arquivos não encontrados", &self.arquivos),
             ("acessos inválidos que o jogo seguiu por cima", &self.falhas),
             ("ponteiros recusados", &self.ponteiros),

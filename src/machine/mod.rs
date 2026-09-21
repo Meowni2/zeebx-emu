@@ -836,6 +836,9 @@ const MAX_POLYGON_POINTS: usize = 4096;
 const MAX_FILE_NAME: usize = 64;
 /// Quantas linhas de texto desenhado o relatório guarda.
 const MAX_TEXTOS_DESENHADOS: usize = 64;
+/// Quantas chamadas de arquivo o relatório guarda. Um jogo de 6 s faz centenas de `Test`;
+/// o que interessa é o começo da execução, e é ele que a fila preserva.
+const MAX_FS_LOG: usize = 96;
 /// Espaço que reportamos no cartão. O Zeebo tem 1 GB de NAND; anunciamos algo dessa ordem
 /// para que nenhum jogo se recuse a salvar por falta de espaço.
 const FS_TOTAL_BYTES: u32 = 512 * 1024 * 1024;
@@ -2003,6 +2006,8 @@ pub struct Machine<C: CpuBackend> {
     module: LoadedModule,
     heap: Heap,
     objects: ObjectStore,
+    /// O que o jogo perguntou ao `IFileMgr`, com o caminho e o retorno.
+    fs_log: std::collections::VecDeque<String>,
     /// Quantas vezes o jogo pediu cada classe, conhecida ou não.
     classes_pedidas: BTreeMap<u32, u32>,
     /// ClassIDs que o jogo pediu e não sabemos criar — a lista do que falta.
@@ -2654,6 +2659,7 @@ impl<C: CpuBackend> Machine<C> {
             module,
             heap,
             objects,
+            fs_log: std::collections::VecDeque::new(),
             classes_pedidas: BTreeMap::new(),
             unknown_classes: BTreeSet::new(),
             web_requests: BTreeSet::new(),
