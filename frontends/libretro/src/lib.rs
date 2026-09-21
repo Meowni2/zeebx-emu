@@ -761,37 +761,34 @@ unsafe fn carrega(
     portas: [Option<Aparelho>; zeebx::input::PORTAS],
     path: PathBuf,
 ) -> Result<Core, StartError> {
-    let session = Session::start_software_with_storage(
+    // **A ordem importa: a biblioteca e a fonte vêm antes da sessão.**
+    //
+    // A fonte é lida quando a máquina é construída — ela entra no `font` do motor. Instalá-la
+    // depois deixava a sessão inteira sem fonte, e o jogo não desenhava texto nenhum: era o que
+    // fazia a tela do Double Dragon ficar branca e vazia, porque o que ele desenha ali é a
+    // mensagem "Memory is insufficient. Please delete some files." em fundo branco.
+    let (pasta, jogos) = biblioteca(caminho);
+    let fonte = prepara_fonte(storage, &jogos);
+    match &fonte {
+        Some(onde) => log(&format!("Zeebx: fonte do sistema em {}", onde.display())),
+        None => aviso(&format!(
+            "Sem tectoy.ttf no acervo ({} jogos): o texto do sistema não será desenhado",
+            jogos.len()
+        )),
+    }
+
+    let mut session = Session::start_software_with_storage(
         std::path::Path::new(caminho),
         portas,
         ZWheel::default(),
         storage,
     )?;
-    let mut session = session;
     let mixer = session.grava_audio(SAMPLE_RATE);
     // **1x e proporção nativa, sempre.** O core entrega o quadro do console em 640×480, sem
     // resolução interna ampliada e sem esticar: quem ajusta shader precisa de uma fonte previsível,
     // e o upscale é papel do frontend.
     session.define_resolucao_interna(1);
     session.define_proporcao(None);
-    // A biblioteca ao lado do conteúdo é o que responde ao pedido de lançamento do shell: a
-    // Z-Wheel pede uma classe, e aqui se sabe qual arquivo carregar. Sem isto ela abre vazia,
-    // porque enumera os applets instalados e não encontra nenhum.
-    let pasta = std::path::Path::new(caminho)
-        .parent()
-        .map(std::path::Path::to_path_buf);
-    let mut jogos: Vec<(u32, PathBuf)> = Vec::new();
-    let mut vistas: std::collections::HashSet<u32> = std::collections::HashSet::new();
-    for jogo in pasta.as_deref().map(zeebx::library::scan).unwrap_or_default() {
-        let Some(classe) = jogo.clsid else {
-            continue;
-        };
-        // A mesma pasta pode ter o `.zip` e uma cópia já extraída (um `debug_nand`, por exemplo):
-        // sem deduplicar por ClassID, a Z-Wheel lista cada jogo duas vezes.
-        if vistas.insert(classe) {
-            jogos.push((classe, jogo.path));
-        }
-    }
     if !jogos.is_empty() {
         session.set_installed_applets(
             jogos
@@ -812,53 +809,7 @@ unsafe fn carrega(
         true => Some(path.clone()),
         false => None,
     };
-    // A fonte do sistema mora dentro do pacote da Z-Wheel. Instalá-la na primeira carga — seja
-    // dela, seja de um jogo — evita a tela sem texto: sem fonte o jogo não desenha aviso nenhum.
-    let fonte = zeebx::loader::archive::fonte_do_sistema_em(&storage.cache, &storage.device)
-        .or_else(|| {
-            // Havendo mais de uma cópia da Z-Wheel no acervo (o `.zip` e uma extraída), o pacote
-            // compactado é o que interessa: a fonte sai dele sem depender do que já foi extraído.
-            let candidatos: Vec<&PathBuf> = jogos
-                .iter()
-                .filter(|(classe, _)| *classe == zeebx::session::Z_WHEEL)
-                .map(|(_, caminho)| caminho)
-                .collect();
-            let pacote = candidatos
-                .iter()
-                .find(|caminho| {
-                    caminho.extension().and_then(|e| e.to_str()) == Some("zip")
-                })
-                .or_else(|| candidatos.first())?;
-            zeebx::loader::archive::instala_fonte_do_pacote(pacote, &storage.device)
-        });
-    match fonte {
-        Some(onde) => log(&format!("Zeebx: fonte do sistema em {}", onde.display())),
-        None => {
-            // Diagnóstico: sem isto, "sem fonte" não diz se o acervo não tem a Z-Wheel, se ela
-            // não traz o arquivo ou se o caminho procurado está errado.
-            let tem_z_wheel = jogos
-                .iter()
-                .any(|(classe, _)| *classe == zeebx::session::Z_WHEEL);
-            aviso(&format!(
-                "Sem tectoy.ttf no acervo ({} jogos, Z-Wheel presente: {tem_z_wheel}): o texto do sistema não será desenhado",
-                jogos.len()
-            ));
-        }
-    }
-    // O cache guarda a extração de **todo** jogo já aberto; sem poda, um acervo inteiro acaba
-    // dentro da pasta de saves do frontend. A extração em uso nunca sai.
-    match zeebx::loader::archive::prune_cache(
-        &storage.cache,
-        Some(session.content_root()),
-        zeebx::loader::archive::CACHE_LIMIT_BYTES,
-    ) {
-        Ok(liberado) if liberado > 0 => log(&format!(
-            "Zeebx: cache podado, {liberado} bytes liberados em {}",
-            storage.cache.display()
-        )),
-        Ok(_) => {}
-        Err(erro) => log(&format!("Zeebx: não deu para podar o cache: {erro}")),
-    }
+
     Ok(Core {
         session,
         mixer,
@@ -879,6 +830,47 @@ unsafe fn carrega(
         select_antes: false,
         quadros_apos_parar: 0,
         parou: false,
+    })
+}
+
+/// A biblioteca de jogos ao lado do conteúdo: `(pasta, [(ClassID, o que carregar)])`.
+///
+/// É o que responde ao pedido de lançamento do shell — a Z-Wheel pede uma classe e aqui se sabe
+/// qual arquivo a atende. Sem isso ela abre vazia, porque enumera os instalados e não acha nenhum.
+/// A deduplicação por ClassID evita listar duas vezes quem tem o `.zip` **e** uma cópia extraída.
+fn biblioteca(caminho: &str) -> (Option<PathBuf>, Vec<(u32, PathBuf)>) {
+    let pasta = std::path::Path::new(caminho)
+        .parent()
+        .map(std::path::Path::to_path_buf);
+    let mut jogos: Vec<(u32, PathBuf)> = Vec::new();
+    let mut vistas: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    for jogo in pasta.as_deref().map(zeebx::library::scan).unwrap_or_default() {
+        let Some(classe) = jogo.clsid else {
+            continue;
+        };
+        if vistas.insert(classe) {
+            jogos.push((classe, jogo.path));
+        }
+    }
+    (pasta, jogos)
+}
+
+/// Instala a fonte do sistema na raiz do aparelho, se ainda não estiver lá.
+///
+/// Sai do cache quando a Z-Wheel já foi extraída e, quando não foi, do próprio pacote compactado —
+/// extraindo **só** o arquivo, porque não vale materializar o pacote inteiro por 190 KB.
+fn prepara_fonte(storage: &StoragePaths, jogos: &[(u32, PathBuf)]) -> Option<PathBuf> {
+    zeebx::loader::archive::fonte_do_sistema_em(&storage.cache, &storage.device).or_else(|| {
+        let candidatos: Vec<&PathBuf> = jogos
+            .iter()
+            .filter(|(classe, _)| *classe == zeebx::session::Z_WHEEL)
+            .map(|(_, caminho)| caminho)
+            .collect();
+        let pacote = candidatos
+            .iter()
+            .find(|caminho| caminho.extension().and_then(|e| e.to_str()) == Some("zip"))
+            .or_else(|| candidatos.first())?;
+        zeebx::loader::archive::instala_fonte_do_pacote(pacote, &storage.device)
     })
 }
 

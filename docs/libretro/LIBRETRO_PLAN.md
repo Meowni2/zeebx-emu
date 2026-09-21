@@ -1019,16 +1019,36 @@ XDG_CONFIG_HOME=/tmp/zeebx-ra retroarch -c /tmp/zeebx-ra/ra.cfg \
 | Crash Bandicoot Nitro Kart 3D | 900 | 14 s | 5 959 cores distintas |
 | Double Dragon | 3 600 | 59 s | branco uniforme |
 
-**A fonte do sistema tinha dois defeitos, os dois corrigidos:** `fonte_do_sistema()` procurava no
-cache do desktop em vez do cache do frontend, e `fonte_do_console()` — a busca na hora de desenhar —
-também usava o caminho do desktop, então a fonte que o core instalava em
-`<raiz do aparelho>/shared/fonts/tectoy.ttf` nunca era encontrada. Mesmo assim o quadro do Double
-Dragon **continua branco e uniforme**, medido duas vezes.
+**O quadro branco do Double Dragon: resolvido, e eram três defeitos empilhados.**
 
-E há uma contradição a resolver: pelo harness da varredura, que usa a **mesma** `Session`, o jogo
-*roda* e desenha 15 360 000 pixels em ~5 s. Ou o que ele desenha não chega à tela do aparelho, ou o
-`Session::screen()` do core pega a superfície errada. Comparar os dois caminhos, quadro a quadro, é
-o próximo passo.
+1. `fonte_do_sistema()` procurava no cache **do desktop** em vez do cache que o frontend forneceu;
+2. `fonte_do_console()` — a busca na hora de desenhar — também usava o caminho do desktop, então a
+   fonte instalada em `<raiz do aparelho>/shared/fonts/tectoy.ttf` nunca era encontrada;
+3. **e a ordem estava errada**: a fonte era instalada **depois** de a sessão existir. O motor lê a
+   fonte quando a máquina é construída, então a sessão inteira ficava sem fonte nenhuma.
+
+O relatório do próprio jogo já dizia o que faltava:
+
+```text
+texto que não soubemos desenhar:
+  Application is finished
+  Memory is insufficient.
+  Please delete
+  by pushing the button.
+  some files.
+```
+
+A tela do Double Dragon é **branco com essa mensagem em preto**. Sem fonte, saía branco puro — que
+parecia "não desenha nada" e era "desenha texto invisível". Medido, antes e depois:
+
+```text
+antes:  1 cor   (branco puro)
+depois: 2 cores (branco + preto) — o texto aparece
+```
+
+O que a mensagem revela é outra coisa, e essa continua: o Double Dragon pede três classes que não
+temos (`0x0102f679`, `0x0102f681`, `0x01030852`) e não acha `./udata/ddz.sav`, e por isso mostra
+"Memory is insufficient". O emulador agora **mostra** o problema em vez de escondê-lo.
 
 Peteca e Crash provam vídeo real pelo caminho Libretro. Double Dragon carrega, roda 59 segundos
 virtuais sem erro e não quebra, mas entrega quadro branco.
