@@ -1312,6 +1312,32 @@ mod testes {
 
     extern "C" fn sem_poll() {}
 
+    /// **O core declara que não tem save state — e declara direito.**
+    ///
+    /// É o critério de aceite do plano para este item: **sem estado parcial**. Um `serialize` que
+    /// gravasse meia máquina seria pior que nenhum: o RetroArch deixaria salvar, e o carregamento
+    /// devolveria um jogo com memória e registradores certos e a mesa de objetos errada — chamando
+    /// API com identificador que não existe mais. Enquanto o estado completo não existir, o
+    /// tamanho é zero, as duas funções recusam, e **nada é escrito** no buffer do frontend.
+    #[test]
+    fn declara_que_nao_tem_save_state() {
+        assert_eq!(
+            retro_serialize_size(),
+            0,
+            "tamanho zero é como o frontend entende \"este core não salva\""
+        );
+        let mut destino = [0u8; 16];
+        assert!(
+            !retro_serialize(destino.as_mut_ptr() as *mut c_void, destino.len()),
+            "gravar meia máquina seria pior que recusar"
+        );
+        assert!(!retro_unserialize(
+            destino.as_ptr() as *const c_void,
+            destino.len()
+        ));
+        assert_eq!(destino, [0u8; 16], "a recusa não pode ter escrito nada");
+    }
+
     /// **O core, exercitado pela própria ABI.**
     ///
     /// É o teste que faltava para o ciclo da Z-Wheel do lado do core: o motor é medido pela
