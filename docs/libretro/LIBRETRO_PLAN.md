@@ -1249,6 +1249,25 @@ plataforma, com o `dynarmic` sozinho —, basta tirar a marca de experimental do
 | CI dos cinco alvos do standalone | em verificação | Linux x86_64/AArch64 e macOS Apple Silicon verdes; Windows ARM64 exigiu tirar o `unicorn` |
 | `IFont` e o layout do `DrawText` | feito | métricas transcritas do `AEEFontsStandard.BID`, com teste que cobra as onze classes |
 | Áudio e desempenho | feito | varredura mede pico/rms/contínuo/salto por jogo; Rolima 79% → 284%, 51 jogos mais rápidos |
+
+### Onde o tempo vai, medido
+
+Com `ZEEBX_ROM_PERFIL=1`, a varredura grava o custo real por método de API. Nos dois jogos mais
+pesados do acervo:
+
+| Jogo | Tempo em chamadas de API | O que domina |
+|---|---:|---|
+| Crash Nitro Kart 3D | 462 ms | `eglSwapBuffers` 415 ms = **89,8%** |
+| Zeebo Extreme Rolima | 958 ms | `memset` 520 ms, `eglSwapBuffers` 257 ms |
+
+Os 415 ms do Crash são **3,5 ms por quadro apresentado** (118 quadros), e ali dentro está o
+rasterizador software desenhando a cena — trocar o buffer é o mesmo que desenhar. Ainda assim o
+jogo roda a **1039%** da velocidade do console: o rasterizador é o maior custo isolado e **não é
+gargalo** para o que existe hoje. O que o render em hardware muda é a **fidelidade** (estado de GL,
+texturas comprimidas, blend), não a velocidade deste acervo.
+
+O `memset` do Rolima custava 731 ms porque o `helpers` **alocava um `Vec` do tamanho pedido em cada
+chamada**. Com limpeza em blocos de um buffer de pilha: 520 ms, e o jogo de 247% para 267%.
 | Render em hardware (`SET_HW_RENDER`) | **falta** | o core entrega RGB565 do rasterizador software; o 3D roda por ele |
 | Save states | **falta** | o core **declara** que não tem (`size` 0, `serialize` falso), que é o critério de aceite |
 | `.7z` | feito | `/tmp/dd.7z` → `estado: roda`; limites iguais aos do zip |
