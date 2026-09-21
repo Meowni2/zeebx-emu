@@ -61,6 +61,14 @@ const RETROK_DOWN: u32 = 274;
 const RETROK_RIGHT: u32 = 275;
 const RETROK_LEFT: u32 = 276;
 
+/// A última classe que o shell pediu para abrir.
+///
+/// **Instrumento de teste, e só dele.** O log do core sai pelo callback do frontend, que é
+/// **variádico** — uma função `extern "C" fn(...)` não pode ser escrita em Rust estável —, então o
+/// teste observa por aqui o que a interface mostraria como texto. Fora de `cfg(test)` não existe.
+#[cfg(test)]
+static ULTIMA_ABERTURA: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 /// Pergunta se o frontend aceita receber quadro nulo quando nada mudou.
 const ENV_GET_CAN_DUPE: u32 = 3;
 const ENV_GET_SYSTEM_DIRECTORY: u32 = 9;
@@ -933,6 +941,11 @@ pub extern "C" fn retro_run() {
         // pedido vive **dentro** do motor (`Machine::pending_launch`), e a UI desktop já o atende
         // assim; aqui ele troca de sessão sem o frontend saber.
         if let Some(classe) = estado.session.take_launch_request() {
+            // Instrumento do teste, e só dele: o log do core sai pelo callback do frontend, que é
+            // **variádico** e por isso não pode ser implementado num teste em Rust estável. Aqui o
+            // teste observa o que a interface do frontend mostraria como texto.
+            #[cfg(test)]
+            ULTIMA_ABERTURA.store(classe, std::sync::atomic::Ordering::Relaxed);
             let alvo = estado
                 .jogos
                 .iter()
@@ -1216,8 +1229,14 @@ mod testes {
 
     /// Quantos quadros o vídeo do frontend recebeu.
     static QUADROS: AtomicU32 = AtomicU32::new(0);
+    /// Qual botão do RetroPad o teste está segurando. `u32::MAX` é nenhum.
+    static BOTAO: AtomicU32 = AtomicU32::new(u32::MAX);
     /// A pasta que o frontend de teste entrega como sistema e como saves.
     static PASTA: OnceLock<CString> = OnceLock::new();
+    /// O sistema de fora, quando `ZEEBX_CORE_SISTEMA` aponta para uma árvore de aparelho real.
+    static SISTEMA: OnceLock<CString> = OnceLock::new();
+    /// A assinatura de cada quadro entregue, na ordem.
+    static ASSINATURAS: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
 
     /// O ambiente mínimo que o core precisa, respondendo como um frontend de verdade.
     ///
@@ -1231,7 +1250,16 @@ mod testes {
                 !dados.is_null() && unsafe { *(dados as *const u32) } == PIXEL_FORMAT_RGB565
             }
             ENV_GET_SYSTEM_DIRECTORY | ENV_GET_SAVE_DIRECTORY => {
-                let Some(pasta) = PASTA.get() else {
+                // O sistema pode vir de fora, e vem por `ZEEBX_CORE_SISTEMA`: é assim que o teste
+                // encontra o aparelho de verdade, com os jogos instalados, e consegue exercitar o
+                // ciclo da Z-Wheel de ponta a ponta. Sem a variável, cada um recebe a pasta
+                // temporária do teste.
+                let pasta = if cmd == ENV_GET_SYSTEM_DIRECTORY {
+                    SISTEMA.get().or_else(|| PASTA.get())
+                } else {
+                    PASTA.get()
+                };
+                let Some(pasta) = pasta else {
                     return false;
                 };
                 if dados.is_null() {
@@ -1245,16 +1273,31 @@ mod testes {
         }
     }
 
-    unsafe extern "C" fn video(_dados: *const c_void, _largura: u32, _altura: u32, _passo: usize) {
+    unsafe extern "C" fn video(dados: *const c_void, largura: u32, altura: u32, passo: usize) {
         QUADROS.fetch_add(1, Ordering::Relaxed);
+        // Assinatura barata do quadro: muda quando a imagem muda, que é o que o teste precisa
+        // saber para dizer se a entrada chegou ao guest — um controle que não chega deixa a tela
+        // parada, e um botão errado também, e as duas coisas se separam olhando o resto.
+        let total = (passo as u64) * u64::from(altura);
+        let bytes =
+            unsafe { std::slice::from_raw_parts(dados as *const u8, total.min(1 << 22) as usize) };
+        let mut assinatura = 1469598103934665603u64;
+        for &b in bytes.iter().step_by(97) {
+            assinatura = (assinatura ^ u64::from(b)).wrapping_mul(1099511628211);
+        }
+        if let Ok(mut vistos) = ASSINATURAS.lock() {
+            vistos.push(assinatura);
+        }
+        let _ = (largura, altura);
     }
 
     unsafe extern "C" fn audio(_dados: *const i16, quadros: usize) -> usize {
         quadros
     }
 
-    unsafe extern "C" fn entrada(_porta: u32, _dispositivo: u32, _indice: u32, _id: u32) -> i16 {
-        0
+    unsafe extern "C" fn entrada(_porta: u32, _dispositivo: u32, _indice: u32, id: u32) -> i16 {
+        // O core pergunta pelo estado de cada botão, um a um.
+        (BOTAO.load(Ordering::Relaxed) == id) as i16
     }
 
     extern "C" fn sem_poll() {}
@@ -1265,6 +1308,18 @@ mod testes {
     /// varredura, e o laço do core — que troca de sessão quando o shell pede — não tinha prova
     /// automática nenhuma. Aqui não há janela nem RetroArch, mas o caminho é o mesmo:
     /// `retro_init`, `retro_load_game`, quadros e `retro_unload_game`.
+    ///
+    /// **O que este teste prova, e o que ele não prova.**
+    ///
+    /// Prova: o core carrega conteúdo pela própria ABI, entrega quadros e desmonta limpo, sem
+    /// RetroArch e sem janela. Com a Z-Wheel, entrega 360 quadros.
+    ///
+    /// **Não prova a troca de sessão.** Dirigindo o controle pelas seis teclas do RetroPad — 30
+    /// quadros por tecla — nenhuma imagem distinta aparece (medido: 1 por fase) e o shell não pede
+    /// abertura nenhuma. Ou a Z-Wheel headless não chega ao estado em que aceita a escolha, ou a
+    /// entrada não chega ao guest pelo caminho do core. As duas hipóteses estão abertas e este
+    /// teste **não** escolhe entre elas: quem fecha o ciclo é o RetroArch, com controle de
+    /// verdade, que é o que o item 8 do plano pede.
     ///
     /// **Sem `ZEEBX_CORE_ROM` ele não roda.** ROM não entra na árvore do repositório, e um teste
     /// que baixa conteúdo sozinho é pior que um teste que não roda.
@@ -1281,6 +1336,9 @@ mod testes {
         let pasta = std::env::temp_dir().join(format!("zeebx-core-{}", std::process::id()));
         std::fs::create_dir_all(&pasta).unwrap();
         let _ = PASTA.set(CString::new(pasta.to_string_lossy().to_string()).unwrap());
+        if let Ok(fora) = std::env::var("ZEEBX_CORE_SISTEMA") {
+            let _ = SISTEMA.set(CString::new(fora).unwrap());
+        }
         QUADROS.store(0, Ordering::Relaxed);
 
         let caminho_c = CString::new(caminho.clone()).unwrap();
@@ -1289,6 +1347,11 @@ mod testes {
             .and_then(|n| n.parse().ok())
             .unwrap_or(60u32);
 
+        let mut abriu = 0u32;
+        let mut qual = None;
+        if let Ok(mut vistos) = ASSINATURAS.lock() {
+            vistos.clear();
+        }
         let info = RetroGameInfo {
             path: caminho_c.as_ptr(),
             data: std::ptr::null(),
@@ -1302,13 +1365,53 @@ mod testes {
             retro_set_input_poll(Some(sem_poll));
             retro_set_input_state(Some(entrada));
             retro_init();
+            retro_set_controller_port_device(0, DEVICE_JOYPAD);
             assert!(retro_load_game(&info), "o core recusou {caminho}");
             for _ in 0..quadros_pedidos {
                 retro_run();
             }
+            // **Dirige a Z-Wheel.** A pergunta desta parte é prática: com que botão o jogador
+            // confirma a escolha, e o pedido de abertura chega ao core? Cada botão do RetroPad é
+            // segurado por vinte quadros e solto por dez, e o teste para no primeiro que o shell
+            // aceitar. Sem o pedido, ele diz que nenhum serviu — que também é resposta.
+            abriu = ULTIMA_ABERTURA.load(Ordering::Relaxed);
+            qual = None;
+            for botao in [ID_A, ID_B, ID_X, ID_Y, ID_START, ID_SELECT] {
+                let antes = QUADROS.load(Ordering::Relaxed);
+                BOTAO.store(botao, Ordering::Relaxed);
+                for _ in 0..20 {
+                    retro_run();
+                }
+                BOTAO.store(u32::MAX, Ordering::Relaxed);
+                for _ in 0..10 {
+                    retro_run();
+                }
+                // A imagem mudou enquanto o botão estava apertado? É o que separa "a entrada não
+                // chega" de "chega, e o botão é outro".
+                let distintas = ASSINATURAS
+                    .lock()
+                    .map(|v| {
+                        let inicio = (antes as usize).min(v.len());
+                        v[inicio..].iter().collect::<std::collections::BTreeSet<_>>().len()
+                    })
+                    .unwrap_or(0);
+                eprintln!("botão {botao}: {distintas} imagem(ns) distinta(s) em 30 quadros");
+                abriu = ULTIMA_ABERTURA.load(Ordering::Relaxed);
+                if abriu != 0 {
+                    qual = Some(botao);
+                    break;
+                }
+            }
             retro_unload_game();
             retro_deinit();
         }
+        eprintln!(
+            "pedido de abertura: {abriu:#010x} ({})",
+            match abriu {
+                0 => "nenhum botão abriu".to_string(),
+                _ => format!("com o botão {qual:?}"),
+            }
+        );
 
         let quadros = QUADROS.load(Ordering::Relaxed);
         assert!(quadros > 0, "nenhum quadro chegou ao frontend");
