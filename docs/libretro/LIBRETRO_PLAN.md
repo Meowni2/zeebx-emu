@@ -1417,6 +1417,28 @@ SUCCESS com as estruturas preenchidas** (`write_axis_range`, `write_position_inf
 a tabela de entradas de 28 bytes que o rastreio sem filtro mostrou. É daqui que a próxima sessão
 continua: essas seis chamadas são o último contato do jogo com o emulador antes de quebrar.
 
+**E a varredura ganhou o instrumento que faltava para olhar a tabela.** `ZEEBX_ROM_DESPEJO=0xADDR:BYTES`
+despeja memória no relatório, em hexadecimal, com o endereço de cada linha:
+
+```bash
+ZEEBX_ROM=… ZEEBX_ROM_DESPEJO=0x10038600:128 cargo test --release varredura -- --nocapture
+```
+
+O endereço muda de execução para execução (é heap do guest), então o despejo é lido **no fim**, com
+o jogo já parado — é quando a tabela está pronta.
+
+Lido, ele mostra o que o rastreio prometia: registros **regulares de 28 bytes**, e um marcador
+`ff ff` que aparece de vez em quando, no meio da sequência:
+
+```text
+0x10038600  21 0f 18 fe ff 00 0f 28 0f 28 00 58 0f 28 00 27
+0x10038660  0f 78 00 39 0f 18 0f 78 ff ff 00 27 0f 78 00 39
+```
+
+Os bytes não têm cara de ponteiro de função (nenhum zero, nenhum endereço de módulo), então o nulo
+que o jogo chama **não sai daqui direto**: sai da lista que ele monta copiando estes registros, ou
+de um campo que não está nesta faixa. É o próximo passo — e agora há com que olhar.
+
 E o que ele mostrou foi o padrão exato antes da queda: uma **tabela sendo construída**, entradas de
 28 bytes (`malloc 0x1c` seguido de `memmove 0x1c`), num laço, com as origens a 28 bytes de
 distância (`0x1003869a`, `0x100386b6`, `0x100386d2`, …) — e **nenhuma chamada de API depois disso**.

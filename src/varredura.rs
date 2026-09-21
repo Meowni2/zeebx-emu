@@ -151,6 +151,20 @@ fn rastreio_pedido() -> Option<String> {
     }
 }
 
+/// Lê o pedido de despejo de memória de `ZEEBX_ROM_DESPEJO`, no formato `endereço:tamanho`.
+///
+/// Existe porque a última pergunta de uma investigação costuma ser "o que tem **naquela**
+/// memória?": o rastreio diz que o jogo montou uma tabela de entradas de 28 bytes e quebrou
+/// chamando um ponteiro nulo; o que responde o resto é ler a tabela. O endereço muda de execução
+/// para execução (é heap do guest), então o despejo é lido no fim, com o mesmo relógio virtual.
+fn despejo_pedido() -> Option<(u32, usize)> {
+    let valor = std::env::var("ZEEBX_ROM_DESPEJO").ok()?;
+    let (endereco, tamanho) = valor.trim().split_once(':')?;
+    let endereco = u32::from_str_radix(endereco.trim().trim_start_matches("0x"), 16).ok()?;
+    let tamanho = tamanho.trim().parse::<usize>().ok()?.min(64 * 1024);
+    Some((endereco, tamanho))
+}
+
 /// Em que taxa o mixer entrega o áudio da medição.
 ///
 /// É a taxa que o core Libretro pede ao frontend, e a que o console entrega de fato — 44,1 kHz
@@ -429,6 +443,8 @@ pub struct Relatorio {
     pub custo_total: u64,
     /// O fim do log do próprio jogo, por `DBGPRINTF` e por semihosting.
     pub log_do_jogo: Vec<String>,
+    /// O despejo de memória pedido em `ZEEBX_ROM_DESPEJO`, com o endereço de onde saiu.
+    pub despejo: Option<(u32, Vec<u8>)>,
     /// As últimas chamadas do rastreio, quando `ZEEBX_ROM_TRACO` o pediu.
     ///
     /// Fica fora do resumo de propósito: é material de investigação, muda de uma execução para a
@@ -554,6 +570,17 @@ impl Relatorio {
                 ));
             }
         }
+        if let Some((endereco, bytes)) = &self.despejo {
+            texto.push_str(&format!("despejo de {endereco:#010x} ({} bytes):\n", bytes.len()));
+            for (linha, pedaco) in bytes.chunks(16).enumerate() {
+                let hexa: Vec<String> = pedaco.iter().map(|b| format!("{b:02x}")).collect();
+                texto.push_str(&format!(
+                    "  {:#010x}  {}\n",
+                    endereco + (linha * 16) as u32,
+                    hexa.join(" ")
+                ));
+            }
+        }
         if !self.rastreio.is_empty() {
             texto.push_str("rastreio (últimas chamadas antes da parada):\n");
             for linha in &self.rastreio {
@@ -637,6 +664,7 @@ impl Relatorio {
             custo_total: 0,
             log_do_jogo: Vec::new(),
             rastreio: Vec::new(),
+            despejo: None,
             audio: None,
         }
     }
@@ -857,6 +885,15 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     log.drain(..sobra);
 
     medida.pixels = session.screen().escritas();
+    // O despejo é lido **no fim**, com o jogo já parado: é quando a tabela que ele montou está
+    // pronta, e é ela que a investigação quer ver.
+    let despejo = despejo_pedido().and_then(|(endereco, tamanho)| {
+        session
+            .machine()
+            .dump(endereco, tamanho)
+            .ok()
+            .map(|bytes| (endereco, bytes))
+    });
     let (medida_cores, medida_dominante) = cores_do_quadro(session.screen());
     medida.cores = medida_cores;
     medida.cor_dominante = medida_dominante;
@@ -910,6 +947,7 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
         custo_total,
         log_do_jogo: log,
         rastreio: session.machine().trace().to_vec(),
+        despejo,
         audio,
     }
 }
@@ -1388,6 +1426,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
             custo_total: 0,
             log_do_jogo: vec!["carregando".to_string()],
             rastreio: Vec::new(),
+            despejo: None,
             audio: None,
         };
         let devagar = Relatorio {
@@ -1403,6 +1442,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
             custo_total: 0,
             log_do_jogo: Vec::new(),
             rastreio: Vec::new(),
+            despejo: None,
             audio: None,
             ..modelo.clone()
         };
@@ -1428,6 +1468,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
             custo_total: 0,
             log_do_jogo: Vec::new(),
             rastreio: Vec::new(),
+            despejo: None,
             audio: None,
         };
         assert!(limpo.resumo().contains("nada a apontar"));
@@ -1461,6 +1502,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
             custo_total: 0,
             log_do_jogo: Vec::new(),
             rastreio: Vec::new(),
+            despejo: None,
             audio: None,
         };
         assert!(confere_base(&caminho, &modelo).is_ok(), "grava o que falta");
@@ -1499,6 +1541,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
             custo_total: 0,
             log_do_jogo: Vec::new(),
             rastreio: Vec::new(),
+            despejo: None,
             audio: None,
         };
         assert!(relatorio.completo().contains("no instante da falha"));
