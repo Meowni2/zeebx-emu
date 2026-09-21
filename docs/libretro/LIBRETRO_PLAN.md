@@ -1290,6 +1290,27 @@ Falta ligar esse caminho ao decodificador do guest, convertendo a imagem para a 
 já sabe montar). É a próxima peça, e é a mesma receita que fechou sete portões hoje: medir, estreitar
 a lista, corrigir o que falta — e a varredura diz se andou.
 
+### Os 18 estalos da Peteca não eram do mixer
+
+O item 4 pede uma revisão de ruído, e a medição do áudio acusou 18 saltos acima de meio curso em
+seis segundos de Peteca, o maior deles em 0,947. Havia um suspeito claro no código: a `Voice`
+**sumia de uma vez** quando o som acabava — o nível podia estar em 0,947 e a amostra seguinte era
+zero. O caminho do `Stream`, no mesmo arquivo, já evitava isso ("segura o último valor em vez de
+estalar para o zero"); a voz não.
+
+Implementada a descida de [`DESCIDA_FRAMES`] quadros (1,5 ms), com teste que cobra a rampa monótona.
+E a medição, depois:
+
+```text
+antes:  maior salto 0,947 · 18 acima de 0,50
+depois: maior salto 0,947 · 18 acima de 0,50     ← idêntico
+```
+
+**Os saltos são os ataques dos efeitos**, que começam longe do zero no próprio dado do jogo — e um
+ataque percussivo legítimo é indistinguível de um estalo pela métrica, que só vê a saída misturada.
+A conclusão honesta do item 4 é dupla: **o mixer não era a causa** destes 18, e o corte de voz que
+era uma causa possível deixou de existir.
+
 ### A tela que a varredura não olhava
 
 A varredura contava **escritas** na tela, e um jogo que pinta 307.200 pixels de preto conta 307.200

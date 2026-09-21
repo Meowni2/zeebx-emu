@@ -32,7 +32,21 @@ struct Voice {
     remaining: Option<u32>,
     paused: bool,
     done: bool,
+    /// Quadros que faltam para a voz sumir, quando o som chegou ao fim.
+    ///
+    /// **Uma voz que some de uma vez estala.** O som acaba, o nível pode estar em 0,947 — foi o
+    /// medido na Peteca — e a amostra seguinte é zero: a queda de quase o curso inteiro em uma
+    /// amostra é um estalo audível, e não uma propriedade do som do jogo. A descida leva
+    /// [`DESCIDA_FRAMES`] quadros, que a 44,1 kHz são menos de dois milissegundos: some sem degrau
+    /// e sem atrasar o efeito seguinte.
+    descida: u32,
 }
+
+/// Quantos quadros a voz leva para sumir quando o som acaba.
+///
+/// 64 quadros a 44,1 kHz são 1,5 ms — abaixo do que o ouvido distingue como silêncio à parte, e
+/// suficiente para o degrau deixar de existir.
+const DESCIDA_FRAMES: u32 = 64;
 
 impl Voice {
     /// A amostra do canal `channel` na posição corrente, interpolada entre os dois quadros
@@ -65,11 +79,38 @@ impl Voice {
         }
         match &mut self.remaining {
             None => self.position = 0.0,
-            Some(0) | Some(1) => self.done = true,
+            // O fim do som **não** corta: segura o último valor e desce em `DESCIDA_FRAMES`
+            // quadros. Repetir não é fim — a volta começa de novo no começo e não precisa disto.
+            Some(0) | Some(1) => {
+                if self.descida == 0 {
+                    self.descida = DESCIDA_FRAMES;
+                }
+            }
             Some(left) => {
                 *left -= 1;
                 self.position = 0.0;
             }
+        }
+    }
+
+    /// Anda um quadro da placa: ou o som avança, ou a descida consome o que resta dele.
+    ///
+    /// **Os dois caminhos da mixagem usam este passo** — o audível e o mudo. O mudo também precisa
+    /// consumir a descida: sem isso a voz nunca chegaria ao fim ali, e o teste que cobra "o som
+    /// andou até o fim" pegou exatamente isso.
+    fn passo(&mut self) {
+        match self.descida {
+            0 => self.advance(),
+            1 => self.done = true,
+            restante => self.descida = restante - 1,
+        }
+    }
+
+    /// O quanto esta voz ainda vale, de 1,0 durante o som a 0,0 no fim da descida.
+    fn decaimento(&self) -> f32 {
+        match self.descida {
+            0 => 1.0,
+            restante => restante as f32 / DESCIDA_FRAMES as f32,
         }
     }
 }
@@ -172,6 +213,7 @@ impl Mixer {
         state.voices.insert(
             id,
             Voice {
+                descida: 0,
                 sound,
                 position: 0.0,
                 step,
@@ -304,7 +346,7 @@ impl Mixer {
             for voice in state.voices.values_mut() {
                 if !voice.paused && !voice.done {
                     for _ in 0..out.len() / channels.max(1) {
-                        voice.advance();
+                        voice.passo();
                     }
                 }
             }
@@ -326,11 +368,13 @@ impl Mixer {
                 if voice.done {
                     break;
                 }
-                let gain = voice.volume * master;
+                let gain = voice.volume * master * voice.decaimento();
                 for (channel, slot) in frame.iter_mut().enumerate() {
                     *slot += voice.sample(channel) * gain;
                 }
-                voice.advance();
+                // Depois de começar a descida, o som não avança mais: o que se ouve é o último
+                // valor, cada vez menor. Quando a descida acaba, a voz sai.
+                voice.passo();
             }
         }
         for stream in state.streams.values_mut() {
@@ -499,13 +543,36 @@ mod tests {
 
     #[test]
     fn a_voz_que_termina_sai_da_lista() {
-        // Dois quadros de som numa placa da mesma taxa: depois de dois quadros, acabou — e
-        // some sozinha, senão a lista de vozes cresceria a cada efeito tocado.
+        // Dois quadros de som numa placa da mesma taxa: o som acaba, e a voz **desce** antes de
+        // sair — some sozinha, senão a lista de vozes cresceria a cada efeito tocado.
         let mixer = mixer(8000);
         mixer.play(7, tone(8000, 2), 1.0, 1);
-        let mut out = [0.0f32; 8];
+        let mut out = [0.0f32; (DESCIDA_FRAMES as usize + 16) * 2];
         mixer.fill(&mut out, 2);
-        assert!(!mixer.is_playing(7));
+        assert!(!mixer.is_playing(7), "a voz sai depois da descida");
+    }
+
+    /// **A descida existe, e é monótona.**
+    ///
+    /// O som acaba no meio da onda, o nível pode estar em quase o curso inteiro, e cortar ali é um
+    /// estalo. A voz segura o último valor e desce em [`DESCIDA_FRAMES`] quadros; como a posição
+    /// não anda nesse trecho, a saída é exatamente uma rampa — e é isso que o teste cobra.
+    #[test]
+    fn a_voz_desce_em_vez_de_sumir_de_uma_vez() {
+        let mixer = mixer(8000);
+        mixer.play(7, tone(8000, 2), 1.0, 1);
+        let mut out = vec![0.0f32; (DESCIDA_FRAMES as usize + 4) * 2];
+        mixer.fill(&mut out, 2);
+        let esquerdo: Vec<f32> = out.chunks_exact(2).map(|par| par[0]).collect();
+        let ultimo = esquerdo[..DESCIDA_FRAMES as usize].to_vec();
+        assert!(
+            ultimo.windows(2).all(|par| par[1] <= par[0] + 1e-6),
+            "a descida tem de ser monótona: {ultimo:?}"
+        );
+        assert!(
+            ultimo.first().copied().unwrap_or(0.0) > 0.0,
+            "a descida começa onde o som parou"
+        );
     }
 
     #[test]
@@ -541,8 +608,9 @@ mod tests {
         let mut out = [0.0f32; 12]; // seis quadros estéreo
         mixer.fill(&mut out, 2);
         assert!(mixer.is_playing(1), "ainda não podia ter acabado");
-        mixer.fill(&mut out, 2);
-        assert!(!mixer.is_playing(1));
+        let mut resto = [0.0f32; (DESCIDA_FRAMES as usize + 16) * 2];
+        mixer.fill(&mut resto, 2);
+        assert!(!mixer.is_playing(1), "sai depois da descida");
     }
 
     #[test]
@@ -601,9 +669,9 @@ mod tests {
         let mixer = mixer(8000);
         mixer.play(1, tone(8000, 4), 1.0, 1);
         mixer.set_master(1.0, true);
-        let mut out = [0.0f32; 8];
+        let mut out = [0.0f32; (DESCIDA_FRAMES as usize + 8) * 2];
         mixer.fill(&mut out, 2);
-        assert!(out.iter().all(|&s| s == 0.0));
-        assert!(!mixer.is_playing(1), "o som andou até o fim");
+        assert!(out.iter().all(|&s| s == 0.0), "no mudo nada sai");
+        assert!(!mixer.is_playing(1), "o som andou até o fim, inclusive a descida");
     }
 }
