@@ -15,7 +15,8 @@ import subprocess
 import sys
 
 FERRAMENTAS = [
-    ("cargo", "Rust", None),
+    # O Rust não vem de pacote de distribuição: o comando é o `rustup`, e é o que a mensagem diz.
+    ("cargo", "Rust (rustup.rs)", "rustup"),
     ("cc", "compilador C", "build-essential"),
     ("c++", "compilador C++20", "build-essential"),
     ("make", "make", "build-essential"),
@@ -99,11 +100,16 @@ def main():
 
     familia = distro()
     if faltando:
-        print("\nfalta instalar. " + (
-            PACOTES[familia] if familia in PACOTES else "instale os pacotes equivalentes:"
-        ))
-        if familia not in PACOTES:
-            print("  " + ", ".join(sorted(set(faltando))))
+        if "rustup" in faltando:
+            print("\nFalta o Rust: https://rustup.rs — depois `rustup default stable`.")
+        faltando = [pacote for pacote in faltando if pacote != "rustup"]
+        if faltando:
+            comando = (
+                PACOTES[familia]
+                if familia in PACOTES
+                else "instale os equivalentes de: " + ", ".join(sorted(set(faltando)))
+            )
+            print("\nfalta instalar:\n  " + comando)
         return 1
     print("\ntudo pronto: cargo build --release")
     return 0
