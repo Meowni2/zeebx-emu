@@ -1250,6 +1250,27 @@ plataforma, com o `dynarmic` sozinho —, basta tirar a marca de experimental do
 | `IFont` e o layout do `DrawText` | feito | métricas transcritas do `AEEFontsStandard.BID`, com teste que cobra as onze classes |
 | Áudio e desempenho | feito | varredura mede pico/rms/contínuo/salto por jogo; Rolima 79% → 284%, 51 jogos mais rápidos; e **pelo caminho do core**: o Peggle entrega 229.080 amostras estéreo em 120 quadros |
 
+### A tela que a varredura não olhava
+
+A varredura contava **escritas** na tela, e um jogo que pinta 307.200 pixels de preto conta 307.200
+escritas: registrava "roda" com a tela apagada. Agora o relatório conta **cores distintas e a
+dominante**, e a linha entra na comparação com a linha de base — uma regressão que apaga a tela sem
+quebrar a execução passa a aparecer no commit que a causou.
+
+Na primeira varredura com a métrica, duas telas pretas entre os que "rodam", e dar mais tempo
+virtual separou os dois casos possíveis:
+
+| Jogo | 6 s | 20 s | Leitura |
+|---|---:|---:|---|
+| Zeebo F.C. Foot Camp | 1 cor | **2410 cores** | estava carregando: seis segundos é pouco |
+| Zeebo F.C. Super League | 6 cores | **4133 cores** | idem |
+| **Prey Evil** | 1 cor | **1 cor** | **não desenha nada, e roda a 3287%** |
+
+Os dois primeiros são calibração: **seis segundos não bastam para quem carrega antes de desenhar**, e
+o número de cores é o que denuncia isso sem ninguém olhar a tela. O terceiro é defeito: o jogo
+executa, responde API e não põe um pixel na tela — e passava despercebido havia quantas sessões
+ninguém sabe. **Fica anotado como o próximo a investigar.**
+
 ### Dois jogos mudos, e o que os calava
 
 O relatório da varredura lista os sons que o decodificador recusou. Dois jogos apareciam ali, e a
