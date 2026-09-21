@@ -1069,6 +1069,15 @@ impl<C: CpuBackend> Machine<C> {
         self.gl.define_escala(escala);
     }
 
+    /// Faz o desenho sair no framebuffer do frontend, quando ele entrega um.
+    ///
+    /// É o que o `libretro` pede de quem usa render em hardware: o core desenha no framebuffer
+    /// que o frontend indica a cada quadro, e é ele que apresenta. Sem framebuffer de fora, o
+    /// motor desenha no próprio e o quadro sai pelo `frame_rgb565`, como sempre.
+    pub fn desenha_no_fbo(&mut self, fbo: Option<u32>) {
+        self.gl.desenha_no_fbo(fbo);
+    }
+
     /// A proporção experimental do 3D. Ver [`Rasterizador::define_proporcao`].
     pub fn define_proporcao(&mut self, aspecto: Option<f32>) {
         self.gl.define_proporcao(aspecto);

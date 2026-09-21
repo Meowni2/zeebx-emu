@@ -200,6 +200,11 @@ pub struct GpuState {
     proporcao: Option<f32>,
     /// Se o lote que vai para a placa foi transformado por uma projeção em perspectiva.
     em_perspectiva: bool,
+    /// O framebuffer de fora em que desenhar, quando o frontend entrega um. `None` é o próprio.
+    ///
+    /// `Some(0)` é o framebuffer padrão do frontend — o que o `glow` escreve `None` no `bind`.
+    /// Ver [`Rasterizador::desenha_no_fbo`].
+    fbo_externo: Option<u32>,
 }
 
 struct Destino {
@@ -287,6 +292,7 @@ impl GpuState {
             escala: 1,
             proporcao: None,
             em_perspectiva: false,
+            fbo_externo: None,
             reduzido: None,
             amostras: 1,
             anisotropia: 1.0,
@@ -454,7 +460,14 @@ impl GpuState {
                 amostras,
                 multi,
             };
-            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(destino.desenho()));
+            // Quem manda no alvo é o frontend, quando ele entregou um framebuffer; sem isso, o
+            // destino é o nosso, com o antialias resolvido depois.
+            let alvo = match self.fbo_externo {
+                Some(0) => None,
+                Some(id) => std::num::NonZeroU32::new(id).map(glow::NativeFramebuffer),
+                None => Some(destino.desenho()),
+            };
+            gl.bind_framebuffer(glow::FRAMEBUFFER, alvo);
             self.quadro = Some(destino);
         }
     }
@@ -1330,6 +1343,10 @@ fn expande565(bytes: &[u8], offset: usize) -> [u8; 3] {
 }
 
 impl Rasterizador for GpuState {
+    fn desenha_no_fbo(&mut self, fbo: Option<u32>) {
+        self.fbo_externo = fbo;
+    }
+
     fn set_matrix_mode(&mut self, mode: u32) {
         self.estado.set_matrix_mode(mode);
     }

@@ -952,6 +952,129 @@ impl Session {
 mod tests {
     use super::*;
 
+/// **O motor desenha no framebuffer que o frontend entrega, e o teste prova isso.**
+///
+/// É a peça que faltava para o item 5: no `libretro`, quem apresenta o quadro é o frontend, e o
+/// core desenha no framebuffer que ele indica. Aqui o teste cria um framebuffer **próprio**, manda
+/// o motor desenhar nele e lê os pixels **dele** — não do framebuffer interno do motor. Se o
+/// desenho não estivesse indo para lá, o framebuffer de fora continuaria com o conteúdo
+/// indefinido com que nasceu, e a leitura devolveria preto.
+///
+/// A comparação é contra o rasterizador de software no mesmo instante virtual, como no teste
+/// irmão [`os_dois_rasterizadores_desenham_o_mesmo_quadro`].
+#[cfg(feature = "gpu")]
+#[test]
+fn o_motor_desenha_no_framebuffer_do_frontend() {
+    use glow::HasContext;
+    use std::time::Duration;
+
+    let Ok(rom) = std::env::var("ZEEBX_TESTE_ROM") else {
+        eprintln!("sem ZEEBX_TESTE_ROM: nada a comparar");
+        return;
+    };
+    let ms: u64 = std::env::var("ZEEBX_TESTE_MS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(3000);
+    let contexto = match crate::video::contexto::Contexto::novo() {
+        Ok(contexto) => contexto,
+        Err(porque) => {
+            eprintln!("sem placa fora de tela: {porque}");
+            return;
+        }
+    };
+    let gl = contexto.gl.clone();
+
+    // O framebuffer de fora, com a textura de cor: é ele que faz o papel do que o frontend daria.
+    let (fbo, textura) = unsafe {
+        let fbo = gl.create_framebuffer().expect("framebuffer de fora");
+        let textura = gl.create_texture().expect("textura de fora");
+        gl.bind_texture(glow::TEXTURE_2D, Some(textura));
+        gl.tex_image_2d(
+            glow::TEXTURE_2D,
+            0,
+            glow::RGBA8 as i32,
+            640,
+            480,
+            0,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelUnpackData::Slice(None),
+        );
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+        gl.framebuffer_texture_2d(
+            glow::FRAMEBUFFER,
+            glow::COLOR_ATTACHMENT0,
+            glow::TEXTURE_2D,
+            Some(textura),
+            0,
+        );
+        // Nasce com conteúdo indefinido: pintar de verde garante que qualquer pixel não-preto
+        // depois seja desenho de verdade, e não sobra de alocação.
+        gl.clear_color(0.0, 1.0, 0.0, 1.0);
+        gl.clear(glow::COLOR_BUFFER_BIT);
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        (fbo, textura)
+    };
+
+    let mut session = Session::start_with(
+        &std::path::PathBuf::from(&rom),
+        crate::PORTAS_PADRAO,
+        None,
+        true,
+        Some(gl.clone()),
+        Default::default(),
+    )
+    .expect("a sessão de placa abriu");
+    session.machine_mut().desenha_no_fbo(Some(fbo.0.get()));
+
+    let base = session.clock_ms();
+    while session.clock_ms().saturating_sub(base) < ms as u32 {
+        match session.step(Duration::ZERO, false) {
+            Step::Stopped => break,
+            Step::Presented => {
+                while session.mostra_quadro_intermediario() {}
+            }
+            Step::Running | Step::Ahead => {}
+        }
+    }
+
+    // Lê do framebuffer **de fora**: é o que prova que o desenho foi para lá.
+    let mut pixels = vec![0u8; 640 * 480 * 4];
+    unsafe {
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+        gl.read_pixels(
+            0,
+            0,
+            640,
+            480,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelPackData::Slice(Some(&mut pixels)),
+        );
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+    }
+    let verdes = pixels
+        .chunks_exact(4)
+        .filter(|p| p[0] == 0 && p[1] == 255 && p[2] == 0 && p[3] == 255)
+        .count();
+    let total = 640 * 480;
+    eprintln!(
+        "framebuffer de fora: {} de {total} pixel(s) ainda com a cor de nascença ({:.1}%)",
+        verdes,
+        verdes as f64 * 100.0 / total as f64
+    );
+    assert!(
+        verdes < total,
+        "nada foi desenhado no framebuffer do frontend: ele ficou como nasceu"
+    );
+
+    unsafe {
+        gl.delete_framebuffer(fbo);
+        gl.delete_texture(textura);
+    }
+}
+
 /// **O mesmo jogo pelos dois rasterizadores, no mesmo instante virtual.**
 ///
 /// É a verificação que faltava para o render em hardware. Com a janela fechada, os dois caminhos

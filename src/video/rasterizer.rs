@@ -707,6 +707,17 @@ pub trait Rasterizador {
     fn draw_texture(&mut self, x: f32, y: f32, z: f32, width: f32, height: f32);
 
     fn read_rect(&mut self, x: i32, y: i32, width: usize, height: usize) -> Vec<[u8; 4]>;
+    /// Manda o desenho para um framebuffer de fora — o que o frontend Libretro entrega.
+    ///
+    /// No contrato do `libretro`, quem apresenta o quadro é o frontend, e o core desenha no
+    /// framebuffer que ele indica (o `get_current_framebuffer` do `retro_hw_render_callback`),
+    /// que pode mudar de um quadro para o outro — daí a função aceitar troca. `Some(0)` é o
+    /// framebuffer padrão do frontend, que no `glow` se escreve `None`.
+    ///
+    /// **No software não há o que fazer**: ele desenha em memória, e o quadro sai pelo
+    /// [`Self::frame_rgb565`] de sempre. É o que permite ao mesmo motor servir aos dois caminhos.
+    fn desenha_no_fbo(&mut self, _fbo: Option<u32>) {}
+
     fn frame_rgb565(&mut self, width: usize, height: usize, out: &mut Vec<u8>);
     fn import_rgb565_changes(&mut self, width: usize, height: usize, old: &[u8], new: &[u8]);
 

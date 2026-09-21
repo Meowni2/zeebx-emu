@@ -1297,7 +1297,7 @@ texturas comprimidas, blend), não a velocidade deste acervo.
 
 O `memset` do Rolima custava 731 ms porque o `helpers` **alocava um `Vec` do tamanho pedido em cada
 chamada**. Com limpeza em blocos de um buffer de pilha: 520 ms, e o jogo de 247% para 267%.
-| Render em hardware (`SET_HW_RENDER`) | **meio caminho, com prova** | o rasterizador da placa está **verificado contra o de software** (ver abaixo); falta ligar ao core |
+| Render em hardware (`SET_HW_RENDER`) | **dois terços, com prova** | o rasterizador da placa está verificado contra o de software, e o motor **já desenha no framebuffer do frontend** (ver abaixo); falta negociar o contexto com o core |
 
 ### O rasterizador da placa desenha o mesmo quadro, medido
 
@@ -1378,12 +1378,14 @@ frontend.
 
 **O que falta, em ordem:**
 
-1. `frontends/libretro`: montar o `glow::Context` a partir de `get_proc_address` do
+1. `frontends/libretro`: montar o `glow::Context` a partir do `get_proc_address` do
    `retro_hw_render_callback` e passá-lo ao `start_with`, com `placa = true`. A constante
    `ENV_SET_HW_RENDER` já está no arquivo, com o comentário dizendo por que ela não é usada hoje.
-2. Fazer o motor desenhar **no framebuffer do frontend** em vez do próprio: hoje o caminho de placa
-   cria o FBO dele e lê de volta; no contrato do `libretro` o core desenha no FBO que
-   `get_current_framebuffer` devolve, e o frontend apresenta.
+2. ~~Fazer o motor desenhar no framebuffer do frontend.~~ **Feito e verificado**: o motor tem
+   `desenha_no_fbo`, o teste `o_motor_desenha_no_framebuffer_do_frontend` cria um framebuffer
+   próprio, manda o motor desenhar nele e lê os pixels **dele** — nos dois jogos medidos, **0 de
+   307.200 pixels** ficaram com a cor de nascença, ou seja, o desenho foi todo para o framebuffer
+   de fora, e não para o interno.
 3. Trocar o `retro_video_refresh` de quadro por `RETRO_HW_FRAME_BUFFER_VALID` — sem isso o
    RetroArch recebe pixels que não são os do FBO.
 
