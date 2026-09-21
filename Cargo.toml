@@ -85,7 +85,10 @@ zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }
 # requantização, IMDCT e banco de síntese, e escrever isso sem uma referência para comparar dá
 # som que toca e sai errado. O symphonia é Rust puro (sem build C) e MPL-2.0, que se combina com
 # o GPLv2 daqui. Só o MP3 entra: o resto dos codecs fica fora.
-symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
+# `mp3` é a música da maioria dos jogos; `ogg`/`vorbis` é a de quem entrega Opus/Vorbis —
+# o Turma da Mônica tem **86 sons** em Ogg, e sem a feature o jogo roda em silêncio absoluto
+# (medido: pico 0,000 no relatório da varredura). É o mesmo decodificador, com duas caixas a mais.
+symphonia = { version = "0.5.5", default-features = false, features = ["mp3", "ogg", "vorbis"] }
 discord-rich-presence = { version = "1.1", optional = true }
 ureq = "3"
 sevenz-rust2 = "0.23.0"

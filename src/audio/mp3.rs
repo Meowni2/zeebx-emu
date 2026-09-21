@@ -154,18 +154,29 @@ pub fn decode(data: &[u8]) -> Option<crate::audio::wav::Sound> {
 
     // O `MediaSourceStream` quer posse do que lê, e o buffer é do guest: copiar é o preço de
     // não deixar o decodificador olhando para a memória do jogo enquanto ele a reescreve.
-    let fonte = std::io::Cursor::new(data.to_vec());
-    let fluxo = MediaSourceStream::new(Box::new(fonte), Default::default());
-    let mut hint = Hint::new();
-    hint.with_extension("mp3");
-    let sondado = symphonia::default::get_probe()
-        .format(
+    // **Duas caixas, o mesmo decodificador.** A música da maioria dos jogos chega em MP3; a do
+    // Turma da Mônica chega em Ogg/Vorbis — 86 sons que eram recusados um a um e deixavam o jogo
+    // em **silêncio absoluto** (medido: pico 0,000 no relatório, com oito mil amostras de Ogg na
+    // lista de recusados). A dica de extensão ajuda a sondagem e não atrapalha: com a errada ela
+    // falha, e aí vale tentar a outra. Antes desta linha, o `recusado (formato desconhecido, 4f 67
+    // 67 53 ...)` do relatório era a única pista, e ela ficou visível por uma tarde.
+    let mut sondado = None;
+    for extensao in ["mp3", "ogg"] {
+        let fonte = std::io::Cursor::new(data.to_vec());
+        let fluxo = MediaSourceStream::new(Box::new(fonte), Default::default());
+        let mut hint = Hint::new();
+        hint.with_extension(extensao);
+        if let Ok(encontrado) = symphonia::default::get_probe().format(
             &hint,
             fluxo,
             &FormatOptions::default(),
             &MetadataOptions::default(),
-        )
-        .ok()?;
+        ) {
+            sondado = Some(encontrado);
+            break;
+        }
+    }
+    let sondado = sondado?;
     let mut formato = sondado.format;
     let trilha = formato.default_track()?;
     let id = trilha.id;
