@@ -1241,6 +1241,34 @@ MASM para ARM64. O `unicorn-engine` 2.1.5 é a última versão publicada, e o QE
 ARM64 como host. Quando isso mudar — versão nova do unicorn, ou o `unicorn` virar opcional nesta
 plataforma, com o `dynarmic` sozinho —, basta tirar a marca de experimental do alvo.
 
+## Estado dos itens, com a prova de cada um
+
+| Item | Estado | Prova |
+|---|---|---|
+| Varredura das 62 ROMs | feito | 57 rodam (linha de base do doc: 50), 0 estados piorados |
+| CI dos cinco alvos do standalone | em verificação | Linux x86_64/AArch64 e macOS Apple Silicon verdes; Windows ARM64 exigiu tirar o `unicorn` |
+| `IFont` e o layout do `DrawText` | feito | métricas transcritas do `AEEFontsStandard.BID`, com teste que cobra as onze classes |
+| Áudio e desempenho | feito | varredura mede pico/rms/contínuo/salto por jogo; Rolima 79% → 284%, 51 jogos mais rápidos |
+| Render em hardware (`SET_HW_RENDER`) | **falta** | o core entrega RGB565 do rasterizador software; o 3D roda por ele |
+| Save states | **falta** | o core **declara** que não tem (`size` 0, `serialize` falso), que é o critério de aceite |
+| `.7z` | feito | `/tmp/dd.7z` → `estado: roda`; limites iguais aos do zip |
+| Ciclo da Z-Wheel no RetroArch | **parcial** | o motor é medido pela varredura; o laço do core que troca de sessão não tem teste automático |
+| Capas e No-Intro | **falta** | depende de conta e de envio externo |
+
+### O que a rodada de CI ensinou
+
+Três defeitos que só apareceram quando os testes passaram a rodar até o fim, e que valem para a
+próxima vez:
+
+1. `cargo test` **nunca** tinha compilado o alvo de teste do binário: o `main.rs` importava
+   `zeebx::varredura` sob `#[cfg(test)]`, e ali a biblioteca é compilada sem esse `cfg`. Rodar
+   `cargo test --lib` escondia isso.
+2. Dois testes de VFS comparavam a caixa exata do caminho, e o APFS do macOS **não distingue
+   caixa**: o arquivo pedido já existe, e não há duas grafias para comparar.
+3. `continue-on-error: ${{ matrix.experimental }}` faz o GitHub **rejeitar o arquivo de workflow
+   inteiro** — o run aparece como falha **sem nenhum trabalho**. `actionlint` e um leitor de YAML
+   não acusam: o diagnóstico é o run vazio.
+
 ## Ordem de implementação
 
 1. Inventariar toda E/S de core e definir `StorageFs`/`GuestFile`; decidir SQLite VFS ou staging
