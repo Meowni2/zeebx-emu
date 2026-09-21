@@ -45,11 +45,15 @@ jobs:
         with:
           key: ${{ matrix.nome }}
 
+      # A mesma lista do `ci.yml`, mais o `libfuse2` do AppImage: o `dynarmic` pede gerador
+      # Ninja e o `bindgen` do unicorn carrega a biblioteca do clang, e depender do que a imagem
+      # do runner já traz funciona até o dia em que não traz — no dia da tag, sem instalador.
       - name: Dependências do Linux
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config libasound2-dev libudev-dev \
+          sudo apt-get install -y cmake ninja-build pkg-config libclang-dev \
+            libasound2-dev libudev-dev \
             libxkbcommon-dev libwayland-dev libgl1-mesa-dev libx11-dev libxcursor-dev \
             libxrandr-dev libxi-dev libfuse2
 
