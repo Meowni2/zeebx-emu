@@ -43,10 +43,6 @@ use zeebx::ui::settings::Settings;
 use entrada::Entrada;
 use tela::{Placa, Tela};
 
-/// Quanto tempo real o jogo pode tomar num quadro da interface. O mesmo teto do desktop: se o
-/// jogo não acompanha, o que se perde é velocidade do jogo, não a resposta da tela.
-const ORCAMENTO: Duration = Duration::from_millis(16);
-
 /// O ponto em que o Android entra.
 ///
 /// A `NativeActivity` carrega o `.so`, acha este símbolo e o chama numa linha de execução

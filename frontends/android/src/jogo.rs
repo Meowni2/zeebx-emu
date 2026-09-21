@@ -11,7 +11,8 @@ use zeebx::ui::depuracao;
 use zeebx::ui::gpu;
 use zeebx::ui::settings::{Proporcao, Scaling};
 
-use crate::{Emulador, ORCAMENTO};
+use crate::Emulador;
+use zeebx::session::FATIA_MAXIMA;
 
 impl Emulador {
     pub(crate) fn jogo(&mut self, ctx: &egui::Context) {
@@ -27,7 +28,7 @@ impl Emulador {
         } else {
             // O orçamento é o tempo real que passou desde o quadro anterior, preso ao teto: é
             // quanto o jogo precisa emular para acompanhar o relógio do mundo.
-            let passou = self.ultimo.elapsed().min(ORCAMENTO);
+            let passou = self.ultimo.elapsed().min(FATIA_MAXIMA);
             self.ultimo = Instant::now();
             sessao.set_port_pad(0, self.pad);
             if sessao.step(passou, self.settings.graphics.speed_limit) == Step::Stopped {

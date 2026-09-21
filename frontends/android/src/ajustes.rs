@@ -246,6 +246,23 @@ impl Emulador {
         // sem corpo quando o 3D roda na CPU: só a placa sabe fazer isso. Apagá-los enquanto ela
         // está desligada é dizer a verdade — antes eles mexiam e nada acontecia.
         let com_placa = graficos.gpu_rasterizer;
+        // Apagar as opções não basta: um controle apagado se lê como quebrado, não como
+        // "depende daquele ali". A linha diz de que ele depende.
+        if !com_placa {
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "↑  {} precisa estar ligado para o que vem abaixo.",
+                        catalogo.get("graphics.gpu_rasterizer")
+                    ))
+                    .small()
+                    .color(ui.visuals().warn_fg_color),
+                );
+            });
+            ui.add_space(4.0);
+        }
         ui.add_enabled_ui(com_placa, |ui| {
         mudou |= widgets::deslizante(
             ui,

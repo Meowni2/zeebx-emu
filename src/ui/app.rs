@@ -28,18 +28,6 @@ use crate::ui::library::Game;
 use crate::ui::settings::{Scaling, Settings};
 use crate::video::display::Framebuffer;
 
-/// Teto de tempo real que o jogo pode tomar num quadro da interface.
-///
-/// O orçamento normal **não** é fixo: é o tempo que passou desde o quadro anterior, que é
-/// exatamente o quanto o jogo precisa emular para acompanhar o relógio do mundo. Uma fatia
-/// fixa de 16 ms virava teto de velocidade, e um teto traiçoeiro: com a janela sincronizada
-/// ao monitor, bastava emulação mais desenho passarem de um retraço para o período dobrar
-/// para 33 ms — e o jogo ficava com 16 de cada 33, travado em 50% por mais folga que a
-/// máquina tivesse. Era o que a tela de seleção do Crash mostrava.
-///
-/// O teto existe só para o caso de o host não dar conta: sem ele, um quadro atrasado pede um
-/// orçamento maior, que atrasa mais o seguinte, e a janela para de responder.
-const MAX_SLICE: Duration = Duration::from_millis(100);
 
 /// A tela do Zeebo.
 const SCREEN: [usize; 2] = [640, 480];
@@ -2706,7 +2694,7 @@ impl App {
             // O orçamento é o tempo real que passou desde o quadro anterior. Com telas
             // intermediárias à espera, uma vai à tela e o jogo não anda neste quadro.
             let now = std::time::Instant::now();
-            let slice = (now - self.last_step).min(MAX_SLICE);
+            let slice = (now - self.last_step).min(crate::session::FATIA_MAXIMA);
             self.last_step = now;
             if !session.mostra_quadro_intermediario() {
                 let _ = session.step(slice, limit);
