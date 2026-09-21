@@ -1250,6 +1250,30 @@ plataforma, com o `dynarmic` sozinho —, basta tirar a marca de experimental do
 | `IFont` e o layout do `DrawText` | feito | métricas transcritas do `AEEFontsStandard.BID`, com teste que cobra as onze classes |
 | Áudio e desempenho | feito | varredura mede pico/rms/contínuo/salto por jogo; Rolima 79% → 284%, 51 jogos mais rápidos |
 
+### Dois jogos mudos, e o que os calava
+
+O relatório da varredura lista os sons que o decodificador recusou. Dois jogos apareciam ali, e a
+medição de áudio — pico, rms, contínuo e salto entre amostras — mostrou **pico 0,000 nos dois**:
+silêncio absoluto, não "sem som por enquanto".
+
+Investigar começou por fazer a recusa **dizer o formato e os primeiros bytes**. Duas linhas
+resolveram os dois casos:
+
+```text
+Turma da Mônica   recusado (formato desconhecido, 86 sons, 4f 67 67 53 ...)   ← "OggS"
+Peggle            recusado (audio/mpeg, 7 sons, 49 44 33 03 00 00 00 00 ...)   ← "ID3"
+```
+
+- **Ogg/Vorbis**: o `symphonia` já sabia decodificar; faltava ligar a feature. 86 sons viraram
+  música — pico 0,586 aos trinta segundos virtuais, contra 0,000 antes.
+- **MP3 com etiqueta ID3 que mente**: o Peggle entrega etiqueta dizendo **zero byte** de tamanho e
+  trinta mil de conteúdo. Quem pula pelo campo declarado procura o quadro no lugar errado e recusa
+  o arquivo inteiro. Agora a busca é pela **sincronia do quadro** (`0xFF` e três bits altos), que é
+  o que o formato garante — sete trilhas voltaram: pico 0,356 contra 0,000.
+
+A lição vale para a próxima: uma recusa que não diz **o que** chegou custa uma investigação inteira
+dentro do jogo. Dizendo o formato e os bytes, foram duas linhas de diagnóstico e vinte de correção.
+
 ### Onde o tempo vai, medido
 
 Com `ZEEBX_ROM_PERFIL=1`, a varredura grava o custo real por método de API. Nos dois jogos mais
