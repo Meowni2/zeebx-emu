@@ -672,6 +672,66 @@ própria de commit/journal; rename atômico de arquivos externos não protege se
 
 Não registrar opção cosmética ou que não possa ser aplicada de forma segura numa sessão viva.
 
+## Catálogo, identificação e capas
+
+O acervo tem duas camadas de identidade, e as duas existem hoje:
+
+| Identidade | Para que serve | Onde |
+|---|---|---|
+| BLAKE3 dos bytes do pacote | cache e overlay de saves: a mesma ROM abre no mesmo lugar, uma ROM trocada não herda save | `StoragePaths::content_id` |
+| No-Intro (CRC32/MD5/SHA1 de um arquivo dentro do tape) | dizer **qual jogo é**, com o nome oficial, e achar capa | `ferramentas/catalogo.py` |
+
+### O que o No-Intro de Zeebo hasheia
+
+O DAT oficial é `Mobile - Zeebo` (libretro-database, `metadat/no-intro/`). Ele hasheia **um arquivo
+dentro de `mod/<pasta>/`**, e o nome no DAT é o caminho interno sem as barras:
+
+```text
+mod274754sound.ggz                              -> mod/274754/sound.ggz
+mod280386resources.pakz                         -> mod/280386/resources.pakz
+modnfsresourcestracksworld_3401.viv             -> mod/nfs/resources/tracks/world_3401.viv
+```
+
+A pasta do módulo **nem sempre é numérica** (`mod/nfs/...`); comparar por prefixo erra o Need For
+Speed. A comparação é pelo caminho inteiro sem separador.
+
+### Medição contra o acervo do usuário
+
+```text
+pacotes: 62
+verificados pelo No-Intro: 57 de 57 do DAT (0 divergentes)
+fora do DAT: 5
+```
+
+Os cinco fora do DAT são os quatro ports da Data East e um homebrew:
+
+- `Bad Dudes vs. DragonNinja`
+- `Caveman Ninja`
+- `Dark Seal`
+- `Karnov's Revenge`
+- `Kingdom Hearts V CAST (Zeebo Homebrew)`
+
+### O que a ferramenta escreve
+
+`ferramentas/catalogo.py --roms DIR --saida DIR [--icones]`:
+
+- `Mobile - Zeebo.lpl` — playlist do RetroArch, `label` com o nome No-Intro, `crc32` do pacote e
+  `db_name` do banco;
+- `thumbnails/Mobile - Zeebo/{Named_Boxarts,Named_Snaps,Named_Titles,Named_Logos}/` — as quatro
+  pastas que o RetroArch procura, com o nome exato de cada título;
+- `catalogo.json` — hashes, verificação e o caminho do `.mod`/`.mif` de cada pacote.
+
+Com `--icones`, o ícone declarado no `.mif` (seção de imagem do manifesto) é gravado em
+`Named_Titles` como imagem provisória. **Ícone não é capa**: a capa de verdade ainda falta, e o
+caminho natural é o catálogo da Z-Wheel (`boxart_path` do `tt_game_info`) ou o repositório de
+thumbnails do Libretro.
+
+### RDB
+
+RetroArch casa banco por hash do **arquivo de conteúdo** que recebe. O RDB de Zeebo não existe em
+nenhum lugar (135 RDBs instalados aqui, nenhum de Zeebo), e o core ainda não tem varredura de
+biblioteca para gerar um. Enquanto isso, a playlist resolve nome e capa sem depender de RDB.
+
 ## Desfecho de um jogo
 
 No console, sair de um jogo devolve o controle à Z-Wheel, que é apenas outro applet instalado. No

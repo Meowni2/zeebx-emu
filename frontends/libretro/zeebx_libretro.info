@@ -7,3 +7,5 @@ manufacturer = "TecToy"
 licenses = "GPLv2"
 firmware_count = 0
 supports_no_game = "false"
+# Banco No-Intro usado para nomear e para achar as capas. Ver `ferramentas/catalogo.py`.
+database = "Mobile - Zeebo"
