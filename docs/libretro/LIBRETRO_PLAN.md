@@ -1318,6 +1318,16 @@ escritas: registrava "roda" com a tela apagada. Agora o relatório conta **cores
 dominante**, e a linha entra na comparação com a linha de base — uma regressão que apaga a tela sem
 quebrar a execução passa a aparecer no commit que a causou.
 
+**A varredura inteira fecha contra a linha de base commitada, e continua fechando.** Depois de
+todas as mudanças do dia — as seis extensões, o joystick, a classe do decodificador de JPEG, o
+despacho por assinatura e a descida da voz no mixer —, rodadas as 62 ROMs de novo:
+
+```text
+62 relatórios · 0 diferenças · 0 linhas de base gravadas
+```
+
+Nenhum jogo mudou de resumo sem que a mudança fosse intencional e registrada, e a árvore saiu limpa.
+
 **A varredura inteira fecha contra a linha de base commitada.** Rodadas as 62 ROMs depois de todas as
 mudanças do dia — as seis extensões, o joystick, a classe do decodificador de JPEG e o despacho por
 assinatura —, o resultado foi **zero diferença** e **zero linha de base gravada**: nenhum jogo mudou
