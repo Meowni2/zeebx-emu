@@ -135,6 +135,22 @@ enum Passo {
     Solto,
 }
 
+/// Lê o rastreio de chamadas com `ZEEBX_ROM_TRACO`.
+///
+/// Vale `1` (as últimas chamadas antes da falha) ou um filtro de texto: `ZEEBX_ROM_TRACO=IFile`
+/// guarda só as chamadas cujo nome contém aquilo. Existe porque "acesso inválido a 0x0" diz que
+/// algum ponteiro era nulo e não diz **qual** — e numa investigação o que responde é a última
+/// chamada antes de a execução sair do prumo. Sem esta opção o rastreio existe no motor e ninguém o
+/// liga numa varredura.
+fn rastreio_pedido() -> Option<String> {
+    let valor = std::env::var("ZEEBX_ROM_TRACO").ok()?;
+    let valor = valor.trim().to_string();
+    match valor.is_empty() || valor == "0" {
+        true => None,
+        false => Some(valor),
+    }
+}
+
 /// Em que taxa o mixer entrega o áudio da medição.
 ///
 /// É a taxa que o core Libretro pede ao frontend, e a que o console entrega de fato — 44,1 kHz
@@ -413,6 +429,12 @@ pub struct Relatorio {
     pub custo_total: u64,
     /// O fim do log do próprio jogo, por `DBGPRINTF` e por semihosting.
     pub log_do_jogo: Vec<String>,
+    /// As últimas chamadas do rastreio, quando `ZEEBX_ROM_TRACO` o pediu.
+    ///
+    /// Fica fora do resumo de propósito: é material de investigação, muda de uma execução para a
+    /// outra com qualquer ajuste no motor, e cobrá-lo na linha de base seria acusar regressão em
+    /// cima de uma ferramenta de depuração.
+    pub rastreio: Vec<String>,
     /// O que o áudio fez, quando houve áudio para medir.
     pub audio: Option<Audio>,
 }
@@ -532,6 +554,12 @@ impl Relatorio {
                 ));
             }
         }
+        if !self.rastreio.is_empty() {
+            texto.push_str("rastreio (últimas chamadas antes da parada):\n");
+            for linha in &self.rastreio {
+                texto.push_str(&format!("  {linha}\n"));
+            }
+        }
         if let Some(audio) = &self.audio {
             // Fica no relatório completo e não no resumo, pela mesma razão do estado da falha:
             // é número de investigação, e a linha de base não cobra limiar escolhido hoje.
@@ -608,6 +636,7 @@ impl Relatorio {
             custo_maiores: Vec::new(),
             custo_total: 0,
             log_do_jogo: Vec::new(),
+            rastreio: Vec::new(),
             audio: None,
         }
     }
@@ -700,6 +729,14 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     let mut ultimo_relogio = base_ms;
     // O roteiro de controle entra pelo mesmo caminho que o frontend usa: `set_port_pad`.
     let roteiro = roteiro_de_teclas();
+    // O rastreio entra antes da partida: a chamada que interessa costuma ser das primeiras.
+    let rastreio = rastreio_pedido();
+    if let Some(filtro) = &rastreio {
+        session.machine_mut().set_tracing(true);
+        if filtro != "1" {
+            session.machine_mut().set_trace_filter(Some(filtro.clone()));
+        }
+    }
     let mut passo_do_roteiro = 0usize;
     // Uma amostra anterior **por canal**: o fluxo é estéreo intercalado, e comparar `R` de um
     // quadro com `L` do mesmo quadro mediria a diferença entre os canais — que é música, e não
@@ -872,6 +909,7 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
         custo_maiores: custo,
         custo_total,
         log_do_jogo: log,
+        rastreio: session.machine().trace().to_vec(),
         audio,
     }
 }
@@ -1349,6 +1387,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
             custo_maiores: Vec::new(),
             custo_total: 0,
             log_do_jogo: vec!["carregando".to_string()],
+            rastreio: Vec::new(),
             audio: None,
         };
         let devagar = Relatorio {
@@ -1363,6 +1402,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
             custo_maiores: Vec::new(),
             custo_total: 0,
             log_do_jogo: Vec::new(),
+            rastreio: Vec::new(),
             audio: None,
             ..modelo.clone()
         };
@@ -1387,6 +1427,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
             custo_maiores: Vec::new(),
             custo_total: 0,
             log_do_jogo: Vec::new(),
+            rastreio: Vec::new(),
             audio: None,
         };
         assert!(limpo.resumo().contains("nada a apontar"));
@@ -1419,6 +1460,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
             custo_maiores: Vec::new(),
             custo_total: 0,
             log_do_jogo: Vec::new(),
+            rastreio: Vec::new(),
             audio: None,
         };
         assert!(confere_base(&caminho, &modelo).is_ok(), "grava o que falta");
@@ -1456,6 +1498,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
             custo_maiores: Vec::new(),
             custo_total: 0,
             log_do_jogo: Vec::new(),
+            rastreio: Vec::new(),
             audio: None,
         };
         assert!(relatorio.completo().contains("no instante da falha"));

@@ -1389,9 +1389,21 @@ _OFM_CREATE will only create a file if it did not exist prior to the IFILEMGR_Op
 
 Ou seja: o console **também** devolve nulo para um `OFM_READ` num arquivo que não existe. Não é
 defeito nosso — é o jogo seguindo com o ponteiro vazio. A pergunta que sobra é **onde** ele usa
-esse nulo, e para isso o relatório não basta: é o rastreio (`set_tracing`) ou o vigia de escrita, e
-é a medição seguinte — com o PC que a falha aponta (`0x161d8`) e a pilha que o relatório já guarda
-(`0x43494 0x4f300 0x3af54 0x43d5c`).
+esse nulo, e para isso o relatório não bastava: é o rastreio.
+
+**A varredura ganhou `ZEEBX_ROM_TRACO`** — `1` guarda as últimas chamadas, ou um filtro de texto
+(`ZEEBX_ROM_TRACO=IFile`). Sem esta opção o rastreio existia no motor e ninguém o ligava numa
+varredura, que é onde a investigação acontece.
+
+E o que ele mostrou foi o padrão exato antes da queda: uma **tabela sendo construída**, entradas de
+28 bytes (`malloc 0x1c` seguido de `memmove 0x1c`), num laço, com as origens a 28 bytes de
+distância (`0x1003869a`, `0x100386b6`, `0x100386d2`, …) — e **nenhuma chamada de API depois disso**.
+A falha é no código do próprio jogo, chamando um ponteiro que ele montou (ou leu de uma tabela),
+não um ponteiro nosso.
+
+É onde esta sessão parou: o que sobra é engenharia reversa do jogo, com o rastreio na mão e o PC
+(`0x161d8`), a pilha (`0x43494 0x4f300 0x3af54 0x43d5c`) e as origens da tabela (`0x1003869a`) como
+ponto de partida.
 
 O `IGLES11ExtPak` responde com o tratamento das outras extensões gráficas — "consegui" ao que não
 muda o traço, identificador `1` para os `Gen*OES` (o alvo aqui é um só) e `GL_FRAMEBUFFER_COMPLETE`
