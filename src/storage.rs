@@ -184,8 +184,16 @@ mod tests {
     fn o_nome_do_perfil_nao_depende_da_caixa_do_core() {
         assert_eq!(PROFILE_DIR, "zeebx");
         let paths = StoragePaths::for_frontend("/saves", Some("/sistema"));
-        assert!(paths.saves.to_string_lossy().contains("/zeebx/"));
-        assert!(!paths.saves.to_string_lossy().contains("/Zeebx/"));
+        // **Componente a componente, e não texto com barra.** O separador do Windows é `\`, e
+        // procurar `/zeebx/` na string fazia este teste falhar só ali — acusando o produto por um
+        // detalhe do sistema de arquivos de quem roda o teste.
+        let partes: Vec<String> = paths
+            .saves
+            .iter()
+            .map(|parte| parte.to_string_lossy().to_string())
+            .collect();
+        assert!(partes.iter().any(|parte| parte == PROFILE_DIR), "{partes:?}");
+        assert!(!partes.iter().any(|parte| parte == "Zeebx"), "{partes:?}");
     }
 
     #[test]
