@@ -93,6 +93,22 @@ Vale saber de um detalhe que já custou uma investigação: **a Z-Wheel é naveg
 não pelos botões (ela registra `RegisterForPositionChange`). Um roteiro só de botões não move a
 roda um pixel — e o sintoma é uma imagem parada, que parece defeito de entrada.
 
+### O que a varredura **não** consegue verificar, medido
+
+Tentativa de exercitar o ciclo da Z-Wheel por aqui, com o roteiro acima: **não funciona**, e vale
+saber por quê antes de tentar de novo. Doze segundos virtuais, com e sem manche:
+
+| | com roteiro | sem roteiro |
+|---|---:|---:|
+| voltas | 1547 | 1543 |
+| instruções | 133.567.092 | 133.566.074 |
+| chamadas de API | 264.953 | 264.931 |
+
+A diferença é de mil instruções em 133 milhões: a roda **não reage** e não desenha nada neste
+caminho (zero quadros apresentados, zero texto desenhado nos dois casos). A Z-Wheel monta a
+interface pelo caminho de placa, que o laço da varredura não exercita; conclusão prática: **o ciclo
+dela só se verifica no RetroArch, com controle na mão** — e é o que o plano já dizia no item 8.
+
 ### Um jogo, com o relatório inteiro
 
 ```bash
