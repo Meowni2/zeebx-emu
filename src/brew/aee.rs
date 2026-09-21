@@ -94,6 +94,9 @@ pub enum Interface {
     /// `AEEIID_EGLGETPOWERLEVEL`: o nível de energia do aparelho. Ver
     /// [`aee_slots::EGL_GET_POWER_LEVEL`].
     EglGetPowerLevel = 57,
+    /// `AEEIID_EGLOESSWAPINTERVAL`: o ritmo de quadro, por interface. Ver
+    /// [`aee_slots::EGL_OES_SWAP_INTERVAL`].
+    EglOesSwapInterval = 58,
     /// `AEECLSID_SQLMGR` do console: abre bancos SQLite. Ver [`crate::brew::sql`].
     SqlMgr = 36,
     /// Um banco aberto pelo [`Interface::SqlMgr`].
@@ -427,6 +430,7 @@ impl Interface {
             Self::Gles11Ext => "IGLES11Ext",
             Self::Gles10Ext => "IGLES10Ext",
             Self::EglGetPowerLevel => "IEGLGetPowerLevel",
+            Self::EglOesSwapInterval => "IEGLOESSwapInterval",
             Self::SqlMgr => "ISQLMgr",
             Self::SqlDatabase => "ISQLDatabase",
             Self::Collection => "IColecao",
@@ -491,6 +495,7 @@ impl Interface {
             Self::Gles11Ext => aee_slots::GLES11_EXT,
             Self::Gles10Ext => aee_slots::GLES10_EXT,
             Self::EglGetPowerLevel => aee_slots::EGL_GET_POWER_LEVEL,
+            Self::EglOesSwapInterval => aee_slots::EGL_OES_SWAP_INTERVAL,
             Self::SqlMgr => aee_slots::SQL_MGR,
             Self::SqlDatabase => aee_slots::SQL_DATABASE,
             Self::Collection => aee_slots::COLLECTION,
@@ -570,6 +575,7 @@ impl Interface {
             55 => Self::Gles11Ext,
             56 => Self::Gles10Ext,
             57 => Self::EglGetPowerLevel,
+            58 => Self::EglOesSwapInterval,
             35 => Self::Probe,
             36 => Self::SqlMgr,
             37 => Self::SqlDatabase,

@@ -711,6 +711,8 @@ const AEECLSID_GLES11EXT: u32 = 0x0103_d8eb;
 const AEEIID_GLES10EXT: u32 = 0x0103_d8de;
 /// `AEEIID_EGLGETPOWERLEVEL`, de `sdk/inc/AEEEGLGetPowerLevel.h`.
 const AEEIID_EGLGETPOWERLEVEL: u32 = 0x0103_d8f0;
+/// `AEEIID_EGLOESSWAPINTERVAL`, de `sdk/inc/AEEEGLOESSwapInterval.h`.
+const AEEIID_EGLOESSWAPINTERVAL: u32 = 0x0104_26e3;
 
 const AEEIID_EGL10: u32 = 0x0103_d8ed;
 const AEEIID_EGL11: u32 = 0x0103_d8ee;
@@ -2097,6 +2099,8 @@ pub struct Machine<C: CpuBackend> {
     gles10_ext: u32,
     /// O objeto do `IEGLGetPowerLevel`.
     egl_get_power_level: u32,
+    /// O objeto do `IEGLOESSwapInterval`.
+    egl_oes_swap_interval: u32,
     /// O retângulo em que o jogo desenha, quando ele o declara pelo `SetSurfaceScale`. Vale
     /// mais que a dedução por viewport: aqui o jogo **diz** o tamanho.
     scale_source: Option<(i32, i32)>,
@@ -2734,6 +2738,7 @@ impl<C: CpuBackend> Machine<C> {
             gles11_ext: 0,
             gles10_ext: 0,
             egl_get_power_level: 0,
+            egl_oes_swap_interval: 0,
             scale_source: None,
             prefs: HashMap::new(),
             enumerations: HashMap::new(),
@@ -3483,7 +3488,8 @@ impl<C: CpuBackend> Machine<C> {
             | (Interface::GlesImageonExt, _)
             | (Interface::Gles11Ext, _)
             | (Interface::Gles10Ext, _)
-            | (Interface::EglGetPowerLevel, _) => {
+            | (Interface::EglGetPowerLevel, _)
+            | (Interface::EglOesSwapInterval, _) => {
                 match self.extension_call(iface, slot)? {
                     Some(result) => result,
                     None => return Ok(None),

@@ -304,6 +304,19 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 SUCCESS
             }
+            // `int SwapInterval(pMe, dpy, interval, EGLBoolean *ret)` e o `Get` dele.
+            //
+            // **Aceitar e não guardar é o que o caminho de função já faz**, e é o certo: o ritmo
+            // de quadro aqui é o do relógio virtual, e prometer um intervalo que não controlamos
+            // seria pior que não prometer nada.
+            "SwapInterval" if iface == Interface::EglOesSwapInterval => self.write_egl_true(3)?,
+            "GetSwapInterval" if iface == Interface::EglOesSwapInterval => {
+                let out = self.arg(2);
+                if out != 0 {
+                    self.cpu.write_u32(out, 1)?;
+                }
+                SUCCESS
+            }
             // `IGLES11Ext`: as extensões OES do OpenGL ES 1.1.
             //
             // **O Prey Evil não desenha sem elas.** O levantamento das 62 ROMs o pegou com a tela

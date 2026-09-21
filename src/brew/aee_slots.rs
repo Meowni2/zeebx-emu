@@ -481,6 +481,17 @@ pub const GLES10_EXT: &[&str] = &["AddRef", "Release", "QueryInterface", "QueryM
 pub const EGL_GET_POWER_LEVEL: &[&str] =
     &["AddRef", "Release", "QueryInterface", "GetPowerLevel"];
 
+/// `IEGLOESSwapInterval`: o ritmo de quadro pedido pelo jogo. Ver `AEEEGLOESSwapInterval.h`.
+///
+/// Por **função** o motor já responde `SwapIntervalOES`; aqui é a mesma resposta, pela interface.
+pub const EGL_OES_SWAP_INTERVAL: &[&str] = &[
+    "AddRef",
+    "Release",
+    "QueryInterface",
+    "SwapInterval",
+    "GetSwapInterval",
+];
+
 pub const GLES11_EXT: &[&str] = &[
     "AddRef",
     "Release",

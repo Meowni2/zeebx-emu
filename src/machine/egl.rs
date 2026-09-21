@@ -510,6 +510,13 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 self.egl_get_power_level
             }
+            AEEIID_EGLOESSWAPINTERVAL => {
+                if self.egl_oes_swap_interval == 0 {
+                    self.egl_oes_swap_interval =
+                        self.new_object(Interface::EglOesSwapInterval)?;
+                }
+                self.egl_oes_swap_interval
+            }
             _ => {
                 self.unknown_classes.insert(iid);
                 if out != 0 {
