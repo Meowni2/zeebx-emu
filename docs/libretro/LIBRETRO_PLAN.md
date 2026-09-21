@@ -1301,6 +1301,12 @@ A tabela do `IGLES11Ext` já está lida, e são **15 slots**: os três de `IQuer
 `DrawTexfvOES`. Os `DrawTex*` são os que interessam a um jogo que monta o quadro em textura — que é
 o caso do Prey Evil, com 16.746 `BindTexture` e nenhum desenho.
 
+**E o número da classe já aparece no motor por outro caminho.** No BREW, o ClassID e o IID são o
+mesmo valor: `AEEIID_GLES_IMAGEON_EXT` (`0x01058546`) já é atendido em `machine/egl.rs` pela rota de
+**função** (`eglGetProcAddress`), e o Prey Evil pede as extensões dele pela rota de **objeto**
+(`ISHELL_CreateInstance`). Falta o registro na fábrica, em `shell_create_instance`, com a tabela de
+slots acima — e o handler da rota de função serve de referência para o que cada slot responde.
+
 ### Dois jogos mudos, e o que os calava
 
 O relatório da varredura lista os sons que o decodificador recusou. Dois jogos apareciam ali, e a
