@@ -1245,7 +1245,7 @@ plataforma, com o `dynarmic` sozinho —, basta tirar a marca de experimental do
 
 | Item | Estado | Prova |
 |---|---|---|
-| Varredura das 62 ROMs | feito | 56 rodam (linha de base do doc: 50), 0 estados piorados — reconferido depois de todas as mudanças desta sessão, com os mesmos 6 fora |
+| Varredura das 62 ROMs | feito | 56 rodam (linha de base do doc: 50), 0 estados piorados — reconferido depois de todas as mudanças desta sessão. Os 6 fora mudaram de nome: o **Zuma saiu** (passou a rodar) e o **Prey Evil entrou** na contagem, porque antes ele aparecia como "roda" com a tela preta |
 | CI dos seis alvos do standalone | **feito** | `ci 77d5b02`: linux x86_64 e AArch64, macOS Intel e Apple Silicon, Windows x86_64 e ARM64 — **os seis verdes**, e o core também |
 | `IFont` e o layout do `DrawText` | feito | métricas transcritas do `AEEFontsStandard.BID`, com teste que cobra as onze classes |
 | Áudio e desempenho | feito | varredura mede pico/rms/contínuo/salto por jogo; Rolima 79% → 284%, 51 jogos mais rápidos; e **pelo caminho do core**: o Peggle entrega 229.080 amostras estéreo em 120 quadros |
