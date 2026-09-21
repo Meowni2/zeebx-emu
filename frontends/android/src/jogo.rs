@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use zeebx::session::Step;
 use zeebx::ui::depuracao;
+use zeebx::ui::gpu;
 use zeebx::ui::settings::{Proporcao, Scaling};
 
 use crate::{Emulador, ORCAMENTO};
@@ -48,27 +49,45 @@ impl Emulador {
             return;
         }
 
+        let suave = self.settings.graphics.smooth;
+        // Com o 3D na placa, o quadro que vai à tela **não** é o `screen()`: é a textura que o
+        // rasterizador acabou de preencher. E essa é a única que pode ser mais larga que 4:3 —
+        // o framebuffer do console tem o tamanho do console, e a proporção larga abre o campo
+        // de visão na renderização, não na composição. Era por isso que mexer na proporção não
+        // mudava nada: o caminho da textura do egui sempre mostra o quadro do aparelho.
+        let pela_placa = self.gl.is_some() && self.settings.graphics.gpu_rasterizer;
+        let quadro_gl = pela_placa.then(|| sessao.quadro_na_placa()).flatten();
+
         let tela = sessao.screen();
         let (largura, altura) = (tela.width() as usize, tela.height() as usize);
-        let chave = (tela.serie(), tela.escritas(), self.settings.graphics.smooth);
-        // Subir a textura só quando o quadro mudou: a tela repinta mais vezes que o jogo
-        // desenha, e cada subida inteira custa uma conversão e uma ida à placa.
-        if self.textura.is_none() || self.quadro != Some(chave) {
-            let rgba: Vec<u8> = tela
-                .to_argb()
-                .into_iter()
-                .flat_map(|p| [(p >> 16) as u8, (p >> 8) as u8, p as u8, 255])
-                .collect();
-            let imagem = egui::ColorImage::from_rgba_unmultiplied([largura, altura], &rgba);
-            let filtro = match self.settings.graphics.smooth {
-                true => egui::TextureOptions::LINEAR,
-                false => egui::TextureOptions::NEAREST,
-            };
-            match &mut self.textura {
-                Some(textura) => textura.set(imagem, filtro),
-                textura => *textura = Some(ctx.load_texture("tela", imagem, filtro)),
+        // Sem 3D na tela — um menu, uma abertura — a placa desenha o quadro do aparelho, em
+        // RGB565, que é o formato em que ele já está.
+        let bytes = match pela_placa && quadro_gl.is_none() {
+            true => tela.to_rgb565_bytes(),
+            false => Vec::new(),
+        };
+
+        if !pela_placa {
+            let chave = (tela.serie(), tela.escritas(), suave);
+            // Subir a textura só quando o quadro mudou: a tela repinta mais vezes que o jogo
+            // desenha, e cada subida inteira custa uma conversão e uma ida à placa.
+            if self.textura.is_none() || self.quadro != Some(chave) {
+                let rgba: Vec<u8> = tela
+                    .to_argb()
+                    .into_iter()
+                    .flat_map(|p| [(p >> 16) as u8, (p >> 8) as u8, p as u8, 255])
+                    .collect();
+                let imagem = egui::ColorImage::from_rgba_unmultiplied([largura, altura], &rgba);
+                let filtro = match suave {
+                    true => egui::TextureOptions::LINEAR,
+                    false => egui::TextureOptions::NEAREST,
+                };
+                match &mut self.textura {
+                    Some(textura) => textura.set(imagem, filtro),
+                    textura => *textura = Some(ctx.load_texture("tela", imagem, filtro)),
+                }
+                self.quadro = Some(chave);
             }
-            self.quadro = Some(chave);
         }
 
         // Os números vêm da sessão antes de ela ser solta: desenhar precisa do `self` inteiro.
@@ -118,13 +137,59 @@ impl Emulador {
                     sessao.define_proporcao(Some(aspecto));
                 }
             }
+            // O quadro largo tem a proporção dele; o resto é o 4:3 do console.
+            let aspecto = quadro_gl.map_or(largura as f32 / altura.max(1) as f32, |q| q.proporcao);
+            let tamanho = coloca(
+                ui.available_size(),
+                aspecto,
+                altura as f32,
+                self.settings.graphics.scaling,
+                self.settings.graphics.keep_aspect,
+            );
+
+            if pela_placa {
+                // O fecho vai para dentro do egui e é chamado no meio da pintura, com o
+                // contexto corrente: nada daqui pode ser emprestado do `self`, e por isso o
+                // pintor mora atrás de um `Arc<Mutex<_>>` e os bytes vão copiados.
+                let pintor = self.pintor.clone();
+                let (lg, at) = (largura as i32, altura as i32);
+                let rect = ui
+                    .centered_and_justified(|ui| {
+                        ui.allocate_exact_size(tamanho, egui::Sense::hover()).0
+                    })
+                    .inner;
+                ui.painter().add(egui::PaintCallback {
+                    rect,
+                    callback: std::sync::Arc::new(egui_glow::CallbackFn::new(
+                        move |info, pintor_do_egui| {
+                            let Ok(mut guarda) = pintor.lock() else {
+                                return;
+                            };
+                            let gl = pintor_do_egui.gl();
+                            if guarda.is_none() {
+                                match gpu::Pintor::novo(gl) {
+                                    Ok(novo) => *guarda = Some(novo),
+                                    Err(erro) => {
+                                        log::error!("pintor de GL: {erro}");
+                                        return;
+                                    }
+                                }
+                            }
+                            let Some(pintor) = guarda.as_mut() else {
+                                return;
+                            };
+                            let vp = info.viewport_in_pixels();
+                            match quadro_gl {
+                                Some(quadro) => pintor.desenha_textura(gl, quadro, &vp, suave),
+                                None => pintor.desenha(gl, &bytes, lg, at, &vp, suave),
+                            }
+                        },
+                    )),
+                });
+                return;
+            }
+
             if let Some(textura) = &self.textura {
-                let tamanho = coloca(
-                    ui.available_size(),
-                    egui::vec2(largura as f32, altura as f32),
-                    self.settings.graphics.scaling,
-                    self.settings.graphics.keep_aspect,
-                );
                 ui.centered_and_justified(|ui| {
                     ui.add(egui::Image::new((textura.id(), tamanho)).fit_to_exact_size(tamanho));
                 });
@@ -197,13 +262,15 @@ impl Emulador {
 ///
 /// É a mesma regra do desktop: pixel inteiro nunca borra e sobra borda; caber respeita a
 /// proporção; preencher só deforma quando o formato foi dispensado.
-fn coloca(area: egui::Vec2, quadro: egui::Vec2, modo: Scaling, manter: bool) -> egui::Vec2 {
-    let aspecto = quadro.x / quadro.y.max(1.0);
+fn coloca(area: egui::Vec2, aspecto: f32, altura: f32, modo: Scaling, manter: bool) -> egui::Vec2 {
+    // O "uma vez" do pixel inteiro é a altura da superfície do console: é a medida que não
+    // muda quando a proporção abre, porque a proporção larga acrescenta colunas, não linhas.
+    let nativo = egui::vec2(altura * aspecto, altura);
     match modo {
         Scaling::Integer => {
-            let fator = (area.x / quadro.x).min(area.y / quadro.y);
+            let fator = (area.x / nativo.x).min(area.y / nativo.y);
             match fator >= 1.0 {
-                true => quadro * fator.floor(),
+                true => nativo * fator.floor(),
                 // Menor que o quadro original não há múltiplo inteiro: cabe, e pronto.
                 false => caber(area, aspecto),
             }

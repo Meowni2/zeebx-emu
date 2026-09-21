@@ -263,6 +263,10 @@ pub struct Emulador {
     /// O contexto de GL da tela, quando ela já subiu. É o que a sessão usa para preencher o 3D
     /// na placa; sem ele, o 3D é da CPU.
     gl: Option<std::sync::Arc<glow::Context>>,
+    /// Quem põe o quadro da placa na tela. Mora atrás de um `Arc<Mutex<_>>` porque quem o usa é
+    /// um fecho que o egui guarda e chama no meio da pintura — ele não pode emprestar do
+    /// `Emulador`. Nasce na primeira pintura, que é a primeira vez que há contexto corrente.
+    pintor: std::sync::Arc<std::sync::Mutex<Option<zeebx::ui::gpu::Pintor>>>,
     /// Os jogos da pasta escolhida, com título e capa, lidos pelo mesmo `library::scan` do
     /// desktop.
     jogos: Vec<Game>,
@@ -333,6 +337,7 @@ impl Emulador {
             minha_pasta,
             app,
             gl: None,
+            pintor: Default::default(),
             arquivo,
             settings,
             catalogo,
