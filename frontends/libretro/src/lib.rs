@@ -70,34 +70,14 @@ const RETROK_LEFT: u32 = 276;
 static ULTIMA_ABERTURA: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// O frontend oferece um contexto de placa para o core desenhar.
+///
+/// **O core não pede, e é assim que ele recusa.** No `libretro`, quem *oferece* é o core: ele
+/// preenche o struct e chama o ambiente. Pedir e ignorar a resposta deixaria o frontend esperando
+/// que nós desenhássemos no framebuffer dele — que ninguém desenhou. Enquanto o encaixe não
+/// existe, o core **não chama** `SET_HW_RENDER`, e o RetroArch segue no caminho de software, que
+/// é o medido e comparado com o da placa. Ver `docs/libretro/LIBRETRO_PLAN.md`, item 5.
+#[allow(dead_code)]
 const ENV_SET_HW_RENDER: u32 = 14;
-
-/// O começo de `retro_hw_render_callback`: o bastante para saber **o que** o frontend oferece.
-///
-/// Os campos vêm na ordem do `libretro.h` e são só os primeiros. Os três ponteiros de função
-/// entram como `usize` de propósito — o alinhamento bate sem precisar escrever a assinatura de
-/// cada um, e nenhum deles é chamado enquanto o core recusa o contexto.
-#[repr(C)]
-struct OfertaDePlaca {
-    context_type: u32,
-    _preenchimento: u32,
-    _context_reset: usize,
-    _get_current_framebuffer: usize,
-    _get_proc_address: usize,
-    depth: u8,
-    stencil: u8,
-    bottom_left_origin: u8,
-    _alinhamento: u8,
-    version_major: u32,
-    version_minor: u32,
-}
-
-/// O tipo de contexto de placa que o frontend ofereceu, registrado pelo core.
-///
-/// **Instrumento de teste, e só dele**: o log do core sai pelo callback variádico do frontend, que
-/// não pode ser escrito em Rust estável. Fora de `cfg(test)` não existe.
-#[cfg(test)]
-static OFERTA_DE_PLACA: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// Pergunta se o frontend aceita receber quadro nulo quando nada mudou.
 const ENV_GET_CAN_DUPE: u32 = 3;
@@ -1274,31 +1254,6 @@ mod testes {
     /// assim que o caminho de recusa do core também fica exercitado.
     unsafe extern "C" fn ambiente(cmd: u32, dados: *mut c_void) -> bool {
         match cmd {
-            // **O frontend oferece um contexto de placa, e nós recusamos — por ora, dizendo o
-            // que ele ofereceu.**
-            //
-            // Recusar é o certo enquanto o core desenha no processador: responder `true` põe o
-            // RetroArch em modo de render em hardware, e ele passa a apresentar o framebuffer que
-            // *nós* deveríamos ter desenhado — que ninguém desenhou. O registro fica para o
-            // encaixe: o rasterizador da placa já foi verificado contra o de software (ver
-            // `docs/libretro/LIBRETRO_PLAN.md`), e o que falta é entregar-lhe este contexto.
-            ENV_SET_HW_RENDER => {
-                if !dados.is_null() {
-                    let oferta = unsafe { &*(dados as *const OfertaDePlaca) };
-                    #[cfg(test)]
-                    OFERTA_DE_PLACA.store(oferta.context_type, std::sync::atomic::Ordering::Relaxed);
-                    log(&format!(
-                        "Zeebx: o frontend oferece render em hardware (contexto {:#x}, versão {}.{},                          profundidade {}, stencil {}); o core ainda desenha no processador",
-                        oferta.context_type,
-                        oferta.version_major,
-                        oferta.version_minor,
-                        oferta.depth,
-                        oferta.stencil
-                    ));
-                    let _ = (oferta.bottom_left_origin, oferta.depth);
-                }
-                false
-            }
             // Aceita RGB565 e recusa o resto: é o formato que o console entrega, e recusar os
             // outros faz o core seguir pelo caminho que ele usa no RetroArch.
             ENV_SET_PIXEL_FORMAT => {
@@ -1356,39 +1311,6 @@ mod testes {
     }
 
     extern "C" fn sem_poll() {}
-
-    /// **O core recusa o contexto de placa, e registra o que lhe ofereceram.**
-    ///
-    /// Recusar é o comportamento certo enquanto o core desenha no processador: aceitar põe o
-    /// frontend em modo de render em hardware, e ele passa a apresentar um framebuffer que ninguém
-    /// desenhou. O teste cobra a recusa **e** o registro — este é o dado que falta para o encaixe,
-    /// já que o rasterizador da placa está verificado contra o de software.
-    #[test]
-    fn recusa_o_contexto_de_placa_e_guarda_o_que_ofereceram() {
-        OFERTA_DE_PLACA.store(0, Ordering::Relaxed);
-        let oferta = OfertaDePlaca {
-            context_type: 1, // RETRO_HW_CONTEXT_OPENGL
-            _preenchimento: 0,
-            _context_reset: 0,
-            _get_current_framebuffer: 0,
-            _get_proc_address: 0,
-            depth: 1,
-            stencil: 1,
-            bottom_left_origin: 0,
-            _alinhamento: 0,
-            version_major: 3,
-            version_minor: 1,
-        };
-        let aceitou = unsafe {
-            ambiente(ENV_SET_HW_RENDER, &oferta as *const OfertaDePlaca as *mut c_void)
-        };
-        assert!(!aceitou, "não se aceita um contexto que não se sabe usar");
-        assert_eq!(
-            OFERTA_DE_PLACA.load(Ordering::Relaxed),
-            1,
-            "o que o frontend ofereceu fica registrado"
-        );
-    }
 
     /// **O core, exercitado pela própria ABI.**
     ///
