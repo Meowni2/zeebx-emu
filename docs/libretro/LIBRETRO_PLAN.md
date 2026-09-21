@@ -833,14 +833,39 @@ existe na ABI é um "carregue este outro conteúdo" do core para o frontend — 
 frontend trocar de jogo a pedido do core. Logo, a volta à Z-Wheel só pode acontecer se o core a
 carregar internamente.
 
+### Ligação feita no core
+
+O motor já tinha as peças; faltava o core usá-las.
+
+| Peça | Como ficou |
+|---|---|
+| Botões | os quatro de face seguem o aparelho: **1 embaixo** (`B` do RetroPad, `X` do PlayStation, `B` do SNES) e a numeração sobe no sentido horário — 2 à esquerda (`Y`), 3 em cima (`X`), 4 à direita (`A`). Os rótulos de mapeamento apontam para o mesmo `id` que o core lê |
+| Vídeo | **1x e proporção nativa, sempre**: `define_resolucao_interna(1)` e `define_proporcao(None)` na carga e na troca de sessão. Quadro fora de 640×480 é avisado uma vez no log, em vez de aparecer como imagem torta sem explicação |
+| Teclado | `SET_KEYBOARD_CALLBACK` recebe as teclas e **enfileira**; `retro_run` entrega os `AVK`. Mapeados: setas, Enter, Backspace/Esc, dígitos, `*` e `#`. O Select do RetroPad vale como `AVK_CLR` |
+| Biblioteca | `library::scan` na pasta do conteúdo, deduplicada por ClassID, alimenta `set_installed_applets` — sem isso a Z-Wheel abre vazia |
+| Troca de sessão | o pedido de lançamento encerra a sessão atual e inicia a nova com o mesmo `StoragePaths`; o frontend nem percebe |
+| Volta à Z-Wheel | ao terminar o jogo, se a sessão era a Z-Wheel ou foi aberta por ela, o core volta para ela em vez de pedir `SHUTDOWN` |
+| Fonte do sistema | `fonte_do_sistema_em(cache, aparelho)` copia o `tectoy.ttf` do pacote para a raiz do aparelho do frontend. Se o acervo só tiver a Z-Wheel extraída, `instala_fonte_do_pacote` a pega de ao lado do módulo |
+
+Medido, headless, com a Z-Wheel como conteúdo:
+
+```text
+Zeebx: 63 jogo(s) instalados a partir de /media/.../zeebo/ROMs
+Zeebx: fonte do sistema em .../system/zeebx/aparelho/shared/fonts/tectoy.ttf
+tela: 640x480, 398 cores distintas
+```
+
+Os 63 são 62 títulos mais a própria Z-Wheel; antes da deduplicação por ClassID eram 124, porque a
+pasta de ROMs tem os `.zip` **e** uma cópia já extraída.
+
 Comportamento atual:
 
 1. o desfecho é relatado **uma vez**, com o relógio virtual (`parou em N ms virtuais`), seguido das
    últimas linhas do log do próprio jogo e do uso de heap;
-2. se o shell pediu um applet, o ClassID vai para o log, com o aviso de que a troca de conteúdo
-   dentro do core ainda não existe;
-3. a tela final fica à mostra **2 segundos** e então o core pede `SHUTDOWN`, e o frontend volta ao
-   menu dele. Sem o pedido, o RetroArch ficaria para sempre no último quadro de um jogo terminado;
+2. se o shell pediu um applet e ele está na pasta de jogos, a sessão troca; se não está, o ClassID
+   vai para o log dizendo que não foi encontrado;
+3. a tela final fica à mostra **2 segundos**; então o core volta à Z-Wheel, se ela estiver
+   disponível, ou pede `SHUTDOWN` para o frontend voltar ao menu dele;
 4. o pedido de descarga é feito **fora** do mutex do estado, como todas as chamadas ao frontend.
 
 O caminho do core-carrega-a-Z-Wheel exige resolver o ClassID para um pacote instalado — o core ainda

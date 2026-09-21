@@ -131,6 +131,46 @@ pub fn fonte_do_sistema_em(cache: &Path, device: &Path) -> Option<PathBuf> {
     Some(destino)
 }
 
+/// Instala o `tectoy.ttf` que vem **dentro do pacote da Z-Wheel** na raiz do aparelho.
+///
+/// É o caminho para quem abre um jogo sem nunca ter aberto a Z-Wheel: a fonte do sistema mora no
+/// pacote dela, e sem fonte o jogo não desenha texto do sistema — o relatório do Double Dragon
+/// listava "texto na tela (ainda sem fonte para desenhar)".
+///
+/// **Não é a causa da tela branca dele.** Medido: com a fonte instalada, o quadro do Double Dragon
+/// no core continua branco e uniforme. O que falta ali é outra coisa, no caminho Dynarmic/`Session`,
+/// porque o mesmo jogo desenha pelo caminho Unicorn da linha de comando.
+///
+/// Extrai **só** o arquivo da fonte: não vale materializar o pacote inteiro por causa de 190 KB.
+pub fn instala_fonte_do_pacote(pacote: &Path, device: &Path) -> Option<PathBuf> {
+    let destino = device.join("shared").join("fonts").join("tectoy.ttf");
+    if destino.is_file() {
+        return Some(destino);
+    }
+    // Duas formas de Z-Wheel aparecem no mesmo acervo: o `.zip` do pacote e uma cópia já extraída,
+    // em que a fonte fica **ao lado** do módulo (`mod/274755/tectoy.ttf`). Tratar só o zip deixava
+    // o acervo extraído sem fonte.
+    let bytes = match pacote.extension().and_then(|e| e.to_str()) {
+        Some("zip") => {
+            let file = std::fs::File::open(pacote).ok()?;
+            let mut archive = zip::ZipArchive::new(file).ok()?;
+            let indice = (0..archive.len()).find(|&i| {
+                archive.by_index(i).is_ok_and(|entrada| {
+                    entrada.name().replace('\\', "/").ends_with("/tectoy.ttf")
+                })
+            })?;
+            let mut entrada = archive.by_index(indice).ok()?;
+            let mut bytes = Vec::new();
+            entrada.read_to_end(&mut bytes).ok()?;
+            bytes
+        }
+        _ => std::fs::read(pacote.parent()?.join("tectoy.ttf")).ok()?,
+    };
+    std::fs::create_dir_all(destino.parent()?).ok()?;
+    std::fs::write(&destino, bytes).ok()?;
+    Some(destino)
+}
+
 /// O caminho interno do `.mod` dentro do zip, se houver um.
 ///
 /// Havendo mais de um, decide nesta ordem:

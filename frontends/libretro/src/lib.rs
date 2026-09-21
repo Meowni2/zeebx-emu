@@ -214,6 +214,8 @@ struct Core {
     ultimo_relogio_ms: u32,
     /// Amostras que o frontend não aceitou e ficam para a chamada seguinte.
     audio_pendente: Vec<i16>,
+    /// Se já avisou que o quadro saiu do tamanho do console.
+    avisou_tamanho: bool,
     /// Estado anterior do Select do RetroPad, para o atalho de `AVK_CLR`.
     select_antes: bool,
     /// Quantos quadros já foram apresentados depois da parada.
@@ -445,8 +447,10 @@ unsafe fn registra_botoes() {
         (ID_DOWN, "Direcional baixo"),
         (ID_LEFT, "Direcional esquerda"),
         (ID_RIGHT, "Direcional direita"),
-        (ID_Y, "Botão 1"),
-        (ID_B, "Botão 2"),
+        // O rótulo vai no `id` que o core realmente lê, senão a tela de mapeamento do frontend
+        // ensina o jogador a apertar o botão errado.
+        (ID_B, "Botão 1"),
+        (ID_Y, "Botão 2"),
         (ID_X, "Botão 3"),
         (ID_A, "Botão 4"),
         (ID_L, "ZL"),
@@ -707,6 +711,11 @@ unsafe fn carrega(
     )?;
     let mut session = session;
     let mixer = session.grava_audio(SAMPLE_RATE);
+    // **1x e proporção nativa, sempre.** O core entrega o quadro do console em 640×480, sem
+    // resolução interna ampliada e sem esticar: quem ajusta shader precisa de uma fonte previsível,
+    // e o upscale é papel do frontend.
+    session.define_resolucao_interna(1);
+    session.define_proporcao(None);
     // A biblioteca ao lado do conteúdo é o que responde ao pedido de lançamento do shell: a
     // Z-Wheel pede uma classe, e aqui se sabe qual arquivo carregar. Sem isto ela abre vazia,
     // porque enumera os applets instalados e não encontra nenhum.
@@ -745,12 +754,37 @@ unsafe fn carrega(
         true => Some(path.clone()),
         false => None,
     };
-    if z_wheel.is_some() {
-        // A fonte do sistema mora dentro do pacote da Z-Wheel; instalá-la agora, quando ela está
-        // em cache, evita o jogo abrir depois sem fonte nenhuma para desenhar texto.
-        match zeebx::loader::archive::fonte_do_sistema_em(&storage.cache, &storage.device) {
-            Some(onde) => log(&format!("Zeebx: fonte do sistema em {}", onde.display())),
-            None => log("Zeebx: sem tectoy.ttf no pacote; texto do sistema ficará sem fonte"),
+    // A fonte do sistema mora dentro do pacote da Z-Wheel. Instalá-la na primeira carga — seja
+    // dela, seja de um jogo — evita a tela sem texto: sem fonte o jogo não desenha aviso nenhum.
+    let fonte = zeebx::loader::archive::fonte_do_sistema_em(&storage.cache, &storage.device)
+        .or_else(|| {
+            // Havendo mais de uma cópia da Z-Wheel no acervo (o `.zip` e uma extraída), o pacote
+            // compactado é o que interessa: a fonte sai dele sem depender do que já foi extraído.
+            let candidatos: Vec<&PathBuf> = jogos
+                .iter()
+                .filter(|(classe, _)| *classe == zeebx::session::Z_WHEEL)
+                .map(|(_, caminho)| caminho)
+                .collect();
+            let pacote = candidatos
+                .iter()
+                .find(|caminho| {
+                    caminho.extension().and_then(|e| e.to_str()) == Some("zip")
+                })
+                .or_else(|| candidatos.first())?;
+            zeebx::loader::archive::instala_fonte_do_pacote(pacote, &storage.device)
+        });
+    match fonte {
+        Some(onde) => log(&format!("Zeebx: fonte do sistema em {}", onde.display())),
+        None => {
+            // Diagnóstico: sem isto, "sem fonte" não diz se o acervo não tem a Z-Wheel, se ela
+            // não traz o arquivo ou se o caminho procurado está errado.
+            let tem_z_wheel = jogos
+                .iter()
+                .any(|(classe, _)| *classe == zeebx::session::Z_WHEEL);
+            log(&format!(
+                "Zeebx: sem tectoy.ttf no acervo ({} jogos, Z-Wheel no acervo: {tem_z_wheel}); texto do sistema ficará sem fonte",
+                jogos.len()
+            ));
         }
     }
     // O cache guarda a extração de **todo** jogo já aberto; sem poda, um acervo inteiro acaba
@@ -782,6 +816,7 @@ unsafe fn carrega(
         ultima_assinatura: None,
         ultimo_relogio_ms: 0,
         audio_pendente: Vec::new(),
+        avisou_tamanho: false,
         select_antes: false,
         quadros_apos_parar: 0,
         parou: false,
@@ -809,6 +844,8 @@ fn troca_para(estado: &mut Core, caminho: &Path, aberto_pela_z_wheel: bool) -> R
             }),
     );
     let mixer = session.grava_audio(SAMPLE_RATE);
+    session.define_resolucao_interna(1);
+    session.define_proporcao(None);
     estado.session = session;
     estado.mixer = mixer;
     estado.path = caminho.to_path_buf();
@@ -918,6 +955,14 @@ pub extern "C" fn retro_run() {
         // Vídeo: o framebuffer do console, no formato negociado.
         let tela = estado.session.screen();
         let (largura, altura) = (tela.width(), tela.height());
+        // O console é 640×480, e é esse o quadro que o shader espera receber. Um tamanho
+        // diferente é avisado uma vez, em vez de aparecer como imagem torta sem explicação.
+        if !estado.avisou_tamanho && (largura != 640 || altura != 480) {
+            estado.avisou_tamanho = true;
+            log(&format!(
+                "Zeebx: quadro {largura}x{altura}, fora dos 640x480 do console"
+            ));
+        }
         let mut quadro = std::mem::take(&mut estado.frame);
         tela.write_rgb565_into(&mut quadro);
         let assinatura = tela.signature();
