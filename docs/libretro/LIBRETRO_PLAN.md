@@ -1380,8 +1380,18 @@ O jogo abre o **save** com modo `OFM_READ` (1) numa primeira execução, quando 
 existe, recebe zero e segue. É o mesmo padrão do Double Dragon, um passo adiante: lá era o
 `OFM_CREATE` que falhava por falta de diretório; aqui o arquivo não existe porque é o primeiro
 save, e a pergunta é o que o console devolve nesse caso — e o que o jogo faz com a resposta.
-A próxima medição é essa: o que um `OpenFile` de leitura devolve no aparelho para um arquivo que
-ainda não foi criado, e onde o jogo usa o resultado.
+**Medido, e o nosso comportamento está certo.** O `AEEFile.h` diz o que o console faz:
+
+```text
+_OFM_READWRITE and _OFM_APPEND will not create a file.
+_OFM_CREATE will only create a file if it did not exist prior to the IFILEMGR_OpenFile call.
+```
+
+Ou seja: o console **também** devolve nulo para um `OFM_READ` num arquivo que não existe. Não é
+defeito nosso — é o jogo seguindo com o ponteiro vazio. A pergunta que sobra é **onde** ele usa
+esse nulo, e para isso o relatório não basta: é o rastreio (`set_tracing`) ou o vigia de escrita, e
+é a medição seguinte — com o PC que a falha aponta (`0x161d8`) e a pilha que o relatório já guarda
+(`0x43494 0x4f300 0x3af54 0x43d5c`).
 
 O `IGLES11ExtPak` responde com o tratamento das outras extensões gráficas — "consegui" ao que não
 muda o traço, identificador `1` para os `Gen*OES` (o alvo aqui é um só) e `GL_FRAMEBUFFER_COMPLETE`
