@@ -1,9 +1,7 @@
 Zuma's Revenge (Brazil) (Es,Pt)
 estado: quebrou no laço de quadros
-motivo: acesso inválido a 0x00000000, em 0x00000000 (de 0x0001a6b8)
+motivo: acesso inválido a 0x00000000, em 0x00000000 (de 0x0001a72c)
 tela: 3231 cor(es), dominante 0x0000
-classes que o jogo pediu e não temos:
-  0x0102fd92
 classes pedidas:
   0x01001001  (1x)
   0x01001003  (6x)
@@ -122,4 +120,5 @@ acessos inválidos que o jogo seguiu por cima:
   acesso inválido a 0x00000000 em pc 0x00000000
 APIs atendidas por hipótese:
   a música MIDI é sintetizada aqui, com timbre aproximado — o banco de instrumentos do console está no firmware que ainda não lemos
+  um decodificador recebeu dados que não são um PNG
   uma superfície do jogo não expõe IDIB; o desenho nela ainda se perde

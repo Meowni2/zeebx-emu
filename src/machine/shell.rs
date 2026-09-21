@@ -582,7 +582,9 @@ impl<C: CpuBackend> Machine<C> {
             // lugar — e faltando o JPEG na lista, o Zuma's Revenge recebia recusa e seguia com
             // um ponteiro nulo até quebrar.
             AEECLSID_PNG | AEECLSID_BMP | AEECLSID_JPEG | AEECLSID_GIF => Interface::Image,
-            AEECLSID_PNGDECODER | AEECLSID_PNGDECODER_BREW => Interface::ImageDecoder,
+            AEECLSID_PNGDECODER | AEECLSID_PNGDECODER_BREW | AEECLSID_JPEGDECODER_BREW => {
+                Interface::ImageDecoder
+            }
             AEECLSID_THREAD => Interface::Thread,
             AEECLSID_QEGL => Interface::Egl,
             AEECLSID_GLES11EXT => Interface::Gles11Ext,

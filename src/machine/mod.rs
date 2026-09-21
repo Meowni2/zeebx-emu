@@ -441,6 +441,13 @@ const AEECLSID_BMP: u32 = 0x0100_4001;
 /// padrão das duas é `IImageDecoder`.
 const AEECLSID_PNGDECODER: u32 = 0x0102_6e23;
 const AEECLSID_PNGDECODER_BREW: u32 = 0x0103_0766;
+/// `AEECLSID_JPEGDECODER_BREW` (`AEECLSID_JPEGDecoderBREW` na tabela de ClassIDs do toolset).
+///
+/// **É o que faltava para o Zuma's Revenge**: ele pede esta classe, recebia recusa, seguia com o
+/// ponteiro nulo e quebrava — a varredura o pegava em "quebrou no laço de quadros" com o motivo
+/// `acesso inválido a 0x0`. O decodificador que ele quer é o mesmo que já atende PNG, BMP, JPEG e
+/// GIF: o nosso olha a assinatura dos bytes e escolhe o formato sozinho.
+const AEECLSID_JPEGDECODER_BREW: u32 = 0x0102_fd92;
 /// `IPARM_*` de `inc/AEEIImage.h`.
 ///
 /// O `SIZE`, o `OFFSET` e o `ROP` saíram do uso: o Action Hero 3D escreve cada letra do menu
