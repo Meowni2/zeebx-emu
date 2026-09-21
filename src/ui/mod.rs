@@ -2577,43 +2577,12 @@ impl App {
             .collect();
         for pad in pads {
             keys.extend(
-                Self::teclas_do_controle(&Pad::default(), pad)
+                input::teclas_do_controle(&Pad::default(), pad)
                     .into_iter()
                     .filter_map(|(key, down)| down.then_some(key)),
             );
         }
         keys
-    }
-
-    /// As teclas que o controle manda, comparando com o quadro anterior.
-    ///
-    /// No console o direcional chega aos aplicativos como as quatro setas do BREW, e é com elas
-    /// que a Z-Wheel navega: esquerda e direita giram a roda e trocam a aba da lista, cima e baixo
-    /// passam as páginas. O analógico não entra aqui: a Z-Wheel lê a posição e faz a tradução
-    /// dela sozinha (`0x44914` no módulo).
-    pub(crate) fn teclas_do_controle(antes: &Pad, agora: &Pad) -> Vec<(u32, bool)> {
-        // Os dois botões de face seguem a ajuda da própria Z-Wheel (`assets/zeebo/pt/controls.html`):
-        // "Sim (Botão 1)" escolhe e "Voltar (Botão 2)" cancela. Voltar é o `AVK_CLR`, medido:
-        // na tela de ajuda ele volta ao menu, e o `0xe065` não faz nada.
-        const DE_BOTAO: [(&str, u32); 6] = [
-            ("up", input::avk::UP),
-            ("down", input::avk::DOWN),
-            ("left", input::avk::LEFT),
-            ("right", input::avk::RIGHT),
-            ("b1", input::avk::CONFIRMA),
-            ("b2", input::avk::CLR),
-        ];
-
-        let mut teclas = Vec::new();
-        for (nome, avk) in DE_BOTAO {
-            let Some(indice) = Pad::button_by_name(nome) else {
-                continue;
-            };
-            if agora.is_down(indice) != antes.is_down(indice) {
-                teclas.push((avk, agora.is_down(indice)));
-            }
-        }
-        teclas
     }
 
     /// O código virtual do BREW de uma tecla da janela, quando ela tem um.

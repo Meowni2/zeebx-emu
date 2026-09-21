@@ -5,36 +5,24 @@
 // ela, o build de desenvolvimento continua com console.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-mod audio;
-mod brew;
-mod config;
-mod cpu;
-mod input;
-mod loader;
-mod library;
-mod machine;
-mod ponte;
-mod rede;
-mod session;
-#[allow(dead_code)]
-mod storage;
-mod ui;
-mod video;
+// O binário consome o motor como biblioteca: nada aqui redeclara módulos, e `desktop` decide
+// quais deles entram na compilação.
+use zeebx::{audio, cpu, input, library, loader, machine, session, ui};
 
 /// Varredura de ROMs por teste — ver [`varredura`]. Só existe em compilação de teste.
 #[cfg(test)]
-mod varredura;
+use zeebx::varredura;
 
 use std::process::ExitCode;
 
-use crate::brew::aee;
-use crate::cpu::{CpuBackend, dynarmic::DynarmicCpu, unicorn::UnicornCpu};
-use crate::input::bindings;
-use crate::loader::archive;
-use crate::loader::modfile::{ModImage, Variant};
-use crate::machine::{AppletResult, Machine, Outcome};
-use crate::ui::window;
-use crate::video::icon;
+use zeebx::brew::aee;
+use zeebx::cpu::{CpuBackend, dynarmic::DynarmicCpu, unicorn::UnicornCpu};
+use zeebx::input::bindings;
+use zeebx::loader::archive;
+use zeebx::loader::modfile::{ModImage, Variant};
+use zeebx::machine::{AppletResult, Machine, Outcome};
+use zeebx::ui::window;
+use zeebx::video::icon;
 
 /// Teto de instruções por fatia entre duas chamadas de API — evita que um laço infinito no
 /// guest trave o emulador. Precisa ser generoso: a inicialização do Bejeweled Twist passa
@@ -211,7 +199,7 @@ fn main() -> ExitCode {
                                 return ExitCode::FAILURE;
                             }
                         },
-                        None => PORTAS_PADRAO,
+                        None => zeebx::PORTAS_PADRAO,
                     },
                 },
             ))
@@ -237,14 +225,17 @@ fn main() -> ExitCode {
             let sensores = input::sensores::Sensores::inicia();
             std::thread::sleep(std::time::Duration::from_millis(1500));
             for (i, nome) in nomes.iter().enumerate() {
-                let sensor = pads
-                    .identidade(Some(nome), i)
-                    .and_then(|(so, vendor, product, ordem)| {
-                        sensores.do_controle(&so, vendor, product, ordem)
-                    });
+                let sensor =
+                    pads.identidade(Some(nome), i)
+                        .and_then(|(so, vendor, product, ordem)| {
+                            sensores.do_controle(&so, vendor, product, ordem)
+                        });
                 match sensor {
                     Some(s) if s.sem_permissao => {
-                        println!("  sensor de {nome}: {} SEM PERMISSÃO — a regra do udev:", s.nome);
+                        println!(
+                            "  sensor de {nome}: {} SEM PERMISSÃO — a regra do udev:",
+                            s.nome
+                        );
                         println!("    {}", input::sensores::REGRA_DO_UDEV);
                     }
                     Some(s) if s.com_leitura => println!(
@@ -366,7 +357,15 @@ fn main() -> ExitCode {
                 .map(instalados)
                 .unwrap_or_default();
             let superficies = args.iter().find_map(|a| a.strip_prefix("--dump-surfaces="));
-            report(bench_dynarmic(&args[1], seconds, dump, &keys, &teclas, instalados, superficies))
+            report(bench_dynarmic(
+                &args[1],
+                seconds,
+                dump,
+                &keys,
+                &teclas,
+                instalados,
+                superficies,
+            ))
         }
         // Mostra o Wii Remote ao vivo: botões e aceleração, para conferir a leitura sem janela.
         Some("wiimote") => {
@@ -389,7 +388,11 @@ fn main() -> ExitCode {
                         let [x, y, z] = e.aceleracao;
                         println!(
                             "x {x:+.2} y {y:+.2} z {z:+.2} g  acelerômetro: {}  botões: {apertados:?}",
-                            if e.com_acelerometro { "sim" } else { "ainda não" }
+                            if e.com_acelerometro {
+                                "sim"
+                            } else {
+                                "ainda não"
+                            }
                         );
                     }
                     None => println!("nenhum Wii Remote"),
@@ -419,14 +422,22 @@ fn main() -> ExitCode {
             let fotos: Vec<u32> = args
                 .iter()
                 .find_map(|a| a.strip_prefix("--fotos="))
-                .map(|lista| lista.split(',').filter_map(|t| t.trim().parse().ok()).collect())
+                .map(|lista| {
+                    lista
+                        .split(',')
+                        .filter_map(|t| t.trim().parse().ok())
+                        .collect()
+                })
                 .unwrap_or_default();
             let placa = args.iter().any(|a| a == "--placa");
             let serial = args.iter().find_map(|a| a.strip_prefix("--serial="));
             // Sem nada, valem as preferências da Z-Wheel gravadas; `--fabrica` usa a cfg do pacote
             // como veio, e os outros dois trocam uma opção só.
             let mut z_wheel = match args.iter().any(|a| a == "--fabrica") {
-                true => ui::settings::ZWheel { fim_de_vida: true, transicoes_sempre: false },
+                true => ui::settings::ZWheel {
+                    fim_de_vida: true,
+                    transicoes_sempre: false,
+                },
                 false => ui::settings::Settings::load().z_wheel,
             };
             if args.iter().any(|a| a == "--sem-fim-de-vida") {
@@ -450,7 +461,9 @@ fn main() -> ExitCode {
             // `--perfil` mede tudo; `--perfil=MS` só a partir desse instante virtual.
             let perfil = args.iter().find_map(|a| match a.as_str() {
                 "--perfil" => Some(0),
-                outro => outro.strip_prefix("--perfil=").and_then(|n| n.parse::<u32>().ok()),
+                outro => outro
+                    .strip_prefix("--perfil=")
+                    .and_then(|n| n.parse::<u32>().ok()),
             });
             // `--boomerang` põe um Boomerang na porta um; `--movimento=ms:x:y:z,...` diz a
             // aceleração dele a partir de cada instante, em g.
@@ -490,7 +503,10 @@ fn main() -> ExitCode {
                 },
                 None => None,
             };
-            report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial, z_wheel, escala, melhorias, perfil, boomerang, portas))
+            report(sessao_sem_janela(
+                &args[1], seconds, dump, &keys, &fotos, placa, serial, z_wheel, escala, melhorias,
+                perfil, boomerang, portas,
+            ))
         }
         // Sem argumento nenhum, o que se quer é o emulador, não a ajuda.
         None => launch(),
@@ -507,8 +523,12 @@ fn main() -> ExitCode {
                              [--sem-rede] [--servidor=MAQUINA[:PORTA]] [--ponte]
                              [--portas=controle|teclado|nenhum,...] [--teclas=ms:nome,...]"
             );
-            eprintln!("     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N] [--msaa=N] [--aniso=N] [--perfil[=MS]] [--boomerang] [--movimento=ms:x:y:z,...] [--wiimote] [--proporcao=16:9] [--portas=controle,controle]  (a sessão da janela, sem janela)");
-            eprintln!("     zeebx bench <arquivo.mod|zip> [--seconds=N] [--keys=ms:tecla,...] [--dump=QUADRO.bmp] [--teclas=ms:nome,...] [--instalados=0xCLSID[:id],...] [--dump-surfaces=DIR]  (Dynarmic, sem janela)");
+            eprintln!(
+                "     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N] [--msaa=N] [--aniso=N] [--perfil[=MS]] [--boomerang] [--movimento=ms:x:y:z,...] [--wiimote] [--proporcao=16:9] [--portas=controle,controle]  (a sessão da janela, sem janela)"
+            );
+            eprintln!(
+                "     zeebx bench <arquivo.mod|zip> [--seconds=N] [--keys=ms:tecla,...] [--dump=QUADRO.bmp] [--teclas=ms:nome,...] [--instalados=0xCLSID[:id],...] [--dump-surfaces=DIR]  (Dynarmic, sem janela)"
+            );
             ExitCode::FAILURE
         }
     }
@@ -674,10 +694,6 @@ fn teclado(lista: &str) -> Vec<(u32, u32)> {
         .collect()
 }
 
-/// O padrão sem janela: um controle na primeira porta, a segunda livre. É o que sempre houve.
-const PORTAS_PADRAO: [Option<bindings::Aparelho>; input::PORTAS] =
-    [Some(bindings::Aparelho::Controle), None];
-
 /// Lê `controle,teclado` e afins. `None` quando algum nome não existe.
 ///
 /// Existe para que as duas portas sejam **testáveis sem janela**, que é como tudo aqui se
@@ -739,7 +755,7 @@ fn run(path: &str, options: Options) -> Result<(), Box<dyn std::error::Error>> {
         _ => path,
     };
     let image = ModImage::parse(std::fs::read(path)?)?;
-    let extensoes = crate::session::extensoes_de(std::path::Path::new(path));
+    let extensoes = zeebx::session::extensoes_de(std::path::Path::new(path));
     for extensao in &extensoes {
         println!(
             "extensão:  fornece {}",
@@ -956,7 +972,10 @@ fn run(path: &str, options: Options) -> Result<(), Box<dyn std::error::Error>> {
     }
     let midia = machine.media_log();
     if !midia.is_empty() {
-        println!("som:       {} linha(s) do que o jogo fez com a mídia", midia.len());
+        println!(
+            "som:       {} linha(s) do que o jogo fez com a mídia",
+            midia.len()
+        );
         for (ms, objeto, chamada, vezes) in &midia {
             let repete = match vezes {
                 1 => String::new(),
@@ -1184,9 +1203,12 @@ fn bench_dynarmic(
         _ => std::path::Path::new(path),
     };
     let image = ModImage::parse(std::fs::read(path)?)?;
-    let extensoes = crate::session::extensoes_de(path);
+    let extensoes = zeebx::session::extensoes_de(path);
     let module = loader::load_with(&image, &extensoes)?;
-    let root = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+    let root = path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default();
     let mut machine = Machine::new(DynarmicCpu::new()?, module, root);
     machine.set_installed_applets(instalados);
     let boot = machine.run(INSTRUCTION_BUDGET)?;
@@ -1220,14 +1242,20 @@ fn bench_dynarmic(
     let mut fotos: std::collections::VecDeque<u32> = std::collections::VecDeque::new();
     let mut numero_da_foto = 0;
     while machine.clock_ms() < until && !machine.is_idle() {
-        while pendentes.front().is_some_and(|&(quando, _)| machine.clock_ms() >= quando) {
+        while pendentes
+            .front()
+            .is_some_and(|&(quando, _)| machine.clock_ms() >= quando)
+        {
             let (quando, avk) = pendentes.pop_front().unwrap_or_default();
             machine.set_key(avk, true);
             machine.set_key(avk, false);
             fotos.push_back(quando.saturating_add(500));
         }
         if let Some(path) = dump {
-            while fotos.front().is_some_and(|&quando| machine.clock_ms() >= quando) {
+            while fotos
+                .front()
+                .is_some_and(|&quando| machine.clock_ms() >= quando)
+            {
                 fotos.pop_front();
                 numero_da_foto += 1;
                 let nome = match path.strip_suffix(".bmp") {
@@ -1243,9 +1271,10 @@ fn bench_dynarmic(
         machine.deliver_signals(INSTRUCTION_BUDGET)?;
         machine.deliver_callbacks(INSTRUCTION_BUDGET)?;
         turns += 1;
-        if let Some(bad) = outcomes.iter().find(|outcome| {
-            !matches!(outcome, Outcome::Returned { .. } | Outcome::Budget)
-        }) {
+        if let Some(bad) = outcomes
+            .iter()
+            .find(|outcome| !matches!(outcome, Outcome::Returned { .. } | Outcome::Budget))
+        {
             return Err(format!("laço parou em {bad:?}").into());
         }
     }
@@ -1254,9 +1283,20 @@ fn bench_dynarmic(
     let instructions = machine.instructions().saturating_sub(base_instructions);
     let ratio = virtual_ms as f64 / elapsed.as_secs_f64().max(f64::MIN_POSITIVE) / 10.0;
     println!("backend:   Dynarmic ARMv6K");
-    println!("tempo:     {virtual_ms} ms virtuais em {:.3} s reais ({ratio:.1}% da velocidade)", elapsed.as_secs_f64());
-    println!("cpu:       {} milhões de instruções ({:.1} MIPS)", instructions / 1_000_000, instructions as f64 / elapsed.as_secs_f64().max(f64::MIN_POSITIVE) / 1_000_000.0);
-    println!("laço:      {turns} voltas, {} timer(s), {} quadro(s) GL", machine.armed_timers(), machine.gl_swaps());
+    println!(
+        "tempo:     {virtual_ms} ms virtuais em {:.3} s reais ({ratio:.1}% da velocidade)",
+        elapsed.as_secs_f64()
+    );
+    println!(
+        "cpu:       {} milhões de instruções ({:.1} MIPS)",
+        instructions / 1_000_000,
+        instructions as f64 / elapsed.as_secs_f64().max(f64::MIN_POSITIVE) / 1_000_000.0
+    );
+    println!(
+        "laço:      {turns} voltas, {} timer(s), {} quadro(s) GL",
+        machine.armed_timers(),
+        machine.gl_swaps()
+    );
     let media: Vec<_> = machine
         .call_log()
         .into_iter()
@@ -1319,7 +1359,7 @@ fn sessao_sem_janela(
     let portas = match (portas_pedidas, &boomerang) {
         (Some(portas), _) => portas,
         (None, Some(_)) => [Some(bindings::Aparelho::Boomerang), None],
-        (None, None) => PORTAS_PADRAO,
+        (None, None) => zeebx::PORTAS_PADRAO,
     };
     let mut session = session::Session::start_with(
         std::path::Path::new(path),
@@ -1386,7 +1426,7 @@ fn sessao_sem_janela(
                 .map_or([0.0, 0.0, 1.0], |(_, g)| *g);
             session.set_port_motion(0, agora);
         }
-        for (avk, apertada) in ui::App::teclas_do_controle(&antes, &pad) {
+        for (avk, apertada) in input::teclas_do_controle(&antes, &pad) {
             session.set_key(avk, apertada);
         }
         // As telas intermediárias passam como na janela, sem avançar o relógio; não viram foto.
@@ -1448,20 +1488,23 @@ fn sessao_sem_janela(
             println!(
                 "lançar:    {classe:#010x} aos {} ms → {}",
                 session.clock_ms(),
-                jogo.map_or("nenhum jogo da biblioteca com essa classe".to_string(), |g| g
-                    .path
-                    .display()
-                    .to_string())
+                jogo.map_or(
+                    "nenhum jogo da biblioteca com essa classe".to_string(),
+                    |g| g.path.display().to_string()
+                )
             );
             break;
         }
         if parou && session.classe() == session::Z_WHEEL && session.saiu_sozinho() {
             // O mesmo que a janela faz: ver `session::Z_WHEEL`.
-            println!("reabrir:   a Z-Wheel saiu aos {} ms; reabrindo", session.clock_ms());
+            println!(
+                "reabrir:   a Z-Wheel saiu aos {} ms; reabrindo",
+                session.clock_ms()
+            );
             let deslocamento = session.clock_ms();
             session = session::Session::start_with(
                 std::path::Path::new(path),
-                PORTAS_PADRAO,
+                zeebx::PORTAS_PADRAO,
                 serial,
                 placa,
                 None,
@@ -1471,7 +1514,7 @@ fn sessao_sem_janela(
             session.define_resolucao_interna(escala);
             session.define_proporcao(proporcao_da_linha());
             session.define_melhorias(melhorias.0, melhorias.1);
-                    session.set_installed_applets(
+            session.set_installed_applets(
                 games
                     .iter()
                     .filter_map(|game| Some((game.clsid?, library::id_do_modulo(&game.path)?))),
@@ -1485,7 +1528,11 @@ fn sessao_sem_janela(
             println!("parou:     {:?}", session.stopped_reason());
             let (regs, pilha, lr) = session.falha();
             if let Some(lr) = lr {
-                let regs: Vec<String> = regs.iter().enumerate().map(|(i, v)| format!("r{i}={v:#x}")).collect();
+                let regs: Vec<String> = regs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| format!("r{i}={v:#x}"))
+                    .collect();
                 println!("           {} lr={lr:#x}", regs.join(" "));
                 let pilha: Vec<String> = pilha.iter().map(|v| format!("{v:#x}")).collect();
                 println!("           pilha: {}", pilha.join(" "));

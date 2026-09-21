@@ -439,17 +439,27 @@ impl<C: CpuBackend> Machine<C> {
         let Some(dir) = self.vfs.resolve_dir(guest_dir) else {
             return Default::default();
         };
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            return Default::default();
-        };
-        // Ordenar deixa a listagem repetível: `read_dir` não promete ordem, e um jogo que
-        // monta um menu com ela mudaria de ordem entre duas aberturas.
-        let mut names: Vec<String> = entries
-            .flatten()
-            .filter(|entry| entry.path().is_dir() == want_dirs)
-            .filter_map(|entry| entry.file_name().into_string().ok())
-            .collect();
+        // Conteúdo e overlay somam: o jogo precisa ver o que veio no pacote **e** o que ele
+        // mesmo gravou. `read_dir` não promete ordem, e um jogo que monta menu com ela mudaria
+        // de ordem entre duas aberturas; por isso a lista sai ordenada.
+        let mut dirs = vec![dir];
+        if let Some(overlay) = self.vfs.overlay_dir(guest_dir) {
+            dirs.push(overlay);
+        }
+        let mut names: Vec<String> = Vec::new();
+        for dir in dirs {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            names.extend(
+                entries
+                    .flatten()
+                    .filter(|entry| entry.path().is_dir() == want_dirs)
+                    .filter_map(|entry| entry.file_name().into_string().ok()),
+            );
+        }
         names.sort();
+        names.dedup();
         let prefix = guest_dir.trim_end_matches('/');
         names
             .into_iter()

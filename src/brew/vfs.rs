@@ -212,6 +212,18 @@ impl Vfs {
         }
     }
 
+    /// O diretório equivalente no overlay, quando ele existe.
+    ///
+    /// Serve à listagem: o jogo precisa enxergar os arquivos que ele mesmo gravou, e não só os
+    /// que vieram no pacote.
+    pub fn overlay_dir(&self, guest_path: &str) -> Option<PathBuf> {
+        let save = self.save.as_deref()?;
+        let base = self.resolve_inner(guest_path, true)?;
+        let relativo = base.strip_prefix(&self.root).ok()?;
+        let caminho = match_case(save.join(relativo));
+        caminho.is_dir().then_some(caminho)
+    }
+
     /// Comportamento histórico, sem overlay: grava dentro do próprio conteúdo.
     fn legacy_target(&self, guest_path: &str, intent: OpenIntent) -> Option<OpenTarget> {
         let path = match intent {
