@@ -1274,6 +1274,11 @@ Peggle            recusado (audio/mpeg, 7 sons, 49 44 33 03 00 00 00 00 ...)   �
 A lição vale para a próxima: uma recusa que não diz **o que** chegou custa uma investigação inteira
 dentro do jogo. Dizendo o formato e os bytes, foram duas linhas de diagnóstico e vinte de correção.
 
+No corpus inteiro, depois das duas correções: **zero sons recusados** (eram dois) e dezesseis jogos
+com som medido nos seis segundos da varredura. O Turma da Mônica entra nessa conta só depois de
+trinta segundos virtuais — a varredura curta o deixaria de fora, e por isso o número dele foi
+medido à parte.
+
 ### Onde o tempo vai, medido
 
 Com `ZEEBX_ROM_PERFIL=1`, a varredura grava o custo real por método de API. Nos dois jogos mais
