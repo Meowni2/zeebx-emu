@@ -1436,8 +1436,24 @@ Lido, ele mostra o que o rastreio prometia: registros **regulares de 28 bytes**,
 ```
 
 Os bytes não têm cara de ponteiro de função (nenhum zero, nenhum endereço de módulo), então o nulo
-que o jogo chama **não sai daqui direto**: sai da lista que ele monta copiando estes registros, ou
-de um campo que não está nesta faixa. É o próximo passo — e agora há com que olhar.
+que o jogo chama **não sai daqui direto**.
+
+**Sai de um campo a `+0x274` de um objeto, e isso está decodificado.** O despejo de memória também
+serve para ler **código**: com `ZEEBX_ROM_DESPEJO=0x161b0:64` sai a instrução que quebra, e as
+quatro palavras à volta dela são legíveis à mão:
+
+```text
+0x161c8   LDR r0, [r6, #8]        ; o objeto
+0x161cc   LDR r1, [r0, #0x274]    ; o ponteiro de função no campo +0x274  ← veio nulo
+0x161d0   MOV r0, sp
+0x161d4   BLX r1                  ; ← a chamada que quebra
+0x161d8   (retorno)
+```
+
+A cadeia é curta e aponta para um lugar só: **o objeto em `[r6+8]` tem o campo `+0x274` nulo**, e o
+que preenche esse campo é a pergunta seguinte — provavelmente o retorno de uma chamada de API que
+respondemos com zero. É aí que a próxima medição começa, com o filtro de família do rastreio (que
+funciona) para ver a última chamada da interface dona desse objeto.
 
 E o que ele mostrou foi o padrão exato antes da queda: uma **tabela sendo construída**, entradas de
 28 bytes (`malloc 0x1c` seguido de `memmove 0x1c`), num laço, com as origens a 28 bytes de
