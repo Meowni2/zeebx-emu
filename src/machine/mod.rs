@@ -209,6 +209,16 @@ fn component_size(kind: u32) -> u32 {
 }
 
 /// Tamanho em bytes de um texel, conforme o par formato/tipo do `TexImage2D`.
+/// Arredonda `valor` para o próximo múltiplo de `alinhamento`.
+///
+/// É a conta que o `glPixelStorei` manda fazer: cada linha de uma textura começa num múltiplo do
+/// alinhamento, e o que sobra entre o fim de uma linha e o começo da seguinte é enchimento. O GL
+/// só admite 1, 2, 4 e 8, e o padrão é 4.
+pub(super) fn arredonda_para(valor: u32, alinhamento: u32) -> u32 {
+    let passo = alinhamento.max(1);
+    valor.div_ceil(passo) * passo
+}
+
 fn bytes_per_texel(format: u32, kind: u32) -> u32 {
     match kind {
         gles::GL_UNSIGNED_BYTE => match format {
@@ -2259,6 +2269,12 @@ pub struct Machine<C: CpuBackend> {
     falhas_engolidas: BTreeSet<String>,
     /// Chamadas de GL atendidas com sucesso sem fazer nada.
     ignored_gl: BTreeSet<&'static str>,
+    /// `glPixelStorei(GL_UNPACK_ALIGNMENT, n)`: com quantos bytes cada linha de textura começa
+    /// alinhada na memória do guest. O padrão do OpenGL é 4.
+    ///
+    /// Mora no `Machine`, e não no estado do rasterizador, porque é propriedade **da memória do
+    /// jogo** — quem lê os texels é `machine/gl.rs`, antes de entregá-los a qualquer rasterizador.
+    unpack_alignment: u32,
     /// O que o jogo entregou ao `ICipher1`, em claro, antes de ser cifrado.
     plaintexts: std::collections::VecDeque<Vec<u8>>,
     /// Se a ponte do módulo pode entregar a resposta ao jogo. Ver [`crate::ponte`].
@@ -2796,6 +2812,7 @@ impl<C: CpuBackend> Machine<C> {
             missing_apis: BTreeSet::new(),
             falhas_engolidas: BTreeSet::new(),
             ignored_gl: BTreeSet::new(),
+            unpack_alignment: 4,
             web_response: Vec::new(),
             streams: HashMap::new(),
             sounds: HashMap::new(),

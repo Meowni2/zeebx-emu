@@ -1269,6 +1269,21 @@ texturas comprimidas, blend), não a velocidade deste acervo.
 O `memset` do Rolima custava 731 ms porque o `helpers` **alocava um `Vec` do tamanho pedido em cada
 chamada**. Com limpeza em blocos de um buffer de pilha: 520 ms, e o jogo de 247% para 267%.
 | Render em hardware (`SET_HW_RENDER`) | **falta** | o core entrega RGB565 do rasterizador software; o 3D roda por ele |
+
+### A lacuna de GL que o levantamento achou
+
+O relatório da varredura tem uma seção **"GL atendido sem fazer nada"**: chamada que o rasterizador
+aceita com sucesso e ignora. Nas 62 ROMs ela apontava **uma só** chamada, em seis jogos — o
+`glPixelStorei`. Não é ruído: o GL alinha cada linha de textura num múltiplo do alinhamento pedido
+(4 por padrão), e o que sobra é enchimento. Ignorando a chamada, uma textura cuja largura **em
+bytes** não é múltipla de quatro chega com as linhas deslocadas — a imagem sai embaralhada em
+diagonal, sem uma linha de aviso.
+
+Implementado: o alinhamento vive no `Machine` (é propriedade da memória do guest, não do
+rasterizador), a leitura dos texels compacta as linhas num único acesso, e `arredonda_para` tem
+teste. Conferido depois: Double Dragon e Galaxy on Fire **deixam de aparecer na seção**, e continuam
+rodando. É o tipo de defeito que o render em hardware resolveria de graça — e que aqui custou vinte
+linhas, sem trocar de rasterizador.
 | Save states | **falta** | o core **declara** que não tem (`size` 0, `serialize` falso), que é o critério de aceite |
 | `.7z` | feito | `/tmp/dd.7z` → `estado: roda`; limites iguais aos do zip |
 | Ciclo da Z-Wheel no RetroArch | **parcial** | o motor é medido pela varredura; o laço do core que troca de sessão não tem teste automático |
