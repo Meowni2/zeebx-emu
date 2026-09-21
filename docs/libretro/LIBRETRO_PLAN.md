@@ -1755,6 +1755,23 @@ frontend.
 
 **O que falta, em ordem:**
 
+### O struct da placa, verificado por deslocamento
+
+Antes de pedir o teste do Rafael, conferi a suposição que faria o render em hardware falhar **em
+silêncio**: o `retro_hw_render_callback` que o core preenche. Se o meu struct tivesse um campo a
+mais ou a menos, `get_current_framebuffer` e `get_proc_address` seriam lidos no lugar errado — e o
+sintoma seria "não funciona", sem nada no log.
+
+O `libretro.h` do repositório resolveu a dúvida: nesta revisão o `context_destroy` vem **depois** do
+`cache_context`, e não em terceiro lugar como em outras. Os deslocamentos do meu struct batem com
+ele, e agora há teste: `os_deslocamentos_do_struct_da_placa_batem_com_o_libretro_h` cobra 8, 16, 24,
+32, 36, 40, 44 e 48 para os campos que usamos.
+
+A conferência também achou uma lacuna real: eu **não** preenchia o `context_destroy`. Agora ele
+existe e tem efeito — quando o frontend troca o contexto de vídeo (trocar de driver, por exemplo),
+o core descarta o `glow::Context`, **recria a sessão em software** e avisa na tela. Sem isso, a
+sessão continuaria no rasterizador de placa chamando funções de GL que já não existem.
+
 0. ~~Separar o backend de placa da criação de contexto.~~ **Feito**: o motor tem duas features —
    `gl` (o desenho, que **só** precisa do `glow`, sem nada de host) e `gpu` (abrir contexto nosso,
    que traz o `glutin` e linka EGL/GLX). Medido: `cargo tree --features gl` tem **0** glutin e o
