@@ -1425,6 +1425,51 @@ fn decodifica_imagem(bytes: &[u8]) -> Option<DecodedImage> {
 }
 
 /// Decodifica um PNG para RGB565, devolvendo `None` se não for um PNG que saibamos ler.
+/// Decodifica uma imagem **pela assinatura**, e não por um formato só.
+///
+/// O caminho do PNG continua sendo o primeiro, porque ele tem tratamento próprio: paleta com
+/// `tRNS`, profundidades menores que oito bits e alfa de meio-tom, que o `decode_png` abaixo
+/// resolve com as transformações do `png` e o resto do motor não sabe repetir.
+///
+/// **O que faltava era o resto.** O Zuma's Revenge pede o decodificador de **JPEG**, alimenta um
+/// JPEG de dezesseis kilobytes e recebia `EFAILED` do `GetBitmap` — o motor só tentava PNG, e a
+/// hipótese registrada era "um decodificador recebeu dados que não são um PNG". O despachante por
+/// assinatura já existia em [`crate::video::icon::decode`], usado pelos ícones dos módulos; aqui
+/// ele passa a servir também ao decodificador do guest.
+fn decode_imagem(bytes: &[u8]) -> Option<DecodedImage> {
+    if let Some(imagem) = decode_png(bytes) {
+        return Some(imagem);
+    }
+    let imagem = crate::video::icon::decode(bytes).ok()?;
+    let count = imagem.pixels();
+    let mut pixels = Vec::with_capacity(count);
+    let mut opaque = Vec::with_capacity(count);
+    let mut alfa = Vec::with_capacity(count);
+    for pixel in imagem.rgba.chunks_exact(4) {
+        pixels.push(
+            Rgb {
+                r: pixel[0],
+                g: pixel[1],
+                b: pixel[2],
+            }
+            .to_rgb565(),
+        );
+        let a = pixel[3];
+        opaque.push(a == 255);
+        alfa.push(a);
+    }
+    Some(DecodedImage {
+        width: imagem.width as u32,
+        height: imagem.height as u32,
+        pixels,
+        opaque,
+        alfa,
+        // Sem `IPARM_CXFRAME`: quem divide a imagem em tiras é o PNG do decodificador, e o
+        // caminho dos outros formatos não recebe esse parâmetro.
+        frame_width: 0,
+    })
+}
+
 fn decode_png(bytes: &[u8]) -> Option<DecodedImage> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     // Os PNGs do Bejeweled Twist usam paleta com `tRNS`. Pedir a expansão aqui evita ter de

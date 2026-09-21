@@ -38,7 +38,7 @@ O que ficou do susto, no `src/varredura.rs`:
 | Jogo | Estado | Causa medida |
 |---|---|---|
 | Bejeweled Twist | quebrou no laço de quadros | acesso inválido a `0x0`, chamado de `0x32c20` |
-| Zuma's Revenge | quebrou no laço de quadros | pede `0x0102fd92` (`JPEGDecoderBREW`), que não temos; recebe nulo e chama o método |
+| ~~Zuma's Revenge~~ | **roda** | era `0x0102fd92` (`JPEGDecoderBREW`) recusada e o decodificador só tentando PNG; corrigidos, ele roda com 18.268 cores na tela |
 | Kingdom Hearts V CAST | não cria o applet | nenhum `.mif` ao lado do módulo diz qual applet criar |
 | Zeebo Channels (Opera Mini) | não cria o applet | `CreateInstance` recusou com o erro 1 |
 | Zeebo App, Zeebo Clube | terminou sozinho | são aplicativos do sistema: terminam sem timer armado |
