@@ -503,14 +503,23 @@ impl Relatorio {
             // apresentando quadro, executando instrução e respondendo API: só o número de cores
             // denuncia. A dominante diz *o que* ficou no lugar — preto é tela apagada, e um
             // `0xFFFF` no lugar dela é outra história.
+            // Uma tela quase uniforme tem duas leituras, e o relatório diz as duas: ou o jogo não
+            // desenha, ou **ainda está carregando**. Foi o que aconteceu com os dois títulos da
+            // linha F.C.: com seis segundos virtuais apareciam com uma e seis cores, e com vinte
+            // mostravam 2.410 e 4.133. Sem esta linha, quem lê o relatório acusa o jogo.
+            let aviso = match d.cores {
+                0..=2 => " (tela quase uniforme: pode ser carregamento — vale aumentar ZEEBX_ROM_MS)",
+                _ => "",
+            };
             texto.push_str(&format!(
-                "tela: {} cor(es), dominante {:#06x}{}\n",
+                "tela: {} cor(es), dominante {:#06x}{}{}\n",
                 d.cores,
                 d.cor_dominante,
                 match d.quadro_na_placa {
                     true => " (o quadro está na placa, não na tela de 2D)",
                     false => "",
-                }
+                },
+                aviso
             ));
         }
         for (nome, linhas) in self.pendencias.secoes() {
