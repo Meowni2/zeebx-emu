@@ -34,18 +34,9 @@ struct HookState {
     last_fault_pc: Option<u32>,
 }
 
-/// Registro de uma escrita observada por um watchpoint.
-#[derive(Debug, Clone, Copy)]
-pub struct Write {
-    pub addr: u32,
-    pub value: i64,
-    /// PC de origem, ou zero quando quem escreveu foi o próprio emulador (implementação de
-    /// API), que não passa pelos hooks do unicorn.
-    pub pc: u32,
-    /// `lr` no momento da escrita: quando o PC cai numa função utilitária compartilhada — um
-    /// `operator=`, um `memcpy` —, é o `lr` que diz quem pediu.
-    pub lr: u32,
-}
+/// O registro de uma escrita vigiada; mora em [`crate::cpu`] porque o `writes()` existe nos dois
+/// backends — num deles para dizer que não há o que devolver.
+pub use crate::cpu::Write;
 
 /// Uma faixa de memória vigiada e o sinalizador que diz se ela foi escrita.
 ///

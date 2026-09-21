@@ -742,3 +742,48 @@ mod tests {
         assert_eq!(cpu.read_reg(Reg::R0), 2);
     }
 }
+
+impl DynarmicCpu {
+    /// **Os ganchos de depuração do unicorn, recusados explicitamente.**
+    ///
+    /// `trace_code`, `watch`, `set_wall_limit`, `enable_profile`, `steps`, `writes`, `profile` e
+    /// `wall_expired` são do unicorn: ele para a execução onde se pede. O dynarmic recompila
+    /// blocos, e não oferece esses ganchos. Este bloco existe para o binário **compilar** onde o
+    /// unicorn não existe — o Windows ARM64, onde o QEMU nem monta —, e para a recusa ser dita em
+    /// voz alta em vez de virar silêncio: um `--trace` que não mostra nada e não explica por quê
+    /// custa mais caro do que um erro claro.
+    ///
+    /// As leituras devolvem vazio porque não têm o que devolver; quem pergunta por elas com uma
+    /// faixa ou um endereço recebe o erro acima antes.
+    fn sem_unicorn(&self) -> CpuError {
+        CpuError("este gancho de depuração precisa do backend unicorn, que não existe neste alvo".to_string())
+    }
+
+    pub fn trace_code(&mut self, _begin: u32, _end: u32, _limite: usize) -> Result<(), CpuError> {
+        Err(self.sem_unicorn())
+    }
+
+    pub fn watch(&mut self, _base: u32, _tamanho: u32) -> Result<(), CpuError> {
+        Err(self.sem_unicorn())
+    }
+
+    pub fn set_wall_limit(&mut self, _limite: std::time::Duration) {}
+
+    pub fn enable_profile(&mut self) {}
+
+    pub fn wall_expired(&self) -> bool {
+        false
+    }
+
+    pub fn steps(&self) -> Vec<(u32, u32, u32)> {
+        Vec::new()
+    }
+
+    pub fn writes(&self) -> Vec<super::Write> {
+        Vec::new()
+    }
+
+    pub fn profile(&self) -> Vec<(u32, u64)> {
+        Vec::new()
+    }
+}

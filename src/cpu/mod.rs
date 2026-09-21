@@ -238,6 +238,23 @@ pub type BackendPadrao = dynarmic::DynarmicCpu;
 // `unicorn`, que falta no Windows ARM64: o `dynarmic` as usa para parar no mesmo lugar.
 pub use faixas_do_brew::{API_BASE, API_SIZE, RETURN_MAGIC};
 
+/// Registro de uma escrita observada por um watchpoint.
+///
+/// Fica aqui, e não no `unicorn.rs`, porque o `writes()` é do contrato dos dois backends: um
+/// vigia de verdade, o outro responde que não tem como vigiar. Sem isto, o tipo sumiria no alvo
+/// onde o unicorn não compila, e com ele o binário inteiro.
+#[derive(Debug, Clone, Copy)]
+pub struct Write {
+    pub addr: u32,
+    pub value: i64,
+    /// PC de origem, ou zero quando quem escreveu foi o próprio emulador (implementação de
+    /// API), que não passa pelos hooks do unicorn.
+    pub pc: u32,
+    /// `lr` no momento da escrita: quando o PC cai numa função utilitária compartilhada — um
+    /// `operator=`, um `memcpy` —, é o `lr` que diz quem pediu.
+    pub lr: u32,
+}
+
 /// As três constantes da faixa reservada às vtables do BREW.
 ///
 /// Ficam num módulo próprio porque são **do contrato**, não de um backend: o `unicorn` as usa para
