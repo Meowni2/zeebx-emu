@@ -1334,6 +1334,28 @@ Os dois `.bmp` são o mesmo instante virtual do mesmo jogo, um desenhado no proc
 placa. É a conferência que qualquer pessoa faz sem escrever código, e foi ela que o teste acima
 automatizou.
 
+### O que já passou pelo caminho do core
+
+O teste `a_abi_do_core_roda_uma_rom` exercita o core como o RetroArch o exercita — `retro_init`,
+`retro_load_game`, quadros, `retro_unload_game` —, e conta o que chega ao frontend. Medido hoje:
+
+| Conteúdo | Quadros | Amostras estéreo | Jogos ao lado |
+|---|---:|---:|---:|
+| Crash Nitro Kart 3D (`.zip`) | 360 | 267.668 | 63 |
+| Double Dragon (`.zip`) | 360 | 268.729 | 63 |
+| Double Dragon (`.7z`) | 300 | 224.669 | — |
+| Peggle (`.zip`) | 300 | 229.080 | — |
+| Z-Wheel (`.zip`) | 300 | 220.300 | 63 |
+
+```bash
+ZEEBX_CORE_ROM="roms/Crash.zip" ZEEBX_CORE_QUADROS=180 \
+  cargo test -p zeebx-libretro -- --nocapture
+```
+
+Cada linha é uma coisa que deixou de ser suposição: o 3D entrega quadro e som pelo core, o `.7z`
+abre pelo core, e a Z-Wheel vê os 63 jogos pelo core. O que **não** está nesta tabela é o desenho
+na placa: para esse é preciso um frontend de verdade, e é o que falta no item 5.
+
 ### A lacuna de GL que o levantamento achou
 
 O relatório da varredura tem uma seção **"GL atendido sem fazer nada"**: chamada que o rasterizador
