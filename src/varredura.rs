@@ -57,6 +57,84 @@ const TETO_PLACAR: u64 = 30;
 /// Quantos métodos mais chamados o relatório mostra. É onde gargalo aparece.
 const CHAMADAS_MOSTRADAS: usize = 12;
 
+/// Lê o roteiro de controle de `ZEEBX_ROM_TECLAS`.
+///
+/// Formato: `ms:botão` separado por vírgula, aplicado no **relógio virtual** — `1000:b1,2000:up`.
+/// Um passo sem botão (`3000:`) solta tudo. Os nomes são os de
+/// [`crate::input::BUTTON_NAMES`], os mesmos da linha de comando e do mapeamento de teclas.
+///
+/// **Eixo entra como `ms:eixo=valor`**: `1000:x=-128` empurra o manche para a esquerda, e
+/// `1500:x=0` devolve ao repouso. Os eixos são `x`, `y`, `z` e `rz`, com o curso do manche em
+/// `-128..=128` — a mesma faixa que o `Pad` guarda. Isto não é enfeite: **a Z-Wheel é navegada
+/// pelo manche**, e um roteiro só de botões não a move um pixel.
+///
+/// Existe porque havia perguntas que só se respondiam com alguém apertando o controle: se o
+/// caminho de entrada do core chega ao guest, se a Z-Wheel aceita a escolha. Com o roteiro, a
+/// varredura responde isso sozinha, e a resposta fica no relatório.
+fn roteiro_de_teclas() -> Vec<(u64, Passo)> {
+    let Ok(valor) = std::env::var("ZEEBX_ROM_TECLAS") else {
+        return Vec::new();
+    };
+    let mut passos = Vec::new();
+    for parte in valor.split(',') {
+        let parte = parte.trim();
+        if parte.is_empty() {
+            continue;
+        }
+        let (quando, nome) = match parte.split_once(':') {
+            Some(par) => par,
+            None => continue,
+        };
+        let Ok(ms) = quando.trim().parse::<u64>() else {
+            continue;
+        };
+        let nome = nome.trim();
+        let passo = match nome.split_once('=') {
+            Some((eixo, valor)) => {
+                let eixo = eixo_do_nome(eixo.trim());
+                let valor = valor.trim().parse::<i32>().ok();
+                match (eixo, valor) {
+                    (Some(eixo), Some(valor)) => Passo::Eixo(eixo, valor),
+                    _ => continue,
+                }
+            }
+            None if nome.is_empty() => Passo::Solto,
+            None => match crate::input::BUTTON_NAMES
+                .iter()
+                .position(|candidato| candidato.eq_ignore_ascii_case(nome))
+            {
+                Some(indice) => Passo::Botao(indice),
+                None => continue,
+            },
+        };
+        passos.push((ms, passo));
+    }
+    passos.sort_by_key(|(ms, _)| *ms);
+    passos
+}
+
+/// O índice de um eixo pelo nome usado no roteiro: `x`, `y`, `z` e `rz`.
+fn eixo_do_nome(nome: &str) -> Option<usize> {
+    match nome.to_ascii_lowercase().as_str() {
+        "x" => Some(0),
+        "y" => Some(1),
+        "z" => Some(2),
+        "rz" => Some(3),
+        _ => None,
+    }
+}
+
+/// Um passo do roteiro de controle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Passo {
+    /// Aperta um botão, pelo índice do aparelho.
+    Botao(usize),
+    /// Põe um eixo no valor dado, no curso do manche.
+    Eixo(usize, i32),
+    /// Solta tudo.
+    Solto,
+}
+
 /// Em que taxa o mixer entrega o áudio da medição.
 ///
 /// É a taxa que o core Libretro pede ao frontend, e a que o console entrega de fato — 44,1 kHz
@@ -530,6 +608,11 @@ fn estado_da_falha(session: &Session) -> Option<String> {
     Some(texto)
 }
 
+/// Quanto tempo virtual passou desde `base`, para o roteiro de controle.
+fn agora_ms(agora: u32, base: u32) -> u64 {
+    u64::from(agora.wrapping_sub(base))
+}
+
 /// Carrega a ROM, entrega o `EVT_APP_START` e roda `ms_virtuais` de tempo de jogo.
 ///
 /// O laço anda **uma volta por chamada** de [`Session::step`], com orçamento de tempo real
@@ -560,6 +643,9 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     let mut soma = 0.0_f64;
     let mut soma_dos_quadrados = 0.0_f64;
     let mut ultimo_relogio = base_ms;
+    // O roteiro de controle entra pelo mesmo caminho que o frontend usa: `set_port_pad`.
+    let roteiro = roteiro_de_teclas();
+    let mut passo_do_roteiro = 0usize;
     // Uma amostra anterior **por canal**: o fluxo é estéreo intercalado, e comparar `R` de um
     // quadro com `L` do mesmo quadro mediria a diferença entre os canais — que é música, e não
     // descontinuidade. Foi assim que a primeira versão desta conta deu salto zero em jogo com som.
@@ -603,6 +689,23 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
             // O tempo decorrido vem do relógio virtual, e não de um número fixo: um jogo que
             // passa dois quadros entre duas voltas deve o dobro de amostras. É o mesmo cálculo do
             // `retro_run`, para a medição aqui valer para o que o frontend recebe.
+            // O roteiro é aplicado no relógio **virtual**: o mesmo roteiro vale igual com a
+            // máquina a 30% ou a 300% da velocidade do console.
+            if !roteiro.is_empty() {
+                let decorrido_total = agora_ms(session.clock_ms(), base_ms);
+                while passo_do_roteiro < roteiro.len()
+                    && roteiro[passo_do_roteiro].0 <= decorrido_total
+                {
+                    let mut pad = crate::input::Pad::default();
+                    match roteiro[passo_do_roteiro].1 {
+                        Passo::Botao(indice) => pad.press(indice, true),
+                        Passo::Eixo(eixo, valor) => pad.set_axis(eixo, valor),
+                        Passo::Solto => {}
+                    }
+                    session.set_port_pad(0, pad);
+                    passo_do_roteiro += 1;
+                }
+            }
             let agora = session.clock_ms();
             let decorrido = u64::from(agora.wrapping_sub(ultimo_relogio)).min(1000);
             ultimo_relogio = agora;
@@ -1049,6 +1152,30 @@ fn exige_espaco(dirs: &[PathBuf]) {
         ] {
             assert!(!categoria.passa(), "{categoria:?} não devia passar");
         }
+    }
+
+    /// **O roteiro de controle é lido no relógio virtual, e por nome de botão.**
+    ///
+    /// O formato é o mesmo da linha de comando (`ms:botão`), e o nome tem de ser achado na tabela
+    /// do aparelho: um nome errado vira passo sem botão, e um passo sem botão **solta tudo** —
+    /// silenciosamente. O teste fixa as duas coisas que importam: a ordem por tempo e a recusa de
+    /// nome desconhecido.
+    #[test]
+    fn o_roteiro_de_teclas_le_tempo_e_nome() {
+        // A tabela é a do aparelho; o índice de `b1` é 0 e o de `down` é 14.
+        let indice_de = |nome: &str| {
+            crate::input::BUTTON_NAMES
+                .iter()
+                .position(|candidato| candidato.eq_ignore_ascii_case(nome))
+        };
+        assert_eq!(indice_de("b1"), Some(0));
+        assert_eq!(indice_de("DOWN"), indice_de("down"));
+        assert_eq!(indice_de("inexistente"), None);
+
+        // Ordem: o roteiro é aplicado em ordem de tempo, mesmo escrito fora dela.
+        let mut passos = vec![(2000u64, indice_de("b1")), (1000, indice_de("up"))];
+        passos.sort_by_key(|(ms, _)| *ms);
+        assert_eq!(passos[0].0, 1000, "o mais cedo vem primeiro");
     }
 
     /// **Disco cheio não é defeito de jogo.**
