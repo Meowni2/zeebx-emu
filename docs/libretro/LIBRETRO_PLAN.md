@@ -737,6 +737,71 @@ supports_no_game = "false"
 
 Adicionar `7z` somente depois de suporte real.
 
+## Validação executada
+
+### Ferramenta
+
+RetroArch 1.20.0 com perfil isolado em `/tmp/zeebx-ra` (nunca o perfil do usuário), drivers
+`video = null`, `audio = null`, `input = null`, `--max-frames=N` e screenshot final:
+
+```bash
+XDG_CONFIG_HOME=/tmp/zeebx-ra retroarch -c /tmp/zeebx-ra/ra.cfg \
+  -L /tmp/zeebx-ra/cores/zeebx_libretro.so --max-frames=900 \
+  --max-frames-ss --max-frames-ss-path=saida.png "'ROM.zip'"
+```
+
+### O que o frontend confirmou
+
+| Etapa | Resultado |
+|---|---|
+| Símbolos exportados | 25 funções `retro_*` |
+| `ldd` do `.so` | só `libc`, `libm`, `libstdc++`, `libgcc` — sem X11, Wayland, EGL, ALSA, udev, GTK |
+| `cargo tree -p zeebx-libretro` | sem eframe, cpal, gilrs, glutin, minifb, rfd, Discord |
+| `retro_api_version` | 1 |
+| `retro_get_system_av_info` | 640×480, aspecto 1,333, 60 Hz, 44 100 Hz |
+| `SET_CONTROLLER_INFO` / `SET_INPUT_DESCRIPTORS` | aceitos |
+| `SAVE_DIRECTORY` / `SYSTEM_DIRECTORY` | usados; perfil criado em `<save>/Zeebx/zeebx/` |
+| `SET_PIXEL_FORMAT` | RGB565 aceito |
+| Extração | `cache/<título>-<hash BLAKE3>/mod/<id>/<nome>.mod` |
+
+### Por jogo
+
+| Título | Quadros | Tempo relatado pelo frontend | Quadro entregue |
+|---|---:|---:|---|
+| Zeebo Sports Peteca | 900 | 14 s | 2 734 cores distintas |
+| Crash Bandicoot Nitro Kart 3D | 900 | 14 s | 5 959 cores distintas |
+| Double Dragon | 3 600 | 59 s | branco uniforme |
+
+Peteca e Crash provam vídeo real pelo caminho Libretro. Double Dragon carrega, roda 59 segundos
+virtuais sem erro e não quebra, mas entrega quadro branco.
+
+**Pendência de investigação, não defeito da ABI.** A tabela de `docs/implementacao/11-compatibilidade.md`
+foi medida com o caminho `zeebx run` (**Unicorn**, `src/main.rs::run_frames`), enquanto o core usa
+`Session` (**Dynarmic**). Antes de acusar o core é preciso rodar a mesma ROM nos dois caminhos e
+comparar; o próprio documento lista Double Dragon com "ponteiro recusado, texto sem fonte".
+
+### Testes automatizados
+
+```text
+cargo test --lib --locked
+→ 439 passaram, 0 falharam, 9 ignorados
+
+cargo test --lib --locked brew::vfs      → 14 passaram
+cargo test --lib --locked loader::archive → 6 passaram
+cargo test --lib --locked storage::      → 3 passaram
+```
+
+### Como repetir
+
+```bash
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_BUILD_JOBS=1 cargo build -p zeebx-libretro
+cp target/debug/libzeebx_libretro.so  <pasta de cores>/zeebx_libretro.so
+cp frontends/libretro/zeebx_libretro.info <pasta de cores>/
+```
+
+O `DEBUG=0` não é detalhe: com debuginfo a árvore passa de 5 GiB e, nesta máquina, o disco acabou
+no meio da compilação mais de uma vez.
+
 ## Referências e padrões verificados
 
 Esta seção registra fontes externas usadas para decisões de arquitetura. Não copiar código C/C++
