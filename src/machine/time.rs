@@ -25,8 +25,26 @@ impl<C: CpuBackend> Machine<C> {
             (iface, name),
             (Interface::Thread, "Suspend" | "GetResumeCBK") | (Interface::Shell, "Resume")
         );
+        // **A volta de um laço de espera não é só a leitura do relógio.** O Zeebo Extreme Rolima
+        // gira em torno de cinco chamadas por volta — relógio, `memset`, posição do controle e
+        // dois eventos de controle —, 1,35 milhão de cada uma em seis segundos de jogo: 2,45
+        // **bilhões** de instruções emuladas para não avançar nada, e o jogo a 79% da velocidade
+        // do console. Enquanto qualquer uma delas zerava a contagem, o atalho nunca ligava.
+        //
+        // Elas são neutras e não zeram a contagem. **Não contam como espera sozinhas**: quem
+        // incrementa continua sendo só a leitura de relógio, e é isso que mantém o atalho preso a
+        // um laço que pergunta as horas. Um jogo que só limpe memória não chega aqui.
+        let neutras = matches!(
+            (iface, name),
+            (Interface::Helpers, "memset")
+                | (
+                    Interface::HidDevice,
+                    "GetPositionState" | "GetNextButtonEvent"
+                )
+                | (Interface::Hid, "GetNextConnectEvent")
+        );
         if !reads_clock {
-            if !yields {
+            if !yields && !neutras {
                 self.spin_polls = 0;
             }
             return;
