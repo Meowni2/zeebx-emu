@@ -1435,10 +1435,26 @@ parcial**", e é o que o core faz (`retro_serialize_size` devolve 0, `retro_seri
 estado parcial seria pior que nenhum: a memória do guest e os registradores voltariam, e a mesa de
 objetos do emulador não — o jogo retomaria chamando APIs com identificadores que não existem mais.
 
-**O que um estado completo exigiria:** RAM do guest e registradores (fáceis, ambos já acessíveis),
-relógio virtual, timers, e a **descrição** de cada objeto vivo (arquivo aberto e deslocamento,
-superfície e formato, fluxo de mídia, consulta SQL), num formato versionado. É trabalho de sessão
-inteira, e a verificação natural é salvar e carregar num jogo com arquivo aberto.
+**O que um estado completo exigiria, contado:** o `Machine` tem **183 campos**. Classificados por
+nome, são:
+
+| grupo | campos | o que fazer |
+|---|---:|---|
+| instrumentos (`bad_pointers`, `calls`, `api_time`, `assumptions`, `debug_*`, contadores de recusa) | 13 | **nada** — não são estado |
+| tabelas de objetos (`bitmaps`, `canvases`, `databases`, `decoders`, `collections`, `egl_surfaces`, …) | 18 | descrever cada objeto vivo e recriá-lo na carga |
+| agendamento (`*_pendente`, `current_thread`, `delivered`) | 13 | serializar a fila |
+| escalares e contadores (`clock_us`, `epoch_seconds`, séries) | 10 | um `u64` cada |
+| o resto (estado de desenho, EGL, configuração em vigor, listas de diagnóstico) | ~129 | separar o que o jogo vê do que é do emulador |
+
+**O critério que faz o escopo encolher: instrumento não é estado.** Tudo o que existe para o
+relatório — ponteiros recusados, contagem de chamadas, tempo por método, hipóteses — fica de fora
+do save state, senão carregar um estado carregaria também o histórico de depuração de outra sessão,
+e a linha de base da varredura passaria a depender de quando o jogo foi salvo.
+
+**E o critério que faz o escopo crescer:** as 18 tabelas de objetos precisam de uma **descrição**
+que baste para recriar cada objeto — arquivo aberto e deslocamento, superfície e formato, fluxo de
+mídia e posição, consulta SQL e cursores. É aí que está o trabalho, e é aí que um estado parcial
+mentiria.
 
 ### Item 9 — capas e No-Intro: depende de conta
 
