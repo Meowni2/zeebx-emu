@@ -1269,7 +1269,30 @@ virtual separou os dois casos possíveis:
 Os dois primeiros são calibração: **seis segundos não bastam para quem carrega antes de desenhar**, e
 o número de cores é o que denuncia isso sem ninguém olhar a tela. O terceiro é defeito: o jogo
 executa, responde API e não põe um pixel na tela — e passava despercebido havia quantas sessões
-ninguém sabe. **Fica anotado como o próximo a investigar.**
+ninguém sabe. **Investigado na mesma sessão, e a causa está identificada.** O Prey Evil não chama desenho
+nenhum: o relatório lista onze métodos de GL e **nenhum** `DrawArrays`, `DrawElements`, `glClear`
+ou `eglSwapBuffers`. Ele prepara matrizes e texturas, e para — e a tela preta é consequência:
+não há o que mostrar.
+
+O motivo está na lista de classes que ele pede e não temos, e **as seis são extensões de GL/EGL**:
+
+| Classe | Nome | Header |
+|---|---|---|
+| `0x0103d8de` | `AEEIID_GLES10EXT` | `AEEGLES10Ext.h` |
+| `0x0103d8eb` | `AEEIID_GLES11EXT` | `AEEGLES11Ext.h` |
+| `0x0103def1` | `AEEIID_GLES11EXTPAK` | `AEEGLES11ExtPak.h` |
+| `0x0103d8ef` | `AEEIID_EGLGETCOLORBUFFER` | `AEEEGLGetColorBuffer.h` |
+| `0x0103d8f0` | `AEEIID_EGLGETPOWERLEVEL` | `AEEEGLGetPowerLevel.h` |
+| `0x010426e3` | `AEEIID_EGLOESSWAPINTERVAL` | `AEEEGLOESSWAPInterval.h` |
+
+O jogo particiona o caminho de desenho pelo que existe: sem as extensões, ele não desenha.
+
+**E a correção é menor do que parece.** O motor **já implementa** essas funções —
+`eglGetColorBufferQUALCOMM`, `SwapIntervalOES` e as outras da `EGL_QUALCOMM` vivem em
+`machine/egl.rs` —, mas as expõe por `eglGetProcAddress`. O jogo as pede por `CreateInstance`, com
+o **ClassID**, e recebe nulo. Falta registrar os seis ClassIDs como interfaces, com os slots na
+ordem dos headers acima — o mesmo caminho que o `IFont` e o `IGraphics` já trilharam, e com a mesma
+verificação: depois de registrar, **a contagem de cores do Prey Evil sai de uma**.
 
 ### Dois jogos mudos, e o que os calava
 
