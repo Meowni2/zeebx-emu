@@ -26,14 +26,44 @@ interface, apesar de morarem em `src/ui/`.
 
 ## O frontend
 
-Três arquivos, e nenhuma linha de Java ou Kotlin: a `NativeActivity` do sistema carrega a
-`libzeebx_android.so` e chama o `android_main` dela.
+Nenhuma linha de Java ou Kotlin: a `NativeActivity` do sistema carrega a `libzeebx_android.so`
+e chama o `android_main` dela.
 
 | Arquivo | O que é |
 |---|---|
-| `src/lib.rs` | o laço de eventos, as três telas (biblioteca, seletor de pasta, jogo) e o JNI da permissão |
+| `src/lib.rs` | o laço de eventos, o estado do aplicativo e por onde cada tela entra |
 | `src/tela.rs` | a `ANativeWindow` virando superfície EGL, e o `egui_glow` desenhando nela |
 | `src/entrada.rs` | o evento do Android virando botão do Zeebo e ponteiro do egui |
+| `src/biblioteca.rs` | a grade de jogos, com as capas que o `library::scan` do núcleo já lê |
+| `src/ajustes.rs` | as configurações, sobre o mesmo `Settings` e o mesmo catálogo de idiomas do desktop |
+| `src/tema.rs` | o tamanho das coisas numa tela que se segura com as mãos |
+| `src/widgets.rs` | as peças de toque: a chave de luz, o segmentado, a faixa de opção |
+| `src/seletor.rs` | o navegador de pastas |
+| `src/jogo.rs` | o quadro na tela, o painel de depuração e a pergunta do "voltar" |
+| `src/sistema.rs` | as duas chamadas de JNI: a permissão de arquivos e abrir um endereço |
+
+**O conteúdo é o mesmo do desktop; a forma não.** A grade usa o `library::scan`, que é o mesmo
+que acha os jogos no desktop; os ajustes escrevem o mesmo `Settings`, no mesmo formato; os
+rótulos saem do mesmo `ui::i18n`, cujos dois idiomas de fábrica vêm embutidos no binário; e o
+painel de velocidade é literalmente o `ui::depuracao::painel`. O que ficou de fora ficou por não
+existir aqui: as opções de janela não valem numa tela só, e os controles, o Discord e as
+atualizações ainda não estão ligados neste frontend.
+
+A forma, essa é outra — e a primeira tentativa, que era a janela do desktop encolhida, não
+servia. Quatro coisas mudaram, e as quatro por causa do aparelho:
+
+- **Tamanho.** Corpo de texto em 17 e dica em 14, não 12 e 9; alvo de toque de 48 pontos, não
+  18. Um portátil fica a meio braço do rosto, não a trinta centímetros, e quem aponta é o
+  polegar, não uma seta de um pixel.
+- **A caixinha virou chave.** Um `checkbox` de 18 pontos não se lê nem se acerta; uma chave de
+  luz diz o estado pela posição e pela cor. As bolinhas do `radio_button` viraram botões
+  segmentados pelo mesmo motivo.
+- **As dicas ficam fechadas.** Os textos de ajuda do Zeebx são longos — alguns têm cinco linhas
+  —, e todos abertos viram uma parede cinza em que não se acha o que se procurava. Cada linha
+  tem um `?`, e só uma dica abre por vez.
+- **O direcional anda na grade.** Num aparelho com botões, chegar ao jogo sem encostar na tela é
+  o caminho normal e não a alternativa: um cartão fica marcado, o direcional o move, a rolagem o
+  acompanha e o botão 1 abre.
 
 **Não há eframe aqui, e é de propósito.** Pelo winit — que é o que o eframe gira — o controle se
 perde duas vezes: os códigos de tecla de um `Gamepad` viram `Key::Unidentified`, que o egui

@@ -5,7 +5,7 @@
 //! execução, e o [`Session::step`] já devolve o controle sozinho a cada fatia de tempo real,
 //! que é o que mantém a janela viva enquanto o jogo corre.
 
-use super::{acervo, atualizacao, discord, gpu, library, settings};
+use super::{acervo, atualizacao, depuracao, discord, gpu, library, settings};
 
 /// A vitrine é filha da [`App`] — e não irmã — porque lê os campos dela direto.
 mod vitrine;
@@ -2799,42 +2799,16 @@ impl App {
                 .collect();
             egui::TopBottomPanel::bottom("painel-debug").show(ctx, |ui| {
                 ui.add_space(2.0);
-                ui.horizontal(|ui| {
-                    if debug.speed {
-                        ui.monospace(self.catalog.format(
-                            "debug.speed.value",
-                            &[
-                                ("percent", &sample.speed.to_string()),
-                                ("fps", &sample.fps.to_string()),
-                            ],
-                        ));
-                        ui.separator();
-                    }
-                    if debug.clock {
-                        ui.monospace(self.catalog.format(
-                            "debug.clock.value",
-                            &[
-                                ("mips", &instrucoes_legiveis(sample.ips)),
-                                ("clock", &format!("{:.1}s", clock as f32 / 1000.0)),
-                            ],
-                        ));
-                        ui.separator();
-                    }
-                    if debug.memory {
-                        ui.monospace(self.catalog.format(
-                            "debug.memory.value",
-                            &[
-                                ("heap", &bytes_legiveis(heap)),
-                                ("objects", &objetos.to_string()),
-                            ],
-                        ));
-                    }
-                    if debug.timeline && !historia.is_empty() {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            desenhar_linha_do_tempo(ui, &historia);
-                        });
-                    }
-                });
+                // O mesmo painel que o frontend do Android desenha: ver [`crate::ui::depuracao`].
+                depuracao::painel(
+                    ui,
+                    &self.catalog,
+                    debug,
+                    sample,
+                    (heap, objetos),
+                    clock,
+                    &historia,
+                );
                 ui.add_space(2.0);
             });
         }
@@ -3335,71 +3309,6 @@ mod tests {
             placement(area, Scaling::Stretch, true, 4.0 / 3.0),
             placement(area, Scaling::Fit, true, 4.0 / 3.0)
         );
-    }
-}
-
-/// Instruções por segundo, na escala que couber.
-///
-/// Um jogo em espera ociosa executa pouquíssimo — arredondar tudo para milhões mostraria zero
-/// justamente aí, e zero se lê como defeito e não como "está esperando".
-fn instrucoes_legiveis(por_segundo: u64) -> String {
-    match por_segundo {
-        0..=9_999 => format!("{por_segundo}"),
-        10_000..=9_999_999 => format!("{} K", por_segundo / 1_000),
-        _ => format!("{} M", por_segundo / 1_000_000),
-    }
-}
-
-/// Um tamanho em bytes no jeito que se lê.
-fn bytes_legiveis(bytes: u32) -> String {
-    match bytes {
-        0..=9_999 => format!("{bytes} B"),
-        10_000..=9_999_999 => format!("{} KB", bytes / 1024),
-        _ => format!("{:.1} MB", bytes as f32 / (1024.0 * 1024.0)),
-    }
-}
-
-/// O gráfico do painel: velocidade e quadros por segundo ao longo do último minuto.
-///
-/// É desenhado à mão em vez de com uma biblioteca de gráficos porque o que se quer aqui é
-/// enxergar a forma — onde afundou, onde estabilizou —, e para isso duas linhas numa faixa de
-/// 40 pixels bastam.
-fn desenhar_linha_do_tempo(ui: &mut egui::Ui, historia: &[(u32, u32)]) {
-    const ALTURA: f32 = 40.0;
-    const LARGURA: f32 = 220.0;
-    let (resposta, pintor) = ui.allocate_painter(egui::vec2(LARGURA, ALTURA), egui::Sense::hover());
-    let area = resposta.rect;
-    pintor.rect_filled(area, 2.0, egui::Color32::from_black_alpha(120));
-
-    // A linha dos 100% é a referência que interessa: acima dela o jogo está no ritmo do
-    // console, abaixo está devendo.
-    let cem = area.bottom() - ALTURA * 0.5;
-    pintor.line_segment(
-        [egui::pos2(area.left(), cem), egui::pos2(area.right(), cem)],
-        egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(40)),
-    );
-
-    let passo = LARGURA / historia.len().max(2) as f32;
-    // A velocidade vai até 200% no gráfico; o que passar disso encosta no teto.
-    let ponto = |i: usize, valor: u32, teto: f32| {
-        egui::pos2(
-            area.left() + i as f32 * passo,
-            area.bottom() - ALTURA * (valor as f32 / teto).min(1.0),
-        )
-    };
-    for (valores, cor, teto) in [
-        (0, egui::Color32::from_rgb(120, 200, 255), 200.0),
-        (1, egui::Color32::from_rgb(160, 255, 160), 60.0),
-    ] {
-        let linha: Vec<egui::Pos2> = historia
-            .iter()
-            .enumerate()
-            .map(|(i, amostra)| match valores {
-                0 => ponto(i, amostra.0, teto),
-                _ => ponto(i, amostra.1, teto),
-            })
-            .collect();
-        pintor.add(egui::Shape::line(linha, egui::Stroke::new(1.0_f32, cor)));
     }
 }
 

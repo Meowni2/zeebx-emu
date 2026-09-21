@@ -8,6 +8,7 @@
 //! núcleo.
 
 pub mod acervo;
+pub mod depuracao;
 pub mod gpu;
 pub mod i18n;
 pub mod library;
