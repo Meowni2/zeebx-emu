@@ -894,6 +894,57 @@ como feature, com o motor já pronto para iniciar uma sessão nova.
   falso**, então na prática ele usa consulta individual; o caminho da máscara fica para frontends
   que o anunciem. O log diz qual dos dois está em uso, em vez de deixar isso invisível.
 
+## O que falta para os ports da Data East: a interface `IFont`
+
+Investigando o quadro branco do Double Dragon, a causa **de fundo** apareceu: ele pede três classes
+que respondemos como desconhecidas.
+
+```text
+classes que o jogo pediu e não temos:
+  0x0102f679   AEECLSID_FONT_STANDARD11
+  0x01030852   AEECLSID_FONT_STANDARD15
+  0x0102f681   AEECLSID_FONT_STANDARD36
+```
+
+São as **fontes de bitmap padrão do BREW**, e o `AEEFontsStandard.bid` do SDK confirma o que cada uma
+é (ascent/descent documentados) e qual interface implementam:
+
+```c
+#define AEECLSID_FONT_STANDARD11  0x0102f679   /* IFont */
+#define AEECLSID_FONT_STANDARD15  0x01030852   /* IFont */
+#define AEECLSID_FONT_STANDARD36  0x0102f681   /* IFont */
+```
+
+**`IFont`, não `ITypeface`** — é essa a diferença que importa, e é por isso que o mapeamento não
+podia ser só "apontar para a nossa fonte TrueType". O `AEEFont.h` lista os seis métodos, e um
+emulador de referência já no disco (`projects/zeebo-emulator/.../zeemu/brew/BrewFont.cpp`) dá a
+ordem da vtable e a tabela de métricas de todas as classes:
+
+```c
+AddRef(0)  Release(1)  QueryInterface(2)  DrawText(3)  GetInfo(4)  MeasureText(5)
+```
+
+A família inteira são 30 classes: `FONTSYS*` (6), `FONT_STANDARD*` (11), `FONT_BASIC*` (10),
+`FONT_FIXED4X6`, `AEECLSID_FONT` e o `BITFONTFOUNDRY`. As assinaturas saem dos próprios exemplos do
+SDK:
+
+```c
+IFont_GetInfo(pFont, &info, sizeof(info))
+IFont_MeasureText(pFont, pszBuf, WSTRLEN(pszBuf), IFONT_MAXWIDTH, &nChars, &extent.width)
+```
+
+O que fazer, na ordem que o projeto adota — **medir antes de inventar**:
+
+1. usar a sonda já existente (`--sonda=0x0102f679`) numa ROM que peça a classe, para registrar por
+   qual slot o jogo chama e com que argumentos. O `DrawText` é o único com layout ainda não medido;
+2. implementar `Interface::Font` com os seis slots, `GetInfo` escrevendo as quatro métricas e
+   `MeasureText` devolvendo largura e altura da tabela;
+3. mapear as 30 classes para essa interface, e o `DrawText` desenhando no destino corrente — o mesmo
+   caminho que o `IDISPLAY_DrawText` já usa.
+
+Sem isso, todo título que desenha com as fontes do sistema cai no mesmo lugar: o Double Dragon, o
+Resident Evil 4 (`0x0102f681`) e os ports da Data East.
+
 ## Save states
 
 Save states exigem snapshot pointer-free e versionado de:
