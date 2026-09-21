@@ -1294,6 +1294,13 @@ o **ClassID**, e recebe nulo. Falta registrar os seis ClassIDs como interfaces, 
 ordem dos headers acima — o mesmo caminho que o `IFont` e o `IGraphics` já trilharam, e com a mesma
 verificação: depois de registrar, **a contagem de cores do Prey Evil sai de uma**.
 
+A tabela do `IGLES11Ext` já está lida, e são **15 slots**: os três de `IQueryInterface` (`AddRef`,
+`Release`, `QueryInterface`) e, na ordem do `AEEGLES11Ext.h`, `CurrentPaletteMatrixOES`,
+`LoadPaletteFromModelViewMatrixOES`, `MatrixIndexPointerOES`, `WeightPointerOES`, `DrawTexsOES`,
+`DrawTexiOES`, `DrawTexxOES`, `DrawTexsvOES`, `DrawTexivOES`, `DrawTexxvOES`, `DrawTexfOES`,
+`DrawTexfvOES`. Os `DrawTex*` são os que interessam a um jogo que monta o quadro em textura — que é
+o caso do Prey Evil, com 16.746 `BindTexture` e nenhum desenho.
+
 ### Dois jogos mudos, e o que os calava
 
 O relatório da varredura lista os sons que o decodificador recusou. Dois jogos apareciam ali, e a
