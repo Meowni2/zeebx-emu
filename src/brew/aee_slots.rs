@@ -495,6 +495,19 @@ pub const GLES11_EXT_PAK: &[&str] = &[
 /// Um método só, e é o que o Prey Evil usa para saber que a extensão existe.
 pub const GLES10_EXT: &[&str] = &["AddRef", "Release", "QueryInterface", "QueryMatrixxOES"];
 
+/// `IJoystick`: o joystick USB, na ordem do `AEEJoystick.h`.
+///
+/// **É o que o gerenciador de joystick da Qualcomm pede** (`gamepadmgr.cpp`, que o Prey Evil usa):
+/// ele cria a interface, e sem ela guarda nulo e cai no primeiro `Read`. Seis slots.
+pub const JOYSTICK: &[&str] = &[
+    "AddRef",
+    "Release",
+    "QueryInterface",
+    "SetParm",
+    "GetParm",
+    "Read",
+];
+
 /// `IEGLGetPowerLevel`: o nível de bateria. Ver `AEEEGLGetPowerLevel.h`.
 pub const EGL_GET_POWER_LEVEL: &[&str] =
     &["AddRef", "Release", "QueryInterface", "GetPowerLevel"];

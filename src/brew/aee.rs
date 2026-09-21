@@ -103,6 +103,8 @@ pub enum Interface {
     /// `AEEIID_GLES11EXTPAK`: `TexGen`, blending separado e objetos de framebuffer. Ver
     /// [`aee_slots::GLES11_EXT_PAK`].
     Gles11ExtPak = 60,
+    /// `AEECLSID_IJOYSTICK`: o joystick USB. Ver [`aee_slots::JOYSTICK`].
+    Joystick = 61,
     /// `AEECLSID_SQLMGR` do console: abre bancos SQLite. Ver [`crate::brew::sql`].
     SqlMgr = 36,
     /// Um banco aberto pelo [`Interface::SqlMgr`].
@@ -439,6 +441,7 @@ impl Interface {
             Self::EglOesSwapInterval => "IEGLOESSwapInterval",
             Self::EglGetColorBuffer => "IEGLGetColorBuffer",
             Self::Gles11ExtPak => "IGLES11ExtPak",
+            Self::Joystick => "IJoystick",
             Self::SqlMgr => "ISQLMgr",
             Self::SqlDatabase => "ISQLDatabase",
             Self::Collection => "IColecao",
@@ -506,6 +509,7 @@ impl Interface {
             Self::EglOesSwapInterval => aee_slots::EGL_OES_SWAP_INTERVAL,
             Self::EglGetColorBuffer => aee_slots::EGL_GET_COLOR_BUFFER,
             Self::Gles11ExtPak => aee_slots::GLES11_EXT_PAK,
+            Self::Joystick => aee_slots::JOYSTICK,
             Self::SqlMgr => aee_slots::SQL_MGR,
             Self::SqlDatabase => aee_slots::SQL_DATABASE,
             Self::Collection => aee_slots::COLLECTION,
@@ -588,6 +592,7 @@ impl Interface {
             58 => Self::EglOesSwapInterval,
             59 => Self::EglGetColorBuffer,
             60 => Self::Gles11ExtPak,
+            61 => Self::Joystick,
             35 => Self::Probe,
             36 => Self::SqlMgr,
             37 => Self::SqlDatabase,

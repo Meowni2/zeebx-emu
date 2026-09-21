@@ -594,6 +594,7 @@ impl<C: CpuBackend> Machine<C> {
             AEEIID_EGLGETCOLORBUFFER => Interface::EglGetColorBuffer,
             AEEIID_EGLGETPOWERLEVEL => Interface::EglGetPowerLevel,
             AEEIID_EGLOESSWAPINTERVAL => Interface::EglOesSwapInterval,
+            AEECLSID_IJOYSTICK1 | AEECLSID_IJOYSTICK2 => Interface::Joystick,
             AEECLSID_EGL => Interface::EglLegacy,
             AEECLSID_GL => Interface::GlLegacy,
             AEECLSID_MEDIAUTIL => Interface::MediaUtil,

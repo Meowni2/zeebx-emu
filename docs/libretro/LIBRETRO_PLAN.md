@@ -1361,7 +1361,27 @@ AEECLSID_IJOYSTICK1 = 0x01021c2b        // e IJOYSTICK2 = 0x01021dac
 ```
 
 Seis slots, e o `Read` tem implementação **de verdade** disponível: é o mesmo estado do Z-Pad que
-o `IHIDDevice::GetPositionState` já entrega. É a próxima peça, e é menor que as seis anteriores 
+o `IHIDDevice::GetPositionState` já entrega.
+
+**Implementado — e a falha não era esta.** O `IJoystick` está no motor, com os seis slots e o
+`Read` entregando o eixo do Z-Pad na faixa do console, e o Prey Evil quebra **no mesmo ponto**, com
+o mesmo log. Fica registrado o que isso ensina: o log dizia "1 Joysticks connected", e isso não é
+prova de que a interface faltasse — o gerenciador fala isso **depois** de enumerar o HID, que nós
+atendemos. A pista estava a duas linhas de distância e eu li a errada.
+
+**A pista de agora, essa sim, veio do próprio relatório:**
+
+```text
+open falhou: <cache>/…/mod/276154/udata/save.dat (No such file or directory)
+OpenFile "udata/save.dat"  (0x1002bcb4 0x1 0xf0003008) -> 0
+```
+
+O jogo abre o **save** com modo `OFM_READ` (1) numa primeira execução, quando o arquivo ainda não
+existe, recebe zero e segue. É o mesmo padrão do Double Dragon, um passo adiante: lá era o
+`OFM_CREATE` que falhava por falta de diretório; aqui o arquivo não existe porque é o primeiro
+save, e a pergunta é o que o console devolve nesse caso — e o que o jogo faz com a resposta.
+A próxima medição é essa: o que um `OpenFile` de leitura devolve no aparelho para um arquivo que
+ainda não foi criado, e onde o jogo usa o resultado.
 
 O `IGLES11ExtPak` responde com o tratamento das outras extensões gráficas — "consegui" ao que não
 muda o traço, identificador `1` para os `Gen*OES` (o alvo aqui é um só) e `GL_FRAMEBUFFER_COMPLETE`

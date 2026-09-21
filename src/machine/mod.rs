@@ -717,6 +717,12 @@ const AEEIID_EGLOESSWAPINTERVAL: u32 = 0x0104_26e3;
 const AEEIID_EGLGETCOLORBUFFER: u32 = 0x0103_d8ef;
 /// `AEEIID_GLES11EXTPAK`, de `sdk/inc/AEEGLES11ExtPak.h`.
 const AEEIID_GLES11EXTPAK: u32 = 0x0103_def1;
+/// `AEECLSID_IJOYSTICK1` e `AEECLSID_IJOYSTICK2`, de `sdk/inc/AEEJoystick.h`.
+///
+/// **O Prey Evil cria esta e guarda o resultado.** Nula, o gerenciador de joystick da Qualcomm
+/// segue com o ponteiro vazio e cai no primeiro `Read` — que é a falha que o levantamento pegou.
+const AEECLSID_IJOYSTICK1: u32 = 0x0102_1c2b;
+const AEECLSID_IJOYSTICK2: u32 = 0x0102_1dac;
 
 const AEEIID_EGL10: u32 = 0x0103_d8ed;
 const AEEIID_EGL11: u32 = 0x0103_d8ee;
@@ -3501,7 +3507,8 @@ impl<C: CpuBackend> Machine<C> {
             | (Interface::EglGetPowerLevel, _)
             | (Interface::EglOesSwapInterval, _)
             | (Interface::EglGetColorBuffer, _)
-            | (Interface::Gles11ExtPak, _) => {
+            | (Interface::Gles11ExtPak, _)
+            | (Interface::Joystick, _) => {
                 match self.extension_call(iface, slot)? {
                     Some(result) => result,
                     None => return Ok(None),

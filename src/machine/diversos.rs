@@ -373,6 +373,34 @@ impl<C: CpuBackend> Machine<C> {
                 self.write_at(self.arg(2), 0)?;
                 SUCCESS
             }
+            // `IJoystick`: o joystick USB que o gerenciador de joystick da Qualcomm procura.
+            //
+            // `int SetParm(pMe, int16 nParmID, int32 p1, int32 p2)` — calibração e configuração.
+            // Aceitar e não guardar é o certo: o controle que temos é o Z-Pad, e não há parâmetro
+            // dele que o jogo possa mudar por aqui.
+            "SetParm" if iface == Interface::Joystick => SUCCESS,
+            // `int GetParm(pMe, int16 nParmID, int32 *pP1)` — responder zero é melhor que deixar
+            // lixo, que o jogo leria como calibração.
+            "GetParm" if iface == Interface::Joystick => {
+                self.write_at(self.arg(2), 0)?;
+                SUCCESS
+            }
+            // `int Read(pMe, int16 *px, int16 *py)` — **o estado do controle, de verdade**.
+            //
+            // É a mesma leitura que o `IHIDDevice::GetPositionState` entrega, na faixa do console
+            // (repouso em 128): o joystick e o Z-Pad são o mesmo aparelho para quem joga, e é o
+            // que o gerenciador de joystick do jogo espera ler.
+            "Read" if iface == Interface::Joystick => {
+                let (px, py) = (self.arg(1), self.arg(2));
+                let pad = self.pads[0];
+                for (onde, eixo) in [(px, 0), (py, 1)] {
+                    if onde != 0 {
+                        let valor = pad.eixo_do_console(eixo) as i16;
+                        self.cpu.write_mem(onde, &valor.to_le_bytes())?;
+                    }
+                }
+                SUCCESS
+            }
             // `IGLES11Ext`: as extensões OES do OpenGL ES 1.1.
             //
             // **O Prey Evil não desenha sem elas.** O levantamento das 62 ROMs o pegou com a tela
