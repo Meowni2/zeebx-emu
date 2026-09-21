@@ -275,6 +275,75 @@ def escreve_playlist(saida, fichas, core):
     return destino
 
 
+def hasheia_arquivos_do_modulo(zip_path, nomes, id_do_modulo):
+    """Todos os arquivos de `mod/<id>/` de um título, com tamanho e os três hashes.
+
+    O No-Intro hasheia **um** arquivo de dentro do módulo, e o nome dele no DAT é
+    `<pasta><arquivo>`. Para um título que **não está** no DAT, o arquivo certo é decisão de quem
+    envia — a nossa é listar todos, com o que cada um é. Adivinhar aqui seria pior: um dump
+    proposto com o arquivo errado volta recusado, e aí o trabalho é o dobro.
+    """
+    pasta = f"mod/{id_do_modulo}/"
+    linhas = []
+    import zipfile
+
+    with zipfile.ZipFile(zip_path) as zf:
+        for nome in sorted(nomes):
+            if not nome.startswith(pasta) or nome.endswith("/"):
+                continue
+            tam, crc, md5, sha1 = hasheia(zf, nome)
+            linhas.append((nome, tam, crc, md5, sha1))
+    return linhas
+
+
+def id_do_mif(nome_do_mif):
+    """O identificador do módulo, a partir do caminho do manifesto: `mif/<id>.mif` -> `<id>`.
+
+    É o mesmo identificador que nomeia a pasta do módulo, `mod/<id>/`, e é por ele que o No-Intro
+    nomeia o arquivo hasheado (`<pasta><arquivo>`).
+    """
+    if not nome_do_mif:
+        return None
+    nome = nome_do_mif.replace("\\", "/").split("/")[-1]
+    if not nome.endswith(".mif"):
+        return None
+    identificador = nome[: -len(".mif")]
+    return identificador or None
+
+
+def escreve_fora_do_dat(saida, fichas):
+    """Grava o que falta para propor os títulos fora do No-Intro.
+
+    O arquivo sai no formato que a submissão pede: nome do título, e para cada arquivo do módulo o
+    tamanho, o CRC32, o MD5 e o SHA1. É o que se copia para a proposta, e evita a rodada de
+    "manda o hash de novo, mas do outro arquivo".
+    """
+    fora = [ficha for ficha in fichas if not ficha["no_dat"]]
+    if not fora:
+        return None
+    caminho = saida / "fora-do-dat.txt"
+    linhas = [
+        "# Títulos fora do No-Intro, com o que cada arquivo do módulo é.",
+        "# Para propor: escolher, em cada módulo, o arquivo que o DAT hasheia —",
+        "# por convenção o de `mod/<id>/` que não é assinatura nem dado do jogo —",
+        "# e levar nome, tamanho, CRC32, MD5 e SHA1 para a proposta.",
+        "",
+    ]
+    for ficha in fora:
+        linhas.append(f"## {ficha['nome_no_intro']}")
+        nome_do_pacote = pathlib.Path(ficha.get("caminho") or ficha["zip"]).name
+        linhas.append(f"pacote: {nome_do_pacote}  ({ficha['tamanho_zip']} bytes)")
+        linhas.append(f"crc32 do pacote: {ficha['crc_zip']}   sha1: {ficha['sha1_zip']}")
+        for nome, tam, crc, md5, sha1 in ficha.get("arquivos_do_modulo", []):
+            linhas.append(f"  {nome}")
+            linhas.append(f"    tamanho: {tam}  crc32: {crc}  md5: {md5}  sha1: {sha1}")
+        if not ficha.get("arquivos_do_modulo"):
+            linhas.append("  (não deu para listar os arquivos do módulo)")
+        linhas.append("")
+    caminho.write_text("\n".join(linhas), encoding="utf-8")
+    return caminho
+
+
 def escreve_capas_da_loja(saida, fichas, z_wheel, ao_lado, para_png=False):
     """Grava as capas oficiais, casadas pelo ClassID do applet.
 
@@ -549,6 +618,21 @@ def main():
     print(f"pacotes: {len(fichas)}")
     print(f"verificados pelo No-Intro: {len(verificados)}")
     print(f"fora do DAT: {len(fora)}" + (": " + ", ".join(f["nome_no_intro"] for f in fora) if fora else ""))
+    # Cada título fora do DAT ganha a lista dos arquivos do módulo com os hashes: é o que a
+    # proposta ao No-Intro pede, e sem ela a primeira resposta seria "manda o hash do outro".
+    for ficha in fora:
+        id_do_modulo = id_do_mif(ficha.get("mif"))
+        if id_do_modulo:
+            import zipfile
+
+            caminho_do_zip = ficha.get("caminho") or ficha["zip"]
+            with zipfile.ZipFile(caminho_do_zip) as zf:
+                ficha["arquivos_do_modulo"] = hasheia_arquivos_do_modulo(
+                    caminho_do_zip, zf.namelist(), id_do_modulo
+                )
+    fora_do_dat = escreve_fora_do_dat(args.saida, fichas)
+    if fora_do_dat:
+        print(f"proposta para o No-Intro: {fora_do_dat}")
     print(f"divergentes: {len(divergentes)}")
     for ficha in divergentes:
         print(f"  {ficha['nome_no_intro']}: {ficha.get('erro', 'hash diferente')}")

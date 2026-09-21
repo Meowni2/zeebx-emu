@@ -1450,6 +1450,20 @@ python3 ferramentas/catalogo.py --roms ROMS --saida saida --png --zwheel "Z-Whee
 # Action Hero 3D ….png: PNG image data, 170 x 220, 8-bit/color RGB
 ```
 
+**E os títulos fora do No-Intro saem com os hashes prontos.** O que a proposta pede é nome,
+tamanho, CRC32, MD5 e SHA1 do arquivo que o DAT hasheia — e para um título que não está no DAT
+esse arquivo é decisão de quem envia. A ferramenta grava `<saída>/fora-do-dat.txt` com **todos** os
+arquivos de `mod/<id>/` e os três hashes de cada um, e diz no cabeçalho que a escolha é humana:
+adivinhar aqui devolveria a proposta recusada, e o trabalho seria o dobro.
+
+```text
+## Bad Dudes vs. DragonNinja (Brazil) (Es,Pt)
+pacote: Bad Dudes vs. DragonNinja (Brazil) (Es,Pt).zip  (1369145 bytes)
+crc32 do pacote: 56020280   sha1: 2E E9 …
+  mod/279888/baddudes.eng
+    tamanho: 1456  crc32: AD9831B6  md5: 82A42D24…  sha1: E4DCEE01…
+```
+
 ## Ordem de implementação
 
 1. Inventariar toda E/S de core e definir `StorageFs`/`GuestFile`; decidir SQLite VFS ou staging
