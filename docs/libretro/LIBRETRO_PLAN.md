@@ -61,42 +61,63 @@ de parede. Um core Libretro precisa de passo virtual determinístico.
 ## Arquitetura proposta
 
 ```text
-src/lib.rs                         motor compartilhado
+src/lib.rs                         motor compartilhado (`zeebx` rlib)
 src/main.rs                        CLI e frontend desktop
-src/libretro/mod.rs                estado do core e exports C ABI
-src/libretro/bindings.rs           bindings gerados e versionados de libretro.h
 src/session.rs                     Session desktop + driver determinístico Libretro
 src/storage.rs                     raízes persistentes, identidade e layout de conteúdo
 src/loader/archive.rs              ZIP/7z, validação, cache e extração atômica
 src/brew/vfs.rs                    conteúdo read-only + overlay de saves + aparelho
-third_party/libretro.h             header oficial fixado em revisão conhecida
+frontends/libretro/Cargo.toml      pacote/alvo independente `zeebx-libretro`
+frontends/libretro/src/lib.rs      estado do core e exports C ABI (`cdylib`)
+frontends/libretro/src/bindings.rs bindings gerados e versionados de libretro.h
+frontends/libretro/include/        `libretro.h` oficial fixado em revisão conhecida
+frontends/libretro/zeebx_libretro.info
+                                  metadados distribuídos do core
 docs/libretro/LIBRETRO_PLAN.md     este plano
 ```
 
-`src/lib.rs` exporta módulos do motor. `src/main.rs` passa a consumir a biblioteca em vez de
-redeclará-los. O core usa apenas interfaces do motor que não dependem de desktop.
+A raiz torna-se workspace Cargo. O pacote raiz `zeebx` expõe o motor como `rlib` e mantém o
+binário desktop; `frontends/libretro` é outro pacote, depende de `zeebx` por path e é o único que
+produz `cdylib`. Isto impede dependências/exports Libretro de vazarem para a CLI e deixa o target
+visível numa pasta própria.
 
-### Features Cargo
+### Features e workspace Cargo
+
+Esboço:
 
 ```toml
-[lib]
-name = "zeebx_libretro"
-crate-type = ["cdylib", "rlib"]
+# Cargo.toml raiz
+[workspace]
+members = [".", "frontends/libretro"]
+resolver = "2"
+
+[package]
+name = "zeebx"
 
 [features]
 default = ["desktop"]
-desktop = [ ... eframe, glutin, minifb, rfd, gilrs, cpal, discord ... ]
-libretro = []
+desktop = ["dep:eframe", "dep:glutin", "dep:minifb", "dep:rfd", "dep:gilrs", "dep:cpal"]
+
+# frontends/libretro/Cargo.toml
+[package]
+name = "zeebx-libretro"
+
+[lib]
+name = "zeebx_libretro"
+crate-type = ["cdylib"]
+
+[dependencies]
+zeebx = { path = "../..", default-features = false }
 ```
 
-O build do core deve funcionar com:
+O build do core deve funcionar isoladamente:
 
 ```bash
-cargo build --locked --release --no-default-features --features libretro --lib
+cargo build --locked --release -p zeebx-libretro
 ```
 
-Não basta o core não *usar* dependências desktop: elas precisam ser opcionais e os módulos que
-as importam precisam estar atrás de `cfg(feature = "desktop")`.
+Não basta o core não *usar* dependências desktop: elas precisam ser opcionais no motor e os
+módulos que as importam precisam estar atrás de `cfg(feature = "desktop")`.
 
 ## Driver de frame determinístico
 
@@ -683,15 +704,20 @@ Recomendação:
 3. adicionar cross-build após toolchain/sysroot estar comprovado;
 4. testar carregamento real em RetroArch, não apenas compilação/dlopen.
 
-CI deve verificar:
+CI deve verificar o pacote separado:
 
 ```text
-cargo build --locked --release --no-default-features --features libretro --lib
+cargo build --locked --release -p zeebx-libretro --target x86_64-unknown-linux-gnu
+cargo build --locked --release -p zeebx-libretro --target aarch64-unknown-linux-gnu
 readelf -h
 nm -D / checagem de símbolos retro_*
 ldd
 smoke test RetroArch
 ```
+
+A release coleta somente `target/<triple>/release/libzeebx_libretro.so` e o
+`frontends/libretro/zeebx_libretro.info`; não deve incluir binário desktop, settings da UI ou
+artefatos de outros membros do workspace.
 
 ## Arquivo `.info`
 
@@ -756,8 +782,9 @@ Consequências incorporadas neste plano:
    explícito; manter `std::fs` somente em CLI/UI/testes desktop.
 5. Implementar VFS com base read-only, overlay gravável, tombstones e device compartilhado.
 6. Extrair driver de frame virtual determinístico de `Session`.
-7. Criar `lib.rs`, features e build sem dependências desktop.
-8. Vendorizar `libretro.h`, gerar bindings e implementar todos os exports base, incluindo VFS v3.
+7. Criar `src/lib.rs`, features e motor sem dependências desktop; converter raiz em workspace.
+8. Criar `frontends/libretro/` como pacote `cdylib`, vendorizar `libretro.h`, gerar bindings e
+   implementar todos os exports base, incluindo VFS v3.
 9. Implementar `.mod`/ZIP, RGB565, áudio PCM16, Dragon/Z-Pad e RetroPad.
 10. Adicionar `SET_CONTROLLER_INFO`, teclado USB com fila AVK e Boomerang estático.
 11. Integrar sensor Libretro e calibração do Boomerang; validar fallback analógico depois.
@@ -770,6 +797,7 @@ Consequências incorporadas neste plano:
 
 ## Critérios de aceite do MVP
 
+- `frontends/libretro/` é pacote independente e não traz UI desktop como dependência;
 - core x86_64 carrega em RetroArch;
 - `.mod` e `.zip` iniciam applet e exibem framebuffer;
 - Dragon, Z-Pad, Boomerang e teclado USB aparecem ao guest conforme aparelho selecionado;
