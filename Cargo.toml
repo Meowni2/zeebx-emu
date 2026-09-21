@@ -30,7 +30,14 @@ desktop = [
     "dep:rfd",
 ]
 # Criação de contexto OpenGL fora de tela para o rasterizador na placa sem janela.
-gpu = ["dep:glutin", "dep:raw-window-handle"]
+# O desenho na placa: o backend de OpenGL do motor. **Não puxa nada de host** — o `glow` é só o
+# vínculo com a API, e quem entrega o contexto é quem chama. É o que o core Libretro precisa: ele
+# recebe o contexto do frontend e não pode criar um próprio.
+gl = []
+# Abrir contexto de OpenGL **nosso**, para a janela do desktop e para a linha de comando sem
+# janela. Aqui entra o `glutin`, que linka EGL/GLX — motivo pelo qual o core não usa esta feature:
+# um core não pode depender de biblioteca de interface do host.
+gpu = ["gl", "dep:glutin", "dep:raw-window-handle"]
 
 # O binário é a interface desktop: sem a feature ele nem é construído.
 [[bin]]

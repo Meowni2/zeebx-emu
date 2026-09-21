@@ -1395,9 +1395,16 @@ frontend.
 
 **O que falta, em ordem:**
 
-1. `frontends/libretro`: montar o `glow::Context` a partir do `get_proc_address` do
-   `retro_hw_render_callback` e passá-lo ao `start_with`, com `placa = true`. A constante
-   `ENV_SET_HW_RENDER` já está no arquivo, com o comentário dizendo por que ela não é usada hoje.
+0. ~~Separar o backend de placa da criação de contexto.~~ **Feito**: o motor tem duas features —
+   `gl` (o desenho, que **só** precisa do `glow`, sem nada de host) e `gpu` (abrir contexto nosso,
+   que traz o `glutin` e linka EGL/GLX). Medido: `cargo tree --features gl` tem **0** glutin e o
+   `glow` presente; `--features gpu` tem 3. Era isto que faltava para o core poder usar a placa: um
+   core não pode linkar biblioteca de interface do host, e é isso que a checagem de `ldd` do
+   `libretro.yml` cobra.
+1. `frontends/libretro`: ligar a feature `gl` do motor, montar o `glow::Context` a partir do
+   `get_proc_address` do `retro_hw_render_callback` e passá-lo ao `start_with_storage`, com
+   `placa = true`. A constante `ENV_SET_HW_RENDER` já está no arquivo, com o comentário dizendo por
+   que ela não é usada hoje.
 2. ~~Fazer o motor desenhar no framebuffer do frontend.~~ **Feito e verificado**: o motor tem
    `desenha_no_fbo`, o teste `o_motor_desenha_no_framebuffer_do_frontend` cria um framebuffer
    próprio, manda o motor desenhar nele e lê os pixels **dele** — nos dois jogos medidos, **0 de

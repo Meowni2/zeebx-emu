@@ -2523,9 +2523,10 @@ fn na_placa(
     altura: usize,
     contexto: Option<std::sync::Arc<glow::Context>>,
 ) -> Box<dyn Rasterizador> {
-    // Sem a feature `gpu` não há como abrir contexto nenhum: o software é a única rota, e é
-    // exatamente o que um core Libretro quer.
-    #[cfg(feature = "gpu")]
+    // Com a feature `gl`, o rasterizador de placa existe — e ele **não** cria contexto: quem
+    // chama entrega o dele. Sem ela, o software é a única rota, que é o caso do core quando o
+    // frontend não oferece contexto.
+    #[cfg(feature = "gl")]
     {
         match crate::video::gpu::GpuState::novo(largura, altura, contexto) {
             Ok(gpu) => return Box::new(gpu),

@@ -14,7 +14,20 @@
 //! o Crash fazem deixam de ser chamadas de GL uma a uma. O estado é aplicado **uma vez por draw**,
 //! a partir do que foi anotado aqui.
 
+// A criação do contexto **nosso** é da feature `gpu`, que traz o glutin. Com só a `gl`, o backend
+// desenha no contexto que quem chama entregou — que é o caso do core Libretro, e a razão de as
+// duas features existirem separadas.
+#[cfg(feature = "gpu")]
 use super::contexto::Contexto;
+
+/// O contexto próprio, quando esta construção sabe abrir um.
+///
+/// Com só a feature `gl` o tipo é a unidade: o campo existe e fica vazio, e a inferência de tipos
+/// do `match` abaixo não precisa de anotação em dois ramos que só existem em um deles.
+#[cfg(feature = "gpu")]
+type ContextoProprio = Contexto;
+#[cfg(not(feature = "gpu"))]
+type ContextoProprio = ();
 use super::gles;
 use super::rasterizer::{GlState, Matrix, QuadroNaPlaca, Rasterizador, TexEnv, UnidadeDeTextura, Vertex};
 use glow::{self, HasContext};
@@ -142,7 +155,7 @@ pub struct GpuState {
     ///
     /// Nunca é lido: existe para não ser solto enquanto o backend vive. Soltá-lo destruiria o
     /// contexto de onde vêm as funções de GL que o `gl` acabou de guardar.
-    _proprio: Option<Contexto>,
+    _proprio: Option<ContextoProprio>,
     /// As funções de GL: emprestadas da janela, ou do contexto próprio.
     gl: std::sync::Arc<glow::Context>,
     /// Se o contexto é de outro. Nesse caso o estado tem que ser devolvido depois de cada uso —
@@ -244,12 +257,23 @@ impl GpuState {
         altura: usize,
         emprestado: Option<std::sync::Arc<glow::Context>>,
     ) -> Result<Self, String> {
+        #[allow(unused_variables)]
         let (proprio, gl, emprestado) = match emprestado {
             Some(gl) => (None, gl, true),
+            // **Sem contexto emprestado, esta feature não abre um.** Quem precisa de contexto
+            // próprio usa a `gpu`; quem recebe o do frontend — o core — não pode abrir um, e
+            // responder isso é melhor que falhar com um erro de link.
+            #[cfg(feature = "gpu")]
             None => {
                 let proprio = Contexto::novo()?;
                 let gl = proprio.gl.clone();
                 (Some(proprio), gl, false)
+            }
+            #[cfg(not(feature = "gpu"))]
+            None => {
+                return Err(
+                    "sem contexto emprestado: esta construção não abre contexto de placa".to_string(),
+                )
             }
         };
         let (programa, vao, vbo, ponte) = unsafe {

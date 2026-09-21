@@ -3,7 +3,7 @@
 pub mod atc;
 #[cfg(feature = "gpu")]
 pub mod contexto;
-#[cfg(feature = "gpu")]
+#[cfg(feature = "gl")]
 pub mod gpu;
 pub mod display;
 pub mod font;
