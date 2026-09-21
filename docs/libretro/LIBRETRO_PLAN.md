@@ -1245,7 +1245,7 @@ plataforma, com o `dynarmic` sozinho —, basta tirar a marca de experimental do
 
 | Item | Estado | Prova |
 |---|---|---|
-| Varredura das 62 ROMs | feito | 57 rodam (linha de base do doc: 50), 0 estados piorados |
+| Varredura das 62 ROMs | feito | 56 rodam (linha de base do doc: 50), 0 estados piorados — reconferido depois de todas as mudanças desta sessão, com os mesmos 6 fora |
 | CI dos cinco alvos do standalone | em verificação | Linux x86_64/AArch64 e macOS Apple Silicon verdes; Windows ARM64 exigiu tirar o `unicorn` |
 | `IFont` e o layout do `DrawText` | feito | métricas transcritas do `AEEFontsStandard.BID`, com teste que cobra as onze classes |
 | Áudio e desempenho | feito | varredura mede pico/rms/contínuo/salto por jogo; Rolima 79% → 284%, 51 jogos mais rápidos |

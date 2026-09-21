@@ -10,7 +10,7 @@ no fim deste documento e dá para repetir a qualquer momento.
 
 | Estado | Primeiro levantamento | Depois | Agora |
 |---|---:|---:|---:|
-| roda | 33 | 50 | **57** |
+| roda | 33 | 50 | **56** |
 | terminou sozinho | — | — | 2 |
 | não cria o applet | 8 | 5 | 2 |
 | para no laço de quadros | 7 | 6 | 2 |
