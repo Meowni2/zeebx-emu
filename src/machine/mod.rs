@@ -14,7 +14,7 @@ use crate::brew::fmath;
 use crate::brew::heap::Heap;
 use crate::brew::objects::ObjectStore;
 use crate::brew::vfs::Vfs;
-use crate::cpu::unicorn::RETURN_MAGIC;
+use crate::cpu::RETURN_MAGIC;
 use crate::cpu::{CpuBackend, CpuError, Reg, StopReason};
 use crate::input::{self, Pad};
 use crate::loader::{self, LoadedModule};

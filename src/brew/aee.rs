@@ -10,7 +10,7 @@
 
 use crate::brew::aee_helpers;
 use crate::brew::aee_slots;
-use crate::cpu::unicorn::API_BASE;
+use crate::cpu::API_BASE;
 
 /// Quantos bits do endereço identificam a interface.
 const IFACE_SHIFT: u32 = 12;
