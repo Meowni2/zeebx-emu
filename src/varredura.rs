@@ -57,6 +57,12 @@ const TETO_PLACAR: u64 = 30;
 /// Quantos métodos mais chamados o relatório mostra. É onde gargalo aparece.
 const CHAMADAS_MOSTRADAS: usize = 12;
 
+/// Em que taxa o mixer entrega o áudio da medição.
+///
+/// É a taxa que o core Libretro pede ao frontend, e a que o console entrega de fato — 44,1 kHz
+/// estéreo. Medir noutra taxa daria um número que não corresponde ao que se ouve.
+const TAXA_DE_AMOSTRAGEM: u32 = 44_100;
+
 /// Quantas linhas do log do próprio jogo entram no relatório. As últimas, não as primeiras: o
 /// que interessa num jogo que quebrou é o que ele dizia pouco antes.
 const LOG_MOSTRADO: usize = 20;
@@ -305,7 +311,41 @@ pub struct Relatorio {
     pub chamadas_maiores: Vec<(String, u64)>,
     /// O fim do log do próprio jogo, por `DBGPRINTF` e por semihosting.
     pub log_do_jogo: Vec<String>,
+    /// O que o áudio fez, quando houve áudio para medir.
+    pub audio: Option<Audio>,
 }
+
+/// O que o áudio do jogo fez, medido sem placa de som.
+///
+/// **O estalo tem assinatura numérica**: um salto grande entre uma amostra e a seguinte, no mesmo
+/// canal. Guardar o maior salto e quantos passaram de meio curso permite dizer "este jogo estala"
+/// sem gravar arquivo de áudio e ouvir — e a varredura das 62 ROMs passa a medir isso de graça,
+/// que é o único jeito de descobrir quando o defeito apareceu.
+///
+/// Fica **fora do resumo**, pela mesma razão do estado da falha: são números de investigação, e
+/// cobrá-los na linha de base acusaria regressão por causa de um limiar escolhido hoje.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Audio {
+    /// Quadros estéreo entregues ao mixer.
+    pub amostras: u64,
+    /// O maior valor absoluto, em `0..=1`.
+    pub pico: f32,
+    /// O valor eficaz, que é o que se percebe como volume.
+    pub rms: f32,
+    /// Deslocamento contínuo: um valor médio longe de zero é assobio de corrente contínua.
+    pub continuo: f32,
+    /// O maior salto entre amostras do mesmo canal.
+    pub maior_salto: f32,
+    /// Quantos saltos passaram de [`LIMIAR_DE_ESTALO`].
+    pub estalos: u64,
+}
+
+/// A partir de quanto um salto entre amostras conta como estalo.
+///
+/// Meio curso em uma amostra é descontinuidade forte para qualquer conteúdo que não seja ruído
+/// branco de propósito. Não é lei: é um limiar declarado, para os números de dois jogos poderem
+/// ser comparados entre si.
+pub const LIMIAR_DE_ESTALO: f32 = 0.5;
 
 impl Relatorio {
     /// O que a linha de base guarda: estado e pendências, sem número de desempenho.
@@ -361,6 +401,15 @@ impl Relatorio {
         }
         if let Some(estado) = &self.estado_da_falha {
             texto.push_str(&format!("no instante da falha:\n{estado}"));
+        }
+        if let Some(audio) = &self.audio {
+            // Fica no relatório completo e não no resumo, pela mesma razão do estado da falha:
+            // é número de investigação, e a linha de base não cobra limiar escolhido hoje.
+            texto.push_str(&format!(
+                "áudio:\n                   {} amostra(s) estéreo, pico {:.3}, rms {:.4}, contínuo {:+.5}\n                   maior salto entre amostras do mesmo canal {:.3}; {} acima de {:.2}\n",
+                audio.amostras, audio.pico, audio.rms, audio.continuo,
+                audio.maior_salto, audio.estalos, LIMIAR_DE_ESTALO,
+            ));
         }
         if !self.chamadas_maiores.is_empty() {
             texto.push_str("chamadas que mais pesaram:\n");
@@ -427,6 +476,7 @@ impl Relatorio {
             estado_da_falha: None,
             chamadas_maiores: Vec::new(),
             log_do_jogo: Vec::new(),
+            audio: None,
         }
     }
 }
@@ -473,6 +523,17 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
         abertura,
         ..Default::default()
     };
+    // **O áudio é medido, não ouvido.** Sem placa, o mixer entrega as amostras do relógio virtual —
+    // a mesma cadência que o frontend Libretro usa —, e a conta do estalo sai daí.
+    let mixer = session.grava_audio(TAXA_DE_AMOSTRAGEM);
+    let mut som = Audio::default();
+    let mut soma = 0.0_f64;
+    let mut soma_dos_quadrados = 0.0_f64;
+    let mut ultimo_relogio = base_ms;
+    // Uma amostra anterior **por canal**: o fluxo é estéreo intercalado, e comparar `R` de um
+    // quadro com `L` do mesmo quadro mediria a diferença entre os canais — que é música, e não
+    // descontinuidade. Foi assim que a primeira versão desta conta deu salto zero em jogo com som.
+    let mut anterior = [0.0_f32; 2];
 
     // A partida vem separada da primeira volta: é nela que o applet recebe o `EVT_APP_START`.
     // Distinguir as duas é o que separa "quebrou antes do primeiro quadro" de "quebrou no
@@ -508,6 +569,27 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
                     break;
                 }
                 Step::Running | Step::Ahead => {}
+            }
+            // O tempo decorrido vem do relógio virtual, e não de um número fixo: um jogo que
+            // passa dois quadros entre duas voltas deve o dobro de amostras. É o mesmo cálculo do
+            // `retro_run`, para a medição aqui valer para o que o frontend recebe.
+            let agora = session.clock_ms();
+            let decorrido = u64::from(agora.wrapping_sub(ultimo_relogio)).min(1000);
+            ultimo_relogio = agora;
+            let devidas = (decorrido * u64::from(TAXA_DE_AMOSTRAGEM) / 1000) as usize;
+            for (i, amostra) in mixer.render(devidas).into_iter().enumerate() {
+                soma += f64::from(amostra);
+                soma_dos_quadrados += f64::from(amostra) * f64::from(amostra);
+                som.amostras += 1;
+                som.pico = som.pico.max(amostra.abs());
+                // O salto se mede **dentro do mesmo canal**, dois índices atrás.
+                let canal = i % 2;
+                let salto = (amostra - anterior[canal]).abs();
+                som.maior_salto = som.maior_salto.max(salto);
+                if salto > LIMIAR_DE_ESTALO {
+                    som.estalos += 1;
+                }
+                anterior[canal] = amostra;
             }
         }
     }
@@ -550,6 +632,14 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     log.drain(..sobra);
 
     medida.pixels = session.screen().escritas();
+    // Fecha as contas do áudio. `rms` e `continuo` só fazem sentido com amostra na conta, e um
+    // jogo que não tocou nada fica com `None` em vez de zeros que pareceriam silêncio medido.
+    if som.amostras > 0 {
+        let quantas = som.amostras as f64;
+        som.rms = (soma_dos_quadrados / quantas).sqrt() as f32;
+        som.continuo = (soma / quantas) as f32;
+    }
+    let audio = (som.amostras > 0).then_some(som);
     Relatorio {
         arquivo: arquivo.to_path_buf(),
         // O título sai do arquivo que se pediu, e **não** do `Session::title`: para um `.zip` a
@@ -564,6 +654,7 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
         estado_da_falha: estado_da_falha(&session),
         chamadas_maiores: chamadas,
         log_do_jogo: log,
+        audio,
     }
 }
 
@@ -980,6 +1071,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
             estado_da_falha: None,
             chamadas_maiores: vec![("IDisplay::Update".to_string(), 300)],
             log_do_jogo: vec!["carregando".to_string()],
+            audio: None,
         };
         let devagar = Relatorio {
             desempenho: Some(Desempenho {
@@ -991,6 +1083,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
             }),
             chamadas_maiores: Vec::new(),
             log_do_jogo: Vec::new(),
+            audio: None,
             ..modelo.clone()
         };
         assert_eq!(modelo.resumo(), devagar.resumo());
@@ -1012,6 +1105,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
             estado_da_falha: None,
             chamadas_maiores: Vec::new(),
             log_do_jogo: Vec::new(),
+            audio: None,
         };
         assert!(limpo.resumo().contains("nada a apontar"));
         let com_api = Relatorio {
@@ -1041,6 +1135,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
             estado_da_falha: None,
             chamadas_maiores: Vec::new(),
             log_do_jogo: Vec::new(),
+            audio: None,
         };
         assert!(confere_base(&caminho, &modelo).is_ok(), "grava o que falta");
         assert!(confere_base(&caminho, &modelo).is_ok(), "e depois confere");
@@ -1075,6 +1170,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
             estado_da_falha: Some("  r0=0x0 r1=0x24\n  pilha: 0x1 0x2\n".to_string()),
             chamadas_maiores: Vec::new(),
             log_do_jogo: Vec::new(),
+            audio: None,
         };
         assert!(relatorio.completo().contains("no instante da falha"));
         assert!(relatorio.completo().contains("r1=0x24"));
