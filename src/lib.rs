@@ -28,4 +28,7 @@ pub const PORTAS_PADRAO: [Option<input::bindings::Aparelho>; input::PORTAS] =
 /// Varredura de ROMs por teste. Depende de `PORTAS_PADRAO`, logo fica junto do motor enquanto os
 /// testes de compatibilidade ainda usam `Session`.
 #[cfg(test)]
+pub mod scratch;
+
+#[cfg(test)]
 pub mod varredura;

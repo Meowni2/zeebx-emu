@@ -781,7 +781,13 @@ Medido, com o core instalado:
 ```text
 [Scanner]: Add "Double Dragon (Brazil) (Es,Pt)" to "Mobile - Zeebo.lpl"
 [Scanner]: Add "Zeebo Sports Peteca (Brazil) (Es,Pt)" to "Mobile - Zeebo.lpl"
+[Scanner]: Add "Caveman Ninja (Brazil) (Es,Pt)" to "Mobile - Zeebo.lpl"
+[Scanner]: Add "Zenonia (Brazil) (Es,Pt)" to "Mobile - Zeebo.lpl"
 ```
+
+As duas últimas linhas não estão no No-Intro nem têm ficha na loja: elas casam pelo registro de
+**CRC do `.zip`**, que é gerado para todos os 62 pacotes. Ou seja, o banco nomeia o acervo inteiro,
+não só a parte verificada pelo DAT.
 
 Duas condições para o scan achar o banco, e as duas são fáceis de esquecer:
 
@@ -791,6 +797,19 @@ Duas condições para o scan achar o banco, e as duas são fáceis de esquecer:
    (`scan_without_core_match = "false"`). Sem o core na pasta de cores, ele nem entra na fase de
    banco e marca `??` em tudo. Com o core instalado funciona; se ainda assim não casar, ligue
    `scan_without_core_match`.
+
+### Destinos explícitos, e o `.info` junto do core
+
+Duas lições desta etapa, as duas medidas na máquina:
+
+1. **o core e o `.info` andam juntos.** Um `.info` antigo, sem a linha `database`, instalado ao lado
+   de um core novo, quebra o scan pelo menu: o RetroArch não associa banco nenhum àquele core, e
+   todo conteúdo sai como `??`. Foi exatamente o que aconteceu aqui — o `.info` tinha sido copiado
+   antes de a linha existir;
+2. **nenhum artefato pode cair na pasta do frontend por acidente.** `--saida` era usado para
+   playlist, catálogo e cache do DAT, e apontá-lo para a configuração do RetroArch largou
+   `Mobile - Zeebo.lpl`, `catalogo.json` e `Mobile - Zeebo.dat` na raiz dela. Agora playlist,
+   catálogo e DAT têm destino próprio (`--playlists`, `--catalogo` e o DAT ao lado do catálogo).
 
 ### Playlist
 
@@ -982,6 +1001,14 @@ gravação e o emulador travou. O core chamava `video_refresh` e `audio_sample_b
 mutex do estado, e também chamava o callback de ambiente segurando o mutex dos ponteiros do
 frontend. Agora os ponteiros são copiados e os cadeados soltos antes de qualquer chamada ao
 frontend, e os buffers de quadro e áudio saem do estado antes de vídeo/áudio e voltam depois.
+
+### Higiene dos testes
+
+A suíte deixava lixo: os testes de SQL e de saves criavam `/tmp/zeebx-sql-*` e `/tmp/zeebx-saves-*`
+e limpavam **no começo** — para o caso de a rodada anterior ter falhado — e nunca no fim. Uma sessão
+com várias rodadas acumulou dez diretórios. Agora existe `src/scratch.rs::TempDir`, que apaga a
+pasta quando o teste sai de escopo, passe ele ou não. Verificado: depois da suíte inteira, `/tmp`
+não tem nenhum `zeebx-*`.
 
 ### Testes automatizados
 

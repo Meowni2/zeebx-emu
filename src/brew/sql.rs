@@ -169,10 +169,8 @@ mod tests {
 
     #[test]
     fn a_consulta_de_versao_do_zwheel_responde() {
-        let dir = std::env::temp_dir().join("zeebx-sql-versao");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let db = prefs(&dir);
+        let dir = crate::scratch::TempDir::new("zeebx-sql-versao");
+        let db = prefs(dir.path());
 
         // É a primeira coisa que a Z-Wheel pergunta depois de abrir o banco.
         let linhas = db.exec("SELECT version, subversion FROM DBINFO").unwrap();
@@ -188,10 +186,8 @@ mod tests {
     fn o_integrity_check_responde_ok() {
         // A instrução que aparece na sonda antes de qualquer outra. Um `PRAGMA` devolve linha
         // como uma consulta qualquer, e é isso que o app confere.
-        let dir = std::env::temp_dir().join("zeebx-sql-integridade");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let db = prefs(&dir);
+        let dir = crate::scratch::TempDir::new("zeebx-sql-integridade");
+        let db = prefs(dir.path());
         let linhas = db.exec("PRAGMA integrity_check").unwrap();
         assert_eq!(linhas.len(), 1);
         assert_eq!(linhas[0].values[0].as_deref(), Some("ok"));
@@ -199,10 +195,8 @@ mod tests {
 
     #[test]
     fn instrucao_sem_resultado_nao_devolve_linha_e_grava() {
-        let dir = std::env::temp_dir().join("zeebx-sql-gravacao");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let db = prefs(&dir);
+        let dir = crate::scratch::TempDir::new("zeebx-sql-gravacao");
+        let db = prefs(dir.path());
         let gravou = db
             .exec("INSERT OR REPLACE INTO PREFSINFO values ('Initialized', '', 1, 2)")
             .unwrap();
@@ -219,10 +213,8 @@ mod tests {
 
     #[test]
     fn instrucao_invalida_vira_erro_com_motivo() {
-        let dir = std::env::temp_dir().join("zeebx-sql-erro");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let db = prefs(&dir);
+        let dir = crate::scratch::TempDir::new("zeebx-sql-erro");
+        let db = prefs(dir.path());
         let erro = db.exec("SELECT * FROM NAO_EXISTE").unwrap_err();
         assert!(
             erro.contains("NAO_EXISTE"),
@@ -232,9 +224,7 @@ mod tests {
 
     #[test]
     fn biblioteca_do_perfil_preserva_o_oficial_e_atualiza_roms() {
-        let dir = std::env::temp_dir().join("zeebx-sql-biblioteca");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::scratch::TempDir::new("zeebx-sql-biblioteca");
         let package = dir.join("tt_game_info");
         let db = Database::open(&package).unwrap();
         db.exec("CREATE TABLE GAMEINFO(game_id INTEGER PRIMARY KEY, class_id INTEGER, playcount INTEGER, dt_download INTEGER, dt_lastplayed INTEGER, boxart_path TEXT, flags INTEGER, size INTEGER)").unwrap();

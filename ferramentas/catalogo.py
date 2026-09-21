@@ -487,7 +487,10 @@ def main():
     args = ap.parse_args()
 
     args.saida.mkdir(parents=True, exist_ok=True)
-    caminho_dat = args.dat or args.saida / f"{DAT_NOME}.dat"
+    catalogo = args.catalogo or (args.saida / "catalogo.json")
+    # O cache do DAT fica **ao lado do catálogo**, não em `--saida`: quando a saída é a própria
+    # configuração do frontend, o `.dat` acabava largado na raiz dela.
+    caminho_dat = args.dat or (catalogo.parent / f"{DAT_NOME}.dat")
     tabela = le_dat(baixa_dat(caminho_dat))
     print(f"DAT: {len(tabela)} títulos conhecidos")
 
@@ -528,7 +531,6 @@ def main():
         destino, quantos = escreve_rdb(args.rdb, fichas)
         print(f"rdb: {destino} ({quantos} entradas)")
 
-    catalogo = args.catalogo or (args.saida / "catalogo.json")
     catalogo.write_text(
         json.dumps(
             [
