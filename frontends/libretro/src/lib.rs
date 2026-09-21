@@ -1205,3 +1205,114 @@ pub extern "C" fn retro_get_memory_data(_id: u32) -> *mut c_void {
 pub extern "C" fn retro_get_memory_size(_id: u32) -> usize {
     0
 }
+
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+    use std::ffi::CString;
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// Quantos quadros o vídeo do frontend recebeu.
+    static QUADROS: AtomicU32 = AtomicU32::new(0);
+    /// A pasta que o frontend de teste entrega como sistema e como saves.
+    static PASTA: OnceLock<CString> = OnceLock::new();
+
+    /// O ambiente mínimo que o core precisa, respondendo como um frontend de verdade.
+    ///
+    /// O que não temos responde `false` — é o que o RetroArch faz com o que não conhece, e é
+    /// assim que o caminho de recusa do core também fica exercitado.
+    unsafe extern "C" fn ambiente(cmd: u32, dados: *mut c_void) -> bool {
+        match cmd {
+            // Aceita RGB565 e recusa o resto: é o formato que o console entrega, e recusar os
+            // outros faz o core seguir pelo caminho que ele usa no RetroArch.
+            ENV_SET_PIXEL_FORMAT => {
+                !dados.is_null() && unsafe { *(dados as *const u32) } == PIXEL_FORMAT_RGB565
+            }
+            ENV_GET_SYSTEM_DIRECTORY | ENV_GET_SAVE_DIRECTORY => {
+                let Some(pasta) = PASTA.get() else {
+                    return false;
+                };
+                if dados.is_null() {
+                    return false;
+                }
+                // SAFETY: o core promete um `*const *const c_char` para escrita.
+                unsafe { *(dados as *mut *const c_char) = pasta.as_ptr() };
+                true
+            }
+            _ => false,
+        }
+    }
+
+    unsafe extern "C" fn video(_dados: *const c_void, _largura: u32, _altura: u32, _passo: usize) {
+        QUADROS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    unsafe extern "C" fn audio(_dados: *const i16, quadros: usize) -> usize {
+        quadros
+    }
+
+    unsafe extern "C" fn entrada(_porta: u32, _dispositivo: u32, _indice: u32, _id: u32) -> i16 {
+        0
+    }
+
+    extern "C" fn sem_poll() {}
+
+    /// **O core, exercitado pela própria ABI.**
+    ///
+    /// É o teste que faltava para o ciclo da Z-Wheel do lado do core: o motor é medido pela
+    /// varredura, e o laço do core — que troca de sessão quando o shell pede — não tinha prova
+    /// automática nenhuma. Aqui não há janela nem RetroArch, mas o caminho é o mesmo:
+    /// `retro_init`, `retro_load_game`, quadros e `retro_unload_game`.
+    ///
+    /// **Sem `ZEEBX_CORE_ROM` ele não roda.** ROM não entra na árvore do repositório, e um teste
+    /// que baixa conteúdo sozinho é pior que um teste que não roda.
+    ///
+    /// ```bash
+    /// ZEEBX_CORE_ROM="roms/Z-Wheel.zip" cargo test -p zeebx-libretro -- --nocapture
+    /// ```
+    #[test]
+    fn a_abi_do_core_roda_uma_rom() {
+        let Ok(caminho) = std::env::var("ZEEBX_CORE_ROM") else {
+            eprintln!("sem ZEEBX_CORE_ROM: nada a rodar");
+            return;
+        };
+        let pasta = std::env::temp_dir().join(format!("zeebx-core-{}", std::process::id()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        let _ = PASTA.set(CString::new(pasta.to_string_lossy().to_string()).unwrap());
+        QUADROS.store(0, Ordering::Relaxed);
+
+        let caminho_c = CString::new(caminho.clone()).unwrap();
+        let quadros_pedidos = std::env::var("ZEEBX_CORE_QUADROS")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(60u32);
+
+        let info = RetroGameInfo {
+            path: caminho_c.as_ptr(),
+            data: std::ptr::null(),
+            size: 0,
+            meta: std::ptr::null(),
+        };
+        unsafe {
+            retro_set_environment(Some(ambiente));
+            retro_set_video_refresh(Some(video));
+            retro_set_audio_sample_batch(Some(audio));
+            retro_set_input_poll(Some(sem_poll));
+            retro_set_input_state(Some(entrada));
+            retro_init();
+            assert!(retro_load_game(&info), "o core recusou {caminho}");
+            for _ in 0..quadros_pedidos {
+                retro_run();
+            }
+            retro_unload_game();
+            retro_deinit();
+        }
+
+        let quadros = QUADROS.load(Ordering::Relaxed);
+        assert!(quadros > 0, "nenhum quadro chegou ao frontend");
+        eprintln!("quadros entregues ao frontend: {quadros}");
+        let _ = std::fs::remove_dir_all(&pasta);
+    }
+}
