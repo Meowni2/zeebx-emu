@@ -4,13 +4,15 @@
 # responde: ele roda em tag, empacota, e deixa os testes como `continue-on-error` para não segurar
 # os instaladores.
 #
-# Custo: cada plataforma compila o `unicorn` (QEMU em C) e o `dynarmic` (JIT em C++20), o que leva
-# uns 15 minutos por runner. Por isso a matriz completa roda em **push** para as ramas de
-# desenvolvimento e sob demanda; em PR roda só o Linux x86_64, que é onde o laço de retroalimentação
-# precisa ser curto.
+# Custo: cada plataforma compila o `unicorn` (QEMU em C) e o `dynarmic` (JIT em C++20), uns 15
+# minutos por runner. Por isso a matriz completa roda em **push** para as ramas de desenvolvimento e
+# sob demanda; em PR roda só o Linux x86_64, onde o retorno precisa ser rápido.
 #
-# Windows e macOS entram com os mesmos passos do `release.yml` — lá eles já produzem instalador, é
-# a prova de que o build passa. Os **testes** nesses dois ficam tolerantes a falha enquanto ninguém
+# **A lista de PR é escolhida por expressão, não por `if` de job**: o contexto `matrix` não existe
+# em `jobs.<id>.if` — o GitHub rejeita o arquivo inteiro, e o sintoma é um run sem job nenhum.
+#
+# Windows e macOS usam os mesmos passos do `release.yml`, onde eles já produzem instalador: é a
+# prova de que o build passa. Os **testes** nesses dois ficam tolerantes a falha enquanto ninguém
 # tiver olhado o resultado deles, como no release.
 
 name: ci
@@ -29,25 +31,31 @@ jobs:
   compila:
     name: ${{ matrix.nome }}
     runs-on: ${{ matrix.sistema }}
-    # Em PR, só o alvo barato: a matriz inteira é coisa de push.
-    if: github.event_name != 'pull_request' || matrix.nome == 'linux-x86_64'
     strategy:
       fail-fast: false
       matrix:
+        alvo: ${{ github.event_name == 'pull_request'
+                  && fromJSON('["linux-x86_64"]')
+                  || fromJSON('["linux-x86_64","linux-aarch64","windows-x86_64","macos-arm64","macos-x86_64"]') }}
         include:
-          - nome: linux-x86_64
+          - alvo: linux-x86_64
+            nome: linux-x86_64
             sistema: ubuntu-24.04
             binario: target/release/zeebx
-          - nome: linux-aarch64
+          - alvo: linux-aarch64
+            nome: linux-aarch64
             sistema: ubuntu-24.04-arm
             binario: target/release/zeebx
-          - nome: windows-x86_64
+          - alvo: windows-x86_64
+            nome: windows-x86_64
             sistema: windows-latest
             binario: target/release/zeebx.exe
-          - nome: macos-arm64
+          - alvo: macos-arm64
+            nome: macos-arm64
             sistema: macos-latest
             binario: target/release/zeebx
-          - nome: macos-x86_64
+          - alvo: macos-x86_64
+            nome: macos-x86_64
             sistema: macos-15-intel
             binario: target/release/zeebx
     steps:
@@ -59,9 +67,9 @@ jobs:
         with:
           key: ci-${{ matrix.nome }}
 
-      # A lista do Linux é a do `release.yml`, mais o `ninja` e o `libclang` de propósito: o
-      # `dynarmic` pede gerador Ninja e o `bindgen` do unicorn carrega a biblioteca do clang.
-      # Depender do que a imagem do runner já traz funciona até o dia em que não traz.
+      # A lista do Linux é a do `release.yml`, mais `ninja` e `libclang` de propósito: o `dynarmic`
+      # pede gerador Ninja e o `bindgen` do unicorn carrega a biblioteca do clang. Depender do que a
+      # imagem do runner já traz funciona até o dia em que não traz.
       - name: Dependências do Linux
         if: runner.os == 'Linux'
         run: |
@@ -82,29 +90,27 @@ jobs:
         run: cargo build --release --locked
 
       - name: Testes
-        # Windows e macOS: ninguém olhou esses testes ainda, e um tropeço deles não pode esconder
-        # o resultado do build. Linux é para valer.
+        # Windows e macOS: ninguém olhou esses testes ainda, e um tropeço deles não pode esconder o
+        # resultado do build. No Linux é para valer.
         continue-on-error: ${{ runner.os != 'Linux' }}
         env:
           CARGO_PROFILE_DEV_DEBUG: "0"
           CARGO_PROFILE_TEST_DEBUG: "0"
         run: cargo test --release --locked
 
-      - name: O binário existe e não é um script
+      - name: O binário existe
         shell: bash
-        run: |
-          test -f ${{ matrix.binario }}
-          ls -la ${{ matrix.binario }}
+        run: ls -la ${{ matrix.binario }}
 
-      - name: Ele não puxa biblioteca de interface inesperada
+      - name: O binário abre no Linux
         if: runner.os == 'Linux'
         shell: bash
         run: |
           file ${{ matrix.binario }}
-          ldd ${{ matrix.binario }} | head -30
-          # No Linux a interface usa X11/Wayland/GL/ALSA/udev de verdade: o que se confere aqui é
-          # que o binário **executa** sem erro de biblioteca faltando, e não que não as use.
-          ${{ matrix.binario }} controles || true
+          ldd ${{ matrix.binario }} | head -20
+          # `controles` lista o que o sistema vê de controle e sai: é o comando mais barato que
+          # exercita a inicialização de verdade (udev, gilrs) sem precisar de tela.
+          ${{ matrix.binario }} controles
 
       - uses: actions/upload-artifact@v4
         with:
