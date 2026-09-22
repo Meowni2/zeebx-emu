@@ -3886,6 +3886,7 @@ impl crate::save_state::Guardavel for GlState {
             luz.extend(floats(&fonte.attenuation));
         }
         destino.poe_u32s("gl.iluminacao", luz);
+        grava_texturas(&self.textures, destino);
     }
 
     fn restaura(&mut self, origem: &crate::save_state::Leitor<'_>) -> Result<(), crate::save_state::Erro> {
@@ -4089,8 +4090,175 @@ impl crate::save_state::Guardavel for GlState {
             cursor += 2;
             quatro!(self.lights[indice].attenuation);
         }
+
+        self.textures = le_texturas(origem)?;
         Ok(())
     }
+}
+
+/// Grava as texturas: por objeto, os números, os pixels e os níveis de redução.
+///
+/// A cadeia de mipmaps é o motivo de esta tabela ter formato próprio. Descartá-la foi a causa das
+/// listras nos modelos do palco da Z-Wheel: eles vêm com a cadeia inteira, de 128×128 até 1×1, e
+/// são vistos de raspão — a lateral de um carro ocupa poucos pixels de largura e cobre a textura
+/// toda. Amostrando sempre o nível zero, cada pixel cai num texel qualquer e o resultado é o
+/// traseiro do carro repetido em colunas.
+///
+/// Os pixels vão **crus**, um byte de alpha inclusive: quatro por pixel, na ordem de leitura. É a
+/// tabela que mais pesa no estado, e é onde comprimir valeria mais — mas comprimir é uma decisão
+/// sobre o formato, e o formato já tem versão para receber isso depois.
+fn grava_texturas(
+    texturas: &std::collections::HashMap<u32, Texture>,
+    destino: &mut crate::save_state::Secoes,
+) {
+    let mut ids: Vec<u32> = texturas.keys().copied().collect();
+    ids.sort_unstable();
+    destino.poe_u32s("tex.ids", ids.iter().copied());
+    for id in ids {
+        let textura = &texturas[&id];
+        destino.poe_u32s(
+            &format!("tex.{id}.meta"),
+            [
+                textura.width as u32,
+                textura.height as u32,
+                textura.wrap[0],
+                textura.wrap[1],
+                textura.filter,
+                textura.min_filter,
+                textura.crop[0] as u32,
+                textura.crop[1] as u32,
+                textura.crop[2] as u32,
+                textura.crop[3] as u32,
+                textura.mipmaps.len() as u32,
+            ],
+        );
+        destino.poe(&format!("tex.{id}.pixels"), bytes_dos_pixels(&textura.pixels));
+        // As dimensões de cada nível, e depois todos os pixels deles em seguida.
+        let mut medidas = Vec::with_capacity(textura.mipmaps.len() * 2);
+        let mut pixels = Vec::new();
+        for nivel in &textura.mipmaps {
+            medidas.push(nivel.width as u32);
+            medidas.push(nivel.height as u32);
+            pixels.extend_from_slice(&bytes_dos_pixels(&nivel.pixels));
+        }
+        destino.poe_u32s(&format!("tex.{id}.mips"), medidas);
+        destino.poe(&format!("tex.{id}.mip_pixels"), pixels);
+    }
+}
+
+/// Os pixels RGBA como bytes.
+fn bytes_dos_pixels(pixels: &[[u8; 4]]) -> Vec<u8> {
+    let mut saida = Vec::with_capacity(pixels.len() * 4);
+    for pixel in pixels {
+        saida.extend_from_slice(pixel);
+    }
+    saida
+}
+
+/// O caminho de volta de [`grava_texturas`], com a conferência que importa.
+///
+/// **O número de pixels tem de casar com as dimensões.** Um arquivo truncado, ou um nível de
+/// mipmap com as medidas trocadas, desenharia listras — e o defeito apareceria como imagem
+/// errada, sem nada apontando para o save state. Aqui é recusa.
+fn le_texturas(
+    origem: &crate::save_state::Leitor<'_>,
+) -> Result<std::collections::HashMap<u32, Texture>, crate::save_state::Erro> {
+    use crate::save_state::Erro;
+    let ids = origem.u32s("tex.ids")?;
+    let mut texturas = std::collections::HashMap::new();
+    for id in ids {
+        let meta = origem.u32s(&format!("tex.{id}.meta"))?;
+        if meta.len() != 11 {
+            return Err(Erro::Secao {
+                nome: format!("tex.{id}.meta"),
+                motivo: format!("esperava 11 números e veio {}", meta.len()),
+            });
+        }
+        let (largura, altura) = (meta[0] as usize, meta[1] as usize);
+        let pixels = pixels_dos_bytes(&secao_do_estado(origem, &format!("tex.{id}.pixels"))?);
+        if pixels.len() != largura * altura {
+            return Err(Erro::Secao {
+                nome: format!("tex.{id}.pixels"),
+                motivo: format!(
+                    "a textura é {largura}x{altura} ({} pixels) e vieram {}",
+                    largura * altura,
+                    pixels.len()
+                ),
+            });
+        }
+        let medidas = origem.u32s(&format!("tex.{id}.mips"))?;
+        let quantos = meta[10] as usize;
+        if medidas.len() != quantos * 2 {
+            return Err(Erro::Secao {
+                nome: format!("tex.{id}.mips"),
+                motivo: format!("diz ter {quantos} nível(is) e veio {} número(s)", medidas.len()),
+            });
+        }
+        let cru = secao_do_estado(origem, &format!("tex.{id}.mip_pixels"))?;
+        let mut mipmaps = Vec::with_capacity(quantos);
+        let mut cursor = 0usize;
+        for nivel in 0..quantos {
+            let (l, a) = (medidas[nivel * 2] as usize, medidas[nivel * 2 + 1] as usize);
+            let precisa = l * a * 4;
+            if cru.len() < cursor + precisa {
+                return Err(Erro::Secao {
+                    nome: format!("tex.{id}.mip_pixels"),
+                    motivo: format!(
+                        "o nível {nivel} é {l}x{a} e precisa de {precisa} bytes, e restam {}",
+                        cru.len() - cursor
+                    ),
+                });
+            }
+            mipmaps.push(Nivel {
+                width: l,
+                height: a,
+                pixels: pixels_dos_bytes(&cru[cursor..cursor + precisa]),
+            });
+            cursor += precisa;
+        }
+        texturas.insert(
+            id,
+            Texture {
+                width: largura,
+                height: altura,
+                pixels,
+                mipmaps,
+                wrap: [meta[2], meta[3]],
+                filter: meta[4],
+                min_filter: meta[5],
+                crop: [
+                    meta[6] as i32,
+                    meta[7] as i32,
+                    meta[8] as i32,
+                    meta[9] as i32,
+                ],
+            },
+        );
+    }
+    Ok(texturas)
+}
+
+/// Uma seção de bytes que tem de existir.
+fn secao_do_estado<'a>(
+    origem: &'a crate::save_state::Leitor<'a>,
+    nome: &str,
+) -> Result<Vec<u8>, crate::save_state::Erro> {
+    origem
+        .secao(nome)
+        .map(|bytes| bytes.to_vec())
+        .ok_or_else(|| crate::save_state::Erro::Secao {
+            nome: nome.to_string(),
+            motivo: "a seção não está no arquivo".to_string(),
+        })
+}
+
+/// Bytes RGBA como pixels. Sobra de menos de quatro bytes é descartada, e quem confere o número
+/// é quem chama.
+fn pixels_dos_bytes(bytes: &[u8]) -> Vec<[u8; 4]> {
+    bytes
+        .chunks_exact(4)
+        .map(|p| [p[0], p[1], p[2], p[3]])
+        .collect()
 }
 
 /// Quantos números o ambiente de textura ocupa: modo, dois de combinação, seis fontes, seis
@@ -4315,6 +4483,89 @@ mod testes_do_estado_de_gl {
         match Leitor::abre(&arquivo) {
             Err(crate::save_state::Erro::Integridade { .. }) => {}
             outro => panic!("devia recusar por integridade, e devolveu {outro:?}"),
+        }
+    }
+
+    /// **As texturas vão e voltam, com a cadeia de mipmaps inteira.**
+    ///
+    /// A cadeia é o motivo de esta tabela ter formato próprio: o teste usa dois níveis, e confere
+    /// que o segundo voltou com as medidas e os pixels dele.
+    #[test]
+    fn as_texturas_e_os_mipmaps_vem_de_volta() {
+        let mut antes = GlState::new(640, 480);
+        let nivel_zero: Vec<[u8; 4]> = (0..16u8).map(|n| [n, n + 1, n + 2, 255]).collect();
+        let nivel_um: Vec<[u8; 4]> = (0..4u8).map(|n| [n + 100, 0, 0, 128]).collect();
+        antes.textures.insert(
+            0x1000,
+            Texture {
+                width: 4,
+                height: 4,
+                pixels: nivel_zero.clone(),
+                mipmaps: vec![Nivel {
+                    width: 2,
+                    height: 2,
+                    pixels: nivel_um.clone(),
+                }],
+                wrap: [0x2901, 0x2900],
+                filter: 0x2601,
+                min_filter: 0x2703,
+                crop: [1, -2, 3, -4],
+            },
+        );
+
+        let mut secoes = Secoes::nova();
+        antes.grava(&mut secoes);
+        let arquivo = secoes.fecha();
+        let leitor = Leitor::abre(&arquivo).expect("abriu");
+        let mut depois = GlState::new(640, 480);
+        depois.restaura(&leitor).expect("restaurou");
+
+        let textura = depois.textures.get(&0x1000).expect("a textura voltou");
+        assert_eq!((textura.width, textura.height), (4, 4));
+        assert_eq!(textura.pixels, nivel_zero, "os pixels não voltaram");
+        assert_eq!((textura.wrap[0], textura.wrap[1]), (0x2901, 0x2900));
+        assert_eq!((textura.filter, textura.min_filter), (0x2601, 0x2703));
+        assert_eq!(textura.crop, [1, -2, 3, -4], "o recorte é assinado");
+        assert_eq!(textura.mipmaps.len(), 1, "a cadeia de mipmaps não voltou");
+        assert_eq!((textura.mipmaps[0].width, textura.mipmaps[0].height), (2, 2));
+        assert_eq!(
+            textura.mipmaps[0].pixels, nivel_um,
+            "os pixels do nível um não voltaram"
+        );
+    }
+
+    /// Uma textura cujo número de pixels não casa com as dimensões é **recusada**.
+    ///
+    /// É a conferência que importa: um nível de mipmap com as medidas trocadas desenharia listras,
+    /// e o defeito apareceria como imagem errada, sem nada apontando para o save state.
+    #[test]
+    fn textura_com_pixels_a_menos_e_recusada() {
+        let mut antes = GlState::new(640, 480);
+        antes.textures.insert(
+            0x1000,
+            Texture {
+                width: 4,
+                height: 4,
+                pixels: vec![[0, 0, 0, 255]],
+                mipmaps: Vec::new(),
+                wrap: [0, 0],
+                filter: 0,
+                min_filter: 0,
+                crop: [0; 4],
+            },
+        );
+        let mut secoes = Secoes::nova();
+        antes.grava(&mut secoes);
+        let arquivo = secoes.fecha();
+        let leitor = Leitor::abre(&arquivo).expect("abriu");
+        let mut depois = GlState::new(640, 480);
+        match depois.restaura(&leitor) {
+            Err(crate::save_state::Erro::Secao { nome, motivo }) => {
+                // O identificador entra em decimal no nome da seção, como nas outras tabelas.
+                assert_eq!(nome, "tex.4096.pixels");
+                assert!(motivo.contains("16"), "{motivo}");
+            }
+            outro => panic!("devia recusar a textura curta, e devolveu {outro:?}"),
         }
     }
 }
