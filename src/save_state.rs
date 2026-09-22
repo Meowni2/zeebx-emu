@@ -285,6 +285,32 @@ impl Secoes {
         self.poe(nome, bytes);
     }
 
+    /// Grava blocos de bytes indexados por uma chave de `chaves` números cada.
+    ///
+    /// É a forma de toda tabela que guarda **conteúdo** em vez de número: as preferências, os
+    /// parâmetros de coleção, os dados que o `IConfig` recebeu. `chaves` diz quantos números formam
+    /// a chave — um para `HashMap<u32, Vec<u8>>`, dois para `HashMap<(u32, u32), Vec<u8>>`.
+    pub fn poe_blocos(
+        &mut self,
+        nome: &str,
+        chaves: usize,
+        itens: impl IntoIterator<Item = (Vec<u32>, Vec<u8>)>,
+    ) {
+        let itens: Vec<(Vec<u32>, Vec<u8>)> = itens.into_iter().collect();
+        let mut saida = Vec::new();
+        saida.extend_from_slice(&(itens.len() as u32).to_le_bytes());
+        saida.extend_from_slice(&(chaves as u32).to_le_bytes());
+        for (chave, dados) in itens {
+            debug_assert_eq!(chave.len(), chaves);
+            for n in chave {
+                saida.extend_from_slice(&n.to_le_bytes());
+            }
+            saida.extend_from_slice(&(dados.len() as u32).to_le_bytes());
+            saida.extend_from_slice(&dados);
+        }
+        self.poe(nome, saida);
+    }
+
     /// Grava um texto em UTF-8, com o tamanho na frente.
     ///
     /// Caminho de arquivo, nome de fonte, título: o que não é número vai assim. O tamanho vem
@@ -349,6 +375,69 @@ impl Leitor<'_> {
             });
         }
         Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    /// Blocos gravados por [`Secoes::poe_blocos`], com a contagem de chaves que o arquivo diz.
+    ///
+    /// O número de chaves mora **no arquivo**, e não só no código: assim uma tabela de chave dupla
+    /// lida como se fosse de chave simples é recusa, e não uma leitura deslocada.
+    pub fn blocos(&self, nome: &str) -> Result<Vec<(Vec<u32>, Vec<u8>)>, Erro> {
+        let bytes = self.secao(nome).ok_or_else(|| Erro::Secao {
+            nome: nome.to_string(),
+            motivo: "a seção não está no arquivo".to_string(),
+        })?;
+        let malformada = |motivo: String| Erro::Secao {
+            nome: nome.to_string(),
+            motivo,
+        };
+        if bytes.len() < 8 {
+            return Err(malformada(format!(
+                "esperava a contagem e a largura da chave, e tem {} bytes",
+                bytes.len()
+            )));
+        }
+        let quantos = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+        let chaves = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+        if chaves == 0 || chaves > 8 {
+            return Err(malformada(format!("largura de chave {chaves}")));
+        }
+        let mut posicao = 8usize;
+        let mut itens = Vec::with_capacity(quantos);
+        for _ in 0..quantos {
+            let precisa = posicao + chaves * 4 + 4;
+            if bytes.len() < precisa {
+                return Err(malformada(format!(
+                    "o item em {posicao} passa do fim ({} bytes)",
+                    bytes.len()
+                )));
+            }
+            let mut chave = Vec::with_capacity(chaves);
+            for _ in 0..chaves {
+                chave.push(u32::from_le_bytes([
+                    bytes[posicao],
+                    bytes[posicao + 1],
+                    bytes[posicao + 2],
+                    bytes[posicao + 3],
+                ]));
+                posicao += 4;
+            }
+            let tamanho = u32::from_le_bytes([
+                bytes[posicao],
+                bytes[posicao + 1],
+                bytes[posicao + 2],
+                bytes[posicao + 3],
+            ]) as usize;
+            posicao += 4;
+            if bytes.len() < posicao + tamanho {
+                return Err(malformada(format!(
+                    "o item {chave:?} diz ter {tamanho} bytes e restam {}",
+                    bytes.len() - posicao
+                )));
+            }
+            itens.push((chave, bytes[posicao..posicao + tamanho].to_vec()));
+            posicao += tamanho;
+        }
+        Ok(itens)
     }
 
     /// Um texto gravado por [`Secoes::poe_texto`].

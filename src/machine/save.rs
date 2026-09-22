@@ -141,6 +141,7 @@ impl<C: CpuBackend> Machine<C> {
         self.grava_entrada_e_tempo(&mut secoes);
         self.grava_tabelas_numericas(&mut secoes);
         self.grava_fontes_e_arquivos(&mut secoes);
+        self.grava_conteudo(&mut secoes);
         self.heap.grava_com_prefixo("heap", &mut secoes);
         self.objects.grava(&mut secoes);
         self.superficies.grava_com_prefixo("surfaces", &mut secoes);
@@ -205,6 +206,7 @@ impl<C: CpuBackend> Machine<C> {
         self.restaura_entrada_e_tempo(&leitor)?;
         self.restaura_tabelas_numericas(&leitor)?;
         self.restaura_fontes_e_arquivos(&leitor)?;
+        self.restaura_conteudo(&leitor)?;
         self.heap.restaura_com_prefixo("heap", &leitor)?;
         self.objects.restaura(&leitor)?;
         self.superficies
@@ -672,6 +674,150 @@ fn deslocamento(file: &std::fs::File) -> std::io::Result<u64> {
     copia.stream_position()
 }
 
+
+/// As tabelas que guardam **conteúdo**: preferências, parâmetros de coleção, dados de `IConfig`,
+/// o texto decifrado, a resposta da rede e o que o `IWeb` já baixou.
+///
+/// Todas usam o mesmo ajudante de blocos, e a diferença entre elas é só quantos números formam a
+/// chave — um para `HashMap<u32, Vec<u8>>`, dois para `HashMap<(u32, u32), Vec<u8>>`. Guardam o
+/// conteúdo porque ele **não está em lugar nenhum** fora do motor: ao contrário dos arquivos
+/// abertos, que se reabrem do disco, um `SetPrefs` que o jogo fez já não existe em disco nenhum.
+impl<C: CpuBackend> Machine<C> {
+    fn grava_conteudo(&self, secoes: &mut Secoes) {
+        secoes.poe_blocos(
+            "cont.prefs",
+            2,
+            self.prefs
+                .iter()
+                .map(|((classe, versao), dados)| {
+                    (vec![*classe, u32::from(*versao)], dados.clone())
+                })
+                .collect::<Vec<_>>(),
+        );
+        secoes.poe_blocos(
+            "cont.parametros",
+            2,
+            self.parametros_de_colecao
+                .iter()
+                .map(|((a, b), dados)| (vec![*a, *b], dados.clone()))
+                .collect::<Vec<_>>(),
+        );
+        secoes.poe_blocos(
+            "cont.sources",
+            1,
+            self.sources
+                .iter()
+                .map(|(id, dados)| (vec![*id], dados.clone()))
+                .collect::<Vec<_>>(),
+        );
+        secoes.poe_blocos(
+            "cont.paginas",
+            1,
+            self.paginas_html
+                .iter()
+                .map(|(id, dados)| (vec![*id], dados.clone()))
+                .collect::<Vec<_>>(),
+        );
+        // O `IConfig` tem um mapa por objeto: uma chave de dois números por entrada, o objeto e o
+        // item.
+        secoes.poe_blocos(
+            "cont.config",
+            2,
+            self.config_items
+                .iter()
+                .flat_map(|(objeto, itens)| {
+                    itens
+                        .iter()
+                        .map(move |(item, dados)| (vec![*objeto, *item], dados.clone()))
+                })
+                .collect::<Vec<_>>(),
+        );
+        secoes.poe_blocos(
+            "cont.plaintexts",
+            1,
+            self.plaintexts
+                .iter()
+                .enumerate()
+                .map(|(ordem, dados)| (vec![ordem as u32], dados.clone()))
+                .collect::<Vec<_>>(),
+        );
+        secoes.poe_blocos("cont.resposta", 1, vec![(vec![0u32], self.web_response.clone())]);
+    }
+
+    fn restaura_conteudo(&mut self, leitor: &Leitor<'_>) -> Result<(), Erro> {
+        // A largura da chave é conferida **antes** de qualquer índice: um arquivo que diga "chave
+        // de um número" numa tabela de dois faria o índice `chave[1]` entrar em pânico, e pânico
+        // no carregamento de um save state derruba o frontend.
+        let conferir = |nome: &str, chave: &[u32], esperada: usize| -> Result<(), Erro> {
+            if chave.len() != esperada {
+                return Err(Erro::Secao {
+                    nome: nome.to_string(),
+                    motivo: format!(
+                        "a chave tem {} número(s) e esta tabela usa {esperada}",
+                        chave.len()
+                    ),
+                });
+            }
+            Ok(())
+        };
+        let mut prefs = std::collections::HashMap::new();
+        for (chave, dados) in leitor.blocos("cont.prefs")? {
+            conferir("cont.prefs", &chave, 2)?;
+            prefs.insert((chave[0], chave[1] as u16), dados);
+        }
+        let mut parametros = std::collections::HashMap::new();
+        for (chave, dados) in leitor.blocos("cont.parametros")? {
+            conferir("cont.parametros", &chave, 2)?;
+            parametros.insert((chave[0], chave[1]), dados);
+        }
+        let mut sources = std::collections::HashMap::new();
+        for (chave, dados) in leitor.blocos("cont.sources")? {
+            conferir("cont.sources", &chave, 1)?;
+            sources.insert(chave[0], dados);
+        }
+        let mut paginas_html = std::collections::HashMap::new();
+        for (chave, dados) in leitor.blocos("cont.paginas")? {
+            conferir("cont.paginas", &chave, 1)?;
+            paginas_html.insert(chave[0], dados);
+        }
+        let mut config_items: std::collections::HashMap<u32, std::collections::HashMap<u32, Vec<u8>>> =
+            std::collections::HashMap::new();
+        for (chave, dados) in leitor.blocos("cont.config")? {
+            conferir("cont.config", &chave, 2)?;
+            config_items.entry(chave[0]).or_default().insert(chave[1], dados);
+        }
+        let mut plaintexts = std::collections::VecDeque::new();
+        for (chave, dados) in leitor.blocos("cont.plaintexts")? {
+            conferir("cont.plaintexts", &chave, 1)?;
+            let ordem = chave[0] as usize;
+            // A fila é **ordenada**, e a ordem é o conteúdo: o índice gravado é o lugar dela.
+            while plaintexts.len() <= ordem {
+                plaintexts.push_back(Vec::new());
+            }
+            plaintexts[ordem] = dados;
+        }
+        let resposta = leitor
+            .blocos("cont.resposta")?
+            .into_iter()
+            .map(|(_, dados)| dados)
+            .next()
+            .ok_or_else(|| Erro::Secao {
+                nome: "cont.resposta".to_string(),
+                motivo: "a seção não tem a resposta".to_string(),
+            })?;
+
+        self.prefs = prefs;
+        self.parametros_de_colecao = parametros;
+        self.sources = sources;
+        self.paginas_html = paginas_html;
+        self.config_items = config_items;
+        self.plaintexts = plaintexts;
+        self.web_response = resposta;
+        Ok(())
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1084,5 +1230,80 @@ mod tests {
             "o arquivo devia continuar do byte 7, e não do começo"
         );
         let _ = std::fs::remove_file(&caminho);
+    }
+
+    /// **As tabelas de conteúdo voltam** — preferências, parâmetros, `IConfig`, texto decifrado,
+    /// resposta da rede.
+    ///
+    /// Elas guardam o conteúdo porque ele **não existe em lugar nenhum** fora do motor: ao contrário
+    /// de um arquivo aberto, que se reabre do disco, um `SetPrefs` que o jogo fez já não está em
+    /// disco nenhum.
+    #[test]
+    fn as_tabelas_de_conteudo_vem_de_volta() {
+        let mut antes = maquina();
+        antes.prefs.insert((0x0100_0001, 3), vec![1, 2, 3]);
+        antes.prefs.insert((0x0100_0002, 0), Vec::new());
+        antes
+            .parametros_de_colecao
+            .insert((0x10, 0x20), b"parametro".to_vec());
+        antes.sources.insert(0x30, b"fonte".to_vec());
+        antes.paginas_html.insert(0x40, b"<html>".to_vec());
+        antes
+            .config_items
+            .entry(0x50)
+            .or_default()
+            .insert(0x60, b"valor".to_vec());
+        antes.plaintexts.push_back(b"primeiro".to_vec());
+        antes.plaintexts.push_back(b"segundo".to_vec());
+        antes.web_response = b"resposta".to_vec();
+
+        let arquivo = antes.grava_estado();
+        let mut depois = maquina();
+        depois.restaura_estado(&arquivo).expect("restaurou");
+
+        assert_eq!(depois.prefs.get(&(0x0100_0001, 3)), Some(&vec![1, 2, 3]));
+        assert_eq!(depois.prefs.get(&(0x0100_0002, 0)), Some(&Vec::new()));
+        assert_eq!(
+            depois.parametros_de_colecao.get(&(0x10, 0x20)),
+            Some(&b"parametro".to_vec())
+        );
+        assert_eq!(depois.sources.get(&0x30), Some(&b"fonte".to_vec()));
+        assert_eq!(depois.paginas_html.get(&0x40), Some(&b"<html>".to_vec()));
+        assert_eq!(
+            depois.config_items.get(&0x50).and_then(|i| i.get(&0x60)),
+            Some(&b"valor".to_vec())
+        );
+        // A fila de texto decifrado volta **na ordem**, que é o conteúdo dela.
+        let fila: Vec<&Vec<u8>> = depois.plaintexts.iter().collect();
+        assert_eq!(
+            fila,
+            vec![&b"primeiro".to_vec(), &b"segundo".to_vec()],
+            "a ordem do texto decifrado não voltou"
+        );
+        assert_eq!(depois.web_response, b"resposta".to_vec());
+    }
+
+    /// Um bloco com tamanho maior do que o arquivo tem é **recusado**.
+    #[test]
+    fn bloco_com_tamanho_mentiroso_e_recusado() {
+        use crate::save_state::Secoes;
+
+        let mut secoes = Secoes::nova();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // um item
+        bytes.extend_from_slice(&2u32.to_le_bytes()); // chave de dois números
+        bytes.extend_from_slice(&[1, 0, 0, 0, 2, 0, 0, 0]);
+        bytes.extend_from_slice(&999u32.to_le_bytes()); // diz ter 999 bytes
+        bytes.extend_from_slice(b"curto");
+        secoes.poe("blocos", bytes);
+        let arquivo = secoes.fecha();
+        let leitor = crate::save_state::Leitor::abre(&arquivo).expect("abriu");
+        match leitor.blocos("blocos") {
+            Err(Erro::Secao { nome, motivo }) => {
+                assert_eq!(nome, "blocos");
+                assert!(motivo.contains("999"), "{motivo}");
+            }
+            outro => panic!("devia recusar o bloco mentiroso, e devolveu {outro:?}"),
+        }
     }
 }
