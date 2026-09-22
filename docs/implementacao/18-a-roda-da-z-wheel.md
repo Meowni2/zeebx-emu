@@ -943,6 +943,23 @@ O que isso delimita: **não é o título nem o número de arquivos** — é o qu
 títulos ela não oferece o foco que o roteiro alcança, e com muitos ela oferece, mas aí o foco cai num
 jogo que não sai sozinho. As duas condições precisam valer ao mesmo tempo, e é isso que falta montar.
 
+**Onde está a lista de jogos, medido na árvore.** A captura de serial despeja a árvore de widgets na
+primeira tecla, e nela a roda tem **dois** rollers (classe `0x01028e14`):
+
+```text
+0x30000ad0  tratador 0x75724  640x330 em (0,50)     <- a LISTA de jogos
+0x30000cd0  tratador 0x6089c  440x49 em (100,405)   <- a roda de baixo (Jogar, Comprar, ...)
+```
+
+O de baixo é o que a doc §7.3 já conhece (é o `0x6089c` que desenha a moldura azul ao receber
+`SETFOCUS`). O de cima, `0x30000ad0`, com `640x330` — a área inteira da grade — e tratador `0x75724`,
+é a **lista de jogos**: é nele que vive a escolha que o confirmar transforma no `class_id` do
+lançamento.
+
+É o próximo experimento, e agora com endereço e tratador na mão: registrar o que o `0x30000ad0`
+recebe enquanto o roteiro navega (o censo já mostra a classe `0x01028e14` recebendo `0x801` dez vezes)
+e o que ele faz no confirmar.
+
 **A hipótese do último jogado caiu.** Zerando o cache (onde a roda grava o estado dela, dentro do
 pacote extraído) o lançamento continua a ser `0x0108E356` — o mesmo Alien Breaker. A escolha é
 **determinística** e não depende do estado que as execuções anteriores deixaram.
