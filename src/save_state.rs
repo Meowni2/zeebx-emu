@@ -285,6 +285,15 @@ impl Secoes {
         self.poe(nome, bytes);
     }
 
+    /// Grava trios de números, com a contagem na frente.
+    pub fn poe_trios(&mut self, nome: &str, valores: impl IntoIterator<Item = (u32, u32, u32)>) {
+        let valores: Vec<u32> = valores
+            .into_iter()
+            .flat_map(|(a, b, c)| [a, b, c])
+            .collect();
+        self.poe_u32s(nome, valores);
+    }
+
     /// Quantas seções já foram postas.
     pub fn quantas(&self) -> usize {
         self.pares.len()
@@ -313,6 +322,38 @@ impl Leitor<'_> {
             });
         }
         Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    /// Trios gravados por [`Secoes::poe_trios`].
+    pub fn trios(&self, nome: &str) -> Result<Vec<(u32, u32, u32)>, Erro> {
+        let valores = self.u32s(nome)?;
+        if valores.len() % 3 != 0 {
+            return Err(Erro::Secao {
+                nome: nome.to_string(),
+                motivo: format!("esperava trios e veio {} valor(es)", valores.len()),
+            });
+        }
+        Ok(valores
+            .chunks_exact(3)
+            .map(|t| (t[0], t[1], t[2]))
+            .collect())
+    }
+
+    /// Pares **na ordem em que foram gravados**.
+    ///
+    /// É o que uma fila precisa: a ordem dos eventos é o conteúdo. Existe separado de
+    /// [`Leitor::pares`], que ordena — ordenar serve para mapa, onde a ordem do `HashMap` não é
+    /// estável, e **destrói** uma fila. Um save state que embaralha a fila de teclas entrega as
+    /// teclas na ordem errada, e o jogo responde a uma sequência que ninguém apertou.
+    pub fn pares_em_ordem(&self, nome: &str) -> Result<Vec<(u32, u32)>, Erro> {
+        let valores = self.u32s(nome)?;
+        if valores.len() % 2 != 0 {
+            return Err(Erro::Secao {
+                nome: nome.to_string(),
+                motivo: format!("esperava pares e veio ímpar ({})", valores.len()),
+            });
+        }
+        Ok(valores.chunks_exact(2).map(|p| (p[0], p[1])).collect())
     }
 
     /// Pares de uma lista gravada por [`Secoes::poe_u32s`], para os mapas.
@@ -428,6 +469,30 @@ mod tests {
             }
             outro => panic!("devia dizer que a seção não está, e devolveu {outro:?}"),
         }
+    }
+
+    /// **Ordenar serve para mapa; para fila, destrói.** Os dois leitores existem por isso, e este
+    /// teste é a diferença entre eles escrita: um save state que embaralha a fila de teclas entrega
+    /// as teclas na ordem errada, e o jogo responde a uma sequência que ninguém apertou.
+    #[test]
+    fn a_fila_nao_se_ordena_e_o_mapa_sim() {
+        let mut secoes = Secoes::nova();
+        // Uma fila de teclas fora de ordem crescente, de propósito.
+        secoes.poe_u32s("fila", [30u32, 1, 20, 0]);
+        secoes.poe_mapa("mapa", [(30u32, 1u32), (7, 2), (20, 3)]);
+        let arquivo = secoes.fecha();
+        let leitor = Leitor::abre(&arquivo).expect("abriu");
+
+        assert_eq!(
+            leitor.pares_em_ordem("fila"),
+            Ok(vec![(30, 1), (20, 0)]),
+            "a fila tem de sair na ordem em que foi gravada"
+        );
+        assert_eq!(
+            leitor.pares("mapa"),
+            Ok(vec![(7, 2), (20, 3), (30, 1)]),
+            "o mapa sai ordenado, para não depender da ordem do HashMap"
+        );
     }
 
     #[test]

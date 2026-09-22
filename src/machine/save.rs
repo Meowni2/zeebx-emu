@@ -23,7 +23,7 @@
 //! respondendo zero — ver o plano. Restaurar um estado parcial é exatamente o que o critério
 //! proíbe, e a porta é essa.
 
-use super::Machine;
+use super::{Callback, Machine, Timer};
 use crate::cpu::{CpuBackend, Reg};
 use crate::save_state::{Erro, Guardavel, Leitor, Secoes};
 
@@ -138,6 +138,7 @@ impl<C: CpuBackend> Machine<C> {
         }
         // Os três livros. O das superfícies vai com o nome da região, para a seção e o livro
         // terem o mesmo nome — quem lê o arquivo não precisa de tabela de tradução.
+        self.grava_entrada_e_tempo(&mut secoes);
         self.heap.grava_com_prefixo("heap", &mut secoes);
         self.objects.grava(&mut secoes);
         self.superficies.grava_com_prefixo("surfaces", &mut secoes);
@@ -199,6 +200,7 @@ impl<C: CpuBackend> Machine<C> {
         }
 
         // Daqui para baixo é aplicação: ou tudo, ou nada.
+        self.restaura_entrada_e_tempo(&leitor)?;
         self.heap.restaura_com_prefixo("heap", &leitor)?;
         self.objects.restaura(&leitor)?;
         self.superficies
@@ -216,6 +218,155 @@ impl<C: CpuBackend> Machine<C> {
         // núcleos, e o valor que veio do estado é o que manda.
         self.cpu.set_cpsr(cpsr);
         self.cpu.set_instructions(relogio);
+        Ok(())
+    }
+}
+
+
+/// O código do nome de um sinal de entrada.
+///
+/// Os dois nomes são o conjunto **fechado** que o `IHIDDevice` usa para avisar quem registrou:
+/// `RegisterForButtonEvent` e `RegisterForPositionChange`. Guardar o nome como texto deixaria o
+/// formato refém de uma string; guardar o código deixa a leitura impossível de errar em silêncio —
+/// código desconhecido é recusa, e não um registro perdido.
+fn codigo_do_sinal_de_entrada(nome: &str) -> u32 {
+    match nome {
+        "RegisterForButtonEvent" => 0,
+        "RegisterForPositionChange" => 1,
+        // Um nome novo entra aqui **e** na tabela do teste `o_nome_do_sinal_vai_e_volta`: sem isso
+        // o save state passaria a perder o registro em silêncio.
+        _ => u32::MAX,
+    }
+}
+
+/// O nome de um sinal de entrada pelo código.
+fn nome_do_sinal_de_entrada(codigo: u32) -> Option<&'static str> {
+    match codigo {
+        0 => Some("RegisterForButtonEvent"),
+        1 => Some("RegisterForPositionChange"),
+        _ => None,
+    }
+}
+
+impl<C: CpuBackend> Machine<C> {
+    /// A entrada e o agendamento: filas de tecla e de botão, quem registrou sinal de aparelho, os
+    /// temporizadores vencendo e os retornos pendentes.
+    ///
+    /// São as tabelas que um jogo sente na hora: sem as filas, a tecla que ele ainda não leu
+    /// desaparece; sem os timers, o relógio que ele armou para daqui a duzentos milissegundos deixa
+    /// de existir; e sem os sinais, o aviso de que o manche mudou não chega a quem o pediu.
+    fn grava_entrada_e_tempo(&self, secoes: &mut Secoes) {
+        secoes.poe_u32s(
+            "entrada.teclas",
+            self.teclas.iter().map(|(avk, baixo)| [*avk, u32::from(*baixo)]).flatten(),
+        );
+        for (porta, fila) in self.pad_events.iter().enumerate() {
+            secoes.poe_u32s(
+                &format!("entrada.pad_events.{porta}"),
+                fila.iter()
+                    .map(|(indice, baixo)| [*indice as u32, u32::from(*baixo)])
+                    .flatten(),
+            );
+        }
+        secoes.poe_mapa("entrada.portas", self.portas_de_aparelho.iter().map(|(a, p)| (*a, *p as u32)));
+        secoes.poe_trios(
+            "entrada.sinais",
+            self.input_signals.iter().map(|((nome, porta), sinal)| {
+                (
+                    codigo_do_sinal_de_entrada(nome),
+                    *porta as u32,
+                    *sinal,
+                )
+            }),
+        );
+        secoes.poe_trios("agenda.timers", self.timers.iter().map(|t| {
+            (t.deadline_ms, t.callback.function, t.callback.context)
+        }));
+        secoes.poe_trios("agenda.sinais", self.signals.iter().map(|(id, cb)| {
+            (*id, cb.function, cb.context)
+        }));
+        secoes.poe_u32s(
+            "agenda.pendentes",
+            self.pending_signals
+                .iter()
+                .flat_map(|cb| [cb.function, cb.context]),
+        );
+    }
+
+    /// Lê e confere entrada e agendamento. Nada é aplicado se alguma seção não bater.
+    fn restaura_entrada_e_tempo(
+        &mut self,
+        leitor: &Leitor<'_>,
+    ) -> Result<(), Erro> {
+        // **Em ordem**: a fila de teclas é uma sequência, e não um mapa.
+        let teclas = leitor.pares_em_ordem("entrada.teclas")?;
+        let portas = leitor.pares("entrada.portas")?;
+        let sinais_crus = leitor.trios("entrada.sinais")?;
+        let timers = leitor.trios("agenda.timers")?;
+        let signals = leitor.trios("agenda.sinais")?;
+        let pendentes = leitor.pares_em_ordem("agenda.pendentes")?;
+
+        let mut filas = Vec::new();
+        for porta in 0..self.pad_events.len() {
+            filas.push(leitor.pares_em_ordem(&format!("entrada.pad_events.{porta}"))?);
+        }
+
+        // O registro do sinal de aparelho é o único com nome: código desconhecido é recusa.
+        let mut sinais = std::collections::BTreeMap::new();
+        for (codigo, porta, sinal) in sinais_crus {
+            let nome = nome_do_sinal_de_entrada(codigo).ok_or_else(|| Erro::Secao {
+                nome: "entrada.sinais".to_string(),
+                motivo: format!(
+                    "o estado registra o sinal de aparelho {codigo}, que este motor não conhece"
+                ),
+            })?;
+            if porta as usize >= self.pad_events.len() {
+                return Err(Erro::Secao {
+                    nome: "entrada.sinais".to_string(),
+                    motivo: format!("a porta {porta} não existe"),
+                });
+            }
+            sinais.insert((nome, porta as usize), sinal);
+        }
+        let mut portas_de_aparelho = std::collections::HashMap::new();
+        for (aparelho, porta) in portas {
+            if porta as usize >= self.pad_events.len() {
+                return Err(Erro::Secao {
+                    nome: "entrada.portas".to_string(),
+                    motivo: format!("a porta {porta} não existe"),
+                });
+            }
+            portas_de_aparelho.insert(aparelho, porta as usize);
+        }
+
+        // Daqui para baixo é aplicação.
+        self.teclas = teclas
+            .into_iter()
+            .map(|(avk, baixo)| (avk, baixo != 0))
+            .collect();
+        for (porta, fila) in filas.into_iter().enumerate() {
+            self.pad_events[porta] = fila
+                .into_iter()
+                .map(|(indice, baixo)| (indice as usize, baixo != 0))
+                .collect();
+        }
+        self.portas_de_aparelho = portas_de_aparelho;
+        self.input_signals = sinais;
+        self.timers = timers
+            .into_iter()
+            .map(|(deadline_ms, function, context)| Timer {
+                deadline_ms,
+                callback: Callback { function, context },
+            })
+            .collect();
+        self.signals = signals
+            .into_iter()
+            .map(|(id, function, context)| (id, Callback { function, context }))
+            .collect();
+        self.pending_signals = pendentes
+            .into_iter()
+            .map(|(function, context)| Callback { function, context })
+            .collect();
         Ok(())
     }
 }
@@ -390,5 +541,80 @@ mod tests {
             maquina.restaura_estado(b"nao sou eu"),
             Err(Erro::Truncado { .. })
         ));
+    }
+
+    /// **Entrada e agendamento voltam inteiros.**
+    ///
+    /// São as tabelas que o jogo sente na hora: a fila de teclas que ele ainda não leu, a fila de
+    /// eventos de botão, quem registrou aviso de aparelho, os temporizadores vencendo e os retornos
+    /// pendentes. Sem elas o save state "volta" e o jogo perde o que já tinha na mão.
+    #[test]
+    fn entrada_e_agendamento_vem_de_volta() {
+        use crate::input::avk;
+
+        let mut antes = maquina();
+        antes.set_key(avk::SELECT, true);
+        antes.set_key(avk::ZERO, false);
+        let mut pad = crate::input::Pad::default();
+        pad.press(1, true);
+        antes.set_port_pad(0, pad);
+        antes
+            .input_signals
+            .insert(("RegisterForPositionChange", 0), 0x5555_0000);
+        antes.timers.push(Timer {
+            deadline_ms: 424_242,
+            callback: Callback {
+                function: 0x1000_2000,
+                context: 0xdead_0000,
+            },
+        });
+        antes.signals.insert(
+            0x77,
+            Callback {
+                function: 0x1000_3000,
+                context: 0xbeef_0000,
+            },
+        );
+        antes.pending_signals.push(Callback {
+            function: 0x1000_4000,
+            context: 0x1234_0000,
+        });
+
+        let arquivo = antes.grava_estado();
+        let mut depois = maquina();
+        assert!(depois.teclas.is_empty(), "a máquina nova começa sem fila");
+        depois.restaura_estado(&arquivo).expect("restaurou");
+
+        assert_eq!(depois.teclas, antes.teclas, "a fila de teclas não voltou");
+        assert_eq!(
+            depois.pad_events[0], antes.pad_events[0],
+            "a fila de eventos de botão não voltou"
+        );
+        assert_eq!(
+            depois.input_signals.get(&("RegisterForPositionChange", 0)),
+            Some(&0x5555_0000),
+            "o registro do aviso de aparelho não voltou"
+        );
+        assert_eq!(depois.timers.len(), 1, "o temporizador não voltou");
+        assert_eq!(depois.timers[0].deadline_ms, 424_242);
+        assert_eq!(depois.timers[0].callback.function, 0x1000_2000);
+        assert_eq!(depois.signals.get(&0x77).map(|c| c.context), Some(0xbeef_0000));
+        assert_eq!(depois.pending_signals.len(), 1);
+        assert_eq!(depois.pending_signals[0].function, 0x1000_4000);
+    }
+
+    /// O código do nome do sinal de aparelho vai e volta para **todos** os nomes conhecidos.
+    ///
+    /// É a mesma ideia do teste das 62 interfaces: nome novo sem entrada na tabela deixa isto
+    /// vermelho, e não um registro que se perde em silêncio num save state.
+    #[test]
+    fn o_nome_do_sinal_vai_e_volta() {
+        for nome in ["RegisterForButtonEvent", "RegisterForPositionChange"] {
+            let codigo = codigo_do_sinal_de_entrada(nome);
+            assert_ne!(codigo, u32::MAX, "{nome} não tem código");
+            assert_eq!(nome_do_sinal_de_entrada(codigo), Some(nome));
+        }
+        assert_eq!(nome_do_sinal_de_entrada(9999), None);
+        assert_eq!(codigo_do_sinal_de_entrada("inventado"), u32::MAX);
     }
 }
