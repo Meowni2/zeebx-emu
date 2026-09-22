@@ -585,14 +585,26 @@ do despacho de API, na chamada `Play` do jogo: com a tabela, cada música que co
 por 6,25 s** nesta máquina — e o aparelho é bem mais lento que ela. O Double Dragon toca doze
 músicas. Com o banco o mesmo trecho leva 289 ms, o que ainda se nota, mas é outra ordem.
 
-Fica registrado como o que é: **medido, e ainda não corrigido**. Duas correções possíveis, e a
-escolha depende de quanto o travamento incomoda no aparelho:
+**Corrigido, e a correção foi a clássica da síntese aditiva**: uma volta de seno é calculada
+**uma vez**, e cada harmônico é lido dessa mesma volta a `k` vezes a velocidade — então cada
+harmônico custa uma leitura, e não um `sin()`. A onda fica guardada por `(expoente, número de
+harmônicos)`, e as vozes de uma música compartilham as mesmas tabelas (algumas centenas de pares
+distintos para 1788 notas).
 
-1. **Tabela de onda pré-calculada por voz**, em vez de somar harmônicos por amostra. É a correção
-   clássica para síntese aditiva e deve cortar a maior parte dos 6,25 s sem mudar o som.
-2. **Renderizar em pedaços**, espalhando o custo pelos quadros seguintes. O misturador já tem voz
-   de fluxo (`open_stream`/`feed_stream`) para som que o jogo entrega aos poucos, então a máquina
-   existe; o que falta é o sequenciador sobreviver entre chamadas, e isso mexe no save state.
+| | antes | depois |
+|---|---:|---:|
+| renderizar 47,5 s de música | 6,25 s | **183 ms** |
+| erro de centroide contra o soundfont | 701 Hz | **699 Hz** |
+
+Ou seja: **34× mais rápido**, com o timbre intacto — a diferença de 2 Hz é a quantização de uma
+tabela de 1024 pontos, e a interpolação linear entre pontos vizinhos mantém a nota aguda sem
+chiado. E o caminho da tabela ficou **mais rápido que o do banco** (183 ms contra 289 ms), o que
+inverte a conta de custo entre os dois: o banco continua ganhando em fidelidade, não em tempo.
+
+Uma segunda correção possível ficou de fora: renderizar em pedaços, espalhando o custo pelos
+quadros seguintes. O misturador já tem voz de fluxo (`open_stream`/`feed_stream`) para som que o
+jogo entrega aos poucos, mas o sequenciador teria de sobreviver entre chamadas, e isso mexe no save
+state. Com 183 ms por música, não se paga.
 
 ### Um `IAStream` do jogo como fonte
 

@@ -350,37 +350,6 @@ enum Forma {
     Ruido,
 }
 
-/// Quantas fases são varridas para achar o pico da série harmônica de uma voz.
-///
-/// Noventa e seis pontos acham o pico de uma soma suave com erro abaixo de 0,5% — e é **uma vez
-/// por nota**, não por amostra: 96 × 48 harmônicos são vinte microssegundos, contra milhões de
-/// amostras por nota.
-const FASES_DO_PICO: usize = 96;
-
-/// O pico da série `Σ sin(2πk·fase)/k^e` com `harmonicos` termos.
-///
-/// Precisa ser calculado, e não tabelado, por dois motivos medidos: o pico depende do **número de
-/// harmônicos** (que o teto de Nyquist faz variar com a altura da nota — de 42 numa nota grave a 3
-/// numa aguda), e varia por um fator de quase 3 entre o expoente do baixo (2,6) e o do lead
-/// (0,2). Com a série normalizada por uma tabela fixa, o baixo ficava quase duas vezes mais alto
-/// que a distorção, e o balanço da música mudava junto com o timbre.
-fn pico_da_serie(expoente: f32, harmonicos: u32) -> f32 {
-    use std::f32::consts::TAU;
-    let mut maior: f32 = 0.0;
-    for passo in 0..FASES_DO_PICO {
-        let fase = passo as f32 / FASES_DO_PICO as f32;
-        let mut soma = 0.0;
-        for k in 1..=harmonicos.max(1) {
-            soma += (fase * TAU * k as f32).sin() / (k as f32).powf(expoente);
-        }
-        maior = maior.max(soma.abs());
-    }
-    match maior > 1e-6 {
-        true => maior,
-        false => 1.0,
-    }
-}
-
 impl Forma {
     /// A amostra da forma na fase `fase` (uma volta é 1,0).
     ///
@@ -422,6 +391,68 @@ impl Forma {
     }
 }
 
+/// Uma volta da série harmônica `1/k^expoente`, pré-calculada.
+///
+/// **Existe por medição, não por elegância.** Somar `sin()` por harmônico **em cada amostra** custa
+/// caro: medido em `--release`, uma música de 47,5 s levava **6,25 s** para ser sintetizada — e
+/// essa conta acontece dentro do despacho de API, na chamada `Play` do jogo, então cada música que
+/// começa travava o jogo por seis segundos nesta máquina. O aparelho é bem mais lento.
+///
+/// O truque é o clássico da síntese aditiva: uma volta de seno é calculada **uma vez**, e cada
+/// harmônico é lido dessa mesma volta a `k` vezes a velocidade. Assim cada harmônico custa uma
+/// leitura, e não um `sin()`.
+struct Tabela {
+    amostras: Vec<f32>,
+}
+
+/// Tamanho da volta pré-calculada, em amostras.
+///
+/// Precisa acomodar o harmônico mais alto: com 48 harmônicos, 1024 pontos dão 21 amostras por
+/// ciclo do mais agudo, o que com interpolação linear reproduz a onda sem degrau audível.
+const PONTOS_DA_TABELA: usize = 1024;
+
+impl Tabela {
+    /// Monta a volta de `1/k^expoente` com `harmonicos` termos, com o pico em 1.
+    ///
+    /// Normalizar aqui **substitui** a normalização por nota: o pico da série depende do expoente,
+    /// e uma tabela por expoente já resolve isso sem varrer fases a cada nota.
+    fn nova(expoente: f32, harmonicos: u32) -> Self {
+        use std::f32::consts::TAU;
+        let pontos = PONTOS_DA_TABELA;
+        let base: Vec<f32> = (0..pontos)
+            .map(|i| (TAU * i as f32 / pontos as f32).sin())
+            .collect();
+        let mut soma = vec![0.0f32; pontos];
+        for k in 1..=harmonicos.clamp(1, 48) {
+            let peso = 1.0 / (k as f32).powf(expoente);
+            for (i, valor) in soma.iter_mut().enumerate() {
+                *valor += base[(i * k as usize) % pontos] * peso;
+            }
+        }
+        let maior = soma.iter().fold(0.0f32, |a, s| a.max(s.abs()));
+        if maior > 0.0 {
+            for valor in &mut soma {
+                *valor /= maior;
+            }
+        }
+        Self { amostras: soma }
+    }
+
+    /// A amostra na fase `fase` (uma volta é 1,0), interpolada entre os dois pontos vizinhos.
+    ///
+    /// A interpolação não é enfeite: sem ela, uma nota aguda lida a 1024 pontos por volta chia,
+    /// que é o mesmo defeito que a soma por harmônicos evitava.
+    fn amostra(&self, fase: f32) -> f32 {
+        let pontos = self.amostras.len();
+        let x = fase * pontos as f32;
+        let i = x as usize % pontos;
+        let fracao = x - x.floor();
+        let a = self.amostras[i];
+        let b = self.amostras[(i + 1) % pontos];
+        a + (b - a) * fracao
+    }
+}
+
 /// Como um instrumento soa: forma, envoltória e ganho.
 #[derive(Debug, Clone, Copy)]
 struct Timbre {
@@ -431,11 +462,6 @@ struct Timbre {
     sustentacao: f32,
     liberacao: f32,
     ganho: f32,
-    /// Quanto dividir a soma harmônica para ela ficar com pico 1. Ver [`pico_da_serie`].
-    ///
-    /// Nasce em 1,0 na tabela de timbres e é preenchido quando a voz é criada, porque depende do
-    /// número de harmônicos — que depende da altura da nota.
-    normalizacao: f32,
 }
 
 /// O timbre de um programa do General MIDI.
@@ -527,7 +553,6 @@ fn timbre(programa: u8) -> Timbre {
         sustentacao,
         liberacao,
         ganho,
-        normalizacao: 1.0,
     }
 }
 
@@ -574,7 +599,6 @@ fn percussao(nota: u8) -> (Timbre, Filtro) {
             sustentacao: 0.0,
             liberacao: 0.02,
             ganho,
-            normalizacao: 1.0,
         },
         filtro,
     )
@@ -585,6 +609,11 @@ fn percussao(nota: u8) -> (Timbre, Filtro) {
 struct Voz {
     canal: u8,
     nota: u8,
+    /// Índice da onda pré-calculada desta voz, quando ela usa uma. Ver [`Tabela`].
+    ///
+    /// É índice, e não `Arc`, para a `Voz` continuar `Copy`: o laço de mixagem copia vozes ao
+    /// soltá-las, e trocar isso por posse espalharia mudança por todo o arquivo.
+    tabela: Option<usize>,
     /// Amostra em que a nota começou e em que ela foi solta.
     inicio: usize,
     solta: Option<usize>,
@@ -651,6 +680,12 @@ pub fn decode(data: &[u8]) -> Option<crate::audio::wav::Sound> {
     let mut programa = [0u8; 16];
     let mut volume = [1.0f32; 16];
     let mut expressao = [1.0f32; 16];
+    // As ondas pré-calculadas, uma por (expoente, número de harmônicos). Várias vozes
+    // compartilham a mesma: numa música de 1788 notas os pares distintos são algumas centenas, e
+    // cada tabela custa uma volta de seno mais uma leitura por harmônico.
+    let mut tabelas: Vec<Tabela> = Vec::new();
+    let mut indice_das_tabelas: std::collections::HashMap<(u32, u32), usize> =
+        std::collections::HashMap::new();
     let mut soando: Vec<Voz> = Vec::new();
     let mut mortas: Vec<Voz> = Vec::new();
 
@@ -701,13 +736,13 @@ pub fn decode(data: &[u8]) -> Option<crate::audio::wav::Sound> {
                     mortas.push(voz);
                 }
                 let canal_idx = canal as usize & 15;
-                let (timbre, filtro, frequencia) = match canal == CANAL_PERCUSSAO {
+                let (timbre, filtro, frequencia, tabela) = match canal == CANAL_PERCUSSAO {
                     true => {
                         let (timbre, filtro) = percussao(nota);
-                        (timbre, filtro, 0.0)
+                        (timbre, filtro, 0.0, None)
                     }
                     false => {
-                        let mut timbre = timbre(programa[canal_idx]);
+                        let timbre = timbre(programa[canal_idx]);
                         // A afinação do MIDI: a nota 69 é o lá de 440 Hz, e cada semitom é a raiz
                         // duodécima de dois.
                         let frequencia = 440.0 * 2.0f32.powf((f32::from(nota) - 69.0) / 12.0);
@@ -717,15 +752,26 @@ pub fn decode(data: &[u8]) -> Option<crate::audio::wav::Sound> {
                             true => (RATE as f32 / 2.0 / frequencia) as u32,
                             false => 1,
                         };
+                        let mut indice = None;
                         if let Forma::Parcial { expoente } = timbre.forma {
-                            timbre.normalizacao = pico_da_serie(expoente, harmonicos.max(1));
+                            let chave = (expoente.to_bits(), harmonicos.max(1));
+                            indice = match indice_das_tabelas.get(&chave) {
+                                Some(&i) => Some(i),
+                                None => {
+                                    let i = tabelas.len();
+                                    tabelas.push(Tabela::nova(expoente, harmonicos.max(1)));
+                                    indice_das_tabelas.insert(chave, i);
+                                    Some(i)
+                                }
+                            };
                         }
-                        (timbre, Filtro::Nenhum, frequencia)
+                        (timbre, Filtro::Nenhum, frequencia, indice)
                     }
                 };
                 soando.push(Voz {
                     canal,
                     nota,
+                    tabela,
                     inicio: agora,
                     solta: None,
                     frequencia,
@@ -747,7 +793,7 @@ pub fn decode(data: &[u8]) -> Option<crate::audio::wav::Sound> {
     }
 
     for voz in &mortas {
-        toca_voz(voz, &mut samples);
+        toca_voz(voz, &mut samples, &tabelas);
     }
     if samples.iter().all(|s| *s == 0.0) {
         return None;
@@ -761,7 +807,7 @@ pub fn decode(data: &[u8]) -> Option<crate::audio::wav::Sound> {
 }
 
 /// Soma uma voz no buffer, do começo dela até a envoltória zerar.
-fn toca_voz(voz: &Voz, samples: &mut [f32]) {
+fn toca_voz(voz: &Voz, samples: &mut [f32], tabelas: &[Tabela]) {
     let taxa = RATE as f32;
     let solta = voz
         .solta
@@ -809,11 +855,14 @@ fn toca_voz(voz: &Voz, samples: &mut [f32]) {
         if envoltoria <= 0.0 && solta.is_some_and(|s| t > s) {
             break;
         }
-        let crua = voz
-            .timbre
-            .forma
-            .amostra(fase, harmonicos.max(1), &mut ruido)
-            / voz.timbre.normalizacao;
+        let crua = match voz.tabela.and_then(|i| tabelas.get(i)) {
+            // Onda pré-calculada: uma leitura interpolada por amostra, em vez de uma soma de
+            // harmônicos. É o que tirou os seis segundos de travamento por música.
+            Some(tabela) => tabela.amostra(fase),
+            // As formas que não têm onda pré-calculada são as de poucos harmônicos (senoide,
+            // quadrada, ruído), e para elas somar por amostra é barato.
+            None => voz.timbre.forma.amostra(fase, harmonicos.max(1), &mut ruido),
+        };
         fase = (fase + passo).fract();
         polo[0] += alpha * (crua - polo[0]);
         let valor = match voz.filtro {
