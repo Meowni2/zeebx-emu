@@ -5,33 +5,19 @@
 // ela, o build de desenvolvimento continua com console.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-mod audio;
-mod brew;
-mod cpu;
-mod input;
-mod loader;
-mod machine;
-mod ponte;
-mod rede;
-mod session;
-mod ui;
-mod video;
-
-/// Varredura de ROMs por teste — ver [`varredura`]. Só existe em compilação de teste.
-#[cfg(test)]
-mod varredura;
-
 use std::process::ExitCode;
 
-use crate::brew::aee;
-use crate::cpu::{CpuBackend, dynarmic::DynarmicCpu, unicorn::UnicornCpu};
-use crate::input::bindings;
-use crate::loader::archive;
-use crate::loader::modfile::{ModImage, Variant};
-use crate::machine::{AppletResult, Machine, Outcome};
-use crate::ui::library;
-use crate::ui::window;
-use crate::video::icon;
+use zeebx::{PORTAS_PADRAO, audio, cpu, input, loader, machine, session, ui};
+
+use zeebx::brew::aee;
+use zeebx::cpu::{CpuBackend, dynarmic::DynarmicCpu, unicorn::UnicornCpu};
+use zeebx::input::bindings;
+use zeebx::loader::archive;
+use zeebx::loader::modfile::{ModImage, Variant};
+use zeebx::machine::{AppletResult, Machine, Outcome};
+use zeebx::ui::library;
+use zeebx::ui::window;
+use zeebx::video::icon;
 
 /// Teto de instruções por fatia entre duas chamadas de API — evita que um laço infinito no
 /// guest trave o emulador. Precisa ser generoso: a inicialização do Bejeweled Twist passa
@@ -671,10 +657,6 @@ fn teclado(lista: &str) -> Vec<(u32, u32)> {
         .collect()
 }
 
-/// O padrão sem janela: um controle na primeira porta, a segunda livre. É o que sempre houve.
-const PORTAS_PADRAO: [Option<bindings::Aparelho>; input::PORTAS] =
-    [Some(bindings::Aparelho::Controle), None];
-
 /// Lê `controle,teclado` e afins. `None` quando algum nome não existe.
 ///
 /// Existe para que as duas portas sejam **testáveis sem janela**, que é como tudo aqui se
@@ -1283,7 +1265,7 @@ fn bench_dynarmic(
 /// A bancada monta a máquina por conta própria, e o que ela mostra pode não ser o que a janela
 /// mostra: a janela instala todos os jogos da biblioteca, passa o controle pela sessão e traduz o
 /// direcional em teclas. Aqui entram as mesmas peças — `Session`, a biblioteca das configurações
-/// e [`ui::App::teclas_do_controle`] —, e o roteiro é de **botões do controle**, como quem joga.
+/// e [`input::teclas_do_controle`] —, e o roteiro é de **botões do controle**, como quem joga.
 /// Com `--dump`, sai um quadro meio segundo depois de cada aperto; o relatório vai inteiro para a
 /// saída no fim.
 fn sessao_sem_janela(
@@ -1383,7 +1365,7 @@ fn sessao_sem_janela(
                 .map_or([0.0, 0.0, 1.0], |(_, g)| *g);
             session.set_port_motion(0, agora);
         }
-        for (avk, apertada) in ui::App::teclas_do_controle(&antes, &pad) {
+        for (avk, apertada) in input::teclas_do_controle(&antes, &pad) {
             session.set_key(avk, apertada);
         }
         // As telas intermediárias passam como na janela, sem avançar o relógio; não viram foto.

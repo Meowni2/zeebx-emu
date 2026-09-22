@@ -1039,6 +1039,12 @@ impl<C: CpuBackend> Machine<C> {
     pub fn define_neblina(&mut self, permitida: bool) {
         self.gl.define_neblina(permitida);
     }
+
+    /// Devolve ao dono o estado de GL que o rasterizador mexeu. Ver
+    /// [`rasterizer::Rasterizador::devolve_o_contexto`].
+    pub fn devolve_o_contexto(&self) {
+        self.gl.devolve_o_contexto();
+    }
 }
 
 /// A fatia de um objeto de buffer que um vetor pede, ou zeros quando ela não cabe.

@@ -6,7 +6,6 @@
 
 use std::path::{Path, PathBuf};
 
-use eframe::egui;
 use serde::{Deserialize, Serialize};
 
 /// Nome da pasta do emulador dentro do diretório de configuração do sistema.

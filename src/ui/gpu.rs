@@ -13,8 +13,7 @@
 //! O contexto que o `eframe` cria é **core 3.3** (o glutin resolve "sem perfil, sem versão"
 //! assim), então não há pipeline fixo: mesmo para um quadrado com textura é preciso shader.
 
-use eframe::egui;
-use eframe::glow::{self, HasContext};
+use glow::HasContext;
 
 /// O triângulo que cobre a tela inteira, gerado sem vetor de vértices.
 ///

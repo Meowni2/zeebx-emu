@@ -57,9 +57,24 @@ Os arquivos ficam em `target/pacotes/`. No Arch, o AppImage precisa de `NO_STRIP
 linuxdeploy não reconhece as bibliotecas do sistema.
 
 Uma tag de versão (`v0.1.0` ou `0.1.0`) enviada ao GitHub dispara o
-[`release.yml`](.github/workflows/release.yml), que gera os quatro pacotes — Linux, Windows, macOS
-Apple Silicon e macOS Intel — e monta a release como rascunho, com o título igual à tag. O
-emulador procura versões novas nessas releases ao abrir.
+[`release.yml`](.github/workflows/release.yml), que monta a release como rascunho, com o título
+igual à tag. O emulador procura versões novas nessas releases ao abrir.
+
+São dois formatos em cada um dos quatro sistemas, e o nome do arquivo diz qual é qual:
+
+| | |
+|---|---|
+| `zeebx-standalone-linux-x86_64.deb`, `.AppImage` | o emulador com a interface, para instalar |
+| `zeebx-standalone-windows-x86_64-setup.exe` | idem, no Windows |
+| `zeebx-standalone-macos-arm64.dmg`, `-x86_64.dmg` | idem, nos dois Macs |
+| `zeebx-headless-<sistema>.zip` | o binário sem interface, com o `config.ini` e o leia-me |
+| `zeebx-android-arm64-v8a.apk` | o aplicativo de Android |
+
+A APK sai assinada com a **chave de depuração**, que é a que o Gradle gera sozinho: serve para
+instalar de lado (`adb install`), não para a Play Store — aquela pede a chave de publicação, que
+não pode morar num repositório público. O mesmo
+[`compilar.sh`](frontends/android/compilar.sh) que se usa na máquina é o que roda no CI; ele
+aceita o `ANDROID_SDK_ROOT` que os runners exportam e o `gradle` que estiver no caminho.
 
 ## Usando
 
@@ -85,6 +100,24 @@ Os controles no teclado:
 O `run` informa onde o jogo parou, o que ele pediu e não temos, e o log que os próprios
 desenvolvedores deixaram no binário — por `DBGPRINTF` e por semihosting do ARM. Esse relatório é
 o backlog do projeto. As opções de depuração estão em [ARCHITECTURE.md](ARCHITECTURE.md).
+
+### Com um frontend seu
+
+Quem já tem um frontend — um que simula a carcaça do console, uma estante de jogos, um gabinete
+de fliperama — não quer a interface do Zeebx por cima da tela que ele mesmo montou. Para isso há
+um binário sem interface nenhuma, configurado por um `config.ini`:
+
+```bash
+cargo build --release -p zeebx-headless
+./target/release/zeebx-headless "roms/Quake.zip"
+```
+
+O jogo é obrigatório e não há padrão: este binário é chamado por outro programa, que sabe o que
+quer abrir. Na primeira execução ele escreve um `config.ini` comentado e diz onde.
+
+Ele abre uma janela só com o jogo — ou nenhuma, mandando os quadros por um cano para o seu
+programa pintar. Gráficos, áudio e controles saem dos mesmos campos que a interface grava, só
+que em INI. Ver [`frontends/headless/LEIAME.md`](frontends/headless/LEIAME.md).
 
 ## Plataformas
 

@@ -737,12 +737,19 @@ pub trait Rasterizador {
     fn quadro_na_placa(&self) -> Option<QuadroNaPlaca> {
         None
     }
+
+    /// Devolve ao dono o estado de GL que o rasterizador mexeu.
+    ///
+    /// **Só faz sentido para quem desenha num contexto emprestado**, e é chamado uma vez por
+    /// fatia de execução, quando o controle volta para a interface — não a cada desenho. Ver
+    /// [`crate::session::Session::step`] e o comentário do `GpuState::submete_com`.
+    fn devolve_o_contexto(&self) {}
 }
 
 /// Uma textura de cor da placa com o quadro já desenhado, e o pedaço dela que é a imagem.
 #[derive(Debug, Clone, Copy)]
 pub struct QuadroNaPlaca {
-    pub textura: eframe::glow::Texture,
+    pub textura: glow::Texture,
     /// A fração da textura que a superfície do jogo ocupa, em `(u, v)`; a linha 0 é o topo.
     pub recorte: [f32; 2],
     /// Largura sobre altura da imagem: 4:3 no nativo, mais larga com a

@@ -1,8 +1,18 @@
-# Gera os instaladores nos três sistemas e monta a release.
+# Gera os pacotes nos três sistemas e monta a release.
 #
 # Dispara com uma tag de versão — `v0.1.0` ou `0.1.0` — ou à mão, pela aba Actions. A release sai
 # como **rascunho**, com o título igual à tag: dá para conferir os arquivos antes de publicar, e o
 # verificador de atualizações do emulador ignora rascunhos até lá.
+#
+# São dois formatos por sistema, e os nomes dizem qual é qual:
+#
+#   zeebx-standalone-linux-x86_64.deb        o emulador com a interface, para instalar
+#   zeebx-headless-linux-x86_64.zip          o binário sem interface, para quem tem frontend próprio
+#   zeebx-android-arm64-v8a.apk              o aplicativo de Android
+#
+# O APK sai assinado com a chave de depuração, que é a que o Gradle gera sozinho. Serve para
+# instalar de lado (`adb install`), **não** para a Play Store: aquela pede a chave de publicação,
+# que não pode morar num repositório público.
 
 name: release
 
@@ -17,8 +27,8 @@ permissions:
   contents: write
 
 jobs:
-  pacotes:
-    name: ${{ matrix.nome }}
+  standalone:
+    name: standalone ${{ matrix.nome }}
     runs-on: ${{ matrix.sistema }}
     strategy:
       fail-fast: false
@@ -61,20 +71,41 @@ jobs:
         run: cargo install cargo-packager --locked
 
       # Os testes ainda não foram rodados em Windows e macOS: um tropeço neles aparece no log
-      # sem impedir os instaladores.
+      # sem impedir os pacotes. O frontend sem interface entra aqui porque o núcleo já está
+      # compilado neste job, e testá-lo num job próprio seria pagar a compilação duas vezes.
       - name: Testes
         continue-on-error: true
-        run: cargo test --release --locked
+        run: cargo test --release --locked -p zeebx -p zeebx-headless
 
-      - name: Instaladores
+      - name: Pacotes
         env:
           # O AppImage é montado sem FUSE no runner.
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: cargo packager --release --formats ${{ matrix.formatos }}
 
+      # O `cargo-packager` nomeia pelo produto e pela versão (`Zeebx_0.2.1_x64-setup.exe`), e o
+      # nome não diz de qual sistema nem de qual formato o arquivo é. Numa release com oito
+      # arquivos isso importa. O que muda é só o nome do arquivo: o `.deb` continua trazendo os
+      # metadados dele, e o atualizador do emulador olha a tag, não os nomes.
+      - name: Nomear
+        shell: bash
+        run: |
+          cd target/pacotes
+          for arquivo in *; do
+            case "$arquivo" in
+              *-setup.exe) novo="zeebx-standalone-${{ matrix.nome }}-setup.exe" ;;
+              *.deb)       novo="zeebx-standalone-${{ matrix.nome }}.deb" ;;
+              *.AppImage)  novo="zeebx-standalone-${{ matrix.nome }}.AppImage" ;;
+              *.dmg)       novo="zeebx-standalone-${{ matrix.nome }}.dmg" ;;
+              *)           continue ;;
+            esac
+            mv -- "$arquivo" "$novo"
+            echo "$arquivo -> $novo"
+          done
+
       - uses: actions/upload-artifact@v4
         with:
-          name: zeebx-${{ matrix.nome }}
+          name: zeebx-standalone-${{ matrix.nome }}
           path: |
             target/pacotes/*.deb
             target/pacotes/*.AppImage
@@ -82,8 +113,148 @@ jobs:
             target/pacotes/*.dmg
           if-no-files-found: error
 
+  headless:
+    name: headless ${{ matrix.nome }}
+    runs-on: ${{ matrix.sistema }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nome: linux-x86_64
+            sistema: ubuntu-22.04
+          - nome: windows-x86_64
+            sistema: windows-latest
+          - nome: macos-arm64
+            sistema: macos-latest
+          - nome: macos-x86_64
+            sistema: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Cache separado do standalone de propósito: os dois compilam o mesmo núcleo, mas com
+      # conjuntos de dependências diferentes — aqui não entram o eframe, o rfd nem o Discord.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: headless-${{ matrix.nome }}
+
+      - name: Dependências do Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config libasound2-dev libudev-dev \
+            libxkbcommon-dev libwayland-dev libgl1-mesa-dev libx11-dev libxcursor-dev \
+            libxrandr-dev libxi-dev
+
+      - name: Dependências do macOS
+        if: runner.os == 'macOS'
+        run: brew install cmake || true
+
+      - name: Compilar
+        run: cargo build --release --locked -p zeebx-headless
+
+      # O que vai no pacote: o binário, o `config.ini` comentado e o leia-me. O arquivo de
+      # configuração vai junto porque o primeiro lugar em que o emulador o procura é ao lado do
+      # executável — é o que faz uma cópia portátil funcionar sem tocar na máquina.
+      - name: Juntar
+        shell: bash
+        run: |
+          mkdir -p entrega
+          cp frontends/headless/config.ini frontends/headless/LEIAME.md entrega/
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp target/release/zeebx-headless.exe entrega/
+          else
+            cp target/release/zeebx-headless entrega/
+          fi
+          ls -l entrega
+
+      # O `zip` existe no Linux e no macOS; no Windows quem compacta é o PowerShell. Nenhum dos
+      # dois precisa ser instalado, que é o motivo de não usar a mesma ferramenta nos três.
+      - name: Compactar (Unix)
+        if: runner.os != 'Windows'
+        run: cd entrega && zip -r "../zeebx-headless-${{ matrix.nome }}.zip" .
+
+      - name: Compactar (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path entrega\* -DestinationPath "zeebx-headless-${{ matrix.nome }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeebx-headless-${{ matrix.nome }}
+          path: zeebx-headless-${{ matrix.nome }}.zip
+          if-no-files-found: error
+
+  android:
+    name: android ${{ matrix.abi }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Uma ABI só, e é o que o `apk/app/build.gradle.kts` filtra. Acrescentar outra é mexer
+        # nos dois lugares, não só aqui.
+        include:
+          - abi: arm64-v8a
+            alvo: aarch64-linux-android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.alvo }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-${{ matrix.abi }}
+
+      # O AGP 8.7 pede o JDK 17. O runner traz vários; dizer qual evita depender de qual deles
+      # está como padrão na imagem do mês.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Sem wrapper no projeto, a versão do Gradle é escolhida aqui — e precisa ser uma que o
+      # AGP 8.7.3 aceite. Deixá-la para o que a imagem traz é deixar a build quebrar sozinha no
+      # dia em que a imagem mudar.
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      # O `ninja` é o gerador que o `ndk-toolchain.cmake` usa para o C e o C++ do núcleo — o
+      # unicorn e o dynarmic.
+      - name: Dependências
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      # A versão exata que o `compilar.sh` espera. A imagem do runner traz algum NDK, mas qual
+      # muda com ela, e o script monta o caminho a partir do número.
+      - name: NDK
+        run: |
+          versao=$(grep -oP 'ANDROID_NDK_VERSAO:=\K[0-9.]+' frontends/android/compilar.sh)
+          echo "instalando o NDK $versao"
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;$versao" > /dev/null
+
+      - name: cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      # O script acha o SDK pelo `ANDROID_SDK_ROOT` e o Gradle pelo caminho, então não há
+      # caminho nenhum repetido aqui.
+      - name: Compilar e montar a APK
+        env:
+          ZEEBX_ANDROID_ABI: ${{ matrix.abi }}
+        run: frontends/android/compilar.sh --apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeebx-android-${{ matrix.abi }}
+          path: frontends/android/apk/app/build/outputs/apk/debug/zeebx-android-${{ matrix.abi }}.apk
+          if-no-files-found: error
+
   release:
-    needs: pacotes
+    needs: [standalone, headless, android]
     # Sai com o que deu certo: um sistema que falhou não segura os outros.
     if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest

@@ -17,25 +17,37 @@
 //! **No macOS não há EGL** — o `glutin` só oferece o CGL, que pede uma janela. Lá o contexto fora
 //! de tela responde que não existe, e o caminho sem janela usa o rasterizador de software. Com
 //! janela nada muda: o backend recebe o contexto do `eframe`.
+//!
+//! **No Windows o EGL existe, mas não é garantido**: vem com o driver que o instala — a NVIDIA
+//! instala — ou com uma ANGLE no caminho de busca. Sem nenhum dos dois é o mesmo desfecho do
+//! macOS, software e um motivo dito. Com janela também não muda nada: lá o contexto é WGL, e
+//! quem o cria é quem abriu a janela.
 
-use eframe::glow;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
 use glutin::config::{ConfigSurfaceTypes, ConfigTemplateBuilder};
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
 use glutin::context::{ContextApi, ContextAttributesBuilder, NotCurrentGlContext, Version};
+#[cfg(not(target_os = "android"))]
 use glutin::context::PossiblyCurrentContext;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
 use glutin::display::{DisplayApiPreference, GlDisplay};
+#[cfg(not(target_os = "android"))]
 use glutin::display::Display;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
 use glutin::surface::SurfaceAttributesBuilder;
+#[cfg(not(target_os = "android"))]
 use glutin::surface::{PbufferSurface, Surface};
-#[cfg(not(target_os = "macos"))]
-use raw_window_handle::{RawDisplayHandle, XlibDisplayHandle};
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
+use raw_window_handle::RawDisplayHandle;
+#[cfg(all(not(any(target_os = "macos", target_os = "android")), not(windows)))]
+use raw_window_handle::XlibDisplayHandle;
+#[cfg(all(not(any(target_os = "macos", target_os = "android")), windows))]
+use raw_window_handle::WindowsDisplayHandle;
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
 use std::num::NonZeroU32;
 
 /// O contexto e o carregador de funções, vivos enquanto o backend existir.
+#[cfg(not(target_os = "android"))]
 pub struct Contexto {
     /// As funções de GL já resolvidas. É o que o backend usa.
     ///
@@ -50,6 +62,21 @@ pub struct Contexto {
     _display: Display,
 }
 
+/// No Android não há contexto fora de tela: quem entrega o GL é o eframe, junto com a janela.
+/// A forma existe para que o [`crate::video::gpu`] não precise saber disso.
+#[cfg(target_os = "android")]
+pub struct Contexto {
+    pub gl: std::sync::Arc<glow::Context>,
+}
+
+#[cfg(target_os = "android")]
+impl Contexto {
+    pub fn novo() -> Result<Self, String> {
+        Err("no Android o contexto de GL vem do eframe, não de um display fora de tela".to_string())
+    }
+}
+
+#[cfg(not(target_os = "android"))]
 impl Contexto {
     /// Abre um contexto fora de tela, ou diz por que não deu.
     ///
@@ -62,9 +89,20 @@ impl Contexto {
 
     #[cfg(not(target_os = "macos"))]
     pub fn novo() -> Result<Self, String> {
-        // `display: None` é o `EGL_DEFAULT_DISPLAY`: pede ao EGL o display que ele considera
-        // padrão, sem precisar de uma conexão de janela aberta por nós.
+        // O display que o EGL considera padrão, sem precisar de uma conexão de janela aberta
+        // por nós. Cada sistema o nomeia de um jeito: no Unix é o `EGL_DEFAULT_DISPLAY`, que o
+        // `XlibDisplayHandle::new(None, 0)` representa; no Windows não há nome a dar, e o
+        // handle vazio é a forma de dizer isso.
+        //
+        // **No Windows o EGL não é garantido.** Ele existe quando o driver o instala — a NVIDIA
+        // instala — ou quando há uma ANGLE (`libEGL.dll` e `libGLESv2.dll`) no caminho de
+        // busca. Sem nenhum dos dois isto falha, e falhar aqui é um caso normal: quem chama
+        // cai para o rasterizador de software, como já acontece no macOS. Com janela nada disso
+        // vale, porque o contexto vem dela.
+        #[cfg(not(windows))]
         let handle = RawDisplayHandle::Xlib(XlibDisplayHandle::new(None, 0));
+        #[cfg(windows)]
+        let handle = RawDisplayHandle::Windows(WindowsDisplayHandle::new());
         let display = unsafe { Display::new(handle, DisplayApiPreference::Egl) }
             .map_err(|erro| format!("não abriu o display EGL: {erro}"))?;
 
@@ -127,7 +165,7 @@ mod tests {
     fn o_contexto_fora_de_tela_abre_ou_diz_por_que_nao() {
         match Contexto::novo() {
             Ok(contexto) => {
-                use eframe::glow::HasContext;
+                use glow::HasContext;
                 let versao = unsafe { contexto.gl.get_parameter_string(glow::VERSION) };
                 let placa = unsafe { contexto.gl.get_parameter_string(glow::RENDERER) };
                 println!("contexto aberto: {versao} — {placa}");
