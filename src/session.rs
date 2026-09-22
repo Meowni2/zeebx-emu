@@ -1129,6 +1129,137 @@ fn o_motor_desenha_no_framebuffer_do_frontend() {
     }
 }
 
+
+/// **Salvar e carregar no rasterizador de placa dá o mesmo quadro.**
+///
+/// É a prova que faltava do item 6: a via de gravação do `GpuState` estava ligada e sem teste. O
+/// teste segue a sequência que o RetroArch faz, e vai além do "os campos voltam": ele **exige que o
+/// desenho continue igual**.
+///
+/// O caminho é este: roda um trecho, **salva**; roda mais um trecho, e guarda o quadro (é o que o
+/// jogo faz depois do save); **carrega** o estado e roda o mesmo trecho de novo. Os dois quadros têm
+/// de ser idênticos — mesma matriz, mesmas texturas, mesmo quadro. Sem isso o save state "volta" e a
+/// cena sai diferente, que é o modo de falhar mais caro de descobrir.
+#[cfg(feature = "gpu")]
+#[test]
+fn o_estado_da_placa_continua_o_mesmo_desenho() {
+    use glow::HasContext;
+    use std::time::Duration;
+
+    let Ok(rom) = std::env::var("ZEEBX_TESTE_ROM") else {
+        eprintln!("sem ZEEBX_TESTE_ROM: nada a comparar");
+        return;
+    };
+    let ms: u64 = std::env::var("ZEEBX_TESTE_MS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(2000);
+    let contexto = match crate::video::contexto::Contexto::novo() {
+        Ok(contexto) => contexto,
+        Err(porque) => {
+            eprintln!("sem placa fora de tela: {porque}");
+            return;
+        }
+    };
+    let gl = contexto.gl.clone();
+    let (fbo, textura) = unsafe {
+        let fbo = gl.create_framebuffer().expect("framebuffer de fora");
+        let textura = gl.create_texture().expect("textura de fora");
+        gl.bind_texture(glow::TEXTURE_2D, Some(textura));
+        gl.tex_image_2d(
+            glow::TEXTURE_2D,
+            0,
+            glow::RGBA8 as i32,
+            640,
+            480,
+            0,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelUnpackData::Slice(None),
+        );
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+        gl.framebuffer_texture_2d(
+            glow::FRAMEBUFFER,
+            glow::COLOR_ATTACHMENT0,
+            glow::TEXTURE_2D,
+            Some(textura),
+            0,
+        );
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        (fbo, textura)
+    };
+
+    let mut session = Session::start_with(
+        &std::path::PathBuf::from(&rom),
+        crate::PORTAS_PADRAO,
+        None,
+        true,
+        Some(gl.clone()),
+        Default::default(),
+    )
+    .expect("a sessão de placa abriu");
+    session.machine_mut().desenha_no_fbo(Some(fbo.0.get()));
+
+    // Roda `ms` virtuais e lê o quadro do framebuffer de fora.
+    let roda_e_le = |session: &mut Session, ms: u64| -> Vec<u8> {
+        let base = session.clock_ms();
+        while session.clock_ms().saturating_sub(base) < ms as u32 {
+            match session.step(Duration::ZERO, false) {
+                Step::Stopped => break,
+                Step::Presented => {
+                    while session.mostra_quadro_intermediario() {}
+                }
+                Step::Running | Step::Ahead => {}
+            }
+        }
+        let mut pixels = vec![0u8; 640 * 480 * 4];
+        unsafe {
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+            gl.read_pixels(
+                0,
+                0,
+                640,
+                480,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelPackData::Slice(Some(&mut pixels)),
+            );
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        }
+        pixels
+    };
+
+    // 1) Um trecho, e o ponto de salvamento.
+    let _ = roda_e_le(&mut session, ms);
+    assert!(session.pode_salvar().is_ok(), "o motor recusou salvar no fim do quadro");
+    let estado = session.grava_estado();
+    assert!(estado.len() > 1024, "o estado saiu pequeno demais: {}", estado.len());
+
+    // 2) Mais um trecho, e o quadro que o jogo mostra depois do save.
+    let esperado = roda_e_le(&mut session, ms);
+
+    // 3) Volta ao ponto de salvamento, e o mesmo trecho de novo.
+    session.restaura_estado(&estado).expect("carregou");
+    let depois = roda_e_le(&mut session, ms);
+
+    let iguais = esperado.iter().zip(depois.iter()).filter(|(a, b)| a == b).count();
+    let total = esperado.len();
+    eprintln!(
+        "o quadro depois do save e o quadro depois de carregar: {iguais} de {total} byte(s) iguais \
+         ({:.2}%)",
+        iguais as f64 * 100.0 / total as f64
+    );
+    assert_eq!(
+        iguais, total,
+        "o desenho não continuou igual depois de carregar o estado"
+    );
+
+    unsafe {
+        gl.delete_framebuffer(fbo);
+        gl.delete_texture(textura);
+    }
+}
+
 /// **O mesmo jogo pelos dois rasterizadores, no mesmo instante virtual.**
 ///
 /// É a verificação que faltava para o render em hardware. Com a janela fechada, os dois caminhos
