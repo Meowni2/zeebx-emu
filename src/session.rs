@@ -639,6 +639,16 @@ impl Session {
         self.machine.clock_ms()
     }
 
+    /// Liga a captura de serial: onde a **instrumentação** do motor escreve.
+    ///
+    /// Classes criadas, bancos abertos, SQL, propriedades de widget e a árvore de widgets da
+    /// primeira tecla saem por aqui, sem se misturar com o log do jogo. A varredura e o `run` têm
+    /// isso por `ZEEBX_ROM_SERIAL` e `--serial` desde sempre; o core não tinha, e é a diferença
+    /// entre poder olhar o que o applet faz **no aparelho** e só poder supor.
+    pub fn liga_serial(&mut self, caminho: &std::path::Path) -> std::io::Result<()> {
+        self.machine.liga_serial(caminho)
+    }
+
     /// O log da execução.
     ///
     /// Junta o que o jogo escreveu com o que o emulador tem a dizer sobre ele. A parte do

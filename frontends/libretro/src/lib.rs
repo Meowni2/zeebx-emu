@@ -1101,6 +1101,18 @@ unsafe fn carrega(
             pasta.as_deref().unwrap_or(std::path::Path::new(".")).display()
         ));
     }
+    // **A captura de serial, quando pedida.** É o mesmo instrumento da varredura
+    // (`ZEEBX_ROM_SERIAL`) e do `run` (`--serial`): classes criadas, bancos abertos, SQL,
+    // propriedades de widget e a árvore de widgets da primeira tecla. Sem ele, quem está no
+    // aparelho vê o jogo e não vê o que o applet faz por dentro — e foi com ele que se mediu, na
+    // Z-Wheel, que o caminho do core reage à tecla mas pergunta `class_id = -1` (0 linhas) onde a
+    // varredura resolve o foco (`class_id = 17359702`, o Alien Breaker) e pede a abertura.
+    if let Ok(caminho) = std::env::var("ZEEBX_CORE_SERIAL") {
+        match session.liga_serial(std::path::Path::new(&caminho)) {
+            Ok(()) => log(&format!("Zeebx: captura de serial em {caminho}")),
+            Err(erro) => aviso(&format!("Zeebx: não deu para abrir a captura de serial: {erro}")),
+        }
+    }
     // A Z-Wheel é o shell: quando ela é o conteúdo, guardar o caminho é o que permite voltar a
     // ela depois que um jogo termina — o que o console faz.
     let z_wheel = match session.classe() == zeebx::session::Z_WHEEL {

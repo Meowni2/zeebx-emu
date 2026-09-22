@@ -746,7 +746,24 @@ enquanto no caminho do core o botão era apertado e solto 300 ms depois. Mantend
 teste do core, o desfecho é **o mesmo**: 1 imagem distinta em 100 quadros e pedido zero. A
 diferença não está no par aperta/solta.
 
-**6. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
+**6. Com a captura de serial no core, a pergunta virou o foco.** O core ganhou o mesmo
+instrumento da varredura (`ZEEBX_CORE_SERIAL`), e ele mostra o que a roda faz por dentro nos dois
+caminhos. A diferença está numa consulta:
+
+```text
+varredura   [  30508 ms] ... AND GAMEINFO.class_id = -1 -> 0 linha(s)
+            [  38022 ms] ... AND GAMEINFO.class_id = 17359702 -> 2 linha(s)   <- o foco, e o pedido sai
+core        [  50611 ms] ... AND GAMEINFO.class_id = -1 -> 0 linha(s)
+            [  53033 ms] ... AND GAMEINFO.class_id = -1 -> 0 linha(s)        <- a tecla é tratada, o foco não vem
+```
+
+`17359702` é `0x0108E356`, o Alien Breaker — o mesmo que a varredura pede para abrir. No core a
+tecla **é tratada** (a roda cria o `IValueModel` em `0x01028e3c`, pendura o `0x5000` no formulário e
+liga o `FID_ACTIVE`), mas o foco nunca vira um jogo: a consulta continua com `-1`. É esta a
+pergunta do próximo experimento — **de onde a roda tira a classe do item em foco, e por que ela sai
+`-1` no caminho do core** —, e agora há como medi-la, porque o instrumento existe nos dois lados.
+
+**7. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
 padrão (a config do usuário) e o do core usa o que o frontend entrega; apontando o teste do core
 para a árvore do usuário (`ZEEBX_CORE_SISTEMA=$HOME/.config/zeebx`), o mesmo número de quadros leva
 a roda a **36,6 s** em vez de **50,6 s** — o estado do aparelho muda quando as coisas acontecem, o
