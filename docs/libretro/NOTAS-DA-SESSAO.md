@@ -521,3 +521,39 @@ cargo run --release -- sessao "roms/Crash.zip" --seconds=3 --placa --dump=placa.
 # o core pela própria ABI, com uma ROM de verdade
 ZEEBX_CORE_ROM="roms/Z-Wheel.zip" cargo test -p zeebx-libretro -- --nocapture
 ```
+
+## O áudio MIDI, do diagnóstico à correção
+
+Resumo do que a frente de áudio MIDI fechou, com os números, e do que ficou aberto. O detalhe
+medido está em [07 — Áudio](../implementacao/07-audio.md); aqui fica só o mapa.
+
+**O que estava errado, em três camadas:**
+
+1. **A tabela de timbres** mapeava família de oito programas para uma forma de onda fixa, e 29
+   (*overdrive*), 30 (distorcida), 42 (violoncelo) e 48 (cordas) saíam com a **mesma onda** — 23,2%
+   das notas do Double Dragon entre as três primeiras. Erro total de centroide contra o soundfont:
+   **7635 Hz**, caiu para **701 Hz** depois da correção.
+2. **Faltava material de amostra.** Entrou um sintetizador de banco (`rustysynth`, MIT, Rust puro),
+   **opcional**: o banco não vem embutido (32 MB), é procurado na pasta do aparelho, e sem ele o
+   MIDI volta para a tabela. Nas doze músicas do Double Dragon, o erro de centroide contra a
+   referência é **11,3%** com o banco e **40,3%** com a tabela.
+3. **O custo de sintetizar era absurdo.** A síntese somava `sin()` por harmônico **em cada amostra**,
+   dentro do despacho de API: **6,25 s** por música, ou seja, o jogo travava seis segundos toda vez
+   que uma trilha começava. Com a onda pré-calculada por voz: **183 ms** (34×), com o timbre
+   intacto.
+
+**O que está validado:** varredura das 62 ROMs com **0 diferenças** de linha de base; quatro
+combinações de features verdes (456/461/467/472 + 5 do core); CI **6/6** nos dois workflows, com o
+`rustysynth` dentro — e o `readelf` do artefato ARM confirma que as dependências continuam sendo só
+libstdc++, libgcc, libm e libc.
+
+**O que falta:** instalar o core no cartão do muOS. É um comando, com o cartão montado:
+
+```bash
+python3 ferramentas/instala_core.py --muos /media/$USER/ROOTFS --banco GeneralUser-GS.sf2
+```
+
+O banco é a decisão que continua aberta e não é técnica: o GeneralUser GS chega a 11,3% e permite
+redistribuir, mas o texto da licença admite origem desconhecida de parte das amostras. Os
+candidatos, com tamanho, licença e presets medidos, estão na tabela do `07-audio.md`.
+
