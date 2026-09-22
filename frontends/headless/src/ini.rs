@@ -48,12 +48,12 @@ impl Ini {
                 continue;
             }
             let Some((chave, valor)) = limpa.split_once('=') else {
-                avisos.push(format!("linha {numero}: não é seção nem `chave = valor`: {limpa}"));
+                avisos.push(format!("line {numero}: neither a section nor `key = value`: {limpa}"));
                 continue;
             };
             let chave = chave.trim().to_lowercase();
             if chave.is_empty() {
-                avisos.push(format!("linha {numero}: chave vazia"));
+                avisos.push(format!("line {numero}: empty key"));
                 continue;
             }
             ini.secoes.entry(secao.clone()).or_default().insert(
@@ -100,7 +100,7 @@ impl Ini {
                     true => chave.clone(),
                     false => format!("[{secao}] {chave}"),
                 };
-                sobras.push(format!("linha {}: ninguém usa `{onde}`", valor.linha));
+                sobras.push(format!("line {}: nobody uses `{onde}`", valor.linha));
             }
         }
         sobras

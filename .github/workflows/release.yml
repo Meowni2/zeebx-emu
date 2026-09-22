@@ -133,8 +133,9 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # Cache separado do standalone de propósito: os dois compilam o mesmo núcleo, mas com
-      # conjuntos de dependências diferentes — aqui não entram o eframe, o rfd nem o Discord.
+      # Cache separado do standalone porque os perfis de build diferem — lá o `cargo-packager`
+      # entra na conta. As dependências são quase as mesmas: o `zeebx` é a biblioteca inteira, e
+      # fora do Android ela traz o eframe e companhia por conta própria.
       - uses: Swatinem/rust-cache@v2
         with:
           key: headless-${{ matrix.nome }}

@@ -130,7 +130,9 @@ cargo build --release -p zeebx-headless
 ```
 
 O jogo é obrigatório e não há padrão: este binário é chamado por outro programa, que sabe o que
-quer abrir. Na primeira execução ele escreve um `config.ini` comentado e diz onde.
+quer abrir. Na primeira execução ele escreve um `config.ini` completo e comentado, e diz onde.
+As opções e as chaves do arquivo são em inglês, como os comandos; os comentários são em
+português.
 
 Ele abre uma janela só com o jogo — ou nenhuma, mandando os quadros por um cano para o seu
 programa pintar. Gráficos, áudio e controles saem dos mesmos campos que a interface grava, só

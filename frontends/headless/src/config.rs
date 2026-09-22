@@ -158,13 +158,13 @@ pub fn carrega(caminho: Option<&std::path::Path>) -> Lido {
     match std::fs::read_to_string(&escolhido) {
         Ok(texto) => {
             let mut lido = de_texto(&texto);
-            lido.avisos.insert(0, format!("lendo {}", escolhido.display()));
+            lido.avisos.insert(0, format!("reading {}", escolhido.display()));
             lido.origem = Origem::Lida;
             lido
         }
         // Existe e não abre: permissão, um diretório com esse nome. Criar por cima seria pior.
         Err(erro) if escolhido.exists() => {
-            let recado = format!("não deu para ler {}: {erro}", escolhido.display());
+            let recado = format!("could not read {}: {erro}", escolhido.display());
             faltando(escolhido, vec![recado])
         }
         Err(_) => faltando(escolhido, Vec::new()),
@@ -178,15 +178,15 @@ pub fn carrega(caminho: Option<&std::path::Path>) -> Lido {
 /// causa de um erro de permissão seria apagar o que não é nosso.
 pub fn cria(caminho: &std::path::Path) -> Result<(), String> {
     if caminho.exists() {
-        return Err(format!("{} já existe", caminho.display()));
+        return Err(format!("{} already exists", caminho.display()));
     }
     let texto = modelo();
     if let Some(pasta) = caminho.parent() {
         std::fs::create_dir_all(pasta)
-            .map_err(|erro| format!("não deu para criar {}: {erro}", pasta.display()))?;
+            .map_err(|erro| format!("could not create {}: {erro}", pasta.display()))?;
     }
     std::fs::write(caminho, texto)
-        .map_err(|erro| format!("não deu para escrever {}: {erro}", caminho.display()))
+        .map_err(|erro| format!("could not write {}: {erro}", caminho.display()))
 }
 
 /// O exemplo distribuído, **antes** de as portas serem preenchidas. Ver [`modelo`].
@@ -224,16 +224,16 @@ fn secoes_das_portas() -> String {
 
 fn secao_da_porta(indice: usize, player: &Player) -> String {
     let mut linhas = vec![
-        format!("[porta{}]", indice + 1),
-        format!("ligada = {}", sim_ou_nao(player.ligada)),
-        format!("# O que o console enxerga ligado: controle (o Dragon), zpad, teclado ou boomerang."),
-        format!("aparelho = {}", nome_do_aparelho(player.aparelho)),
-        "# Qual controle do host alimenta esta porta. `--controles` lista os nomes que o sistema".to_string(),
-        "# dá a eles. Sem esta linha, a porta fica só no teclado.".to_string(),
+        format!("[port{}]", indice + 1),
+        format!("enabled = {}", sim_ou_nao(player.ligada)),
+        "# O que o console enxerga ligado: gamepad (o Dragon), zpad, keyboard ou boomerang.".to_string(),
+        format!("device = {}", nome_do_aparelho(player.aparelho)),
+        "# Qual controle do host alimenta esta porta. `--controllers` lista os nomes que o".to_string(),
+        "# sistema dá a eles. Sem esta linha, a porta fica só no teclado.".to_string(),
     ];
     match &player.device {
-        Some(nome) => linhas.push(format!("controle = \"{nome}\"")),
-        None => linhas.push("# controle = \"Xbox Wireless Controller\"".to_string()),
+        Some(nome) => linhas.push(format!("controller = \"{nome}\"")),
+        None => linhas.push("# controller = \"Xbox Wireless Controller\"".to_string()),
     }
     linhas.push(String::new());
 
@@ -265,10 +265,10 @@ fn secao_da_porta(indice: usize, player: &Player) -> String {
             continue;
         };
         let sufixo = match origem.invert {
-            true => ":invertido",
+            true => ":inverted",
             false => "",
         };
-        linhas.push(format!("# eixo_{eixo} = {}{sufixo}", origem.name));
+        linhas.push(format!("# axis_{eixo} = {}{sufixo}", origem.name));
     }
     linhas.push(String::new());
     linhas.join("\n")
@@ -276,31 +276,31 @@ fn secao_da_porta(indice: usize, player: &Player) -> String {
 
 fn escreve_origem(source: &Source) -> String {
     match source {
-        Source::Key { name } => format!("tecla:{name}"),
-        Source::Button { name } => format!("botao:{name}"),
+        Source::Key { name } => format!("key:{name}"),
+        Source::Button { name } => format!("button:{name}"),
         Source::Axis { name, positive } => {
             let sinal = match positive {
                 true => '+',
                 false => '-',
             };
-            format!("eixo:{name}{sinal}")
+            format!("axis:{name}{sinal}")
         }
     }
 }
 
 fn nome_do_aparelho(aparelho: Aparelho) -> &'static str {
     match aparelho {
-        Aparelho::Controle => "controle",
+        Aparelho::Controle => "gamepad",
         Aparelho::ZPad => "zpad",
-        Aparelho::Teclado => "teclado",
+        Aparelho::Teclado => "keyboard",
         Aparelho::Boomerang => "boomerang",
     }
 }
 
 fn sim_ou_nao(valor: bool) -> &'static str {
     match valor {
-        true => "sim",
-        false => "nao",
+        true => "true",
+        false => "false",
     }
 }
 
@@ -311,13 +311,13 @@ pub fn de_texto(texto: &str) -> Lido {
     let mut headless = Headless::default();
 
     // ---- [video] -----------------------------------------------------------------------
-    if let Some(v) = ini.pega("video", "modo") {
+    if let Some(v) = ini.pega("video", "mode") {
         match v.texto.to_lowercase().as_str() {
-            "janela" => headless.video = Video::Janela,
-            "tela_cheia" | "cheia" => headless.video = Video::TelaCheia,
-            "nenhum" | "sem_janela" => headless.video = Video::Nenhum,
+            "window" => headless.video = Video::Janela,
+            "fullscreen" => headless.video = Video::TelaCheia,
+            "none" => headless.video = Video::Nenhum,
             outro => avisa(&mut avisos, &v, &format!(
-                "`{outro}` não é modo de vídeo; use janela, tela_cheia ou sem_janela"
+                "`{outro}` is not a video mode; use window, fullscreen or none"
             )),
         }
     }
@@ -329,105 +329,105 @@ pub fn de_texto(texto: &str) -> Lido {
     };
     settings.graphics.janela = settings.graphics.janela_do_jogo;
 
-    if let Some(v) = ini.pega("video", "escala") {
+    if let Some(v) = ini.pega("video", "scaling") {
         match v.texto.to_lowercase().as_str() {
-            "inteira" | "integer" => settings.graphics.scaling = Scaling::Integer,
-            "cabe" | "fit" => settings.graphics.scaling = Scaling::Fit,
-            "estica" | "stretch" => settings.graphics.scaling = Scaling::Stretch,
+            "integer" => settings.graphics.scaling = Scaling::Integer,
+            "fit" => settings.graphics.scaling = Scaling::Fit,
+            "stretch" => settings.graphics.scaling = Scaling::Stretch,
             outro => avisa(&mut avisos, &v, &format!(
-                "`{outro}` não é escala; use inteira, cabe ou estica"
+                "`{outro}` is not a scaling mode; use integer, fit or stretch"
             )),
         }
     }
-    booleano(&mut ini, "video", "suave", &mut settings.graphics.smooth, &mut avisos);
-    booleano(&mut ini, "video", "proporcao_4_3", &mut settings.graphics.keep_aspect, &mut avisos);
-    booleano(&mut ini, "video", "limite_velocidade", &mut settings.graphics.speed_limit, &mut avisos);
+    booleano(&mut ini, "video", "smooth", &mut settings.graphics.smooth, &mut avisos);
+    booleano(&mut ini, "video", "keep_aspect", &mut settings.graphics.keep_aspect, &mut avisos);
+    booleano(&mut ini, "video", "speed_limit", &mut settings.graphics.speed_limit, &mut avisos);
     booleano(&mut ini, "video", "vsync", &mut headless.vsync, &mut avisos);
-    if let Some(v) = ini.pega("video", "titulo") {
+    if let Some(v) = ini.pega("video", "title") {
         headless.titulo = sem_aspas(&v.texto).to_string();
     }
     let (mut largura, mut altura) = headless.tamanho;
-    inteiro(&mut ini, "video", "largura", &mut largura, &mut avisos);
-    inteiro(&mut ini, "video", "altura", &mut altura, &mut avisos);
+    inteiro(&mut ini, "video", "width", &mut largura, &mut avisos);
+    inteiro(&mut ini, "video", "height", &mut altura, &mut avisos);
     headless.tamanho = (largura.max(160), altura.max(120));
 
-    // ---- [grafico] ---------------------------------------------------------------------
+    // ---- [graphics] ---------------------------------------------------------------------
     // O `gpu_present` do núcleo não aparece aqui: ele escolhe entre pôr o quadro pela placa ou
     // mandá-lo como textura do egui, e aqui não há egui. A janela crua sempre apresenta pela
     // placa, que é o caminho barato — o quadro já está em RGB565 e quem amplia é ela.
     let g: &mut Graphics = &mut settings.graphics;
-    booleano(&mut ini, "grafico", "rasterizador_na_placa", &mut g.gpu_rasterizer, &mut avisos);
-    booleano(&mut ini, "grafico", "neblina", &mut g.neblina, &mut avisos);
-    oito(&mut ini, "grafico", "resolucao_interna", &mut g.resolucao_interna, 1, 8, &mut avisos);
-    oito(&mut ini, "grafico", "antialias", &mut g.antialias, 1, 16, &mut avisos);
-    oito(&mut ini, "grafico", "anisotropico", &mut g.anisotropico, 1, 16, &mut avisos);
-    if let Some(v) = ini.pega("grafico", "proporcao") {
+    booleano(&mut ini, "graphics", "gpu_rasterizer", &mut g.gpu_rasterizer, &mut avisos);
+    booleano(&mut ini, "graphics", "fog", &mut g.neblina, &mut avisos);
+    oito(&mut ini, "graphics", "internal_resolution", &mut g.resolucao_interna, 1, 8, &mut avisos);
+    oito(&mut ini, "graphics", "antialias", &mut g.antialias, 1, 16, &mut avisos);
+    oito(&mut ini, "graphics", "anisotropic", &mut g.anisotropico, 1, 16, &mut avisos);
+    if let Some(v) = ini.pega("graphics", "aspect") {
         match v.texto.to_lowercase().as_str() {
-            "nativa" => g.proporcao = Proporcao::Nativa,
+            "native" => g.proporcao = Proporcao::Nativa,
             "16x9" => g.proporcao = Proporcao::Larga16x9,
             "16x10" => g.proporcao = Proporcao::Larga16x10,
-            "janela" => g.proporcao = Proporcao::Janela,
+            "window" => g.proporcao = Proporcao::Janela,
             outro => avisa(&mut avisos, &v, &format!(
-                "`{outro}` não é proporção; use nativa, 16x9, 16x10 ou janela"
+                "`{outro}` is not an aspect; use native, 16x9, 16x10 or window"
             )),
         }
     }
 
     // ---- [audio] -----------------------------------------------------------------------
     let a: &mut Audio = &mut settings.audio;
-    booleano(&mut ini, "audio", "ligado", &mut a.enabled, &mut avisos);
+    booleano(&mut ini, "audio", "enabled", &mut a.enabled, &mut avisos);
     oito(&mut ini, "audio", "volume", &mut a.volume, 0, 100, &mut avisos);
 
-    // ---- [despejo] ---------------------------------------------------------------------
-    if let Some(v) = ini.pega("despejo", "formato") {
+    // ---- [dump] ---------------------------------------------------------------------
+    if let Some(v) = ini.pega("dump", "format") {
         match v.texto.to_lowercase().as_str() {
             "rgb565" => headless.despejo.formato = Formato::Rgb565,
             "rgba" => headless.despejo.formato = Formato::Rgba,
             "png" => headless.despejo.formato = Formato::Png,
             outro => avisa(&mut avisos, &v, &format!(
-                "`{outro}` não é formato de despejo; use rgb565, rgba ou png"
+                "`{outro}` is not a dump format; use rgb565, rgba or png"
             )),
         }
     }
-    if let Some(v) = ini.pega("despejo", "destino") {
+    if let Some(v) = ini.pega("dump", "destination") {
         let texto = sem_aspas(&v.texto);
         headless.despejo.destino = match texto.is_empty() || texto == "-" {
             true => None,
             false => Some(PathBuf::from(texto)),
         };
     }
-    if let Some(v) = ini.pega("despejo", "limite_de_quadros") {
+    if let Some(v) = ini.pega("dump", "frame_limit") {
         match v.texto.parse::<u64>() {
             Ok(n) => headless.despejo.limite = n,
-            Err(_) => avisa(&mut avisos, &v, "limite_de_quadros espera um número"),
+            Err(_) => avisa(&mut avisos, &v, "frame_limit expects a number"),
         }
     }
 
-    // ---- [sistema] ---------------------------------------------------------------------
-    if let Some(v) = ini.pega("sistema", "roms") {
+    // ---- [system] ---------------------------------------------------------------------
+    if let Some(v) = ini.pega("system", "roms") {
         let caminho = PathBuf::from(sem_aspas(&v.texto));
         settings.roms_dir = Some(caminho.clone());
         headless.roms = Some(caminho);
     }
-    if let Some(v) = ini.pega("sistema", "z_wheel") {
+    if let Some(v) = ini.pega("system", "z_wheel") {
         let caminho = PathBuf::from(sem_aspas(&v.texto));
         settings.z_wheel_path = Some(caminho.clone());
         headless.z_wheel = Some(caminho);
     }
-    if let Some(v) = ini.pega("sistema", "idioma") {
+    if let Some(v) = ini.pega("system", "language") {
         settings.language = Some(sem_aspas(&v.texto).to_string());
     }
-    if let Some(v) = ini.pega("sistema", "segundos") {
+    if let Some(v) = ini.pega("system", "seconds") {
         match v.texto.parse::<u32>() {
             Ok(0) => headless.segundos = None,
             Ok(n) => headless.segundos = Some(n),
-            Err(_) => avisa(&mut avisos, &v, "segundos espera um número"),
+            Err(_) => avisa(&mut avisos, &v, "seconds expects a number"),
         }
     }
-    booleano(&mut ini, "sistema", "sair_com_o_jogo", &mut headless.sair_com_o_jogo, &mut avisos);
-    booleano(&mut ini, "sistema", "z_wheel_fim_de_vida", &mut settings.z_wheel.fim_de_vida, &mut avisos);
+    booleano(&mut ini, "system", "exit_with_game", &mut headless.sair_com_o_jogo, &mut avisos);
+    booleano(&mut ini, "system", "z_wheel_end_of_life", &mut settings.z_wheel.fim_de_vida, &mut avisos);
 
-    // ---- [porta1], [porta2] ------------------------------------------------------------
+    // ---- [port1], [port2] ------------------------------------------------------------
     //
     // Uma porta que o arquivo não cita fica como está no padrão: a primeira com um controle e
     // as outras livres. Citar a seção, mesmo vazia, já liga a porta — é o que alguém quer dizer
@@ -441,10 +441,10 @@ pub fn de_texto(texto: &str) -> Lido {
         player.ligada = true;
         le_porta(&mut ini, &nome, player, &mut avisos);
     }
-    for sobrando in ini.secoes_com("porta") {
+    for sobrando in ini.secoes_com("port") {
         if !nomes_de_porta().contains(&sobrando) {
             avisos.push(format!(
-                "[{sobrando}]: o console tem {} portas, de porta1 a porta{}",
+                "[{sobrando}]: the console has {} ports, from port1 to port{}",
                 zeebx::input::PORTAS,
                 zeebx::input::PORTAS
             ));
@@ -463,27 +463,27 @@ pub fn de_texto(texto: &str) -> Lido {
 }
 
 fn nomes_de_porta() -> Vec<String> {
-    (1..=zeebx::input::PORTAS).map(|n| format!("porta{n}")).collect()
+    (1..=zeebx::input::PORTAS).map(|n| format!("port{n}")).collect()
 }
 
 /// Uma porta: que aparelho o console vê, qual controle do host a alimenta, e o mapeamento.
 fn le_porta(ini: &mut Ini, secao: &str, player: &mut Player, avisos: &mut Vec<String>) {
     let mut ligada = player.ligada;
-    booleano(ini, secao, "ligada", &mut ligada, avisos);
+    booleano(ini, secao, "enabled", &mut ligada, avisos);
     player.ligada = ligada;
 
-    if let Some(v) = ini.pega(secao, "aparelho") {
+    if let Some(v) = ini.pega(secao, "device") {
         match v.texto.to_lowercase().as_str() {
-            "controle" | "dragon" => player.aparelho = Aparelho::Controle,
+            "gamepad" | "dragon" => player.aparelho = Aparelho::Controle,
             "zpad" | "z-pad" => player.aparelho = Aparelho::ZPad,
-            "teclado" => player.aparelho = Aparelho::Teclado,
+            "keyboard" => player.aparelho = Aparelho::Teclado,
             "boomerang" => player.aparelho = Aparelho::Boomerang,
             outro => avisa(avisos, &v, &format!(
-                "`{outro}` não é aparelho; use controle, zpad, teclado ou boomerang"
+                "`{outro}` is not a device; use gamepad, zpad, keyboard or boomerang"
             )),
         }
     }
-    if let Some(v) = ini.pega(secao, "controle") {
+    if let Some(v) = ini.pega(secao, "controller") {
         let nome = sem_aspas(&v.texto);
         // Um controle escolhido pelo nome ganha os eixos padrão junto: sem eles o manche fica
         // mudo, e quem escreveu só o nome não teria como adivinhar que faltava mais.
@@ -511,7 +511,7 @@ fn le_porta(ini: &mut Ini, secao: &str, player: &mut Player, avisos: &mut Vec<St
             match origem(pedaco.trim()) {
                 Some(source) => player.bind(botao, source),
                 None => avisa(avisos, &v, &format!(
-                    "`{}` não é origem; use tecla:NOME, botao:NOME ou eixo:NOME+",
+                    "`{}` is not a source; use key:NAME, button:NAME or axis:NAME+",
                     pedaco.trim()
                 )),
             }
@@ -520,7 +520,7 @@ fn le_porta(ini: &mut Ini, secao: &str, player: &mut Player, avisos: &mut Vec<St
 
     // Os eixos analógicos do console. `eixo_x = LeftStickX` ou `eixo_y = LeftStickY:invertido`.
     for eixo in zeebx::input::AXIS_NAMES {
-        let chave = format!("eixo_{eixo}");
+        let chave = format!("axis_{eixo}");
         let Some(v) = ini.pega(secao, &chave) else {
             continue;
         };
@@ -531,9 +531,9 @@ fn le_porta(ini: &mut Ini, secao: &str, player: &mut Player, avisos: &mut Vec<St
         }
         let (nome, invert) = match texto.split_once(':') {
             Some((nome, marca)) => {
-                let invert = matches!(marca.trim().to_lowercase().as_str(), "invertido" | "invert");
+                let invert = matches!(marca.trim().to_lowercase().as_str(), "inverted");
                 if !invert {
-                    avisa(avisos, &v, &format!("`{marca}` não é `invertido`"));
+                    avisa(avisos, &v, &format!("`{marca}` is not `inverted`"));
                 }
                 (nome.trim(), invert)
             }
@@ -561,9 +561,9 @@ fn origem(texto: &str) -> Option<Source> {
         return None;
     }
     match tipo.trim().to_lowercase().as_str() {
-        "tecla" | "key" => Some(Source::key(nome)),
-        "botao" | "botão" | "button" => Some(Source::button(nome)),
-        "eixo" | "axis" => {
+        "key" => Some(Source::key(nome)),
+        "button" => Some(Source::button(nome)),
+        "axis" => {
             // O sinal vem colado no fim, que é como a interface mostra: `LeftStickY-`.
             let (nome, positive) = match nome.strip_suffix('+') {
                 Some(nome) => (nome, true),
@@ -582,7 +582,7 @@ fn origem(texto: &str) -> Option<Source> {
 }
 
 fn avisa(avisos: &mut Vec<String>, valor: &Valor, texto: &str) {
-    avisos.push(format!("linha {}: {texto}", valor.linha));
+    avisos.push(format!("line {}: {texto}", valor.linha));
 }
 
 /// `true`, `sim`, `1`, `ligado` — e os contrários.
@@ -591,9 +591,9 @@ fn booleano(ini: &mut Ini, secao: &str, chave: &str, destino: &mut bool, avisos:
         return;
     };
     match v.texto.to_lowercase().as_str() {
-        "true" | "sim" | "1" | "ligado" | "on" => *destino = true,
-        "false" | "nao" | "não" | "0" | "desligado" | "off" => *destino = false,
-        outro => avisa(avisos, &v, &format!("`{chave}` espera sim ou não, não `{outro}`")),
+        "true" | "yes" | "1" | "on" => *destino = true,
+        "false" | "no" | "0" | "off" => *destino = false,
+        outro => avisa(avisos, &v, &format!("`{chave}` expects true or false, not `{outro}`")),
     }
 }
 
@@ -603,7 +603,7 @@ fn inteiro(ini: &mut Ini, secao: &str, chave: &str, destino: &mut u32, avisos: &
     };
     match v.texto.parse::<u32>() {
         Ok(n) => *destino = n,
-        Err(_) => avisa(avisos, &v, &format!("`{chave}` espera um número")),
+        Err(_) => avisa(avisos, &v, &format!("`{chave}` expects a number")),
     }
 }
 
@@ -623,8 +623,8 @@ fn oito(
     };
     match v.texto.parse::<u8>() {
         Ok(n) if (minimo..=maximo).contains(&n) => *destino = n,
-        Ok(n) => avisa(avisos, &v, &format!("`{chave}` = {n} está fora de {minimo}..{maximo}")),
-        Err(_) => avisa(avisos, &v, &format!("`{chave}` espera um número")),
+        Ok(n) => avisa(avisos, &v, &format!("`{chave}` = {n} is outside {minimo}..{maximo}")),
+        Err(_) => avisa(avisos, &v, &format!("`{chave}` expects a number")),
     }
 }
 
@@ -657,14 +657,14 @@ mod testes {
     fn as_chaves_chegam_no_settings_do_nucleo() {
         let lido = de_texto(
             "[video]\n\
-             modo = tela_cheia\n\
-             escala = inteira\n\
-             suave = sim\n\
-             limite_velocidade = nao\n\
-             [grafico]\n\
-             rasterizador_na_placa = sim\n\
-             resolucao_interna = 2\n\
-             proporcao = 16x9\n\
+             mode = fullscreen\n\
+             scaling = integer\n\
+             smooth = true\n\
+             speed_limit = false\n\
+             [graphics]\n\
+             gpu_rasterizer = true\n\
+             internal_resolution = 2\n\
+             aspect = 16x9\n\
              [audio]\n\
              volume = 42\n",
         );
@@ -684,7 +684,7 @@ mod testes {
     /// Citar a seção já liga a porta, e uma porta não citada fica como vem de fábrica.
     #[test]
     fn a_secao_da_porta_liga_a_porta() {
-        let lido = de_texto("[porta2]\naparelho = teclado\n");
+        let lido = de_texto("[port2]\ndevice = keyboard\n");
         let portas = &lido.settings.controls;
         assert!(portas.player(0).unwrap().ligada, "a primeira porta é de fábrica");
         let segunda = portas.player(1).unwrap();
@@ -695,7 +695,7 @@ mod testes {
     /// Escrever um botão substitui o padrão dele, e só dele.
     #[test]
     fn o_botao_escrito_substitui_o_padrao() {
-        let lido = de_texto("[porta1]\nb1 = tecla:Q, botao:North\n");
+        let lido = de_texto("[port1]\nb1 = key:Q, button:North\n");
         assert!(lido.avisos.is_empty(), "{:?}", lido.avisos);
         let porta = lido.settings.controls.player(0).unwrap();
         assert_eq!(
@@ -709,13 +709,13 @@ mod testes {
     /// Um botão com a linha vazia fica sem origem nenhuma — é assim que se desliga um botão.
     #[test]
     fn o_botao_vazio_fica_sem_origem() {
-        let lido = de_texto("[porta1]\nb2 =\n");
+        let lido = de_texto("[port1]\nb2 =\n");
         assert!(lido.settings.controls.player(0).unwrap().sources("b2").is_empty());
     }
 
     #[test]
     fn os_eixos_saem_com_o_sentido_pedido() {
-        let lido = de_texto("[porta1]\neixo_y = LeftStickY:invertido\neixo_x = RightStickX\n");
+        let lido = de_texto("[port1]\naxis_y = LeftStickY:inverted\naxis_x = RightStickX\n");
         assert!(lido.avisos.is_empty(), "{:?}", lido.avisos);
         let porta = lido.settings.controls.player(0).unwrap();
         assert_eq!(porta.axes["y"], AxisSource { name: "LeftStickY".into(), invert: true });
@@ -725,7 +725,7 @@ mod testes {
     /// O sinal do eixo como origem de botão: é o que faz um manche acionar o direcional.
     #[test]
     fn o_eixo_como_origem_traz_o_sentido() {
-        let lido = de_texto("[porta1]\nup = eixo:LeftStickY-\n");
+        let lido = de_texto("[port1]\nup = axis:LeftStickY-\n");
         assert_eq!(
             lido.settings.controls.player(0).unwrap().sources("up"),
             [Source::Axis { name: "LeftStickY".into(), positive: false }]
@@ -737,19 +737,19 @@ mod testes {
     #[test]
     fn o_que_esta_errado_e_dito() {
         let lido = de_texto(
-            "[grafico]\n\
-             resolucao_interna = 40\n\
+            "[graphics]\n\
+             internal_resolution = 40\n\
              [video]\n\
-             modo = quadrado\n\
-             [porta1]\n\
+             mode = square\n\
+             [port1]\n\
              b1 = Z\n\
              [audio]\n\
              volumee = 10\n",
         );
         let tudo = lido.avisos.join("\n");
-        assert!(tudo.contains("resolucao_interna"), "{tudo}");
-        assert!(tudo.contains("quadrado"), "{tudo}");
-        assert!(tudo.contains("não é origem"), "{tudo}");
+        assert!(tudo.contains("internal_resolution"), "{tudo}");
+        assert!(tudo.contains("square"), "{tudo}");
+        assert!(tudo.contains("is not a source"), "{tudo}");
         assert!(tudo.contains("volumee"), "{tudo}");
         // E nada disso impede o resto de valer.
         assert_eq!(lido.settings.graphics.resolucao_interna, 1);
@@ -759,7 +759,7 @@ mod testes {
     /// quem escreveu só o nome não teria como adivinhar que faltava mais.
     #[test]
     fn o_controle_escolhido_ganha_os_eixos() {
-        let lido = de_texto("[porta1]\ncontrole = \"Pad #2\"\n");
+        let lido = de_texto("[port1]\ncontroller = \"Pad #2\"\n");
         let porta = lido.settings.controls.player(0).unwrap();
         assert_eq!(porta.device.as_deref(), Some("Pad #2"));
         assert_eq!(porta.axes, Player::default_axes());
@@ -786,7 +786,7 @@ mod testes {
     fn as_portas_saem_com_todos_os_botoes() {
         let texto = modelo();
         for porta in 1..=zeebx::input::PORTAS {
-            assert!(texto.contains(&format!("[porta{porta}]")), "falta a porta {porta}");
+            assert!(texto.contains(&format!("[port{porta}]")), "falta a porta {porta}");
         }
         let lido = de_texto(&texto);
         for indice in 0..zeebx::input::PORTAS {

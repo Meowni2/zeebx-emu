@@ -150,10 +150,10 @@ impl Console {
         // o `EVT_APP_START` sai na primeira volta do laço.
         let audio = &self.settings.audio;
         if let Some(erro) = sessao.set_audio(audio.enabled, audio.volume) {
-            eprintln!("aviso: sem som: {erro}");
+            eprintln!("warning: no sound: {erro}");
         }
 
-        eprintln!("rodando: {}", sessao.title());
+        eprintln!("running: {}", sessao.title());
         self.sessao = Some(sessao);
         self.anteriores = Default::default();
         self.entregues.clear();
@@ -173,7 +173,7 @@ impl Console {
     /// Uma volta: lê a entrada, anda com o jogo, e trata o que ele pediu ao sair.
     pub fn passo(&mut self) -> Fim {
         if self.sessao.is_none() {
-            return Fim::Acabou("sem jogo".to_string());
+            return Fim::Acabou("no game".to_string());
         }
 
         self.pads.poll();
@@ -237,7 +237,7 @@ impl Console {
 
         if let Some(teto) = self.limite_de_relogio {
             if sessao.clock_ms() >= teto {
-                return Fim::Acabou("o tempo pedido acabou".to_string());
+                return Fim::Acabou("the requested time is up".to_string());
             }
         }
 
@@ -257,7 +257,7 @@ impl Console {
                     Err(erro) => Fim::Erro(format!("{}: {erro}", caminho.display())),
                 },
                 None => Fim::Erro(format!(
-                    "a Z-Wheel pediu a classe {classe:#010x}, que não está na pasta de ROMs"
+                    "the Z-Wheel asked for class {classe:#010x}, which is not in the ROMs folder"
                 )),
             };
         }
@@ -276,7 +276,7 @@ impl Console {
                     Err(erro) => Fim::Erro(format!("{}: {erro}", caminho.display())),
                 };
             }
-            return Fim::Acabou("o jogo saiu".to_string());
+            return Fim::Acabou("the game exited".to_string());
         }
 
         Fim::Segue

@@ -61,28 +61,28 @@ impl Janela {
         let (janela, config) = DisplayBuilder::new()
             .with_window_attributes(Some(atributos))
             .build(laco, modelo, escolhe_config)
-            .map_err(|erro| format!("sem janela com OpenGL: {erro}"))?;
-        let janela = janela.ok_or("o sistema não devolveu janela")?;
+            .map_err(|erro| format!("no OpenGL window: {erro}"))?;
+        let janela = janela.ok_or("the system returned no window")?;
 
         let janela_crua = janela
             .window_handle()
-            .map_err(|erro| format!("janela sem identificador: {erro}"))?
+            .map_err(|erro| format!("window without a handle: {erro}"))?
             .as_raw();
         let display = config.display();
         // Sem pedir versão nem perfil: o glutin resolve isso no melhor que o driver oferece, e
         // é o mesmo que o eframe faz — o que mantém os shaders do [`Pintor`] valendo nos dois.
         let atributos = ContextAttributesBuilder::new().build(Some(janela_crua));
         let contexto = unsafe { display.create_context(&config, &atributos) }
-            .map_err(|erro| format!("sem contexto de GL: {erro}"))?;
+            .map_err(|erro| format!("no GL context: {erro}"))?;
 
         let atributos = janela
             .build_surface_attributes(Default::default())
-            .map_err(|erro| format!("a janela não descreve superfície: {erro}"))?;
+            .map_err(|erro| format!("the window describes no surface: {erro}"))?;
         let superficie = unsafe { display.create_window_surface(&config, &atributos) }
-            .map_err(|erro| format!("sem superfície de GL: {erro}"))?;
+            .map_err(|erro| format!("no GL surface: {erro}"))?;
         let contexto = contexto
             .make_current(&superficie)
-            .map_err(|erro| format!("o contexto não ficou corrente: {erro}"))?;
+            .map_err(|erro| format!("the context did not become current: {erro}"))?;
 
         // O vsync é escolha de quem configurou. Ligado, a janela troca o quadro no retraço e o
         // laço dorme nele; desligado, ela corre solta — que é o que quem mede quer.
@@ -91,7 +91,7 @@ impl Janela {
             false => SwapInterval::DontWait,
         };
         if let Err(erro) = superficie.set_swap_interval(&contexto, intervalo) {
-            eprintln!("aviso: o driver não aceitou o vsync pedido: {erro}");
+            eprintln!("warning: the driver refused the requested vsync: {erro}");
         }
 
         let gl = Arc::new(unsafe {
@@ -102,7 +102,7 @@ impl Janela {
         let pintor = match Pintor::novo(&gl) {
             Ok(pintor) => Some(pintor),
             Err(erro) => {
-                eprintln!("aviso: sem o pincel de GL, a janela fica preta: {erro}");
+                eprintln!("warning: without the GL painter the window stays black: {erro}");
                 None
             }
         };
@@ -185,7 +185,7 @@ impl Janela {
 
     fn troca(&self) {
         if let Err(erro) = self.superficie.swap_buffers(&self.contexto) {
-            eprintln!("aviso: a troca de quadro falhou: {erro}");
+            eprintln!("warning: the buffer swap failed: {erro}");
         }
     }
 }
@@ -259,7 +259,7 @@ fn escolhe_config(configs: Box<dyn Iterator<Item = Config> + '_>) -> Config {
             true => b,
             false => a,
         })
-        .expect("o driver não ofereceu nenhuma configuração de GL")
+        .expect("the driver offered no GL configuration")
 }
 
 #[cfg(test)]
@@ -342,8 +342,8 @@ pub fn roda(console: Console, primeiro: PathBuf) -> ExitCode {
     let laco = match EventLoop::new() {
         Ok(laco) => laco,
         Err(erro) => {
-            eprintln!("erro: sem laço de eventos: {erro}");
-            eprintln!("      num servidor sem tela, use `[video] modo = sem_janela`.");
+            eprintln!("error: no event loop: {erro}");
+            eprintln!("       on a headless server, use `[video] mode = none`.");
             return ExitCode::FAILURE;
         }
     };
@@ -358,7 +358,7 @@ pub fn roda(console: Console, primeiro: PathBuf) -> ExitCode {
         codigo: ExitCode::SUCCESS,
     };
     if let Err(erro) = laco.run_app(&mut aplicativo) {
-        eprintln!("erro: o laço de eventos parou: {erro}");
+        eprintln!("error: the event loop stopped: {erro}");
         return ExitCode::FAILURE;
     }
     aplicativo.codigo
@@ -373,7 +373,7 @@ struct Aplicativo {
 
 impl Aplicativo {
     fn morre(&mut self, laco: &winit::event_loop::ActiveEventLoop, erro: &str) {
-        eprintln!("erro: {erro}");
+        eprintln!("error: {erro}");
         self.codigo = ExitCode::FAILURE;
         laco.exit();
     }
@@ -479,7 +479,7 @@ impl ApplicationHandler for Aplicativo {
         match self.console.passo() {
             Fim::Segue => {}
             Fim::Acabou(motivo) => {
-                eprintln!("parou: {motivo}");
+                eprintln!("stopped: {motivo}");
                 return laco.exit();
             }
             Fim::Erro(erro) => return self.morre(laco, &erro),

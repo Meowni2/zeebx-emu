@@ -23,43 +23,43 @@ use crate::config::Video;
 use crate::console::{Console, Fim};
 
 const AJUDA: &str = "\
-Zeebx sem interface — o emulador do Zeebo por linha de comando.
+Zeebx headless — the Zeebo emulator on the command line.
 
-  zeebx-headless [OPÇÕES] JOGO
+  zeebx-headless [OPTIONS] GAME
 
-O JOGO é obrigatório: um `.mod`, ou o `.zip` que o contém. Para abrir pela
-Z-Wheel, passe a Z-Wheel — ela é um jogo como outro qualquer.
+GAME is required: a `.mod`, or the `.zip` that holds it. To boot into the
+Z-Wheel, pass the Z-Wheel — it is a game like any other.
 
-Opções:
-  --config=CAMINHO   o arquivo de configuração a usar. Sem isto, procura um
-                     `config.ini` ao lado do executável e depois na pasta de
-                     configuração do sistema.
-  --controles        lista os controles que o sistema enxerga, com os nomes que
-                     `[porta1] controle` espera, e sai.
-  --exemplo          escreve na saída padrão um `config.ini` comentado, com os
-                     valores de fábrica, e sai.
-  --ajuda            isto.
-  --versao           a versão.
+Options:
+  --config=PATH    the configuration file to use. Without it, looks for a
+                   `config.ini` next to the executable and then in the system
+                   configuration directory. If none exists, writes one there.
+  --controllers    list the controllers the system can see, with the names
+                   `[port1] controller` expects, and exit.
+  --example        write a commented `config.ini` with the factory values to
+                   standard output, and exit.
+  --help           this.
+  --version        the version.
 
-Tudo o mais — vídeo, áudio, controles — está no `config.ini`.
+Everything else — video, audio, controls — lives in the `config.ini`.
 ";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    if args.iter().any(|a| a == "--ajuda" || a == "-h" || a == "--help") {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
         print!("{AJUDA}");
         return ExitCode::SUCCESS;
     }
-    if args.iter().any(|a| a == "--versao" || a == "--version") {
+    if args.iter().any(|a| a == "--version") {
         println!("zeebx-headless {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
     }
-    if args.iter().any(|a| a == "--exemplo") {
+    if args.iter().any(|a| a == "--example") {
         print!("{}", config::modelo());
         return ExitCode::SUCCESS;
     }
-    if args.iter().any(|a| a == "--controles") {
+    if args.iter().any(|a| a == "--controllers") {
         return lista_controles();
     }
 
@@ -73,7 +73,7 @@ fn main() -> ExitCode {
         .iter()
         .find(|a| a.starts_with("--") && !a.starts_with("--config="))
     {
-        eprintln!("erro: não conheço `{desconhecida}`. `--ajuda` lista o que existe.");
+        eprintln!("error: unknown option `{desconhecida}`. `--help` lists what exists.");
         return ExitCode::FAILURE;
     }
 
@@ -89,8 +89,8 @@ fn main() -> ExitCode {
     // vez de só rodar com os padrões e não dizer onde se muda nada.
     if let config::Origem::Faltando(onde) = &origem {
         match config::cria(onde) {
-            Ok(()) => eprintln!("config: não havia nenhum; escrevi um em {}", onde.display()),
-            Err(erro) => eprintln!("config: sem arquivo, valendo as opções de fábrica ({erro})"),
+            Ok(()) => eprintln!("config: none found; wrote one at {}", onde.display()),
+            Err(erro) => eprintln!("config: no file, using factory settings ({erro})"),
         }
     }
 
@@ -99,10 +99,10 @@ fn main() -> ExitCode {
     // que ninguém pediu. Quem quiser a Z-Wheel a passa como qualquer outro jogo.
     let Some(caminho) = jogo else {
         eprintln!(
-            "erro: falta dizer o que rodar.\n\
+            "error: nothing to run.\n\
              \n\
-             Passe o `.mod`, ou o `.zip` que o contém:\n\
-             \x20   zeebx-headless CAMINHO/DO/JOGO.zip"
+             Pass the `.mod`, or the `.zip` that holds it:\n\
+             \x20   zeebx-headless PATH/TO/GAME.zip"
         );
         return ExitCode::FAILURE;
     };
@@ -121,7 +121,7 @@ fn sem_janela(mut console: Console, caminho: &std::path::Path) -> ExitCode {
         true => match zeebx::video::contexto::Contexto::novo() {
             Ok(contexto) => Some(contexto),
             Err(erro) => {
-                eprintln!("aviso: sem placa alcançável, o 3D fica em software: {erro}");
+                eprintln!("warning: no reachable GPU, 3D stays in software: {erro}");
                 None
             }
         },
@@ -132,12 +132,12 @@ fn sem_janela(mut console: Console, caminho: &std::path::Path) -> ExitCode {
     let mut saida = match despejo::Saida::abre(&console.opcoes.despejo.clone()) {
         Ok(saida) => saida,
         Err(erro) => {
-            eprintln!("erro: {erro}");
+            eprintln!("error: {erro}");
             return ExitCode::FAILURE;
         }
     };
     if let Err(erro) = console.abre(caminho) {
-        eprintln!("erro: {}: {erro}", caminho.display());
+        eprintln!("error: {}: {erro}", caminho.display());
         return ExitCode::FAILURE;
     }
 
@@ -148,11 +148,11 @@ fn sem_janela(mut console: Console, caminho: &std::path::Path) -> ExitCode {
         match console.passo() {
             Fim::Segue => {}
             Fim::Acabou(motivo) => {
-                eprintln!("parou: {motivo}");
+                eprintln!("stopped: {motivo}");
                 return ExitCode::SUCCESS;
             }
             Fim::Erro(erro) => {
-                eprintln!("erro: {erro}");
+                eprintln!("error: {erro}");
                 return ExitCode::FAILURE;
             }
         }
@@ -184,11 +184,11 @@ fn sem_janela(mut console: Console, caminho: &std::path::Path) -> ExitCode {
         if let Err(erro) = saida.escreve(quadro) {
             // A outra ponta fechou o cano. Não é falha de quem rodou: é o fim normal de
             // `zeebx-headless ... | frontend` quando o frontend sai.
-            eprintln!("parou: {erro} ({} quadros)", saida.contados());
+            eprintln!("stopped: {erro} ({} frames)", saida.contados());
             return ExitCode::SUCCESS;
         }
         if saida.cheia() {
-            eprintln!("parou: os {} quadros pedidos saíram", saida.contados());
+            eprintln!("stopped: wrote the {} frames requested", saida.contados());
             return ExitCode::SUCCESS;
         }
     }
@@ -199,13 +199,13 @@ fn lista_controles() -> ExitCode {
     let pads = zeebx::input::gamepads::Gamepads::new();
     let nomes = pads.names();
     if nomes.is_empty() {
-        println!("nenhum controle visto pelo sistema");
+        println!("no controllers visible to the system");
         return ExitCode::SUCCESS;
     }
-    println!("controles vistos, na ordem do sistema:");
+    println!("controllers seen, in system order:");
     for (i, nome) in nomes.iter().enumerate() {
         println!("  {i}: {nome}");
     }
-    println!("\nem [porta1] do config.ini, por exemplo:\n  controle = \"{}\"", nomes[0]);
+    println!("\nin [port1] of config.ini, for example:\n  controller = \"{}\"", nomes[0]);
     ExitCode::SUCCESS
 }

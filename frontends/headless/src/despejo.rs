@@ -39,17 +39,17 @@ impl Saida {
         let destino = match (&despejo.destino, despejo.formato) {
             (Some(caminho), Formato::Png) => {
                 std::fs::create_dir_all(caminho)
-                    .map_err(|erro| format!("não deu para criar {}: {erro}", caminho.display()))?;
+                    .map_err(|erro| format!("could not create {}: {erro}", caminho.display()))?;
                 Destino::Pasta(caminho.clone())
             }
             // PNG na saída padrão seria um arquivo atrás do outro no mesmo fluxo, que nenhum
             // leitor de PNG desembrulha. Dizer isso é melhor que escrever algo inútil.
             (None, Formato::Png) => {
-                return Err("despejo em png precisa de uma pasta em `destino`".to_string());
+                return Err("png dumping needs a folder in `destination`".to_string());
             }
             (Some(caminho), _) => {
                 let arquivo = abre_para_escrita(caminho)
-                    .map_err(|erro| format!("não deu para abrir {}: {erro}", caminho.display()))?;
+                    .map_err(|erro| format!("could not open {}: {erro}", caminho.display()))?;
                 Destino::Arquivo(arquivo)
             }
             (None, _) => Destino::Padrao,
@@ -89,7 +89,7 @@ impl Saida {
             }
             Formato::Png => {
                 let Destino::Pasta(pasta) = &self.destino else {
-                    return Err("despejo em png sem pasta".to_string());
+                    return Err("png dumping without a folder".to_string());
                 };
                 let caminho = pasta.join(format!("quadro-{:06}.png", self.contados));
                 let rgba: Vec<u8> = quadro
@@ -98,7 +98,7 @@ impl Saida {
                     .flat_map(|p| [(p >> 16) as u8, (p >> 8) as u8, p as u8, 255])
                     .collect();
                 grava_png(&caminho, &rgba, largura, altura)
-                    .map_err(|erro| format!("não deu para gravar {}: {erro}", caminho.display()))?;
+                    .map_err(|erro| format!("could not write {}: {erro}", caminho.display()))?;
             }
         }
         self.contados += 1;
@@ -117,7 +117,7 @@ impl Saida {
             Destino::Arquivo(arquivo) => arquivo.write_all(dados).and_then(|()| arquivo.flush()),
             Destino::Pasta(_) => Ok(()),
         };
-        escrito.map_err(|erro| format!("o quadro não saiu: {erro}"))
+        escrito.map_err(|erro| format!("the frame did not go out: {erro}"))
     }
 }
 

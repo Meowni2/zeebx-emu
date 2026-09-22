@@ -16,21 +16,25 @@ propósito — este binário é chamado por outro programa, que sabe o que quer 
 alguma coisa quando ninguém disse nada seria abrir o que ninguém pediu. Para começar pela
 Z-Wheel, passe a Z-Wheel: ela é um jogo como outro qualquer.
 
-O `[sistema] z_wheel` do arquivo é outra coisa: é para onde o console **volta** quando um jogo
+O `[system] z_wheel` do arquivo é outra coisa: é para onde o console **volta** quando um jogo
 sai sozinho, como no aparelho de verdade. Sem ele, um jogo que sai encerra o emulador — que é o
 que um frontend de fora costuma querer, já que a tela dele é que volta a aparecer.
 
 | Opção | O que faz |
 |---|---|
 | `--config=CAMINHO` | o arquivo a usar; sem isto, procura um `config.ini` ao lado do executável e depois na pasta de configuração do sistema |
-| `--controles` | lista os controles que o sistema enxerga, **com os nomes que o `config.ini` espera** |
-| `--exemplo` | escreve na saída padrão um `config.ini` comentado, com os valores de fábrica |
-| `--ajuda`, `--versao` | o que se espera delas |
+| `--controllers` | lista os controles que o sistema enxerga, **com os nomes que o `config.ini` espera** |
+| `--example` | escreve na saída padrão um `config.ini` comentado, com os valores de fábrica |
+| `--help`, `--version` | o que se espera delas |
 
 Não há mais opções, e é de propósito: o resto está no arquivo. Um frontend que precisa de dois
 perfis usa dois arquivos e dois `--config=`.
 
 ## A configuração
+
+As chaves e os valores são em **inglês**, como os comandos; os comentários do arquivo, não. A
+ideia é que quem escreve um frontend leia a configuração sem precisar de português, e quem edita
+o arquivo à mão tenha a explicação na língua do projeto.
 
 Gráficos, áudio e mapeamento de controle **não são um modelo novo**: são os mesmos campos que a
 interface do desktop grava no `settings.json`, chegando por INI porque é o que se edita à mão.
@@ -58,24 +62,31 @@ O arquivo vai para a pasta de configuração e não para o lado do executável, 
 lugar da procura: ali a cópia instalada costuma não ter permissão de escrita, e uma que tenha
 seria um arquivo dentro da instalação, que some na próxima atualização.
 
+Ele sai **completo**, com tudo escrito e nada a adivinhar — inclusive os treze botões de cada
+porta. O bloco das portas é gerado a partir do `Controls::default()` do núcleo, não escrito à
+mão, e cada linha diz o que já valeria se não existisse; um teste fixa essa igualdade, porque um
+exemplo escrito à mão envelhece calado no dia em que um padrão muda, e um arquivo que mente
+sobre o padrão é pior que um arquivo sem a linha. `--example` imprime o mesmo texto na saída
+padrão, para quem quer olhá-lo sem criar nada.
+
 Nada é adivinhado. O núcleo sabe procurar uma Z-Wheel sozinho — pela pasta de ROMs e, na falta
 dela, por nome dentro da pasta pessoal —, e isso faz sentido na interface, onde é um chute
 simpático para quem ainda não configurou nada. Aqui não: o headless usa só o que o arquivo
 apontar.
 
 O [`config.ini`](config.ini) deste diretório é o exemplo, comentado linha a linha, e é o que
-`--exemplo` imprime. Um teste confere que ele é lido sem nenhum aviso: um exemplo que reclama
+`--example` imprime. Um teste confere que ele é lido sem nenhum aviso: um exemplo que reclama
 ensina errado.
 
 ## Os dois modos de vídeo
 
-**`modo = janela`** (ou `tela_cheia`) abre uma janela com o jogo e nada mais. O contexto de
-OpenGL é o dela, e é ele que a sessão usa para rasterizar o 3D quando `rasterizador_na_placa`
+**`mode = window`** (ou `fullscreen`) abre uma janela com o jogo e nada mais. O contexto de
+OpenGL é o dela, e é ele que a sessão usa para rasterizar o 3D quando `gpu_rasterizer`
 está ligado: o quadro que a placa acabou de preencher vai à tela sem voltar à CPU. `Esc` fecha,
 e isso não é mapeável — quem rodou precisa de uma saída que não dependa de o arquivo estar
 certo.
 
-**`modo = sem_janela`** não desenha nada. Os quadros saem pela seção `[despejo]`: na saída
+**`mode = none`** não desenha nada. Os quadros saem pela seção `[dump]`: na saída
 padrão (`zeebx-headless jogo.mod | seu-frontend`), num arquivo, num FIFO — e aí nada passa por
 disco — ou como um `.png` por quadro. Um quadro só é escrito quando muda. Sem janela não há
 teclado, porque não há foco; quem joga usa um controle, que o sistema entrega sem precisar
@@ -84,7 +95,7 @@ dele. O 3D na placa continua possível: o núcleo abre um contexto fora de tela,
 
 Nos formatos crus o quadro é sempre o do console, 640×480, do começo ao fim. É a única escolha
 possível: o fluxo não tem cabeçalho, e um quadro que mudasse de tamanho no meio faria quem conta
-bytes do outro lado perder o passo para sempre. Por isso `resolucao_interna` e a proporção larga
+bytes do outro lado perder o passo para sempre. Por isso `internal_resolution` e a proporção larga
 não chegam ao despejo cru — elas valem na janela. O `.png` é a exceção, porque cada arquivo diz
 o próprio tamanho.
 
@@ -95,7 +106,7 @@ com o binário, o `config.ini` comentado e este arquivo — o `config.ini` vai j
 primeiro lugar em que o emulador o procura é **ao lado do executável**, que é o que faz uma
 cópia portátil funcionar sem tocar na máquina.
 
-Uma diferença que vale saber: no modo `sem_janela` com `rasterizador_na_placa` ligado, o 3D
+Uma diferença que vale saber: no modo `none` com `gpu_rasterizer` ligado, o 3D
 precisa de um contexto de OpenGL sem janela, e isso é EGL. No Linux ele está sempre lá; no
 Windows vem com o driver que o instala — a NVIDIA instala — ou com uma ANGLE (`libEGL.dll` e
 `libGLESv2.dll`) ao lado do executável; no macOS não existe. Onde ele falta, o emulador diz o
@@ -116,10 +127,14 @@ o da própria janela, e os três sistemas o têm.
 
 ## Por que não o eframe
 
-Pelo mesmo motivo que o frontend de Android não o usa: o eframe existe para pôr uma interface na
-tela, e aqui não há interface — há um quadro. Arrastá-lo junto significaria compilar o egui
-inteiro, o seletor de arquivos, o Discord e a procura por atualizações para desenhar um
-retângulo com uma textura.
+Pelo mesmo motivo que o frontend de Android não o usa: o eframe gira um laço de interface, e
+aqui não há interface — há um quadro. O laço é nosso, sobre o winit, e é o que permite tratar a
+entrada como o sistema a entrega e ser dono do ciclo de vida da janela.
+
+Isso é sobre o laço, **não** sobre o tamanho da compilação. O `zeebx` de que este pacote depende
+é a biblioteca inteira, e fora do Android ela traz o eframe, o `rfd`, o Discord e o `ureq` por
+conta própria: compilar o headless compila aquilo junto. Enxugar de verdade seria pôr as telas
+do desktop atrás de uma feature do núcleo, o que ainda não foi feito.
 
 O `egui` continua na lista de dependências, mas só pelos tipos: `egui::Key` é o nome canônico de
 uma tecla no `settings.json`, e o `ViewportInPixels` é o que o pincel do núcleo (`ui::gpu`)
