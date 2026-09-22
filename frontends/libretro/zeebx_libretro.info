@@ -1,0 +1,11 @@
+display_name = "Zeebx"
+authors = "ZeebxTeam"
+supported_extensions = "mod|zip|7z"
+categories = "Emulator"
+systemname = "Zeebo"
+manufacturer = "TecToy"
+licenses = "GPLv2"
+firmware_count = 0
+supports_no_game = "false"
+# Banco No-Intro usado para nomear e para achar as capas. Ver `ferramentas/catalogo.py`.
+database = "Mobile - Zeebo"

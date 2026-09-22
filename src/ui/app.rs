@@ -1,13 +1,6 @@
-//! A interface do emulador: biblioteca de jogos, configurações e a tela do console.
-//!
-//! O emulador roda **na mesma linha de execução da interface**, um pedaço por quadro
-//! desenhado. É o arranjo simples e é o certo aqui: o núcleo do unicorn não atravessa linhas de
-//! execução, e o [`Session::step`] já devolve o controle sozinho a cada fatia de tempo real,
-//! que é o que mantém a janela viva enquanto o jogo corre.
+//! Interface desktop do Zeebx.
 
-use super::{acervo, atualizacao, depuracao, discord, gpu, library, settings};
-
-/// A vitrine é filha da [`App`] — e não irmã — porque lê os campos dela direto.
+use super::{acervo, atualizacao, discord, gpu, library, settings};
 mod vitrine;
 
 use std::collections::{HashMap, HashSet};
@@ -28,6 +21,18 @@ use crate::ui::library::Game;
 use crate::ui::settings::{Scaling, Settings};
 use crate::video::display::Framebuffer;
 
+/// Teto de tempo real que o jogo pode tomar num quadro da interface.
+///
+/// O orçamento normal **não** é fixo: é o tempo que passou desde o quadro anterior, que é
+/// exatamente o quanto o jogo precisa emular para acompanhar o relógio do mundo. Uma fatia
+/// fixa de 16 ms virava teto de velocidade, e um teto traiçoeiro: com a janela sincronizada
+/// ao monitor, bastava emulação mais desenho passarem de um retraço para o período dobrar
+/// para 33 ms — e o jogo ficava com 16 de cada 33, travado em 50% por mais folga que a
+/// máquina tivesse. Era o que a tela de seleção do Crash mostrava.
+///
+/// O teto existe só para o caso de o host não dar conta: sem ele, um quadro atrasado pede um
+/// orçamento maior, que atrasa mais o seguinte, e a janela para de responder.
+const MAX_SLICE: Duration = Duration::from_millis(100);
 
 /// A tela do Zeebo.
 const SCREEN: [usize; 2] = [640, 480];
@@ -140,6 +145,11 @@ impl Tab {
     }
 }
 
+/// O repositório do projeto.
+const REPOSITORY: &str = "https://github.com/ZeebxTeam/zeebx-emu";
+/// O convite do servidor de conversa.
+const DISCORD: &str = "https://discord.gg/D96HjsKTPa";
+
 pub struct App {
     /// Qual porta a tela de controles está editando. Ver [`crate::input::PORTAS`].
     porta_editada: usize,
@@ -245,7 +255,7 @@ pub struct App {
     ///
     /// Guardá-lo é o que permite pintar o quadro do console com GL do host em vez de mandá-lo
     /// como textura do egui. Sem ele — e o `eframe` admite não ter —, vale o caminho antigo.
-    gl: Option<std::sync::Arc<eframe::glow::Context>>,
+    gl: Option<std::sync::Arc<glow::Context>>,
     /// O pintor de GL, montado na primeira vez que a janela do jogo desenha.
     ///
     /// Vive atrás de um `Mutex` porque o `egui_glow` exige um retorno de chamada `Sync`, e é
@@ -1705,9 +1715,9 @@ impl App {
                 egui::special_emojis::GITHUB,
                 self.catalog.get("about.repository")
             ),
-            crate::ui::REPOSITORIO,
+            REPOSITORY,
         );
-        ui.hyperlink_to(format!("💬 {}", self.catalog.get("about.discord")), crate::ui::DISCORD);
+        ui.hyperlink_to(format!("💬 {}", self.catalog.get("about.discord")), DISCORD);
         false
     }
 
@@ -2550,7 +2560,7 @@ impl App {
     fn avks_ativos(teclado: &HashSet<egui::Key>, pads: &[Pad]) -> HashSet<u32> {
         let mut keys: HashSet<_> = teclado
             .iter()
-            .filter_map(|key| input::avk_de(*key))
+            .filter_map(|key| Self::avk_de(*key))
             .collect();
         for pad in pads {
             keys.extend(
@@ -2560,6 +2570,25 @@ impl App {
             );
         }
         keys
+    }
+
+    /// O código virtual do BREW de uma tecla da janela, quando ela tem um.
+    ///
+    /// `Esc` e `P` ficam de fora de propósito: são as duas da janela, encerrar e pausar.
+    fn avk_de(key: egui::Key) -> Option<u32> {
+        use egui::Key::*;
+        Some(match key {
+            ArrowUp => input::avk::UP,
+            ArrowDown => input::avk::DOWN,
+            ArrowLeft => input::avk::LEFT,
+            ArrowRight => input::avk::RIGHT,
+            Enter | Space => input::avk::CONFIRMA,
+            Backspace | Delete => input::avk::CLR,
+            Num0 | Num1 | Num2 | Num3 | Num4 | Num5 | Num6 | Num7 | Num8 | Num9 => {
+                input::avk::ZERO + (key as u32 - Num0 as u32)
+            }
+            _ => return None,
+        })
     }
 
     /// Roda e desenha o jogo na janela dele. Devolve se é hora de fechá-la.
@@ -2639,7 +2668,7 @@ impl App {
             // O orçamento é o tempo real que passou desde o quadro anterior. Com telas
             // intermediárias à espera, uma vai à tela e o jogo não anda neste quadro.
             let now = std::time::Instant::now();
-            let slice = (now - self.last_step).min(crate::session::FATIA_MAXIMA);
+            let slice = (now - self.last_step).min(MAX_SLICE);
             self.last_step = now;
             if !session.mostra_quadro_intermediario() {
                 let _ = session.step(slice, limit);
@@ -2732,16 +2761,42 @@ impl App {
                 .collect();
             egui::TopBottomPanel::bottom("painel-debug").show(ctx, |ui| {
                 ui.add_space(2.0);
-                // O mesmo painel que o frontend do Android desenha: ver [`crate::ui::depuracao`].
-                depuracao::painel(
-                    ui,
-                    &self.catalog,
-                    debug,
-                    sample,
-                    (heap, objetos),
-                    clock,
-                    &historia,
-                );
+                ui.horizontal(|ui| {
+                    if debug.speed {
+                        ui.monospace(self.catalog.format(
+                            "debug.speed.value",
+                            &[
+                                ("percent", &sample.speed.to_string()),
+                                ("fps", &sample.fps.to_string()),
+                            ],
+                        ));
+                        ui.separator();
+                    }
+                    if debug.clock {
+                        ui.monospace(self.catalog.format(
+                            "debug.clock.value",
+                            &[
+                                ("mips", &instrucoes_legiveis(sample.ips)),
+                                ("clock", &format!("{:.1}s", clock as f32 / 1000.0)),
+                            ],
+                        ));
+                        ui.separator();
+                    }
+                    if debug.memory {
+                        ui.monospace(self.catalog.format(
+                            "debug.memory.value",
+                            &[
+                                ("heap", &bytes_legiveis(heap)),
+                                ("objects", &objetos.to_string()),
+                            ],
+                        ));
+                    }
+                    if debug.timeline && !historia.is_empty() {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            desenhar_linha_do_tempo(ui, &historia);
+                        });
+                    }
+                });
                 ui.add_space(2.0);
             });
         }
@@ -2862,7 +2917,7 @@ impl eframe::App for App {
     /// O contexto só existe enquanto a janela existe: soltar depois seria mexer num contexto
     /// morto, e não soltar deixa programa e textura vivos até o processo acabar. O `eframe`
     /// chama isto com o contexto ainda de pé, que é a única hora em que dá para fazer certo.
-    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self, gl: Option<&glow::Context>) {
         let (Some(gl), Ok(mut guarda)) = (gl, self.pintor.lock()) else {
             return;
         };
@@ -3163,14 +3218,14 @@ mod tests {
         let b1 = Pad::button_by_name("b1").unwrap();
         agora.press(b1, true);
         assert_eq!(
-            crate::input::teclas_do_controle(&antes, &agora),
+            input::teclas_do_controle(&antes, &agora),
             vec![(crate::input::avk::CONFIRMA, true)]
         );
         antes = agora;
-        assert!(crate::input::teclas_do_controle(&antes, &agora).is_empty());
+        assert!(input::teclas_do_controle(&antes, &agora).is_empty());
         agora.press(b1, false);
         assert_eq!(
-            crate::input::teclas_do_controle(&antes, &agora),
+            input::teclas_do_controle(&antes, &agora),
             vec![(crate::input::avk::CONFIRMA, false)]
         );
     }
@@ -3188,12 +3243,12 @@ mod tests {
         ] {
             let mut agora = Pad::default();
             agora.press(Pad::button_by_name(nome).unwrap(), true);
-            assert_eq!(crate::input::teclas_do_controle(&antes, &agora), vec![(esperado, true)]);
+            assert_eq!(input::teclas_do_controle(&antes, &agora), vec![(esperado, true)]);
         }
         let mut voltar = Pad::default();
         voltar.press(Pad::button_by_name("b2").unwrap(), true);
         assert_eq!(
-            crate::input::teclas_do_controle(&antes, &voltar),
+            input::teclas_do_controle(&antes, &voltar),
             vec![(crate::input::avk::CLR, true)]
         );
     }
@@ -3203,12 +3258,12 @@ mod tests {
     #[test]
     fn digitos_viram_avk() {
         use eframe::egui::Key;
-        assert_eq!(crate::input::avk_de(Key::Num0), Some(crate::input::avk::ZERO));
-        assert_eq!(crate::input::avk_de(Key::Num7), Some(crate::input::avk::ZERO + 7));
-        assert_eq!(crate::input::avk_de(Key::Num9), Some(crate::input::avk::ZERO + 9));
-        assert_eq!(crate::input::avk_de(Key::Backspace), Some(crate::input::avk::CLR));
-        assert_eq!(crate::input::avk_de(Key::Escape), None);
-        assert_eq!(crate::input::avk_de(Key::P), None);
+        assert_eq!(App::avk_de(Key::Num0), Some(crate::input::avk::ZERO));
+        assert_eq!(App::avk_de(Key::Num7), Some(crate::input::avk::ZERO + 7));
+        assert_eq!(App::avk_de(Key::Num9), Some(crate::input::avk::ZERO + 9));
+        assert_eq!(App::avk_de(Key::Backspace), Some(crate::input::avk::CLR));
+        assert_eq!(App::avk_de(Key::Escape), None);
+        assert_eq!(App::avk_de(Key::P), None);
     }
     use super::*;
 
@@ -3242,6 +3297,71 @@ mod tests {
             placement(area, Scaling::Stretch, true, 4.0 / 3.0),
             placement(area, Scaling::Fit, true, 4.0 / 3.0)
         );
+    }
+}
+
+/// Instruções por segundo, na escala que couber.
+///
+/// Um jogo em espera ociosa executa pouquíssimo — arredondar tudo para milhões mostraria zero
+/// justamente aí, e zero se lê como defeito e não como "está esperando".
+fn instrucoes_legiveis(por_segundo: u64) -> String {
+    match por_segundo {
+        0..=9_999 => format!("{por_segundo}"),
+        10_000..=9_999_999 => format!("{} K", por_segundo / 1_000),
+        _ => format!("{} M", por_segundo / 1_000_000),
+    }
+}
+
+/// Um tamanho em bytes no jeito que se lê.
+fn bytes_legiveis(bytes: u32) -> String {
+    match bytes {
+        0..=9_999 => format!("{bytes} B"),
+        10_000..=9_999_999 => format!("{} KB", bytes / 1024),
+        _ => format!("{:.1} MB", bytes as f32 / (1024.0 * 1024.0)),
+    }
+}
+
+/// O gráfico do painel: velocidade e quadros por segundo ao longo do último minuto.
+///
+/// É desenhado à mão em vez de com uma biblioteca de gráficos porque o que se quer aqui é
+/// enxergar a forma — onde afundou, onde estabilizou —, e para isso duas linhas numa faixa de
+/// 40 pixels bastam.
+fn desenhar_linha_do_tempo(ui: &mut egui::Ui, historia: &[(u32, u32)]) {
+    const ALTURA: f32 = 40.0;
+    const LARGURA: f32 = 220.0;
+    let (resposta, pintor) = ui.allocate_painter(egui::vec2(LARGURA, ALTURA), egui::Sense::hover());
+    let area = resposta.rect;
+    pintor.rect_filled(area, 2.0, egui::Color32::from_black_alpha(120));
+
+    // A linha dos 100% é a referência que interessa: acima dela o jogo está no ritmo do
+    // console, abaixo está devendo.
+    let cem = area.bottom() - ALTURA * 0.5;
+    pintor.line_segment(
+        [egui::pos2(area.left(), cem), egui::pos2(area.right(), cem)],
+        egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(40)),
+    );
+
+    let passo = LARGURA / historia.len().max(2) as f32;
+    // A velocidade vai até 200% no gráfico; o que passar disso encosta no teto.
+    let ponto = |i: usize, valor: u32, teto: f32| {
+        egui::pos2(
+            area.left() + i as f32 * passo,
+            area.bottom() - ALTURA * (valor as f32 / teto).min(1.0),
+        )
+    };
+    for (valores, cor, teto) in [
+        (0, egui::Color32::from_rgb(120, 200, 255), 200.0),
+        (1, egui::Color32::from_rgb(160, 255, 160), 60.0),
+    ] {
+        let linha: Vec<egui::Pos2> = historia
+            .iter()
+            .enumerate()
+            .map(|(i, amostra)| match valores {
+                0 => ponto(i, amostra.0, teto),
+                _ => ponto(i, amostra.1, teto),
+            })
+            .collect();
+        pintor.add(egui::Shape::line(linha, egui::Stroke::new(1.0_f32, cor)));
     }
 }
 

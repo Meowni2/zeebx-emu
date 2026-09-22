@@ -58,6 +58,28 @@ Rust 1.88 ou mais novo.
 cargo build --release
 ```
 
+### O que mais precisa estar instalado
+
+O standalone usa dependências nativas para `unicorn-engine`, `dynarmic`, áudio, janela e controles.
+Debian, Ubuntu e derivados:
+
+```bash
+sudo apt install build-essential cmake ninja-build pkg-config python3 clang libclang-dev \
+    libglib2.0-dev libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+```
+
+O core Libretro não linka a interface desktop nem bibliotecas de áudio/controle do host:
+
+```bash
+cargo build --release -p zeebx-libretro
+```
+
+Para conferir dependências antes do build standalone:
+
+```bash
+python3 ferramentas/prepara_build.py
+```
+
 ### Instaladores e releases
 
 Os instaladores saem do [cargo-packager](https://github.com/crabnebula-dev/cargo-packager), com a
@@ -137,6 +159,13 @@ português.
 Ele abre uma janela só com o jogo — ou nenhuma, mandando os quadros por um cano para o seu
 programa pintar. Gráficos, áudio e controles saem dos mesmos campos que a interface grava, só
 que em INI. Ver [`frontends/headless/LEIAME.md`](frontends/headless/LEIAME.md).
+
+## Core Libretro e muOS
+
+O core Libretro é empacotado com o `.info` e pode ser instalado no RetroArch. O cartão muOS usa o
+core AArch64 em `opt/muos/share/core` e o banco MIDI é opcional. A instalação documentada está em
+[`docs/libretro/LIBRETRO_PLAN.md`](docs/libretro/LIBRETRO_PLAN.md). A playlist, o DAT e as capas de
+Zeebo são gerados pelas ferramentas da pasta `ferramentas/`.
 
 ## Plataformas
 

@@ -10,28 +10,18 @@ use std::time::{Duration, Instant};
 
 use crate::cpu::dynarmic::DynarmicCpu;
 use crate::input::Pad;
+use crate::library;
 use crate::loader;
 use crate::loader::archive;
 use crate::loader::modfile::ModImage;
 use crate::machine::{AppletResult, Machine, Outcome};
-use crate::ui::library;
+use crate::storage::StoragePaths;
 use crate::video::display::Framebuffer;
 
-/// Teto de tempo real que o jogo pode tomar num quadro da interface.
+/// Maior fatia de tempo real que os frontends podem pedir em uma volta.
 ///
-/// O orçamento normal **não** é fixo: é o tempo que passou desde o quadro anterior, que é
-/// exatamente o quanto o jogo precisa emular para acompanhar o relógio do mundo. Uma fatia
-/// fixa de 16 ms virava teto de velocidade, e um teto traiçoeiro: com a janela sincronizada
-/// ao monitor, bastava emulação mais desenho passarem de um retraço para o período dobrar
-/// para 33 ms — e o jogo ficava com 16 de cada 33, travado em 50% por mais folga que a
-/// máquina tivesse. Era o que a tela de seleção do Crash mostrava.
-///
-/// O teto existe só para o caso de o host não dar conta: sem ele, um quadro atrasado pede um
-/// orçamento maior, que atrasa mais o seguinte, e a janela para de responder.
-///
-/// **Mora aqui, e não no frontend, porque os dois frontends precisam concordar.** No Android
-/// ele nasceu de novo como 16 ms, e o mesmo teto reapareceu no mesmo jogo — o Crash, a 41% num
-/// aparelho que dava conta de mais.
+/// Compartilhada para que desktop, headless e Android não reintroduzam um teto de 16 ms e
+/// reduzam jogos rápidos como Crash Nitro Kart a uma fração da velocidade.
 pub const FATIA_MAXIMA: Duration = Duration::from_millis(100);
 
 /// Teto de instruções por fatia entre duas chamadas de API — evita que um laço infinito no
@@ -53,6 +43,12 @@ const QUADROS_POR_VOLTA: u32 = 4;
 
 /// O atraso a partir do qual o jogo recupera quadros: um quadro de 60 Hz.
 const ATRASO_PARA_RECUPERAR_MS: u64 = 17;
+
+/// Milissegundos de um quadro a 60 Hz: o passo que um frontend Libretro avança por chamada.
+const FRAME_MS: u64 = 16;
+
+/// Teto de voltas internas por quadro virtual, contra um guest que não avança nem apresenta.
+const MAX_STEPS_PER_FRAME: u32 = 200_000;
 
 /// O maior atraso que o jogo recupera. Além dele o atraso é perdoado, e não corrido atrás: uma
 /// pausa, um carregamento ou a janela arrastada param o relógio virtual enquanto o real anda, e
@@ -115,7 +111,8 @@ pub struct Session {
     /// que o som passou a ser ligado só com a janela pronta, não saía de jeito nenhum, porque o
     /// jogo já tinha tocado.
     partida: Option<(u32, u32)>,
-    /// A saída de som. Enquanto ela existe, o som toca; largá-la fecha o fluxo.
+    /// A saída de som do host. Um frontend Libretro não tem esta peça: ele recebe o mixer.
+    #[cfg(feature = "desktop")]
     audio: Option<crate::audio::Output>,
     title: String,
     /// O ClassID do applet desta sessão.
@@ -178,9 +175,116 @@ impl Session {
         serial: Option<&Path>,
         placa: bool,
         contexto: Option<std::sync::Arc<glow::Context>>,
-        z_wheel: crate::ui::settings::ZWheel,
+        z_wheel: crate::config::ZWheel,
     ) -> Result<Self, StartError> {
-        Self::start_inner(path, Some(portas), serial, placa, contexto, z_wheel)
+        Self::start_inner(path, Some(portas), serial, placa, contexto, z_wheel, &[])
+    }
+
+    /// Como [`Session::start_with`], mas instala os módulos antes do boot do guest.
+    ///
+    /// A Z-Wheel enumera os jogos durante `EVT_APP_START`. Instalar depois que a sessão já existe
+    /// é tarde demais: a lista dela nasce vazia e o gesto nunca pode escolher um jogo.
+    pub fn start_with_installed(
+        path: &Path,
+        portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
+        serial: Option<&Path>,
+        placa: bool,
+        contexto: Option<std::sync::Arc<glow::Context>>,
+        z_wheel: crate::config::ZWheel,
+        instalados: &[(u32, String)],
+    ) -> Result<Self, StartError> {
+        Self::start_inner(path, Some(portas), serial, placa, contexto, z_wheel, instalados)
+    }
+
+    /// Como [`Session::start_with`], mas recebe a raiz persistente explicitamente.
+    ///
+    /// É a fronteira que o frontend Libretro usará: cache de pacote e `fs:/` deixam de depender
+    /// da configuração da UI desktop.
+    #[allow(dead_code)] // consumido por `frontends/libretro`, ainda não criado.
+    pub fn start_with_storage(
+        path: &Path,
+        portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
+        serial: Option<&Path>,
+        placa: bool,
+        contexto: Option<std::sync::Arc<glow::Context>>,
+        z_wheel: crate::config::ZWheel,
+        storage: &StoragePaths,
+    ) -> Result<Self, StartError> {
+        Self::start_inner_with_storage(
+            path,
+            Some(portas),
+            serial,
+            placa,
+            contexto,
+            z_wheel,
+            storage,
+            &[],
+        )
+    }
+
+    /// Como [`Session::start_with_storage`], com os applets instalados antes do boot.
+    ///
+    /// O core Libretro usa esta entrada para a Z-Wheel: ela enumera a biblioteca no primeiro
+    /// `EVT_APP_START`, portanto `set_installed_applets` depois do retorno não basta.
+    #[allow(dead_code)]
+    pub fn start_with_storage_installed(
+        path: &Path,
+        portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
+        serial: Option<&Path>,
+        placa: bool,
+        contexto: Option<std::sync::Arc<glow::Context>>,
+        z_wheel: crate::config::ZWheel,
+        storage: &StoragePaths,
+        instalados: &[(u32, String)],
+    ) -> Result<Self, StartError> {
+        Self::start_inner_with_storage(
+            path,
+            Some(portas),
+            serial,
+            placa,
+            contexto,
+            z_wheel,
+            storage,
+            instalados,
+        )
+    }
+
+    /// Inicia o motor sem janela, dispositivo de áudio ou contexto gráfico do host.
+    ///
+    /// Sem chamador até `frontends/libretro` existir; o aviso de código morto está silenciado
+    /// de propósito.
+    ///
+    /// Esta é a entrada do core Libretro: vídeo, áudio e input são fornecidos por callbacks do
+    /// frontend, e o armazenamento já vem delimitado em [`StoragePaths`].
+    #[allow(dead_code)] // consumido por `frontends/libretro`, ainda não criado.
+    pub fn start_software_with_storage(
+        path: &Path,
+        portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
+        z_wheel: crate::config::ZWheel,
+        storage: &StoragePaths,
+    ) -> Result<Self, StartError> {
+        Self::start_inner_with_storage(path, Some(portas), None, false, None, z_wheel, storage, &[])
+    }
+
+    /// Variante software de [`Session::start_software_with_storage`] com a biblioteca conhecida.
+    #[allow(dead_code)]
+    pub fn start_software_with_storage_installed(
+        path: &Path,
+        portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
+        z_wheel: crate::config::ZWheel,
+        storage: &StoragePaths,
+        instalados: &[(u32, String)],
+    ) -> Result<Self, StartError> {
+        Self::start_inner_with_storage(
+            path,
+            Some(portas),
+            None,
+            false,
+            None,
+            z_wheel,
+            storage,
+            instalados,
+        )
     }
 
     /// A serial entra **antes de o módulo ser criado**, e não depois de a sessão existir.
@@ -195,12 +299,31 @@ impl Session {
         serial: Option<&Path>,
         placa: bool,
         contexto: Option<std::sync::Arc<glow::Context>>,
-        z_wheel: crate::ui::settings::ZWheel,
+        z_wheel: crate::config::ZWheel,
+        instalados: &[(u32, String)],
     ) -> Result<Self, StartError> {
+        let storage = StoragePaths::from_root(crate::config::config_dir());
+        Self::start_inner_with_storage(path, portas, serial, placa, contexto, z_wheel, &storage, instalados)
+    }
+
+    fn start_inner_with_storage(
+        path: &Path,
+        portas: Option<[Option<crate::input::bindings::Aparelho>; crate::input::PORTAS]>,
+        serial: Option<&Path>,
+        placa: bool,
+        contexto: Option<std::sync::Arc<glow::Context>>,
+        z_wheel: crate::config::ZWheel,
+        storage: &StoragePaths,
+        instalados: &[(u32, String)],
+    ) -> Result<Self, StartError> {
+        // Caminho escolhido no frontend, antes de extrair: é ele que identifica o conteúdo.
+        let conteudo = path;
         let extracted;
         let path = match path.extension().and_then(|e| e.to_str()) {
-            Some("zip") => {
-                extracted = archive::extract(path).map_err(StartError::Unreadable)?;
+            // O `.7z` extrai pelo mesmo caminho: quem separa os formatos é o descompactador.
+            Some("zip" | "7z") => {
+                extracted =
+                    archive::extract_in(path, &storage.cache).map_err(StartError::Unreadable)?;
                 extracted.as_path()
             }
             _ => path,
@@ -214,14 +337,31 @@ impl Session {
         // A raiz do sistema de arquivos do jogo é o diretório onde o `.mod` está: é lá que o
         // console guarda os arquivos do título.
         let root = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        // O overlay é por conteúdo: o mesmo jogo extraído de novo continua lendo o mesmo save, e
+        // um pacote diferente não herda o save do outro. O hash é do arquivo escolhido pelo
+        // frontend (`.zip` ou `.mod`), antes de qualquer extração.
+        let save_root = match storage.overlay {
+            true => {
+                let id = storage
+                    .content_id(conteudo)
+                    .map_err(|e| StartError::Unreadable(e))?;
+                Some(storage.save_for(&id))
+            }
+            false => None,
+        };
         let cpu = DynarmicCpu::new().map_err(|e| StartError::NotLoadable(e.to_string()))?;
-        let mut machine = Machine::new(cpu, module, root);
+        let mut machine = Machine::new_with_storage(cpu, module, root, storage, save_root);
+        // A lista precisa existir antes de `run` e `create_applet`: a Z-Wheel a enumera no boot.
+        machine.set_installed_applets(instalados.iter().cloned());
         // Antes de qualquer desenho: ver [`Machine::usa_placa`].
         machine.usa_placa(placa, contexto);
         machine.configura_z_wheel(z_wheel);
         // A tela com que o console abre a Z-Wheel. Ver [`SPLASH_DA_Z_WHEEL`].
         if library::applet_clsid(path) == Some(Z_WHEEL) {
-            if let Some(imagem) = path.parent().and_then(|dir| std::fs::read(dir.join(SPLASH_DA_Z_WHEEL)).ok()) {
+            if let Some(imagem) = path
+                .parent()
+                .and_then(|dir| std::fs::read(dir.join(SPLASH_DA_Z_WHEEL)).ok())
+            {
                 machine.pinta_tela_rgb565(&imagem);
             }
         }
@@ -264,6 +404,7 @@ impl Session {
         Ok(Self {
             machine,
             partida: Some((applet, clsid)),
+            #[cfg(feature = "desktop")]
             audio: None,
             title: library::title_for(path),
             classe: clsid,
@@ -283,18 +424,6 @@ impl Session {
     /// uma fatia minúscula de instruções, e devolver o controle regularmente é o que permite
     /// redesenhar e atender o teclado enquanto o jogo roda.
     pub fn step(&mut self, budget: Duration, speed_limit: bool) -> Step {
-        let resultado = self.passo(budget, speed_limit);
-        // **O contexto volta ao dono aqui, e só aqui.** Quando o rasterizador desenha num
-        // contexto emprestado — o da janela —, ele precisa devolver o estado que mexeu antes de
-        // a interface pintar. Fazer isso a cada desenho custava um `bind_framebuffer(None)` por
-        // submissão, que num GPU de ladrilho fecha o render pass e resolve o quadro inteiro
-        // para a memória. Uma fatia é exatamente o pedaço em que ninguém de fora toca na placa,
-        // então é o lugar certo para pagar isso uma vez.
-        self.machine.devolve_o_contexto();
-        resultado
-    }
-
-    fn passo(&mut self, budget: Duration, speed_limit: bool) -> Step {
         if self.stopped.is_some() {
             return Step::Stopped;
         }
@@ -328,6 +457,31 @@ impl Session {
                 None => {}
             }
         }
+    }
+
+    /// Avança **um quadro virtual**, sem consultar o relógio de parede.
+    ///
+    /// É a unidade que um frontend repete: o tempo do jogo anda pelo relógio virtual, e nenhuma
+    /// decisão depende de quão rápido o host executa. [`Session::step`] continua sendo o caminho
+    /// da janela, que precisa devolver o controle ao sistema operacional de tempos em tempos.
+    pub fn run_frame(&mut self) -> Step {
+        if self.stopped.is_some() {
+            return Step::Stopped;
+        }
+        let inicio = u64::from(self.machine.clock_ms());
+        for _ in 0..MAX_STEPS_PER_FRAME {
+            match self.advance_once() {
+                Some(step) => return step,
+                None => {
+                    if u64::from(self.machine.clock_ms()).saturating_sub(inicio) >= FRAME_MS {
+                        return Step::Presented;
+                    }
+                }
+            }
+        }
+        // Um guest que não avança o relógio nem apresenta nada: devolver o controle é melhor que
+        // travar o frontend para sempre.
+        Step::Running
     }
 
     /// Quantos milissegundos o jogo está atrasado em relação ao relógio do mundo.
@@ -491,6 +645,25 @@ impl Session {
         self.machine.clock_ms()
     }
 
+    /// Liga o censo do acessador por classe de widget: o que cada classe recebe, por seletor.
+    ///
+    /// É o mesmo que a varredura liga por `ZEEBX_ROM_SELETORES`, e o core não tinha como pedir —
+    /// `Machine` é privado do motor. Serve para responder, **no aparelho**, o que a família de
+    /// widgets não distingue: o que cada classe proprietária espera.
+    pub fn liga_censo_de_widgets(&mut self) {
+        self.machine.liga_censo_de_widgets();
+    }
+
+    /// Liga a captura de serial: onde a **instrumentação** do motor escreve.
+    ///
+    /// Classes criadas, bancos abertos, SQL, propriedades de widget e a árvore de widgets da
+    /// primeira tecla saem por aqui, sem se misturar com o log do jogo. A varredura e o `run` têm
+    /// isso por `ZEEBX_ROM_SERIAL` e `--serial` desde sempre; o core não tinha, e é a diferença
+    /// entre poder olhar o que o applet faz **no aparelho** e só poder supor.
+    pub fn liga_serial(&mut self, caminho: &std::path::Path) -> std::io::Result<()> {
+        self.machine.liga_serial(caminho)
+    }
+
     /// O log da execução.
     ///
     /// Junta o que o jogo escreveu com o que o emulador tem a dizer sobre ele. A parte do
@@ -552,7 +725,7 @@ impl Session {
                 format!("  {ms:>7} ms  {objeto:#010x}  {chamada}{repete}")
             }));
         }
-                let classes = self.machine.unknown_classes();
+        let classes = self.machine.unknown_classes();
         if !classes.is_empty() {
             linhas.push("— classes que o jogo pediu e não temos —".to_string());
             linhas.extend(classes.iter().map(|id| format!("  {id:#010x}")));
@@ -611,6 +784,7 @@ impl Session {
     ///
     /// Um host sem placa de áudio não pode impedir o jogo de rodar: o motivo é devolvido para
     /// quem quiser mostrá-lo, e o emulador segue mudo.
+    #[cfg(feature = "desktop")]
     pub fn set_audio(&mut self, enabled: bool, volume: u8) -> Option<String> {
         let level = f32::from(volume.min(100)) / 100.0;
         if !enabled {
@@ -662,6 +836,11 @@ impl Session {
         self.machine.take_launch_request()
     }
 
+    /// Entrega um evento de widget ao applet. Ver [`Machine::entrega_evento_ao_applet`].
+    pub fn entrega_evento_ao_applet(&mut self, evt: u32, w: u16) -> Result<u32, crate::cpu::CpuError> {
+        self.machine.entrega_evento_ao_applet(evt, w)
+    }
+
     pub fn set_key(&mut self, avk: u32, apertada: bool) {
         self.machine.set_key(avk, apertada);
     }
@@ -672,6 +851,33 @@ impl Session {
         portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
     ) {
         self.machine.set_portas(portas);
+    }
+
+    /// Grava o estado da máquina, no formato versionado de [`crate::save_state`].
+    pub fn grava_estado(&self) -> Vec<u8> {
+        self.machine.grava_estado()
+    }
+
+    /// Põe de volta um estado gravado por [`Session::grava_estado`].
+    pub fn restaura_estado(&mut self, arquivo: &[u8]) -> Result<(), crate::save_state::Erro> {
+        self.machine.restaura_estado(arquivo)
+    }
+
+    /// Se dá para gravar agora. Ver [`crate::machine::Machine::pode_salvar`].
+    pub fn pode_salvar(&mut self) -> Result<(), String> {
+        self.machine.pode_salvar()
+    }
+
+    /// Assinatura do conteúdo da tela, para o frontend evitar reenvio de quadro repetido.
+    pub fn screen_signature(&self) -> u64 {
+        self.screen().signature()
+    }
+
+    /// A raiz do sistema de arquivos do jogo: onde a extração vive.
+    ///
+    /// O frontend precisa dela para podar o cache sem apagar o jogo em execução.
+    pub fn content_root(&self) -> &Path {
+        self.machine.file_root()
     }
 
     /// A tela, como está agora.
@@ -784,6 +990,19 @@ impl Session {
     }
 
     /// A proporção experimental do 3D, largura sobre altura; `None` é o 4:3 do console.
+    /// Faz o desenho sair no framebuffer do frontend, quando ele entrega um.
+    ///
+    /// **É o que o core precisa para o `SET_HW_RENDER`**, e por isso tem caminho público: o motor
+    /// já sabe desenhar no framebuffer de fora (`Machine::desenha_no_fbo`, verificado pelo teste
+    /// `o_motor_desenha_no_framebuffer_do_frontend`), mas quem tem o framebuffer em mãos é o core,
+    /// a cada quadro, pelo `get_current_framebuffer` do `retro_hw_render_callback`.
+    ///
+    /// `Some(0)` é o framebuffer padrão do frontend; `None` devolve o desenho ao framebuffer do
+    /// próprio motor, que é o caminho de sempre.
+    pub fn desenha_no_fbo(&mut self, fbo: Option<u32>) {
+        self.machine.desenha_no_fbo(fbo);
+    }
+
     pub fn define_proporcao(&mut self, aspecto: Option<f32>) {
         self.machine.define_proporcao(aspecto);
     }
@@ -834,6 +1053,14 @@ pub const SPLASH_DA_Z_WHEEL: &str = "zeebosplash.rgb565.raw";
 /// usa isto, e por isso não faz parte da interface da sessão.
 #[cfg(test)]
 impl Session {
+    /// O motor, para quem precisa ligar uma medição antes de rodar.
+    ///
+    /// Existe para o perfil de tempo por método: ligar o cronômetro por chamada é coisa que se faz
+    /// **antes** do laço, e a varredura precisa fazer isso de fora da sessão.
+    pub(crate) fn machine_mut(&mut self) -> &mut Machine<DynarmicCpu> {
+        &mut self.machine
+    }
+
     pub(crate) fn machine(&self) -> &Machine<DynarmicCpu> {
         &self.machine
     }
@@ -852,6 +1079,408 @@ impl Session {
 mod tests {
     use super::*;
 
+/// **O motor desenha no framebuffer que o frontend entrega, e o teste prova isso.**
+///
+/// É a peça que faltava para o item 5: no `libretro`, quem apresenta o quadro é o frontend, e o
+/// core desenha no framebuffer que ele indica. Aqui o teste cria um framebuffer **próprio**, manda
+/// o motor desenhar nele e lê os pixels **dele** — não do framebuffer interno do motor. Se o
+/// desenho não estivesse indo para lá, o framebuffer de fora continuaria com o conteúdo
+/// indefinido com que nasceu, e a leitura devolveria preto.
+///
+/// A comparação é contra o rasterizador de software no mesmo instante virtual, como no teste
+/// irmão [`os_dois_rasterizadores_desenham_o_mesmo_quadro`].
+#[cfg(feature = "gpu")]
+#[test]
+fn o_motor_desenha_no_framebuffer_do_frontend() {
+    use glow::HasContext;
+    use std::time::Duration;
+
+    let Ok(rom) = std::env::var("ZEEBX_TESTE_ROM") else {
+        eprintln!("sem ZEEBX_TESTE_ROM: nada a comparar");
+        return;
+    };
+    let ms: u64 = std::env::var("ZEEBX_TESTE_MS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(3000);
+    let contexto = match crate::video::contexto::Contexto::novo() {
+        Ok(contexto) => contexto,
+        Err(porque) => {
+            eprintln!("sem placa fora de tela: {porque}");
+            return;
+        }
+    };
+    let gl = contexto.gl.clone();
+
+    // O framebuffer de fora, com a textura de cor: é ele que faz o papel do que o frontend daria.
+    let (fbo, textura) = unsafe {
+        let fbo = gl.create_framebuffer().expect("framebuffer de fora");
+        let textura = gl.create_texture().expect("textura de fora");
+        gl.bind_texture(glow::TEXTURE_2D, Some(textura));
+        gl.tex_image_2d(
+            glow::TEXTURE_2D,
+            0,
+            glow::RGBA8 as i32,
+            640,
+            480,
+            0,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelUnpackData::Slice(None),
+        );
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+        gl.framebuffer_texture_2d(
+            glow::FRAMEBUFFER,
+            glow::COLOR_ATTACHMENT0,
+            glow::TEXTURE_2D,
+            Some(textura),
+            0,
+        );
+        // Nasce com conteúdo indefinido: pintar de verde garante que qualquer pixel não-preto
+        // depois seja desenho de verdade, e não sobra de alocação.
+        gl.clear_color(0.0, 1.0, 0.0, 1.0);
+        gl.clear(glow::COLOR_BUFFER_BIT);
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        (fbo, textura)
+    };
+
+    let mut session = Session::start_with(
+        &std::path::PathBuf::from(&rom),
+        crate::PORTAS_PADRAO,
+        None,
+        true,
+        Some(gl.clone()),
+        Default::default(),
+    )
+    .expect("a sessão de placa abriu");
+    session.machine_mut().desenha_no_fbo(Some(fbo.0.get()));
+
+    let base = session.clock_ms();
+    // **A cerca.** Metade do tempo depois, o framebuffer de fora volta a ser pintado de verde.
+    // Sem isto o teste não pega o defeito que existiu: o alvo do frontend era respeitado só na
+    // **criação** do destino, e todo quadro seguinte religava o framebuffer interno — o de fora
+    // ficava com o que o primeiro quadro deixou, e uma verificação de "mudou alguma coisa" passava
+    // com a tela preta no frontend. Com a cerca, o verde só desaparece se os quadros **novos**
+    // estiverem indo para lá.
+    let cerca = ms / 2;
+    let mut ja_cercou = false;
+    loop {
+        let decorrido = session.clock_ms().saturating_sub(base);
+        if decorrido >= ms as u32 {
+            break;
+        }
+        if !ja_cercou && decorrido >= cerca as u32 {
+            ja_cercou = true;
+            unsafe {
+                gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+                gl.clear_color(0.0, 1.0, 0.0, 1.0);
+                gl.clear(glow::COLOR_BUFFER_BIT);
+                gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            }
+        }
+        match session.step(Duration::ZERO, false) {
+            Step::Stopped => break,
+            Step::Presented => {
+                while session.mostra_quadro_intermediario() {}
+            }
+            Step::Running | Step::Ahead => {}
+        }
+    }
+
+    // Lê do framebuffer **de fora**: é o que prova que o desenho foi para lá.
+    let mut pixels = vec![0u8; 640 * 480 * 4];
+    unsafe {
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+        gl.read_pixels(
+            0,
+            0,
+            640,
+            480,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelPackData::Slice(Some(&mut pixels)),
+        );
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+    }
+    let verdes = pixels
+        .chunks_exact(4)
+        .filter(|p| p[0] == 0 && p[1] == 255 && p[2] == 0 && p[3] == 255)
+        .count();
+    let total = 640 * 480;
+    eprintln!(
+        "framebuffer de fora: {} de {total} pixel(s) ainda com a cor de nascença ({:.1}%)",
+        verdes,
+        verdes as f64 * 100.0 / total as f64
+    );
+    assert!(
+        verdes < total,
+        "nada foi desenhado no framebuffer do frontend: ele ficou como nasceu"
+    );
+    // E o que mais importa: os quadros **posteriores à cerca** também foram para lá.
+    assert!(
+        verdes < total / 10,
+        "o framebuffer do frontend ficou com a cor da cerca: os quadros novos não foram para lá"
+    );
+
+    unsafe {
+        gl.delete_framebuffer(fbo);
+        gl.delete_texture(textura);
+    }
+}
+
+
+/// **Salvar e carregar no rasterizador de placa dá o mesmo quadro.**
+///
+/// É a prova que faltava do item 6: a via de gravação do `GpuState` estava ligada e sem teste. O
+/// teste segue a sequência que o RetroArch faz, e vai além do "os campos voltam": ele **exige que o
+/// desenho continue igual**.
+///
+/// O caminho é este: roda um trecho, **salva**; roda mais um trecho, e guarda o quadro (é o que o
+/// jogo faz depois do save); **carrega** o estado e roda o mesmo trecho de novo. Os dois quadros têm
+/// de ser idênticos — mesma matriz, mesmas texturas, mesmo quadro. Sem isso o save state "volta" e a
+/// cena sai diferente, que é o modo de falhar mais caro de descobrir.
+#[cfg(feature = "gpu")]
+#[test]
+fn o_estado_da_placa_continua_o_mesmo_desenho() {
+    use glow::HasContext;
+    use std::time::Duration;
+
+    let Ok(rom) = std::env::var("ZEEBX_TESTE_ROM") else {
+        eprintln!("sem ZEEBX_TESTE_ROM: nada a comparar");
+        return;
+    };
+    let ms: u64 = std::env::var("ZEEBX_TESTE_MS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(2000);
+    let contexto = match crate::video::contexto::Contexto::novo() {
+        Ok(contexto) => contexto,
+        Err(porque) => {
+            eprintln!("sem placa fora de tela: {porque}");
+            return;
+        }
+    };
+    let gl = contexto.gl.clone();
+    let (fbo, textura) = unsafe {
+        let fbo = gl.create_framebuffer().expect("framebuffer de fora");
+        let textura = gl.create_texture().expect("textura de fora");
+        gl.bind_texture(glow::TEXTURE_2D, Some(textura));
+        gl.tex_image_2d(
+            glow::TEXTURE_2D,
+            0,
+            glow::RGBA8 as i32,
+            640,
+            480,
+            0,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelUnpackData::Slice(None),
+        );
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+        gl.framebuffer_texture_2d(
+            glow::FRAMEBUFFER,
+            glow::COLOR_ATTACHMENT0,
+            glow::TEXTURE_2D,
+            Some(textura),
+            0,
+        );
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        (fbo, textura)
+    };
+
+    let mut session = Session::start_with(
+        &std::path::PathBuf::from(&rom),
+        crate::PORTAS_PADRAO,
+        None,
+        true,
+        Some(gl.clone()),
+        Default::default(),
+    )
+    .expect("a sessão de placa abriu");
+    session.machine_mut().desenha_no_fbo(Some(fbo.0.get()));
+
+    // Roda `ms` virtuais e lê o quadro do framebuffer de fora.
+    let roda_e_le = |session: &mut Session, ms: u64| -> Vec<u8> {
+        let base = session.clock_ms();
+        while session.clock_ms().saturating_sub(base) < ms as u32 {
+            match session.step(Duration::ZERO, false) {
+                Step::Stopped => break,
+                Step::Presented => {
+                    while session.mostra_quadro_intermediario() {}
+                }
+                Step::Running | Step::Ahead => {}
+            }
+        }
+        let mut pixels = vec![0u8; 640 * 480 * 4];
+        unsafe {
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+            gl.read_pixels(
+                0,
+                0,
+                640,
+                480,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelPackData::Slice(Some(&mut pixels)),
+            );
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        }
+        pixels
+    };
+
+    // 1) Um trecho, e o ponto de salvamento.
+    let _ = roda_e_le(&mut session, ms);
+    assert!(session.pode_salvar().is_ok(), "o motor recusou salvar no fim do quadro");
+    let estado = session.grava_estado();
+    assert!(estado.len() > 1024, "o estado saiu pequeno demais: {}", estado.len());
+
+    // 2) Mais um trecho, e o quadro que o jogo mostra depois do save.
+    let esperado = roda_e_le(&mut session, ms);
+
+    // 3) Volta ao ponto de salvamento, e o mesmo trecho de novo.
+    session.restaura_estado(&estado).expect("carregou");
+    let depois = roda_e_le(&mut session, ms);
+
+    let iguais = esperado.iter().zip(depois.iter()).filter(|(a, b)| a == b).count();
+    let total = esperado.len();
+    eprintln!(
+        "o quadro depois do save e o quadro depois de carregar: {iguais} de {total} byte(s) iguais \
+         ({:.2}%)",
+        iguais as f64 * 100.0 / total as f64
+    );
+    assert_eq!(
+        iguais, total,
+        "o desenho não continuou igual depois de carregar o estado"
+    );
+
+    unsafe {
+        gl.delete_framebuffer(fbo);
+        gl.delete_texture(textura);
+    }
+}
+
+/// **O mesmo jogo pelos dois rasterizadores, no mesmo instante virtual.**
+///
+/// É a verificação que faltava para o render em hardware. Com a janela fechada, os dois caminhos
+/// rodam o mesmo conteúdo pelo mesmo tempo virtual, e os quadros são comparados byte a byte. Sem
+/// isto, ligar o render em hardware seria trocar um caminho medido por um caminho que ninguém
+/// olhou — e é por isso que o `SET_HW_RENDER` fica por fazer no core até esta conta existir.
+///
+/// **Sem `ZEEBX_TESTE_ROM` não roda**, e **sem placa também não**: num terminal sem EGL o caminho
+/// fora de tela responde que não existe, e isso é o caso normal, não uma falha do teste.
+#[cfg(feature = "gpu")]
+#[test]
+fn os_dois_rasterizadores_desenham_o_mesmo_quadro() {
+    use std::time::Duration;
+
+    let Ok(rom) = std::env::var("ZEEBX_TESTE_ROM") else {
+        eprintln!("sem ZEEBX_TESTE_ROM: nada a comparar");
+        return;
+    };
+    let origem = std::path::PathBuf::from(&rom);
+    let ms: u64 = std::env::var("ZEEBX_TESTE_MS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(3000);
+
+    // O contexto precisa ficar vivo enquanto a sessão roda: as funções de GL moram nele.
+    let contexto = match crate::video::contexto::Contexto::novo() {
+        Ok(contexto) => contexto,
+        Err(porque) => {
+            eprintln!("sem placa fora de tela: {porque}");
+            return;
+        }
+    };
+
+    let tela_de = |placa: bool, contexto: Option<std::sync::Arc<glow::Context>>| {
+        let mut session = Session::start_with(
+            &origem,
+            crate::PORTAS_PADRAO,
+            None,
+            placa,
+            contexto,
+            Default::default(),
+        )
+        .ok()?;
+        let base = session.clock_ms();
+        while session.clock_ms().saturating_sub(base) < ms as u32 {
+            match session.step(Duration::ZERO, false) {
+                Step::Stopped => break,
+                Step::Presented => {
+                    while session.mostra_quadro_intermediario() {}
+                }
+                Step::Running | Step::Ahead => {}
+            }
+        }
+        let tela = session.screen();
+        let (largura, altura) = (tela.width(), tela.height());
+        let mut bytes = Vec::new();
+        tela.write_rgb565_into(&mut bytes);
+        Some((largura, altura, bytes))
+    };
+
+    let software = tela_de(false, None).expect("a sessão de software abriu");
+    let placa = tela_de(true, Some(contexto.gl.clone())).expect("a sessão de placa abriu");
+
+    assert_eq!(
+        (software.0, software.1),
+        (placa.0, placa.1),
+        "os dois caminhos desenham em tamanhos diferentes"
+    );
+    assert_eq!(software.2.len(), placa.2.len());
+
+    // Comparação de pixel RGB565: quantos diferem e por quanto. Um rasterizador na placa e outro
+    // no processador não dão o **mesmo** quadro — a diferença é arredondamento e ordem de
+    // operações. O que se cobra aqui é que desenhem a mesma imagem, e não que sejam idênticos.
+    let mut diferentes = 0usize;
+    let mut grosseiras = 0usize;
+    let mut soma = 0u64;
+    let mut pior = 0u16;
+    for (a, b) in software.2.chunks_exact(2).zip(placa.2.chunks_exact(2)) {
+        let (a, b) = (
+            u16::from_le_bytes([a[0], a[1]]),
+            u16::from_le_bytes([b[0], b[1]]),
+        );
+        let (r1, g1, b1) = (a >> 11 & 0x1f, a >> 5 & 0x3f, a & 0x1f);
+        let (r2, g2, b2) = (b >> 11 & 0x1f, b >> 5 & 0x3f, b & 0x1f);
+        let d = (r1.abs_diff(r2) as u64)
+            + (g1.abs_diff(g2) as u64)
+            + (b1.abs_diff(b2) as u64);
+        if d > 0 {
+            diferentes += 1;
+        }
+        // Um passo de canal em 565 é o **arredondamento** dos dois conversores, e não imagem
+        // diferente: o rasterizador de software trunca (`>> 3`), e o `glReadPixels` em
+        // `UNSIGNED_SHORT_5_6_5` arredonda. Medido no Crash: 98,33% dos pixels diferem por 1 ou 2
+        // passos, com pior 2 e média 1,93 — mesma imagem. O que a conta abaixo guarda é a
+        // diferença que **não** é arredondamento.
+        if d > 2 {
+            grosseiras += 1;
+        }
+        soma += d;
+        pior = pior.max(d as u16);
+    }
+    let total = software.2.len() / 2;
+    let percentual = diferentes as f64 * 100.0 / total as f64;
+    let grosseiro = grosseiras as f64 * 100.0 / total as f64;
+    let media = soma as f64 / total as f64;
+    eprintln!(
+        "software x placa: {diferentes} de {total} pixel(s) diferentes ({percentual:.2}%), \
+         diferença média {media:.3} por pixel, pior {pior}, acima de 2 passos: {grosseiro:.2}%"
+    );
+    // **O que este teste guarda é a imagem, não o arredondamento.** Uma imagem diferente erra por
+    // muito mais que dois passos de canal; o arredondamento dos dois conversores erra por um ou
+    // dois. Sem esta separação o teste ficava vermelho por 1,9 passo de média — e um teste que
+    // ninguém pode deixar verde deixa de guardar coisa alguma.
+    assert!(
+        grosseiro < 1.0,
+        "os dois rasterizadores desenham imagens diferentes: {grosseiro:.2}% dos pixels diferem \
+         por mais de 2 passos de canal (média {media:.3}, pior {pior})"
+    );
+    assert!(media <= 2.0, "diferença média de {media:.3} passos por pixel");
+}
+
+
     #[test]
     fn um_arquivo_que_nao_existe_diz_que_nao_deu_para_ler() {
         let err = Session::start_inner(
@@ -861,6 +1490,7 @@ mod tests {
             false,
             None,
             Default::default(),
+            &[],
         );
         assert!(matches!(err, Err(StartError::Unreadable(_))));
     }
@@ -872,7 +1502,8 @@ mod tests {
         // legível, porque é ele que a interface mostra.
         let path = std::env::temp_dir().join("zeebx-teste-lixo.mod");
         std::fs::write(&path, b"isto nao e um modulo").unwrap();
-        let Err(err) = Session::start_inner(&path, None, None, false, None, Default::default()) else {
+        let Err(err) = Session::start_inner(&path, None, None, false, None, Default::default(), &[])
+        else {
             panic!("um arquivo de lixo não podia virar uma sessão");
         };
         assert!(!err.to_string().is_empty());
@@ -886,7 +1517,7 @@ mod tests {
 /// jogo inteiro porque um módulo secundário está corrompido seria trocar um jogo que roda em
 /// parte por um que não roda.
 pub fn extensoes_de(mod_path: &std::path::Path) -> Vec<loader::ExtensionImage> {
-    crate::ui::library::extensoes(mod_path)
+    crate::library::extensoes(mod_path)
         .into_iter()
         .filter_map(|(caminho, classes)| {
             let bytes = std::fs::read(caminho).ok()?;

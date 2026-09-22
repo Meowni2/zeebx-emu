@@ -19,21 +19,23 @@ pub const REPOSITORIO: &str = "https://github.com/ZeebxTeam/zeebx-emu";
 pub const DISCORD: &str = "https://discord.gg/D96HjsKTPa";
 
 pub mod acervo;
+#[cfg(feature = "desktop")]
 pub mod depuracao;
+#[cfg(feature = "desktop")]
 pub mod gpu;
 pub mod i18n;
 pub mod library;
 pub mod saves;
 pub mod settings;
 
-#[cfg(not(target_os = "android"))]
+#[cfg(feature = "desktop")]
 pub mod app;
-#[cfg(not(target_os = "android"))]
+#[cfg(feature = "desktop")]
 pub mod atualizacao;
-#[cfg(not(target_os = "android"))]
+#[cfg(feature = "desktop")]
 pub mod discord;
-#[cfg(not(target_os = "android"))]
+#[cfg(feature = "desktop")]
 pub mod window;
 
-#[cfg(not(target_os = "android"))]
+#[cfg(feature = "desktop")]
 pub use app::App;
