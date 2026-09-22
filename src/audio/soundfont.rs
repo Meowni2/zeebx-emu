@@ -401,6 +401,41 @@ mod tests {
         bloco(b"RIFF", &sfbk)
     }
 
+
+    /// **Um banco corrompido não pode derrubar o jogo.** Ele é um arquivo que o usuário baixa e
+    /// copia à mão: um download truncado ou um `.sf2` de outro formato é cenário real, não
+    /// hipótese. O motor tem de seguir com a tabela de timbres e não dizer nada de errado.
+    #[test]
+    fn um_banco_estragado_nao_derruba_nada() {
+        let pasta = std::env::temp_dir().join("zeebx-banco-estragado.sf2");
+        // Cabeçalho de RIFF válido e o resto lixo: passa a checagem mais óbvia e falha na leitura
+        // das listas, que é onde um arquivo truncado de verdade falha.
+        let mut lixo = b"RIFF".to_vec();
+        lixo.extend(1_000u32.to_le_bytes());
+        lixo.extend(b"sfbk".to_vec());
+        lixo.extend(vec![0x7f; 4_000]);
+        std::fs::write(&pasta, &lixo).expect("escreve o lixo");
+
+        assert!(
+            abre(&pasta).is_none(),
+            "um banco estragado tem de ser recusado, e não aceito pela metade"
+        );
+        // Com o banco recusado, o MIDI segue pela tabela de timbres — o caminho de produção
+        // (`machine::media`) pergunta por `banco_de_som`, que é `None`, e cai no sintetizador.
+        let som = crate::audio::midi::decode(&uma_nota(0, 69, 240)).expect("a tabela atende");
+        assert!(som.samples.iter().any(|s| *s != 0.0), "a tabela tinha de soar");
+        let _ = std::fs::remove_file(&pasta);
+    }
+
+    /// **Um caminho que não existe também é recusado em silêncio**, e sem gastar a carga.
+    #[test]
+    fn banco_ausente_nao_e_erro() {
+        let caminho = std::env::temp_dir().join("zeebx-banco-que-nao-existe.sf2");
+        let _ = std::fs::remove_file(&caminho);
+        assert!(abre(&caminho).is_none());
+        assert!(primeiro_banco(&std::env::temp_dir().join("zeebx-sem-pasta")) .is_none());
+    }
+
     /// **O caminho do banco é exercitado sempre**, com um banco montado aqui.
     ///
     /// Os outros testes do módulo usam um `.sf2` de verdade e se dispensam quando não há um — e no
