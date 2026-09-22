@@ -85,6 +85,39 @@ investigação inteira dentro do jogo.
   `glPixelStorei` (alinhamento de linha na textura), em seis jogos. Implementado; depois, **zero**
   jogos ignoram qualquer chamada de GL.
 
+## O que a varredura pegou hoje, e o que foi corrigido
+
+A varredura com linha de base commitada deixou de ser relatório e passou a ser teste. No mesmo dia
+em que passou a cobrar, ela encontrou quatro defeitos — e três foram corrigidos:
+
+| Defeito | Correção | Resultado medido |
+|---|---|---|
+| `glPixelStorei` ignorado (seis jogos) | alinhamento de linha na textura | zero jogos ignoram GL |
+| Dois jogos mudos | Ogg/Vorbis e o quadro MPEG pela sincronia | pico 0,000 → 0,356 e 0,586 |
+| `AEECLSID_JPEGDecoderBREW` recusado | uma linha na fábrica | o Zuma avança um portão |
+| O decodificador só tentava PNG | despacho pela assinatura | **o Zuma roda**, 18.268 cores |
+
+Também entrou uma tela preta que passava como "roda" (o Prey Evil), e o passo de áudio que sumia de
+uma vez virou descida de 1,5 ms — sem mudar a medição dos 18 saltos da Peteca, que se revelaram os
+**ataques** dos efeitos, e não estalos.
+
+## O estado do render em hardware
+
+Não falta código. O que existe, medido:
+
+- o rasterizador da placa desenha **o mesmo quadro** que o de software (idêntico em Double Dragon e
+  Crash; 2,6% de arredondamento no Peteca);
+- o motor sabe desenhar num framebuffer **de fora** (teste que lê os pixels do framebuffer alheio);
+- as features `gl` e `gpu` estão separadas, e o core usa só a primeira: **0 dependências de host**,
+  medido em CI nos seis alvos;
+- o core pede o contexto, monta o `glow::Context`, desenha no FBO do frontend, e **volta ao software**
+  se qualquer passo falhar — inclusive num pânico, que derrubaria o RetroArch;
+- os deslocamentos do `retro_hw_render_callback` batem com o `libretro.h`, e há teste que os cobra.
+
+**O que falta é só a sua sessão**: qual das duas linhas aparece no log
+(`desenhando na placa` ou `seguindo no processador`) e o que a tela mostra. Qualquer uma das duas é
+resultado, porque o jogo continua rodando nos dois casos.
+
 ## O que falta
 
 - **Item 5** (render em hardware): o rasterizador da placa está **verificado contra o de software**
