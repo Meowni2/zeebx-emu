@@ -110,11 +110,28 @@ botao 2 (SELECT): 2 imagens   ← a roda reagiu
 manche x e y:     1 imagem    (não moveu)
 ```
 
-**A roda responde ao Select**, então o caminho de entrada dela funciona pelo core — e o ciclo é
-verificável sem frontend, ao menos em parte. O que falta descobrir é a sequência que **abre um
-jogo**: o manche não a moveu neste arranjo (o aparelho da porta é escolhido por outra variável de
-ambiente, e a roda é navegada pelo manche), e é a próxima medição — agora com um teste que diz
-**qual** entrada mudou a tela, em vez de parar na primeira que não mudou.
+**A roda responde — e isso foi medido com tempo suficiente.** Com 1200 quadros de espera (vinte
+segundos virtuais) antes de mandar entrada:
+
+```text
+botao 3 (START):   1 imagem
+botao 8:          12 imagens   ← reagiu
+manche x=+32767:  26 imagens   ← reagiu
+```
+
+Ou seja: **a roda fica interativa por volta dos vinte segundos**, e o caminho de entrada dela
+funciona pelo core. As duas medições anteriores que diziam "não responde" estavam medindo
+**carregamento** — a mesma armadilha dos títulos F.C., pela terceira vez no dia. O teste agora
+espera antes de mandar entrada, e diz qual entrada mudou a tela.
+
+**O que ainda não saiu é a abertura de um jogo.** Com a roda interativa e navegando, o teste tenta
+manche (quatro direções) com cada botão de face e o Start, e espera 180 quadros depois do
+confirmar — a transição da roda é animada. O pedido não veio. O que já está descartado, por
+medição: a entrada (chega), o tempo de carregamento (vinte segundos bastam), o tempo depois do
+botão (180 quadros), e a árvore de aparelho vazia (o teste foi rodado com `ZEEBX_CORE_SISTEMA`
+apontando para a pasta real, com os 63 jogos instalados). O que sobra é a **sequência** — qual
+gesto a roda espera para confirmar — e é o próximo passo, agora com o instrumento que diz se o
+pedido saiu (`ULTIMA_ABERTURA`).
 
 ## Como fechar o item 8 (o ciclo da Z-Wheel)
 

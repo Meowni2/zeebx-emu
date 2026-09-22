@@ -1510,6 +1510,7 @@ mod testes {
             meta: std::ptr::null(),
         };
         let mut reagiu = None;
+        let mut abriu: Option<(&str, i32, u32, u32)> = None;
         unsafe {
             retro_set_environment(Some(ambiente));
             retro_set_video_refresh(Some(video));
@@ -1519,7 +1520,14 @@ mod testes {
             retro_init();
             retro_set_controller_port_device(0, DEVICE_JOYPAD);
             assert!(retro_load_game(&info), "o core recusou {caminho}");
-            for _ in 0..180 {
+            // Quanto tempo esperar antes de mandar entrada. A Z-Wheel leva mais que os jogos para
+            // chegar à tela interativa — a varredura a pega com zero quadros aos seis segundos —,
+            // e mandar botão para uma tela de carregamento não diz nada sobre o caminho de entrada.
+            let espera: u32 = std::env::var("ZEEBX_TESTE_ESPERA")
+                .ok()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(180);
+            for _ in 0..espera {
                 retro_run();
             }
             for botao in [ID_START, ID_A, ID_B, ID_SELECT] {
@@ -1571,10 +1579,58 @@ mod testes {
                     break;
                 }
             }
+            // **Abrir um jogo com o manche e o botão de confirmar.** É o ciclo do item 8 inteiro,
+            // sem frontend: a roda está interativa desde a espera, o manche a navega, e o pedido de
+            // abertura aparece em `ULTIMA_ABERTURA` — o core o registra por instrumento de teste,
+            // porque o log dele sai por callback variádico do frontend.
+            ULTIMA_ABERTURA.store(0, Ordering::Relaxed);
+            'tentativas: for (direcao, valor) in [("x", 0x7fff), ("x", -0x8000), ("y", 0x7fff), ("y", -0x8000)] {
+                // Os quatro botões de face **e** o Start: a Z-Wheel não usa o mesmo para navegar e
+                // para confirmar, e testar só os de face foi o que deixou o ciclo sem resposta.
+                for botao in [ID_A, ID_B, ID_Y, ID_X, ID_START] {
+                    let alvo = match direcao {
+                        "x" => &EIXO_X,
+                        _ => &EIXO_Y,
+                    };
+                    // Empurra o manche, solta, e confirma.
+                    alvo.store(valor, Ordering::Relaxed);
+                    for _ in 0..30 {
+                        retro_run();
+                    }
+                    alvo.store(0, Ordering::Relaxed);
+                    for _ in 0..20 {
+                        retro_run();
+                    }
+                    BOTAO.store(botao, Ordering::Relaxed);
+                    for _ in 0..20 {
+                        retro_run();
+                    }
+                    BOTAO.store(u32::MAX, Ordering::Relaxed);
+                    // **Depois de confirmar, a roda anima a transição** antes de pedir a abertura —
+                    // vinte quadros não bastam, e o pedido chega durante a animação.
+                    for _ in 0..180 {
+                        retro_run();
+                    }
+                    let classe = ULTIMA_ABERTURA.load(Ordering::Relaxed);
+                    if classe != 0 {
+                        abriu = Some((direcao, valor, botao, classe));
+                        break 'tentativas;
+                    }
+                }
+            }
             retro_unload_game();
             retro_deinit();
         }
         let _ = std::fs::remove_dir_all(&pasta);
+        eprintln!(
+            "ciclo: {}",
+            match abriu {
+                Some((direcao, valor, botao, classe)) => format!(
+                    "o shell pediu {classe:#010x} (manche {direcao}={valor}, botão {botao})"
+                ),
+                None => "a roda não pediu abertura nenhuma".to_string(),
+            }
+        );
         eprintln!(
             "entrada: {}",
             match reagiu {
