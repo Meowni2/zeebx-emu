@@ -567,6 +567,33 @@ mais é um palpite, e palpite em caminho de arquivo se paga com "não funciona e
 compilação sem a feature também responde — dizendo que não tem o sintetizador —, porque silêncio
 aqui vira a mesma conclusão errada.
 
+#### O custo de renderizar a música, e o defeito que ele revelou
+
+Medido com a mesma música (Double Dragon, 47,5 s), em `--release`, nesta máquina:
+
+| caminho | carga do banco | renderizar a música inteira |
+|---|---:|---:|
+| tabela de timbres | — | **6,25 s** |
+| banco de amostras (GeneralUser GS, 32 MB) | 23 ms | **289 ms** |
+
+O banco é **21× mais rápido**, e isso não era esperado. O motivo é o trabalho por amostra: a tabela
+soma `sin()` por harmônico **em cada amostra** (até 48 harmônicos × 1.057.823 amostras), enquanto o
+banco toca amostras gravadas com interpolação.
+
+**O defeito que isso revelou é mais sério que a diferença de fidelidade.** A síntese acontece dentro
+do despacho de API, na chamada `Play` do jogo: com a tabela, cada música que começa **trava o jogo
+por 6,25 s** nesta máquina — e o aparelho é bem mais lento que ela. O Double Dragon toca doze
+músicas. Com o banco o mesmo trecho leva 289 ms, o que ainda se nota, mas é outra ordem.
+
+Fica registrado como o que é: **medido, e ainda não corrigido**. Duas correções possíveis, e a
+escolha depende de quanto o travamento incomoda no aparelho:
+
+1. **Tabela de onda pré-calculada por voz**, em vez de somar harmônicos por amostra. É a correção
+   clássica para síntese aditiva e deve cortar a maior parte dos 6,25 s sem mudar o som.
+2. **Renderizar em pedaços**, espalhando o custo pelos quadros seguintes. O misturador já tem voz
+   de fluxo (`open_stream`/`feed_stream`) para som que o jogo entrega aos poucos, então a máquina
+   existe; o que falta é o sequenciador sobreviver entre chamadas, e isso mexe no save state.
+
 ### Um `IAStream` do jogo como fonte
 
 O Aviãozinho, um port do Quake feito por fãs, monta o `ISource` de outro jeito: escreve um
