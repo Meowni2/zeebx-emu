@@ -57,9 +57,13 @@ jobs:
             libxkbcommon-dev libwayland-dev libgl1-mesa-dev libx11-dev libxcursor-dev \
             libxrandr-dev libxi-dev libfuse2
 
+      # A mesma lista do `ci.yml`: o `dynarmic` pede gerador Ninja e há dependências que se acham
+      # pelo `pkg-config`. As duas linhas foram alinhadas depois que o ensaio dos passos de tag
+      # mostrou que a release usava uma lista mais magra que o CI — e o dia da tag é o pior dia
+      # para descobrir isso.
       - name: Dependências do macOS
         if: runner.os == 'macOS'
-        run: brew install cmake || true
+        run: brew install cmake ninja pkg-config || true
 
       - name: cargo-packager
         run: cargo install cargo-packager --locked
