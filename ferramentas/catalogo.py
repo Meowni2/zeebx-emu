@@ -43,6 +43,9 @@ DAT_URL = (
 )
 DAT_NOME = "Mobile - Zeebo"
 
+# Data da proposta enviada ao No-Intro, no formato que o banco usa na linha `version` do cabeçalho.
+VERSAO_DA_PROPOSTA = "2026.09.21"
+
 ROM = re.compile(
     r'rom \( name "(?P<nome>[^"]+)" size (?P<tamanho>\d+) '
     r"crc (?P<crc>[0-9A-Fa-f]{8}) md5 (?P<md5>[0-9A-Fa-f]{32}) "
@@ -347,7 +350,19 @@ def escreve_fora_do_dat(saida, fichas):
     # grava `mod274259font.bar` para `mod/274259/font.bar`. Um `game` com vários `rom` é válido no
     # formato e é o certo aqui: **qual dos arquivos é o dump é decisão de quem mantém o banco**, e
     # a proposta leva todos, com os hashes, em vez de apostar num.
-    linhas_dat = []
+    linhas_dat = [
+        "# Proposta de inclusão no banco: títulos de Zeebo que não estão no `Mobile - Zeebo.dat`",
+        "# dos DATs do libretro (`github.com/robloach/libretro-dats`), que é quem mantém esse banco.",
+        "# O cabeçalho segue o do DAT oficial, campo por campo — `version` entre aspas, no formato",
+        "# `AAAA.MM.DD`, e só os quatro campos que ele usa. Conferido contra o arquivo do banco.",
+        "clrmamepro (",
+        '\tname "Mobile - Zeebo"',
+        '\tdescription "Mobile - Zeebo (proposta: titulos ausentes)"',
+        f'\tversion "{VERSAO_DA_PROPOSTA}"',
+        '\thomepage "https://github.com/requeijaum/zeebx-emu"',
+        ")",
+        "",
+    ]
     for ficha in fora:
         linhas_dat.append("game (")
         linhas_dat.append(f'\tname "{ficha["nome_no_intro"]}"')
