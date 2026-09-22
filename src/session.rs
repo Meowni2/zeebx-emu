@@ -639,6 +639,15 @@ impl Session {
         self.machine.clock_ms()
     }
 
+    /// Liga o censo do acessador por classe de widget: o que cada classe recebe, por seletor.
+    ///
+    /// É o mesmo que a varredura liga por `ZEEBX_ROM_SELETORES`, e o core não tinha como pedir —
+    /// `Machine` é privado do motor. Serve para responder, **no aparelho**, o que a família de
+    /// widgets não distingue: o que cada classe proprietária espera.
+    pub fn liga_censo_de_widgets(&mut self) {
+        self.machine.liga_censo_de_widgets();
+    }
+
     /// Liga a captura de serial: onde a **instrumentação** do motor escreve.
     ///
     /// Classes criadas, bancos abertos, SQL, propriedades de widget e a árvore de widgets da

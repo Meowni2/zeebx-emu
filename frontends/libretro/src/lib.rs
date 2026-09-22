@@ -1107,6 +1107,11 @@ unsafe fn carrega(
     // aparelho vê o jogo e não vê o que o applet faz por dentro — e foi com ele que se mediu, na
     // Z-Wheel, que o caminho do core reage à tecla mas pergunta `class_id = -1` (0 linhas) onde a
     // varredura resolve o foco (`class_id = 17359702`, o Alien Breaker) e pede a abertura.
+    // O censo do acessador por classe, o mesmo da varredura — e ele é **opt-in** lá pelos mesmos
+    // motivos: acrescenta uma seção ao relatório, e o relatório entra na linha de base.
+    if std::env::var("ZEEBX_CORE_SELETORES").is_ok() {
+        session.liga_censo_de_widgets();
+    }
     if let Ok(caminho) = std::env::var("ZEEBX_CORE_SERIAL") {
         match session.liga_serial(std::path::Path::new(&caminho)) {
             Ok(()) => log(&format!("Zeebx: captura de serial em {caminho}")),

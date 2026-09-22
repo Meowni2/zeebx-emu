@@ -1361,10 +1361,20 @@ impl<C: CpuBackend> Machine<C> {
                 // como o perfil de custo.
                 if self.censo_de_widgets {
                     let classe = self.widgets.get(&this).map_or(0, |widget| widget.classe);
-                    *self
-                        .seletores_por_classe
-                        .entry((classe, seletor))
-                        .or_insert(0) += 1;
+                    let vezes = {
+                        let contagem = self.seletores_por_classe.entry((classe, seletor)).or_insert(0);
+                        *contagem += 1;
+                        *contagem
+                    };
+                    // **A captura é o relatório de quem não tem relatório.** A varredura imprime o
+                    // censo no relatório dela; o core não tem onde imprimir, e é na captura de
+                    // serial que ele já escreve tudo o mais. Sem esta linha, o censo ligado no core
+                    // ficaria só na memória do processo.
+                    if self.serial.is_some() {
+                        self.registra_serial(format!(
+                            "<acessor classe {classe:#010x} seletor {seletor:#x} ({vezes}x)>"
+                        ));
+                    }
                 }
                 match seletor {
                     // Algumas classes usam o próprio endereço de um filho como seletor para
