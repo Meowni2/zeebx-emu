@@ -812,7 +812,26 @@ Isso não é o applet: é a **entrega**. Depois da primeira tecla o caminho do c
 nenhuma à máquina, e é essa a pergunta do próximo experimento — com o instrumento já nos dois lados
 (a linha da entrega na captura) e o roteiro da varredura como referência do que deveria aparecer.
 
-**10. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
+**10. O pad muda, a entrega não chega — e há um atalho que consome setas.** Medindo direto a
+tradução (impressão temporária do que `le_pad` devolve por quadro), o pad muda **corretamente** em
+todos os passos:
+
+```text
+0x0 -> 0x1       aperta o botão 1 (o confirmar)
+0x1 -> 0x1  ...  segura
+0x1 -> 0x0       solta
+0x0 -> 0x4000    aperta o direcional para baixo
+```
+
+Ou seja: a leitura do controle está certa e as bordas existem. O que não acontece é a **entrega** —
+a captura registra uma tecla e as outras não aparecem. E no despacho das teclas há um caminho que
+**consome as setas antes de entregá-las**: o rolamento do HTML em foco, que devolve "tratei" para
+cima/baixo quando há um widget de HTML com foco, e sai do laço antes de chamar tratador nenhum.
+Também merece olhar: o `continue` dele não passa pela linha da captura, então uma seta consumida ali
+**não deixa rastro** — o que faz "a tecla não chegou" e "a tecla foi consumida pelo rolamento" se
+parecerem.
+
+**11. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
 padrão (a config do usuário) e o do core usa o que o frontend entrega; apontando o teste do core
 para a árvore do usuário (`ZEEBX_CORE_SISTEMA=$HOME/.config/zeebx`), o mesmo número de quadros leva
 a roda a **36,6 s** em vez de **50,6 s** — o estado do aparelho muda quando as coisas acontecem, o
