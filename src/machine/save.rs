@@ -23,7 +23,10 @@
 //! respondendo zero — ver o plano. Restaurar um estado parcial é exatamente o que o critério
 //! proíbe, e a porta é essa.
 
-use super::{Callback, Machine, MemStream, OpenFile, SoundState, Timer};
+use super::{
+    Callback, DecodedImage, Machine, MemStream, OpenFile, SoundState, Timer,
+};
+use crate::video::display::Framebuffer;
 use crate::cpu::{CpuBackend, Reg};
 use crate::save_state::{Erro, Guardavel, Leitor, Secoes};
 
@@ -142,6 +145,7 @@ impl<C: CpuBackend> Machine<C> {
         self.grava_tabelas_numericas(&mut secoes);
         self.grava_fontes_e_arquivos(&mut secoes);
         self.grava_conteudo(&mut secoes);
+        self.grava_superficies_e_imagens(&mut secoes);
         self.heap.grava_com_prefixo("heap", &mut secoes);
         self.objects.grava(&mut secoes);
         self.superficies.grava_com_prefixo("surfaces", &mut secoes);
@@ -207,6 +211,7 @@ impl<C: CpuBackend> Machine<C> {
         self.restaura_tabelas_numericas(&leitor)?;
         self.restaura_fontes_e_arquivos(&leitor)?;
         self.restaura_conteudo(&leitor)?;
+        self.restaura_superficies_e_imagens(&leitor)?;
         self.heap.restaura_com_prefixo("heap", &leitor)?;
         self.objects.restaura(&leitor)?;
         self.superficies
@@ -818,6 +823,229 @@ impl<C: CpuBackend> Machine<C> {
 }
 
 
+
+/// Empacota um `Vec<bool>` em bits, um por pixel.
+///
+/// O `DecodedImage` guarda um booleano por pixel dizendo se ele é desenhado. Um byte por pixel
+/// gastaria oito vezes o necessário numa tabela que já guarda dois bytes de cor por pixel.
+fn empacota_bits(bits: &[bool]) -> Vec<u8> {
+    let mut saida = vec![0u8; bits.len().div_ceil(8)];
+    for (indice, bit) in bits.iter().enumerate() {
+        if *bit {
+            saida[indice / 8] |= 1 << (indice % 8);
+        }
+    }
+    saida
+}
+
+/// Desempacota o que [`empacota_bits`] escreveu.
+fn desempacota_bits(bytes: &[u8], quantos: usize) -> Vec<bool> {
+    (0..quantos)
+        .map(|indice| bytes[indice / 8] & (1 << (indice % 8)) != 0)
+        .collect()
+}
+
+/// As superfícies e as imagens decodificadas: as **duas famílias que guardam pixels**.
+///
+/// Elas são o que resta de conteúdo no motor depois das tabelas numéricas, e não dá para
+/// re-derivá-las de nada: ao contrário de uma superfície do guest, que está na memória que entra no
+/// estado, um `Framebuffer` é uma cópia do lado do host, criada por `Framebuffer::new` e preenchida
+/// com o que o jogo desenhou. O mesmo vale para uma imagem já decodificada — o arquivo de origem
+/// pode ter mudado no disco, e decodificar de novo daria outra coisa.
+///
+/// Cada superfície ocupa duas seções, com o identificador no nome: uma de números (tamanho, o que
+/// já foi escrito e a caixa suja) e uma de pixels. É de propósito — assim os pixels ficam num bloco
+/// corrido, e não misturados com números no meio.
+impl<C: CpuBackend> Machine<C> {
+    fn grava_superficies_e_imagens(&self, secoes: &mut Secoes) {
+        secoes.poe_u32s("sup.ids", self.bitmaps.keys().copied());
+        for (id, superficie) in &self.bitmaps {
+            grava_superficie(secoes, &format!("sup.{id}"), superficie);
+        }
+        // A tela é uma superfície também, e a única que sempre existe: quem olha o quadro vê esta.
+        grava_superficie(secoes, "sup.tela", &self.screen);
+
+        secoes.poe_u32s("img.ids", self.images.keys().copied());
+        for (id, imagem) in &self.images {
+            secoes.poe_u32s(
+                &format!("img.{id}.meta"),
+                [
+                    imagem.width,
+                    imagem.height,
+                    u32::from(imagem.frame_width),
+                    imagem.pixels.len() as u32,
+                    imagem.alfa.len() as u32,
+                ],
+            );
+            secoes.poe(&format!("img.{id}.pixels"), pixels_em_bytes(&imagem.pixels));
+            secoes.poe(
+                &format!("img.{id}.opaque"),
+                empacota_bits(&imagem.opaque),
+            );
+            secoes.poe(&format!("img.{id}.alfa"), imagem.alfa.clone());
+        }
+    }
+
+    fn restaura_superficies_e_imagens(&mut self, leitor: &Leitor<'_>) -> Result<(), Erro> {
+        let ids = leitor.u32s("sup.ids")?;
+        let mut superficies = std::collections::HashMap::new();
+        for id in ids {
+            superficies.insert(id, le_superficie(leitor, &format!("sup.{id}"))?);
+        }
+        let tela = le_superficie(leitor, "sup.tela")?;
+
+        let ids = leitor.u32s("img.ids")?;
+        let mut imagens = std::collections::HashMap::new();
+        for id in ids {
+            let meta = leitor.u32s(&format!("img.{id}.meta"))?;
+            if meta.len() != 5 {
+                return Err(Erro::Secao {
+                    nome: format!("img.{id}.meta"),
+                    motivo: format!("esperava 5 números e veio {}", meta.len()),
+                });
+            }
+            let (largura, altura, quadro) = (meta[0], meta[1], meta[2]);
+            let quantos = (largura as usize) * (altura as usize);
+            if meta[3] as usize != quantos {
+                return Err(Erro::Secao {
+                    nome: format!("img.{id}.meta"),
+                    motivo: format!(
+                        "a imagem é {largura}x{altura} e diz ter {} pixels",
+                        meta[3]
+                    ),
+                });
+            }
+            let pixels = bytes_em_pixels(&secao_exigida(leitor, &format!("img.{id}.pixels"))?);
+            if pixels.len() != quantos {
+                return Err(Erro::Secao {
+                    nome: format!("img.{id}.pixels"),
+                    motivo: format!("esperava {quantos} pixels e veio {}", pixels.len()),
+                });
+            }
+            let opacos = secao_exigida(leitor, &format!("img.{id}.opaque"))?;
+            if opacos.len() < quantos.div_ceil(8) {
+                return Err(Erro::Secao {
+                    nome: format!("img.{id}.opaque"),
+                    motivo: format!(
+                        "esperava {} bytes de bits e veio {}",
+                        quantos.div_ceil(8),
+                        opacos.len()
+                    ),
+                });
+            }
+            let alfa = secao_exigida(leitor, &format!("img.{id}.alfa"))?;
+            if alfa.len() != meta[4] as usize {
+                return Err(Erro::Secao {
+                    nome: format!("img.{id}.alfa"),
+                    motivo: format!("esperava {} bytes de alfa e veio {}", meta[4], alfa.len()),
+                });
+            }
+            imagens.insert(
+                id,
+                std::rc::Rc::new(DecodedImage {
+                    width: largura,
+                    height: altura,
+                    pixels,
+                    opaque: desempacota_bits(&opacos, quantos),
+                    alfa,
+                    frame_width: quadro as u16,
+                }),
+            );
+        }
+
+        self.bitmaps = superficies;
+        self.screen = tela;
+        self.images = imagens;
+        Ok(())
+    }
+}
+
+/// Grava uma superfície em duas seções: os números e os pixels.
+fn grava_superficie(secoes: &mut Secoes, prefixo: &str, superficie: &Framebuffer) {
+    let (escritas, serie) = (superficie.escritas(), superficie.serie());
+    let sujo = superficie.sujeira().unwrap_or([0; 4]);
+    secoes.poe_u32s(
+        &format!("{prefixo}.meta"),
+        [
+            superficie.width(),
+            superficie.height(),
+            escritas as u32,
+            (escritas >> 32) as u32,
+            serie as u32,
+            (serie >> 32) as u32,
+            u32::from(superficie.sujeira().is_some()),
+            sujo[0],
+            sujo[1],
+            sujo[2],
+            sujo[3],
+        ],
+    );
+    secoes.poe(&format!("{prefixo}.pixels"), pixels_em_bytes(superficie.pixels()));
+}
+
+/// Lê uma superfície gravada por [`grava_superficie`].
+fn le_superficie(leitor: &Leitor<'_>, prefixo: &str) -> Result<Framebuffer, Erro> {
+    let meta = leitor.u32s(&format!("{prefixo}.meta"))?;
+    if meta.len() != 11 {
+        return Err(Erro::Secao {
+            nome: format!("{prefixo}.meta"),
+            motivo: format!("esperava 11 números e veio {}", meta.len()),
+        });
+    }
+    let (largura, altura) = (meta[0], meta[1]);
+    let quantos = (largura as usize) * (altura as usize);
+    let pixels = bytes_em_pixels(&secao_exigida(leitor, &format!("{prefixo}.pixels"))?);
+    if pixels.len() != quantos {
+        return Err(Erro::Secao {
+            nome: format!("{prefixo}.pixels"),
+            motivo: format!("a superfície é {largura}x{altura} e vieram {} pixels", pixels.len()),
+        });
+    }
+    let mut superficie = Framebuffer::new(largura, altura);
+    let escritas = u64::from(meta[2]) | (u64::from(meta[3]) << 32);
+    let serie = u64::from(meta[4]) | (u64::from(meta[5]) << 32);
+    let sujo = match meta[6] {
+        0 => None,
+        1 => Some([meta[7], meta[8], meta[9], meta[10]]),
+        outro => {
+            return Err(Erro::Secao {
+                nome: format!("{prefixo}.meta"),
+                motivo: format!("o campo da caixa suja vale {outro}, e é booleano"),
+            })
+        }
+    };
+    superficie.restaura_estado(escritas, serie, sujo, pixels);
+    Ok(superficie)
+}
+
+/// Uma seção que tem de existir.
+fn secao_exigida<'a>(leitor: &'a Leitor<'a>, nome: &str) -> Result<Vec<u8>, Erro> {
+    leitor
+        .secao(nome)
+        .map(|bytes| bytes.to_vec())
+        .ok_or_else(|| Erro::Secao {
+            nome: nome.to_string(),
+            motivo: "a seção não está no arquivo".to_string(),
+        })
+}
+
+/// Pixels RGB565 como bytes, na ordem de leitura.
+fn pixels_em_bytes(pixels: &[u16]) -> Vec<u8> {
+    let mut saida = Vec::with_capacity(pixels.len() * 2);
+    for pixel in pixels {
+        saida.extend_from_slice(&pixel.to_le_bytes());
+    }
+    saida
+}
+
+/// O caminho de volta de [`pixels_em_bytes`]. Tamanho ímpar é recusa.
+fn bytes_em_pixels(bytes: &[u8]) -> Vec<u16> {
+    bytes
+        .chunks_exact(2)
+        .map(|par| u16::from_le_bytes([par[0], par[1]]))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1304,6 +1532,100 @@ mod tests {
                 assert!(motivo.contains("999"), "{motivo}");
             }
             outro => panic!("devia recusar o bloco mentiroso, e devolveu {outro:?}"),
+        }
+    }
+
+    /// **As superfícies e as imagens decodificadas voltam** — os pixels, e o que a superfície já
+    /// viveu (`escritas` e `serie`), que é por onde o frontend sabe o que mudou.
+    #[test]
+    fn superficies_e_imagens_vem_de_volta() {
+        let mut antes = maquina();
+        // Uma superfície de 4x2 com pixels distintos, para o teste distinguir pixel de pixel.
+        let mut superficie = Framebuffer::new(4, 2);
+        for (indice, valor) in [0x1111u16, 0x2222, 0x3333, 0x4444, 0x5555, 0x6666, 0x7777, 0x8888]
+            .iter()
+            .enumerate()
+        {
+            superficie.set_pixel_native((indice % 4) as i32, (indice / 4) as i32, *valor);
+        }
+        // Escrever mexe no `touched` e na caixa suja, que é o que o frontend lê.
+        assert!(superficie.is_dirty());
+        antes.bitmaps.insert(0x9000, superficie);
+
+        let mut imagem = DecodedImage {
+            width: 2,
+            height: 2,
+            pixels: vec![0xaaaa, 0xbbbb, 0xcccc, 0xdddd],
+            opaque: vec![true, false, true, true],
+            alfa: vec![0, 51, 255, 7],
+            frame_width: 1,
+        };
+        imagem.frame_width = 1;
+        antes.images.insert(0xa000, std::rc::Rc::new(imagem));
+
+        let arquivo = antes.grava_estado();
+        let mut depois = maquina();
+        depois.restaura_estado(&arquivo).expect("restaurou");
+
+        let voltou = depois.bitmaps.get(&0x9000).expect("a superfície voltou");
+        assert_eq!((voltou.width(), voltou.height()), (4, 2));
+        assert_eq!(
+            voltou.pixels(),
+            &[0x1111u16, 0x2222, 0x3333, 0x4444, 0x5555, 0x6666, 0x7777, 0x8888],
+            "os pixels não voltaram"
+        );
+        let antes_da_gravacao = antes.bitmaps.get(&0x9000).expect("a original");
+        assert_eq!(
+            voltou.escritas(),
+            antes_da_gravacao.escritas(),
+            "o contador de escritas não voltou"
+        );
+        assert_eq!(
+            voltou.serie(),
+            antes_da_gravacao.serie(),
+            "a série da superfície não voltou"
+        );
+        assert_eq!(
+            voltou.sujeira(),
+            antes_da_gravacao.sujeira(),
+            "a caixa suja não voltou"
+        );
+
+        let imagem = depois.images.get(&0xa000).expect("a imagem voltou");
+        assert_eq!((imagem.width, imagem.height), (2, 2));
+        assert_eq!(imagem.pixels, vec![0xaaaa, 0xbbbb, 0xcccc, 0xdddd]);
+        assert_eq!(imagem.opaque, vec![true, false, true, true], "o `opaque` não voltou");
+        assert_eq!(imagem.alfa, vec![0, 51, 255, 7], "o alfa não voltou");
+        assert_eq!(imagem.frame_width, 1);
+    }
+
+    /// A superfície volta **sem** perder a caixa suja: gravar um estado não pode consumir o aviso
+    /// de que a tela mudou, senão o quadro seguinte sai velho por causa do save state.
+    #[test]
+    fn a_caixa_suja_nao_e_consumida_ao_gravar() {
+        let mut maquina = maquina();
+        let mut superficie = Framebuffer::new(2, 2);
+        superficie.set_pixel_native(1, 1, 0x1234);
+        let esperada = superficie.sujeira();
+        assert!(esperada.is_some(), "desenhar devia sujar a superfície");
+        maquina.bitmaps.insert(0x1000, superficie);
+
+        let _ = maquina.grava_estado();
+        assert_eq!(
+            maquina.bitmaps.get(&0x1000).and_then(|s| s.sujeira()),
+            esperada,
+            "gravar o estado consumiu a caixa suja"
+        );
+    }
+
+    /// Os bits do `opaque` vão empacotados e voltam na ordem certa.
+    #[test]
+    fn os_bits_do_opaque_vao_e_voltam() {
+        for quantos in [0usize, 1, 7, 8, 9, 16, 17, 100] {
+            let bits: Vec<bool> = (0..quantos).map(|i| i % 3 == 0).collect();
+            let bytes = empacota_bits(&bits);
+            assert_eq!(bytes.len(), quantos.div_ceil(8), "tamanho com {quantos} bits");
+            assert_eq!(desempacota_bits(&bytes, quantos), bits, "com {quantos} bits");
         }
     }
 }
