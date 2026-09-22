@@ -500,6 +500,30 @@ Dois defeitos apareceram na medição, os dois por comparação com a referênci
 Custo medido: a carga do banco mais a renderização da música de 47,5 s levam **295 ms**, uma vez
 por música e com o banco guardado por caminho (o jogo toca doze).
 
+#### Qual banco usar: medido, não escolhido no gosto
+
+Quatro candidatos, com o que foi verificado em fonte primária (tamanho por `HEAD` no arquivo, licença
+pelo `copyright` do pacote Debian ou pelo repositório do autor):
+
+| banco | tamanho | licença | presets | centroide contra a referência |
+|---|---:|---|---:|---:|
+| **GeneralUser GS** | 32,3 MB | permissiva, mas o texto admite origem desconhecida de parte das amostras | **287** | **+2,5%** |
+| FluidR3_GS | 2,4 MB | **MIT** (Frank Wen, no `copyright` do Debian) | **33** | +7,3%, com RMS 3× menor |
+| FluidR3_GM | 114 MB | **MIT** | — | não medido: grande demais para distribuir |
+| MuseScore_General (Lite) | 32,6 MB | **MIT** | — | **não é lido**: é `.sf3`, e o `rustysynth` rejeita SF3 (há teste no próprio crate) |
+
+O banco pequeno **não resolve**, e o motivo é medido: o FluidR3_GS tem 33 presets porque é um
+subconjunto GS, e a música do Double Dragon usa **25 programas GM** diferentes. Com 33 presets, a
+maior parte cai no preset padrão, e o resultado é uma mistura mais fina (RMS 0,055 contra 0,143 do
+GeneralUser, com o mesmo pico 0,8). Ele ainda é 7,3% melhor que a tabela, mas fica longe do banco
+completo.
+
+Ou seja: **fidelidade e licença limpa não cabem juntas no mesmo tamanho**. O GeneralUser GS é a
+referência que o Zeebulator usa e o que chega a 2,5%; a licença dele permite redistribuir, mas o
+próprio texto diz que não se sabe a origem de todas as amostras. Quem publica tem de decidir isso.
+Um caminho aberto: o `rustysynth-ext` lê SF3, e aí o MuseScore_General (MIT, 32,6 MB) entra — não
+foi testado aqui.
+
 ### Um `IAStream` do jogo como fonte
 
 O Aviãozinho, um port do Quake feito por fãs, monta o `ISource` de outro jeito: escreve um

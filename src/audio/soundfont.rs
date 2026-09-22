@@ -228,7 +228,6 @@ mod tests {
         assert!(pico > 0.01, "o piano tinha de soar, pico {pico}");
     }
 
-
     /// **O banco distingue o arco da palheta.** Era o defeito mais audível da tabela de timbres:
     /// 29 (*overdrive*), 30 (distorcida), 42 (violoncelo) e 48 (cordas) saíam com a **mesma onda**.
     ///
