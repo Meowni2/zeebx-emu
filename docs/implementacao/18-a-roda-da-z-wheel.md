@@ -763,7 +763,23 @@ liga o `FID_ACTIVE`), mas o foco nunca vira um jogo: a consulta continua com `-1
 pergunta do próximo experimento — **de onde a roda tira a classe do item em foco, e por que ela sai
 `-1` no caminho do core** —, e agora há como medi-la, porque o instrumento existe nos dois lados.
 
-**7. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
+**7. A árvore de widgets é a mesma, e o primeiro confirmar faz o mesmo — a divergência está depois.**
+Comparando as duas capturas no instante da primeira tecla, as árvores são **idênticas**, linha por
+linha: mesmos endereços, mesmas classes, mesmos tratadores. O `0x300007d0` que a §7.6 mede
+(`classe 0x1028e19`, 39×25 em (100,21), dois filhos) está nos dois, pendurado na barra
+`0x1028e3f`, cujo tratador é a `0x77300` — a que responde "tratei" para qualquer tecla.
+
+E o **primeiro** confirmar faz o mesmo nos dois: `IWeb` (`0x0100550d`), display, e
+`prop 0x5064=0x1` (o `FID_ACTIVE`) — na varredura aos 30 910 ms, no core aos 53 434 ms.
+
+A divergência aparece **na tecla seguinte**: na varredura, a seta para baixo (33 023 ms) e a da
+direita (35 023 ms) produzem atividade (`IWeb` + display, uma vez cada); no core, as teclas
+seguintes não produzem **nada** na captura. Mesma árvore, mesmo primeiro efeito, e a segunda tecla
+se perde — o que aponta para a **entrega do evento**, e não para o estado da tela. É a única
+variável que difere entre os dois caminhos: lá a tecla entra como tecla do console, aqui ela é
+traduzida do controle.
+
+**8. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
 padrão (a config do usuário) e o do core usa o que o frontend entrega; apontando o teste do core
 para a árvore do usuário (`ZEEBX_CORE_SISTEMA=$HOME/.config/zeebx`), o mesmo número de quadros leva
 a roda a **36,6 s** em vez de **50,6 s** — o estado do aparelho muda quando as coisas acontecem, o
