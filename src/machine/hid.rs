@@ -634,6 +634,8 @@ impl<C: CpuBackend> Machine<C> {
                 .tratadores_em_ordem(&dentro)
                 .into_iter()
                 .partition(|(esta_dentro, _)| *esta_dentro);
+            // As contagens saem antes dos laços: depois deles as listas foram consumidas.
+            let (quantos_na_tela, quantos_fora) = (na_tela.len(), fora.len());
             for (_, (funcao, contexto)) in na_tela {
                 let saida = self.call_guest(funcao, [contexto, evento, avk, 0], QSORT_BUDGET)?;
                 if matches!(saida, Outcome::Returned { code } if code != 0) {
@@ -649,6 +651,27 @@ impl<C: CpuBackend> Machine<C> {
                         break;
                     }
                 }
+            }
+            // **A entrega da tecla vai para a captura de serial.** É o instrumento que responde
+            // as duas perguntas que sobram quando um applet reage à primeira tecla e ignora as
+            // seguintes: **a quem** ela foi entregue, e se alguém a tratou. Medido: no caminho do
+            // core a segunda tecla não produz efeito nenhum, com a árvore de widgets idêntica à da
+            // varredura — sem esta linha, "a tecla não chegou" e "chegou e ninguém tratou" são
+            // indistinguíveis.
+            if self.serial.is_some() {
+                self.registra_serial(format!(
+                    "<tecla {avk:#x} {} para {} tratador(es) na tela e {} fora{}>",
+                    match down {
+                        true => "aperta",
+                        false => "solta",
+                    },
+                    quantos_na_tela,
+                    quantos_fora,
+                    match tratado {
+                        true => ", tratada",
+                        false => ", ninguém tratou",
+                    }
+                ));
             }
             if !tratado {
                 let _ = self.send_applet_event(self.applet_class, evento, avk as u16, 0)?;

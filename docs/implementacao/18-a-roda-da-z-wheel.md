@@ -779,7 +779,22 @@ se perde — o que aponta para a **entrega do evento**, e não para o estado da 
 variável que difere entre os dois caminhos: lá a tecla entra como tecla do console, aqui ela é
 traduzida do controle.
 
-**8. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
+**8. E só **uma** tecla chega à máquina.** O instrumento que faltava — a linha da entrega, no
+próprio despacho — respondeu de imediato. Na execução inteira do caminho do core, a máquina recebeu
+**um único par**:
+
+```text
+[36612 ms] <tecla 0xe064 aperta para 2 tratador(es) na tela e 0 fora, tratada>
+[36771 ms] <tecla 0xe064 solta  para 2 tratador(es) na tela e 4 fora, tratada>
+```
+
+As **sete teclas seguintes do roteiro não chegam à máquina** — nem como aperta, nem como solta. Isso
+não é o applet ignorando: é o evento não chegando. Com a primeira tecla tratada e as demais ausentes,
+a pergunta muda de lado: ou a **tradução do controle** não produz as bordas seguintes, ou a **fila**
+da máquina não é esvaziada depois desse despacho. É o próximo experimento, e ele é de código, não de
+comportamento do applet — a instrumentação para ele já está na captura.
+
+**9. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
 padrão (a config do usuário) e o do core usa o que o frontend entrega; apontando o teste do core
 para a árvore do usuário (`ZEEBX_CORE_SISTEMA=$HOME/.config/zeebx`), o mesmo número de quadros leva
 a roda a **36,6 s** em vez de **50,6 s** — o estado do aparelho muda quando as coisas acontecem, o
