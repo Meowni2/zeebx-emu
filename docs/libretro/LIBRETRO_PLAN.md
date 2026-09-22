@@ -1758,6 +1758,12 @@ extraído: a biblioteca carrega e responde api_version 1
 Dois arquivos com o **mesmo nome**, e a biblioteca funcional depois de sair do `.zip` — que é
 exatamente o que o RetroArch precisa para aceitar o core.
 
+**E os nomes dos artefatos não colidem**, que era o outro risco daquele passo: o job da release
+baixa tudo para um diretório só e publica `pacotes/*`, então dois arquivos com o mesmo nome
+derrubariam a publicação. Conferido: são **11 artefatos** — cinco instaladores (dois `.deb`/AppImage
+no Linux, um `-setup.exe`, dois `.dmg`) e seis `.zip` do core, um por alvo, todos com nome distinto.
+Sem os zips por alvo, seriam seis `zeebx_libretro.so` iguais.
+
 ## O que falta, com o mapa de cada item
 
 ### Item 5 — render em hardware: só o encanamento
