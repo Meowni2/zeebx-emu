@@ -1744,6 +1744,20 @@ Cada sistema empacota com a ferramenta que tem: `zip` no Linux e no macOS, `Comp
 Windows — o `zip` **não existe** no runner do Windows, e um `shell: bash` com `zip` falharia num
 terço dos alvos no dia da tag.
 
+**Ensaio local do passo de empacotamento, porque ele só roda em tag.** Os comandos do workflow,
+executados à mão:
+
+```text
+zeebx_libretro-linux-x86_64.zip
+  zeebx_libretro.info    332 bytes
+  zeebx_libretro.so      15.637.608 bytes
+
+extraído: a biblioteca carrega e responde api_version 1
+```
+
+Dois arquivos com o **mesmo nome**, e a biblioteca funcional depois de sair do `.zip` — que é
+exatamente o que o RetroArch precisa para aceitar o core.
+
 ## O que falta, com o mapa de cada item
 
 ### Item 5 — render em hardware: só o encanamento
