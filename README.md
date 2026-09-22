@@ -14,6 +14,21 @@ Em desenvolvimento. Hoje 50 dos 62 títulos de teste passam do carregamento e de
 
 [GitHub: https://github.com/ZeebxTeam](https://github.com/ZeebxTeam)
 
+# Notas para Colaboradores
+
+Por favor, ao abrir uma PR, sempre aponte para a branch development ou a branch correspondente ao ajuste que está sendo feito.
+Não abra PR para a branch master, visto que é onde organizamos e concentramos nossos CI de build de relases.
+
+Para novos targets de frontend, siga sempre a regrinha de mantê-lo dentro da pasta "frontends", exemplo:
+frontends/android/
+frontends/headless/
+frontends/libretro/
+frontends/standalone-qt/
+
+E também ajuste o [.github/workflows/release.yml](release.yml) para apontar um alvo de build durante nosso CI, assim garante que o target seja fornecido junto durante a criação da release!
+
+Esses são detalhes sugeridos apenas para manter a organização do nosso repositório!
+
 ## Como funciona
 
 Emular Zeebo não é emular um console: é reimplementar o Qualcomm BREW 4.0.2. O jogo é um binário
@@ -28,10 +43,12 @@ O desenho completo está em [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Compatibilidade
 
-Poucas ROMs ainda rodam sem problemas, diversos jogos podem apresentar travamentos antes da inicialização ou durante a execução.
+A maioria das ROMs rodam sem problemas, alguns jogos podem apresentar travamentos antes da inicialização ou durante a execução.
 
 O estado de cada título, com os endereços de cada parada, está em
 [docs/implementacao/11-compatibilidade.md](docs/implementacao/11-compatibilidade.md).
+
+Para frontends como Android e Libretro, essa listagem de compatibilidade pode não se aplicar. Pedimos que reportem quaisquer problemas nessas versões também.
 
 ## Compilando
 
