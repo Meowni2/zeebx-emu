@@ -680,6 +680,69 @@ própria de commit/journal; rename atômico de arquivos externos não protege se
 
 Não registrar opção cosmética ou que não possa ser aplicada de forma segura numa sessão viva.
 
+## Core Options: mecanismo e desenho para o Zeebx
+
+O menu **Core Options** não é alimentado pelo `.info` do núcleo. O core registra as opções pelo
+callback `retro_set_environment`, usando a ABI de `libretro.h`:
+
+1. chamar `RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION` (`52`);
+2. se a versão for pelo menos 2, registrar uma tabela estática com
+   `RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2` (`67`), usando `retro_core_options_v2`, categorias e
+   `retro_core_option_v2_definition`;
+3. para frontends antigos, recuar para `RETRO_ENVIRONMENT_SET_VARIABLES` (`16`), com
+   `retro_variable { key, "Nome; valor1|valor2" }`;
+4. ler cada valor com `RETRO_ENVIRONMENT_GET_VARIABLE` (`15`), usando chaves prefixadas com
+   `zeebx_`;
+5. consultar `RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE` (`17`) no laço quando houver opção que possa
+   mudar durante a sessão.
+
+O frontend mantém uma cópia das strings e das tabelas. Portanto, descrições, valores e terminadores
+precisam ter vida estática; não apontar para `String` local. O `key` deve ser estável e igual entre
+versões para que o RetroArch preserve as escolhas. `retro_get_system_info` continua descrevendo só o
+core e as extensões (`mod|zip|7z`); não há opção de usuário ali.
+
+No código atual, `retro_set_environment` registra controladores e descritores de entrada, mas ainda
+não registra opções. O próprio plano antigo deixava `GET_CORE_OPTIONS_VERSION`/`SET_CORE_OPTIONS_V2`
+como futuro; a ABI e os structs necessários já estão no `frontends/libretro/include/libretro.h`.
+
+### Primeira opção a implementar
+
+A opção útil e verificável é uma política de síntese MIDI:
+
+```text
+key:     zeebx_midi_backend
+category: audio
+values:  Auto | Tabela de timbres | SoundFont
+default: Auto
+```
+
+`Auto` preserva o comportamento atual: usa `.sf2` quando encontrado e recua para a tabela quando
+não há banco ou o banco é inválido. `Tabela de timbres` evita a espera longa no RG40XX-H. `SoundFont`
+recusa silenciosamente o recuo apenas depois de avisar que não há banco, ou mantém o recuo atual se a
+compatibilidade for preferida. O texto da opção deve dizer que a troca exige recarregar o conteúdo.
+
+A opção não pode ser apenas decorativa: hoje `Machine::new` chama `banco_do_aparelho` durante a
+construção da sessão e guarda `banco_de_som`; `Session::start_*` e `Machine::new_with_storage` não
+recebem uma política de áudio. A implementação precisa carregar a opção em `retro_load_game`, passá-la
+pela criação da `Session`/`Machine` e também aplicá-la em `troca_para`, que recria a sessão quando a
+Z-Wheel abre um jogo ou retorna a ela. Ler a opção no `retro_run` sem reconstruir a sessão deixaria o
+menu dizendo uma coisa e o banco já carregado fazendo outra.
+
+### Opções de desempenho, somente após medição
+
+Não registrar ainda controles para `block_size` ou chorus/reverb antes de existir uma implementação
+real. As candidatas são:
+
+```text
+zeebx_midi_effects: Ligados | Desligados
+zeebx_midi_block:  64 | 1024
+```
+
+A medição local de 22/09/2026 mostrou 279 ms para a faixa de 47,5 s com bloco 64 e efeitos ligados,
+e 149 ms com bloco 1024 e efeitos desligados. Isso dá cerca de 1,9x, mas não explica sozinho os mais
+de dois minutos observados no H700; por isso a primeira opção deve ser o backend MIDI, e não expor
+internais de desempenho como se fossem solução.
+
 ## Catálogo, identificação e capas
 
 O acervo tem duas camadas de identidade, e as duas existem hoje:

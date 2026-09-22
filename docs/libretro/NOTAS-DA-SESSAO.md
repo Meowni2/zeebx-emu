@@ -191,9 +191,9 @@ e a segunda caiu por medição, não por opinião.
   (`Mobile - Zeebo`), DAT No-Intro de 57 jogos. **Publicar depende de conta**, e é decisão do
   Rafael; nada foi publicado e nenhum repositório externo foi criado.
 
-**Bloqueado por hardware, sem contorno:** item 5 (teste físico), a validação no aparelho do item 8,
-e o core no cartão do muOS — este último adiado pelo Rafael até a noite, com o comando pronto
-(`ferramentas/instala_core.py --muos /media/ROOTFS --banco GeneralUser-GS.sf2`).
+**Bloqueado por hardware, sem contorno:** item 5 (teste físico) e a validação no aparelho do item 8.
+O core no cartão do muOS, que estava adiado neste ponto do histórico, foi instalado depois no SD1;
+a validação física continua pendente.
 
 ## O que o teste headless já responde sobre a Z-Wheel
 
@@ -564,15 +564,45 @@ combinações de features verdes (456/461/467/472 + 5 do core); CI **6/6** nos d
 `rustysynth` dentro — e o `readelf` do artefato ARM confirma que as dependências continuam sendo só
 libstdc++, libgcc, libm e libc.
 
-**O que falta:** instalar o core no cartão do muOS. É um comando, com o cartão montado:
+**O que estava pendente naquele fechamento:** instalar o core no cartão do muOS. Isso foi feito depois
+no SD1 com o core AArch64, o `.info` e o `GeneralUser-GS.sf2`; os hashes e o atraso observado no
+primeiro MIDI estão registrados na seção seguinte. O comando continua sendo a referência para uma
+instalação limpa:
 
 ```bash
 python3 ferramentas/instala_core.py --muos /media/$USER/ROOTFS --banco GeneralUser-GS.sf2
 ```
 
-O banco é a decisão que continua aberta e não é técnica: o GeneralUser GS chega a 11,3% e permite
+A decisão de banco continua aberta e não é técnica: o GeneralUser GS chega a 11,3% e permite
 redistribuir, mas o texto da licença admite origem desconhecida de parte das amostras. Os
 candidatos, com tamanho, licença e presets medidos, estão na tabela do `07-audio.md`.
+
+## SoundFont no RG40XX-H: a primeira música demora, mas toca
+
+**Observação física de 22/09/2026:** no RG40XX-H, o core novo com `GeneralUser-GS.sf2` demorou mais de
+**2 minutos** antes de tocar a música tema do menu do Double Dragon; depois subiu e a música foi ouvida
+no console. Isso não é uma falha de formato nem de caminho: o banco instalado foi conferido com SHA-256
+`9575028c7a1f589f5770fccc8cff273456af40cd26ed836944e9a5152688cfe`, e o core novo com o suporte
+`rustysynth` está no SD1.
+
+**Medição no laptop:** `SoundFont::new` levou **66 ms**; a faixa de 47,5 s levou **279 ms** com o
+`rustysynth` padrão (bloco interno 64, chorus/reverb ligados). Com bloco 1024 e efeitos desligados,
+levou **149 ms**. As doze músicas do Double Dragon renderizaram em cerca de **7,2 s** no laptop.
+Isso separa o custo de abrir os 32 MB do custo de renderizar as vozes. No código atual,
+`Machine::new` carrega o banco de forma síncrona e `decodifica_som` renderiza a partitura inteira antes
+de entregá-la ao mixer; o cache é por caminho e evita recarregar o banco no mesmo processo, mas não evita
+a primeira síntese de cada MIDI.
+
+**Hipótese de trabalho:** o atraso no H700 está no custo de renderização síncrona (possivelmente várias
+faixas solicitadas no arranque), não na cópia ou no parser do `.sf2`. O core AArch64 foi compilado com
+`-C target-cpu=cortex-a35`, a configuração portátil usada para RK3326/H700. Ainda falta medir o tempo
+por faixa no aparelho. O A/B previsto é retirar temporariamente o `.sf2`: a tabela de timbres deve
+voltar ao arranque rápido e confirmar a regressão do caminho de amostras.
+
+**Otimizações candidatas, sem aplicar ainda:** bloco interno 1024; chorus/reverb opcional no portátil;
+cache persistente de PCM; ou renderização incremental/assíncrona em vez de sintetizar a música inteira
+no despacho de `Play`. A medição local mostra que bloco/efeitos sozinhos dão cerca de 1,9x, portanto
+não são ainda uma explicação completa para os mais de dois minutos.
 
 ## O item 8, do "não reage" ao "abre e executa" — o que mudou nesta sessão
 
@@ -610,7 +640,7 @@ acessador por classe de widget (`ZEEBX_ROM_SELETORES`), e no teste do core a cla
 (`CLASSE_ATUAL`), o relógio virtual (`RELOGIO`), as instruções (`INSTRUCOES`) e o roteiro
 configurável (`ZEEBX_CORE_TECLAS=ms:id`).
 
-**Bloqueado por hardware, declarado:** teste físico em R36S/RG40XX-H (item 5), validação no aparelho
-(item 8), e o core no cartão do muOS — adiado pelo Rafael, com o comando pronto
-(`ferramentas/instala_core.py --muos /media/ROOTFS --banco GeneralUser-GS.sf2`).
+**Bloqueado por hardware, declarado:** teste físico em R36S/RG40XX-H (item 5) e validação no
+aparelho (item 8). O core, o `.info` e o banco MIDI já foram instalados no SD1; o primeiro teste no
+RG40XX-H tocou, mas demorou mais de dois minutos para iniciar a primeira música.
 
