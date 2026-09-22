@@ -214,6 +214,28 @@ Zeebx: o shell pediu {classe}; abrindo {caminho}
 Zeebx: o shell pediu {classe}, que não está na pasta de jogos
 ```
 
+## Os passos que só rodam no dia da tag
+
+Empacotar e publicar só acontece quando alguém envia uma tag, então esses caminhos nunca eram
+exercitados — e três defeitos apareceram quando passei a ensaiá-los à mão:
+
+1. **O `zip` não existe no runner do Windows.** O passo de empacotar o core usava `zip` num
+   `shell: bash`, e falharia em dois dos seis alvos. Cada sistema agora usa a ferramenta que tem
+   (`Compress-Archive` no Windows).
+2. **Os nomes dos artefatos podiam colidir.** O job da release baixa tudo para um diretório só e
+   publica `pacotes/*`: seis `zeebx_libretro.so` iguais derrubariam a publicação. Os zips por alvo
+   evitam isso, e conferi que são **11 artefatos com nomes distintos**.
+3. **O `.deb` não puxava as bibliotecas de janela.** O `eframe` é declarado com `x11` e `wayland`,
+   então o binário linka `libX11`, `libXcursor`, `libXrandr`, `libXi` e `libwayland-client` — e a
+   lista de dependências não tinha nenhuma delas. Numa instalação de sistema mínimo o emulador
+   instalaria e não abriria.
+
+E o ensaio do empacotamento do core confirmou o que importa para o usuário: o `.zip` sai com o
+`.so` e o `.info` de mesmo nome, e a biblioteca **carrega depois de extraída** (`api_version` 1).
+
+**A lição que fica:** caminho que só roda em dia de release é caminho sem teste. Ensaia-lo à mão
+custou minutos e pegou três defeitos.
+
 ## Como capturar o que o core diz
 
 O core escreve em dois lugares, e os dois servem para diagnosticar sem abrir depurador:

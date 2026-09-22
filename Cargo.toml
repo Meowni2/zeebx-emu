@@ -138,7 +138,23 @@ main = true
 
 [package.metadata.packager.deb]
 # O `libasound2t64` é o nome do ALSA a partir do Ubuntu 24.04 e do Debian 13.
-depends = ["libasound2 | libasound2t64", "libudev1", "libgl1", "libxkbcommon0", "libatomic1"]
+# As de áudio, entrada e GL já estavam; **as de janela faltavam**, e o defeito só apareceria
+# numa instalação de sistema mínimo: o `eframe` é declarado com as features `x11` e `wayland`, então
+# o binário linka `libX11`, `libXcursor`, `libXrandr`, `libXi` e `libwayland-client`, e o `.deb` não
+# puxava nenhuma delas. A lista abaixo é a mesma do `ci.yml`, que é o que o build precisa para
+# compilar — trocando os `-dev` pelos pacotes de execução.
+depends = [
+    "libasound2 | libasound2t64",
+    "libudev1",
+    "libgl1",
+    "libxkbcommon0",
+    "libatomic1",
+    "libx11-6",
+    "libxcursor1",
+    "libxrandr2",
+    "libxi6",
+    "libwayland-client0",
+]
 section = "games"
 
 [package.metadata.packager.nsis]
