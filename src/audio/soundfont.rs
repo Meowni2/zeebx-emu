@@ -436,6 +436,27 @@ mod tests {
         assert!(primeiro_banco(&std::env::temp_dir().join("zeebx-sem-pasta")) .is_none());
     }
 
+
+    /// **O relato diz onde pôr o banco**, senão "o banco não funciona" fica indistinguível de
+    /// "o arquivo está no lugar errado". Este é o lado da build **com** o sintetizador; o lado
+    /// sem ele é cobrado em `audio::mod`, e os dois existem porque silêncio numa das builds leva à
+    /// conclusão errada.
+    #[cfg(feature = "soundfont")]
+    #[test]
+    fn o_relato_diz_onde_por_o_banco() {
+        let aparelho = std::env::temp_dir().join("zeebx-aparelho-sem-banco");
+        let _ = std::fs::remove_dir_all(&aparelho);
+        let texto = relato(&aparelho);
+        assert!(
+            texto.contains("soundfonts"),
+            "o relato tem de dizer a pasta: {texto}"
+        );
+        assert!(
+            texto.contains("tabela de timbres"),
+            "sem banco, o relato tem de dizer com o que a trilha toca: {texto}"
+        );
+    }
+
     /// **O caminho do banco é exercitado sempre**, com um banco montado aqui.
     ///
     /// Os outros testes do módulo usam um `.sf2` de verdade e se dispensam quando não há um — e no

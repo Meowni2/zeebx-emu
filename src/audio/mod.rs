@@ -697,3 +697,20 @@ mod tests {
         assert!(!mixer.is_playing(1), "o som andou até o fim, inclusive a descida");
     }
 }
+
+#[cfg(test)]
+mod testes_do_relato {
+    /// **A build sem o sintetizador também responde**, e diz que não tem — em vez de calar.
+    /// Silêncio aqui viraria a mesma conclusão errada do outro lado: "o banco não funciona".
+    #[cfg(not(feature = "soundfont"))]
+    #[test]
+    fn o_relato_avisa_que_a_build_nao_tem_banco() {
+        let aparelho = std::env::temp_dir().join("zeebx-aparelho-sem-feature");
+        let texto = super::soundfont::relato(&aparelho);
+        assert!(
+            texto.contains("não tem o sintetizador de banco"),
+            "o relato tem de dizer que a build não tem o recurso: {texto}"
+        );
+        assert!(texto.contains("soundfonts"), "e onde o arquivo iria: {texto}");
+    }
+}
