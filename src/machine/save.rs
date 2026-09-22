@@ -23,7 +23,7 @@
 //! respondendo zero — ver o plano. Restaurar um estado parcial é exatamente o que o critério
 //! proíbe, e a porta é essa.
 
-use super::{Callback, Machine, MemStream, SoundState, Timer};
+use super::{Callback, Machine, MemStream, OpenFile, SoundState, Timer};
 use crate::cpu::{CpuBackend, Reg};
 use crate::save_state::{Erro, Guardavel, Leitor, Secoes};
 
@@ -140,6 +140,7 @@ impl<C: CpuBackend> Machine<C> {
         // terem o mesmo nome — quem lê o arquivo não precisa de tabela de tradução.
         self.grava_entrada_e_tempo(&mut secoes);
         self.grava_tabelas_numericas(&mut secoes);
+        self.grava_fontes_e_arquivos(&mut secoes);
         self.heap.grava_com_prefixo("heap", &mut secoes);
         self.objects.grava(&mut secoes);
         self.superficies.grava_com_prefixo("surfaces", &mut secoes);
@@ -203,6 +204,7 @@ impl<C: CpuBackend> Machine<C> {
         // Daqui para baixo é aplicação: ou tudo, ou nada.
         self.restaura_entrada_e_tempo(&leitor)?;
         self.restaura_tabelas_numericas(&leitor)?;
+        self.restaura_fontes_e_arquivos(&leitor)?;
         self.heap.restaura_com_prefixo("heap", &leitor)?;
         self.objects.restaura(&leitor)?;
         self.superficies
@@ -555,6 +557,121 @@ impl<C: CpuBackend> Machine<C> {
     }
 }
 
+
+/// As métricas de fonte e os arquivos abertos.
+///
+/// Duas tabelas que **não** guardam conteúdo, e é por isso que são baratas:
+///
+/// - as métricas de fonte são sete números por objeto — vêm do `.bid` e são consultadas a cada
+///   `GetFontMetrics`;
+/// - um arquivo aberto tem **caminho e deslocamento**, e não bytes: o conteúdo está no disco. Na
+///   volta o arquivo é **reaberto pelo caminho** e o deslocamento é devolvido com um `seek`. É
+///   honesto e é o que um save state de console faz: se o arquivo mudou no disco entre salvar e
+///   carregar, o estado carrega o arquivo de agora — e isso vai dito aqui, para não virar surpresa.
+impl<C: CpuBackend> Machine<C> {
+    fn grava_fontes_e_arquivos(&self, secoes: &mut Secoes) {
+        secoes.poe_registros(
+            "tab.fontes",
+            self.fontes
+                .iter()
+                .map(|(id, m)| {
+                    vec![
+                        *id,
+                        u32::from(m.ascent),
+                        u32::from(m.descent),
+                        u32::from(m.leading),
+                        u32::from(m.max_char_width),
+                        u32::from(m.height),
+                        u32::from(m.bold),
+                        u32::from(m.italic),
+                    ]
+                })
+                .collect::<Vec<_>>(),
+        );
+        // Um objeto por arquivo, com os próprios nomes de seção: o identificador entra no nome, e
+        // não numa lista paralela de identificadores que alguém teria de manter em ordem.
+        secoes.poe_u32s("arq.ids", self.open_files.keys().copied());
+        for (id, arquivo) in &self.open_files {
+            secoes.poe_texto(&format!("arq.{id}.guest"), &arquivo.guest_path);
+            secoes.poe_texto(&format!("arq.{id}.caminho"), &arquivo.caminho.to_string_lossy());
+            // O deslocamento lido **agora**: é ele que diz em que ponto da leitura o jogo estava.
+            let posicao = deslocamento(&arquivo.file).unwrap_or(0);
+            secoes.poe(&format!("arq.{id}.pos"), posicao.to_le_bytes().to_vec());
+        }
+    }
+
+    fn restaura_fontes_e_arquivos(&mut self, leitor: &Leitor<'_>) -> Result<(), Erro> {
+        let mut fontes = std::collections::HashMap::new();
+        for registro in leitor.registros("tab.fontes", 8)? {
+            let menor = |indice: usize| -> Result<u16, Erro> {
+                u16::try_from(registro[indice]).map_err(|_| Erro::Secao {
+                    nome: "tab.fontes".to_string(),
+                    motivo: format!(
+                        "a fonte {:#010x} tem o campo {indice} valendo {}, que não cabe num u16",
+                        registro[0], registro[indice]
+                    ),
+                })
+            };
+            fontes.insert(
+                registro[0],
+                crate::machine::font::Metricas {
+                    ascent: menor(1)?,
+                    descent: menor(2)?,
+                    leading: menor(3)?,
+                    max_char_width: menor(4)?,
+                    height: menor(5)?,
+                    bold: registro[6] != 0,
+                    italic: registro[7] != 0,
+                },
+            );
+        }
+
+        // Os arquivos são **reabertos** antes de qualquer coisa ser aplicada: um caminho que não
+        // existe mais é recusa, e não uma tabela de arquivos com uma entrada vazia.
+        let ids = leitor.u32s("arq.ids")?;
+        let mut abertos = std::collections::HashMap::new();
+        for id in ids {
+            let guest_path = leitor.texto(&format!("arq.{id}.guest"))?;
+            let caminho = std::path::PathBuf::from(leitor.texto(&format!("arq.{id}.caminho"))?);
+            let bytes_da_posicao = leitor.secao(&format!("arq.{id}.pos")).ok_or_else(|| Erro::Secao {
+                nome: format!("arq.{id}.pos"),
+                motivo: "a seção não está no arquivo".to_string(),
+            })?;
+            if bytes_da_posicao.len() != 8 {
+                return Err(Erro::Secao {
+                    nome: format!("arq.{id}.pos"),
+                    motivo: format!("esperava 8 bytes e tem {}", bytes_da_posicao.len()),
+                });
+            }
+            let posicao = u64::from_le_bytes(bytes_da_posicao.try_into().unwrap());
+            let mut file = std::fs::File::open(&caminho).map_err(|erro| Erro::Secao {
+                nome: format!("arq.{id}"),
+                motivo: format!(
+                    "o estado guarda \"{}\" aberto e ele não pôde ser reaberto: {erro}",
+                    caminho.display()
+                ),
+            })?;
+            use std::io::Seek as _;
+            file.seek(std::io::SeekFrom::Start(posicao)).map_err(|erro| Erro::Secao {
+                nome: format!("arq.{id}"),
+                motivo: format!("não deu para voltar o arquivo ao byte {posicao}: {erro}"),
+            })?;
+            abertos.insert(id, OpenFile { file, guest_path, caminho });
+        }
+
+        self.fontes = fontes;
+        self.open_files = abertos;
+        Ok(())
+    }
+}
+
+/// Em que byte do arquivo a leitura está.
+fn deslocamento(file: &std::fs::File) -> std::io::Result<u64> {
+    use std::io::Seek as _;
+    let mut copia = file;
+    copia.stream_position()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -890,5 +1007,82 @@ mod tests {
             }
             outro => panic!("devia recusar o volume impossível, e devolveu {outro:?}"),
         }
+    }
+
+    /// **As métricas de fonte e os arquivos abertos voltam.**
+    ///
+    /// O caso do arquivo é o interessante: ele não guarda bytes, guarda **caminho e deslocamento**,
+    /// e a volta reabre o arquivo pelo caminho e devolve o deslocamento. É o que faz um jogo que
+    /// estava lendo no meio de um arquivo continuar lendo do mesmo ponto.
+    #[test]
+    fn fontes_e_arquivos_abertos_vem_de_volta() {
+        use std::io::{Read as _, Write as _};
+
+        // Um arquivo de verdade, em disco, com conteúdo conhecido.
+        let caminho = std::env::temp_dir().join("zeebx-teste-do-estado.bin");
+        let mut criado = std::fs::File::create(&caminho).expect("criar o arquivo de teste");
+        let duzentos_e_cinquenta_e_seis: Vec<u8> = (0u8..=255).collect();
+        criado
+            .write_all(&duzentos_e_cinquenta_e_seis)
+            .expect("escrever");
+        drop(criado);
+
+        let mut antes = maquina();
+        antes.fontes.insert(
+            0x1010,
+            crate::machine::font::Metricas {
+                ascent: 13,
+                descent: 3,
+                leading: 1,
+                max_char_width: 9,
+                height: 17,
+                bold: true,
+                italic: false,
+            },
+        );
+        {
+            let mut file = std::fs::File::open(&caminho).expect("abrir para ler");
+            // O jogo já leu sete bytes deste arquivo.
+            let mut lidos = [0u8; 7];
+            file.read_exact(&mut lidos).expect("ler sete bytes");
+            assert_eq!(lidos, [0u8, 1, 2, 3, 4, 5, 6]);
+            antes.open_files.insert(
+                0x2020,
+                OpenFile {
+                    file,
+                    guest_path: "./dados/cena.bin".to_string(),
+                    caminho: caminho.clone(),
+                },
+            );
+        }
+
+        let arquivo = antes.grava_estado();
+        let mut depois = maquina();
+        depois.restaura_estado(&arquivo).expect("restaurou");
+
+        let metricas = depois.fontes.get(&0x1010).expect("as métricas voltaram");
+        assert_eq!(
+            (
+                metricas.ascent,
+                metricas.descent,
+                metricas.leading,
+                metricas.max_char_width,
+                metricas.height
+            ),
+            (13, 3, 1, 9, 17)
+        );
+        assert!(metricas.bold);
+        assert!(!metricas.italic);
+
+        let aberto = depois.open_files.get_mut(&0x2020).expect("o arquivo voltou");
+        assert_eq!(aberto.guest_path, "./dados/cena.bin");
+        let mut seguinte = [0u8; 2];
+        aberto.file.read_exact(&mut seguinte).expect("ler o seguinte");
+        assert_eq!(
+            seguinte,
+            [7, 8],
+            "o arquivo devia continuar do byte 7, e não do começo"
+        );
+        let _ = std::fs::remove_file(&caminho);
     }
 }

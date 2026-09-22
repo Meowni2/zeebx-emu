@@ -285,6 +285,19 @@ impl Secoes {
         self.poe(nome, bytes);
     }
 
+    /// Grava um texto em UTF-8, com o tamanho na frente.
+    ///
+    /// Caminho de arquivo, nome de fonte, título: o que não é número vai assim. O tamanho vem
+    /// antes porque um separador teria de ser um byte que o texto não pode conter — e num caminho
+    /// de arquivo isso não existe.
+    pub fn poe_texto(&mut self, nome: &str, texto: &str) {
+        let bytes = texto.as_bytes();
+        let mut saida = Vec::with_capacity(4 + bytes.len());
+        saida.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        saida.extend_from_slice(bytes);
+        self.poe(nome, saida);
+    }
+
     /// Grava **registros de tamanho fixo**: cada um é o índice do objeto seguido dos campos dele.
     ///
     /// É a forma da maioria das tabelas do motor — `HashMap<u32, Estado>` onde o estado é um punhado
@@ -336,6 +349,37 @@ impl Leitor<'_> {
             });
         }
         Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    /// Um texto gravado por [`Secoes::poe_texto`].
+    ///
+    /// Tamanho que passa do que o arquivo tem é recusa: cortar em silêncio devolveria um caminho
+    /// pela metade, e o arquivo seria aberto no lugar errado.
+    pub fn texto(&self, nome: &str) -> Result<String, Erro> {
+        let bytes = self.secao(nome).ok_or_else(|| Erro::Secao {
+            nome: nome.to_string(),
+            motivo: "a seção não está no arquivo".to_string(),
+        })?;
+        if bytes.len() < 4 {
+            return Err(Erro::Secao {
+                nome: nome.to_string(),
+                motivo: format!("esperava o tamanho e tem {} bytes", bytes.len()),
+            });
+        }
+        let quantos = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+        if bytes.len() < 4 + quantos {
+            return Err(Erro::Secao {
+                nome: nome.to_string(),
+                motivo: format!(
+                    "diz ter {quantos} bytes de texto e restam {}",
+                    bytes.len() - 4
+                ),
+            });
+        }
+        String::from_utf8(bytes[4..4 + quantos].to_vec()).map_err(|erro| Erro::Secao {
+            nome: nome.to_string(),
+            motivo: format!("o texto não é UTF-8: {erro}"),
+        })
     }
 
     /// Registros gravados por [`Secoes::poe_registros`], com o número de campos de cada um.
