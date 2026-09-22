@@ -667,6 +667,31 @@ não uma necessidade própria. O que ficou dessa medição é a contabilidade ho
 livre" (`Heap::maior_bloco`), que antes somava buracos com o que resta à frente e respondia um
 número que nenhuma alocação consegue.
 
+### 7.6 O widget proprietário `0x01028e19`, medido pelo uso
+
+A família dos widgets é atendida em bloco (por vizinhança de numeração), e o que distingue uma
+classe da outra não está em header nenhum. O censo do acessador por classe
+(`ZEEBX_ROM_SELETORES=1`) responde **pelo uso**, e na Z-Wheel a `0x01028e19` — a única do trio
+`0x01028e19` / `0x01028e2a` / `0x01028e4b` que este roteiro cria — recebe dois seletores, e só:
+
+```text
+classe 0x01028e19  seletor 0x800  (5x)
+classe 0x01028e19  seletor 0x801  (10x)
+```
+
+`0x800` é leitura de item e `0x801` a gravação; os itens são **tipados**, com o corte medido em
+`0x5000` — de lá para cima o item guarda objeto, abaixo guarda número. É o mesmo caminho que a
+família inteira usa, então neste ciclo **o que a classe proprietária pede é o comportamento
+genérico** — e é o que o emulador faz.
+
+**O que não se reproduz, e fica registrado:**
+
+1. **O desenho próprio da classe.** Pintamos imagens e textos por substituto declarado, e não
+   emulando a extensão de widgets — o que a classe faria de diferente ao desenhar não é medido
+   aqui.
+2. **Qualquer comportamento dela fora dos caminhos que este roteiro exercita.** O censo mede o
+   *uso*; ausência de uso não é ausência de comportamento.
+
 ## 8. O que ainda não funciona
 
 ### 8.1 Medido em 22/09/2026: a roda não reage a tecla, e a causa era uma classe

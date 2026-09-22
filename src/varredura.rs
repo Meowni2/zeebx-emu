@@ -512,6 +512,8 @@ pub struct Pendencias {
     pub desenhados: Vec<String>,
     /// O que o jogo chamou nas classes atendidas por **sonda** (`ZEEBX_ROM_SONDA`), slot a slot.
     pub sonda: Vec<String>,
+    /// O que cada classe de **widget** recebeu no acessador, por seletor.
+    pub seletores: Vec<String>,
     /// Alocações que o heap recusou, como `tamanho em quem pediu (lr)`.
     ///
     /// É a pista que faltava quando um jogo mostrasse a tela de falta de memória sem nada no
@@ -560,6 +562,13 @@ impl Pendencias {
                 .drawn_text()
                 .map(|(ms, x, y, texto)| format!("{ms:>7} ms  ({x}, {y})  {texto}"))
                 .collect(),
+            seletores: machine
+                .seletores_por_classe()
+                .into_iter()
+                .map(|(classe, seletor, vezes)| {
+                    format!("classe {classe:#010x}  seletor {seletor:#x}  ({vezes}x)")
+                })
+                .collect(),
             sonda: machine
                 .probe_log()
                 .iter()
@@ -602,7 +611,7 @@ impl Pendencias {
     }
 
     /// As seções, na ordem em que valem a pena ser lidas — a mesma do relatório do `run`.
-    fn secoes(&self) -> [(&'static str, &Vec<String>); 13] {
+    fn secoes(&self) -> [(&'static str, &Vec<String>); 14] {
         [
             ("APIs que faltaram", &self.apis),
             ("classes que o jogo pediu e não temos", &self.classes),
@@ -614,6 +623,7 @@ impl Pendencias {
             ("APIs atendidas por hipótese", &self.hipoteses),
             ("texto desenhado na tela", &self.desenhados),
             ("alocações recusadas pelo heap", &self.alocacoes),
+            ("o que cada classe de widget recebeu no acessador", &self.seletores),
             ("o que o jogo chamou nas classes de sonda", &self.sonda),
             ("texto que não soubemos desenhar", &self.texto),
             ("GL atendido sem fazer nada", &self.gl_ignorado),
@@ -1004,6 +1014,12 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     // chamadas do jogo, que é quando ele monta o que precisa.
     if let Some(sonda) = sonda_pedida() {
         session.machine_mut().probe_classes(&sonda);
+    }
+    // O censo do acessador por classe de widget é opt-in pelo mesmo motivo do perfil de custo: ele
+    // acrescenta uma seção ao relatório, e a linha de base dos 62 jogos não pode mudar por
+    // instrumento. `ZEEBX_ROM_SELETORES` o liga.
+    if std::env::var("ZEEBX_ROM_SELETORES").is_ok() {
+        session.machine_mut().liga_censo_de_widgets();
     }
     // A captura de serial entra antes da partida: o que interessa nela é o começo.
     if let Some(caminho) = serial_pedido() {

@@ -2369,6 +2369,12 @@ pub struct Machine<C: CpuBackend> {
     config_items: HashMap<u32, HashMap<u32, Vec<u8>>>,
     /// O estado de cada widget vivo. Ver [`Widget`].
     widgets: HashMap<u32, Widget>,
+    /// Quantas vezes cada par `(classe de widget, seletor)` passou pelo acessador. Ver o braço
+    /// `Acessador` de `widget_call`: é o que responde "que comportamento esta classe proprietária
+    /// espera" pelo uso, sem sonda e sem desmonte. Ligado por [`Machine::liga_censo_de_widgets`].
+    seletores_por_classe: std::collections::BTreeMap<(u32, u32), u32>,
+    /// Se o censo do acessador por classe está ligado. Desligado, para não mexer na linha de base.
+    censo_de_widgets: bool,
     /// As APIs que faltaram, com quem as chamou. Ver o `None` do despacho.
     missing_apis: BTreeSet<String>,
     /// Acessos inválidos que aconteceram dentro de retorno de chamada e não pararam o jogo.
@@ -2912,6 +2918,8 @@ impl<C: CpuBackend> Machine<C> {
             teclas_da_rolagem: Default::default(),
             peeks: HashMap::new(),
             widgets: HashMap::new(),
+            seletores_por_classe: std::collections::BTreeMap::new(),
+            censo_de_widgets: false,
             config_items: HashMap::new(),
             network: true,
             // Pelo mesmo motivo, o desvio de servidor também vem do ambiente:

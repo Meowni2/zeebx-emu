@@ -224,6 +224,23 @@ impl<C: CpuBackend> Machine<C> {
     }
 
     /// As APIs que faltaram durante a execução, inclusive dentro de retornos de chamada.
+    /// O que cada classe de widget recebeu no acessador, por seletor, em ordem de classe.
+    ///
+    /// Serve para responder "o que esta classe proprietária espera?" **pelo uso**: a família dos
+    /// widgets é atendida em bloco (por vizinhança de numeração), e a diferença entre as classes
+    /// dela não está em header nenhum — está no que cada uma recebe. A `0x01028e19` é o caso que
+    /// motivou o instrumento.
+    pub fn liga_censo_de_widgets(&mut self) {
+        self.censo_de_widgets = true;
+    }
+
+    pub fn seletores_por_classe(&self) -> Vec<(u32, u32, u32)> {
+        self.seletores_por_classe
+            .iter()
+            .map(|(&(classe, seletor), &vezes)| (classe, seletor, vezes))
+            .collect()
+    }
+
     pub fn missing_apis(&self) -> Vec<String> {
         self.missing_apis.iter().cloned().collect()
     }

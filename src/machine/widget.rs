@@ -1348,6 +1348,24 @@ impl<C: CpuBackend> Machine<C> {
                     self.cpu.read_reg(Reg::R2),
                     self.cpu.read_reg(Reg::R3),
                 );
+                // **O que cada classe de widget recebe, contado por seletor.** É o instrumento
+                // para responder "que comportamento esta classe proprietária espera?" sem sonda e
+                // sem desmonte: a contagem por par `(classe, seletor)` diz o que o jogo usa de
+                // fato, e não o que a família inteira poderia usar. A `0x01028e19` é o caso que
+                // motivou: ela entra na família dos widgets por vizinhança de numeração, e o que
+                // se sabe dela é o que se mediu.
+                //
+                // **Desligado por padrão**, e a razão é medida: o censo entra no relatório, o
+                // relatório entra na linha de base, e uma seção nova faria os **62 jogos** da
+                // varredura acusarem diferença de uma vez. Ele se liga com `ZEEBX_ROM_SELETORES`,
+                // como o perfil de custo.
+                if self.censo_de_widgets {
+                    let classe = self.widgets.get(&this).map_or(0, |widget| widget.classe);
+                    *self
+                        .seletores_por_classe
+                        .entry((classe, seletor))
+                        .or_insert(0) += 1;
+                }
                 match seletor {
                     // Algumas classes usam o próprio endereço de um filho como seletor para
                     // consultar/ligar o estado visual. É uma operação sem valor de retorno;
