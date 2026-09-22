@@ -2555,66 +2555,16 @@ impl App {
     fn avks_ativos(teclado: &HashSet<egui::Key>, pads: &[Pad]) -> HashSet<u32> {
         let mut keys: HashSet<_> = teclado
             .iter()
-            .filter_map(|key| Self::avk_de(*key))
+            .filter_map(|key| input::avk_de(*key))
             .collect();
         for pad in pads {
             keys.extend(
-                Self::teclas_do_controle(&Pad::default(), pad)
+                input::teclas_do_controle(&Pad::default(), pad)
                     .into_iter()
                     .filter_map(|(key, down)| down.then_some(key)),
             );
         }
         keys
-    }
-
-    /// As teclas que o controle manda, comparando com o quadro anterior.
-    ///
-    /// No console o direcional chega aos aplicativos como as quatro setas do BREW, e é com elas
-    /// que a Z-Wheel navega: esquerda e direita giram a roda e trocam a aba da lista, cima e baixo
-    /// passam as páginas. O analógico não entra aqui: a Z-Wheel lê a posição e faz a tradução
-    /// dela sozinha (`0x44914` no módulo).
-    pub fn teclas_do_controle(antes: &Pad, agora: &Pad) -> Vec<(u32, bool)> {
-        // Os dois botões de face seguem a ajuda da própria Z-Wheel (`assets/zeebo/pt/controls.html`):
-        // "Sim (Botão 1)" escolhe e "Voltar (Botão 2)" cancela. Voltar é o `AVK_CLR`, medido:
-        // na tela de ajuda ele volta ao menu, e o `0xe065` não faz nada.
-        const DE_BOTAO: [(&str, u32); 6] = [
-            ("up", input::avk::UP),
-            ("down", input::avk::DOWN),
-            ("left", input::avk::LEFT),
-            ("right", input::avk::RIGHT),
-            ("b1", input::avk::CONFIRMA),
-            ("b2", input::avk::CLR),
-        ];
-
-        let mut teclas = Vec::new();
-        for (nome, avk) in DE_BOTAO {
-            let Some(indice) = Pad::button_by_name(nome) else {
-                continue;
-            };
-            if agora.is_down(indice) != antes.is_down(indice) {
-                teclas.push((avk, agora.is_down(indice)));
-            }
-        }
-        teclas
-    }
-
-    /// O código virtual do BREW de uma tecla da janela, quando ela tem um.
-    ///
-    /// `Esc` e `P` ficam de fora de propósito: são as duas da janela, encerrar e pausar.
-    fn avk_de(key: egui::Key) -> Option<u32> {
-        use egui::Key::*;
-        Some(match key {
-            ArrowUp => input::avk::UP,
-            ArrowDown => input::avk::DOWN,
-            ArrowLeft => input::avk::LEFT,
-            ArrowRight => input::avk::RIGHT,
-            Enter | Space => input::avk::CONFIRMA,
-            Backspace | Delete => input::avk::CLR,
-            Num0 | Num1 | Num2 | Num3 | Num4 | Num5 | Num6 | Num7 | Num8 | Num9 => {
-                input::avk::ZERO + (key as u32 - Num0 as u32)
-            }
-            _ => return None,
-        })
     }
 
     /// Roda e desenha o jogo na janela dele. Devolve se é hora de fechá-la.
@@ -3218,14 +3168,14 @@ mod tests {
         let b1 = Pad::button_by_name("b1").unwrap();
         agora.press(b1, true);
         assert_eq!(
-            App::teclas_do_controle(&antes, &agora),
+            crate::input::teclas_do_controle(&antes, &agora),
             vec![(crate::input::avk::CONFIRMA, true)]
         );
         antes = agora;
-        assert!(App::teclas_do_controle(&antes, &agora).is_empty());
+        assert!(crate::input::teclas_do_controle(&antes, &agora).is_empty());
         agora.press(b1, false);
         assert_eq!(
-            App::teclas_do_controle(&antes, &agora),
+            crate::input::teclas_do_controle(&antes, &agora),
             vec![(crate::input::avk::CONFIRMA, false)]
         );
     }
@@ -3243,12 +3193,12 @@ mod tests {
         ] {
             let mut agora = Pad::default();
             agora.press(Pad::button_by_name(nome).unwrap(), true);
-            assert_eq!(App::teclas_do_controle(&antes, &agora), vec![(esperado, true)]);
+            assert_eq!(crate::input::teclas_do_controle(&antes, &agora), vec![(esperado, true)]);
         }
         let mut voltar = Pad::default();
         voltar.press(Pad::button_by_name("b2").unwrap(), true);
         assert_eq!(
-            App::teclas_do_controle(&antes, &voltar),
+            crate::input::teclas_do_controle(&antes, &voltar),
             vec![(crate::input::avk::CLR, true)]
         );
     }
@@ -3258,12 +3208,12 @@ mod tests {
     #[test]
     fn digitos_viram_avk() {
         use eframe::egui::Key;
-        assert_eq!(App::avk_de(Key::Num0), Some(crate::input::avk::ZERO));
-        assert_eq!(App::avk_de(Key::Num7), Some(crate::input::avk::ZERO + 7));
-        assert_eq!(App::avk_de(Key::Num9), Some(crate::input::avk::ZERO + 9));
-        assert_eq!(App::avk_de(Key::Backspace), Some(crate::input::avk::CLR));
-        assert_eq!(App::avk_de(Key::Escape), None);
-        assert_eq!(App::avk_de(Key::P), None);
+        assert_eq!(crate::input::avk_de(Key::Num0), Some(crate::input::avk::ZERO));
+        assert_eq!(crate::input::avk_de(Key::Num7), Some(crate::input::avk::ZERO + 7));
+        assert_eq!(crate::input::avk_de(Key::Num9), Some(crate::input::avk::ZERO + 9));
+        assert_eq!(crate::input::avk_de(Key::Backspace), Some(crate::input::avk::CLR));
+        assert_eq!(crate::input::avk_de(Key::Escape), None);
+        assert_eq!(crate::input::avk_de(Key::P), None);
     }
     use super::*;
 

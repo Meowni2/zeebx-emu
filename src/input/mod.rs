@@ -402,6 +402,61 @@ fn eixo_por_nome(nome: &str) -> Option<(usize, i32)> {
     Some((eixo, valor))
 }
 
+// A ponte entre o que o jogador aperta e as teclas que o BREW entrega ao aplicativo mora aqui,
+// e não num frontend, porque é do console: quem monta a tela — a janela do egui, o laço do
+// Android, o frontend sem interface — muda, e o que o Zeebo manda a um applet quando o
+// direcional anda, não.
+
+/// As teclas que o controle manda, comparando com o quadro anterior.
+///
+/// No console o direcional chega aos aplicativos como as quatro setas do BREW, e é com elas
+/// que a Z-Wheel navega: esquerda e direita giram a roda e trocam a aba da lista, cima e baixo
+/// passam as páginas. O analógico não entra aqui: a Z-Wheel lê a posição e faz a tradução
+/// dela sozinha (`0x44914` no módulo).
+pub fn teclas_do_controle(antes: &Pad, agora: &Pad) -> Vec<(u32, bool)> {
+    // Os dois botões de face seguem a ajuda da própria Z-Wheel (`assets/zeebo/pt/controls.html`):
+    // "Sim (Botão 1)" escolhe e "Voltar (Botão 2)" cancela. Voltar é o `AVK_CLR`, medido:
+    // na tela de ajuda ele volta ao menu, e o `0xe065` não faz nada.
+    const DE_BOTAO: [(&str, u32); 6] = [
+        ("up", avk::UP),
+        ("down", avk::DOWN),
+        ("left", avk::LEFT),
+        ("right", avk::RIGHT),
+        ("b1", avk::CONFIRMA),
+        ("b2", avk::CLR),
+    ];
+
+    let mut teclas = Vec::new();
+    for (nome, avk) in DE_BOTAO {
+        let Some(indice) = Pad::button_by_name(nome) else {
+            continue;
+        };
+        if agora.is_down(indice) != antes.is_down(indice) {
+            teclas.push((avk, agora.is_down(indice)));
+        }
+    }
+    teclas
+}
+
+/// O código virtual do BREW de uma tecla da janela, quando ela tem um.
+///
+/// `Esc` e `P` ficam de fora de propósito: são as duas da janela, encerrar e pausar.
+pub fn avk_de(key: egui::Key) -> Option<u32> {
+    use egui::Key::*;
+    Some(match key {
+        ArrowUp => avk::UP,
+        ArrowDown => avk::DOWN,
+        ArrowLeft => avk::LEFT,
+        ArrowRight => avk::RIGHT,
+        Enter | Space => avk::CONFIRMA,
+        Backspace | Delete => avk::CLR,
+        Num0 | Num1 | Num2 | Num3 | Num4 | Num5 | Num6 | Num7 | Num8 | Num9 => {
+            avk::ZERO + (key as u32 - Num0 as u32)
+        }
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1265,7 +1265,7 @@ fn bench_dynarmic(
 /// A bancada monta a máquina por conta própria, e o que ela mostra pode não ser o que a janela
 /// mostra: a janela instala todos os jogos da biblioteca, passa o controle pela sessão e traduz o
 /// direcional em teclas. Aqui entram as mesmas peças — `Session`, a biblioteca das configurações
-/// e [`ui::App::teclas_do_controle`] —, e o roteiro é de **botões do controle**, como quem joga.
+/// e [`input::teclas_do_controle`] —, e o roteiro é de **botões do controle**, como quem joga.
 /// Com `--dump`, sai um quadro meio segundo depois de cada aperto; o relatório vai inteiro para a
 /// saída no fim.
 fn sessao_sem_janela(
@@ -1365,7 +1365,7 @@ fn sessao_sem_janela(
                 .map_or([0.0, 0.0, 1.0], |(_, g)| *g);
             session.set_port_motion(0, agora);
         }
-        for (avk, apertada) in ui::App::teclas_do_controle(&antes, &pad) {
+        for (avk, apertada) in input::teclas_do_controle(&antes, &pad) {
             session.set_key(avk, apertada);
         }
         // As telas intermediárias passam como na janela, sem avançar o relógio; não viram foto.
