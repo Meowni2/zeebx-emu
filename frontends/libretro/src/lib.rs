@@ -1233,8 +1233,13 @@ pub extern "C" fn retro_run() {
 
         // **Quem está rodando agora**, para o teste do ciclo da Z-Wheel poder dizer se é a roda
         // ou o jogo que ela abriu. Ver [`CLASSE_ATUAL`].
+        // Os dois instrumentos de teste, e a anotação vai **em cada linha**: um `#[cfg(test)]` só
+        // vale para o item seguinte, e sem ela aqui o `cargo build` do CI quebra com "cannot find
+        // value RELOGIO in this scope" enquanto o `cargo test` local passa — que foi exatamente o
+        // que aconteceu.
         #[cfg(test)]
         CLASSE_ATUAL.store(estado.session.classe(), std::sync::atomic::Ordering::Relaxed);
+        #[cfg(test)]
         RELOGIO.store(estado.session.clock_ms(), std::sync::atomic::Ordering::Relaxed);
         // **A placa entra no primeiro quadro.** O contexto de GL só existe depois que o frontend
         // chama o `context_reset`, que acontece depois do `retro_load_game`; aqui é o primeiro
