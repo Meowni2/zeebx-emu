@@ -907,6 +907,27 @@ Com a pasta cheia (62 jogos), o roteiro da doc lança e executa (o `0x0108E356`)
 sozinho**. Fica medido e registrado: falta um roteiro que abra, na pasta cheia, um dos dois títulos
 que terminam sozinhos.
 
+**A volta à roda: o que a medição delimitou.** Três pastas, o mesmo teste, o mesmo roteiro
+padrão — e só uma lança:
+
+```text
+62 jogos (a pasta cheia)   lança e executa (0x0108E356); a volta fica em false porque o jogo em
+                           foco nao sai sozinho
+3 jogos (Action Hero 3D, Alice, Zeebo Clube)   nao lanca: a primeira tecla produz 50 imagens
+                           distintas (uma transicao) e o pedido fica em zero
+2 jogos (Zeebo Clube)       nao lanca, com o mesmo sintoma
+```
+
+Ou seja: **a grade só põe foco alcançável com catálogo grande**, e é isso que a navegação do roteiro
+precisa para escolher — e não a quantidade de títulos em si, porque a lista é montada pelo catálogo.
+A volta à roda fica, portanto, dependente de duas coisas ao mesmo tempo: um catálogo onde o roteiro
+ache o foco, e um jogo que **saia sozinho** nesse foco. O `Zeebo Clube` e o `Zeebo App` são os dois
+que saem (medidos na varredura), e nenhum dos dois é alcançado pelo roteiro na pasta cheia.
+
+É o próximo experimento, e agora com o alvo estreito: **descobrir como a grade escolhe o item em
+foco** (o relatório da varredura diz `class_id = 17359702` depois do roteiro, e a grade é ordenada
+por título), para montar uma pasta onde o foco caia num título que termina sozinho.
+
 **13. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
 padrão (a config do usuário) e o do core usa o que o frontend entrega; apontando o teste do core
 para a árvore do usuário (`ZEEBX_CORE_SISTEMA=$HOME/.config/zeebx`), o mesmo número de quadros leva
