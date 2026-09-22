@@ -95,6 +95,19 @@ aparece" por `dlopen` recusado.
 
 ### Instalar
 
+Com a partição ROOTFS do cartão do sistema montada, é **um comando**:
+
+```bash
+python3 ferramentas/instala_core.py --muos /media/$USER/ROOTFS --banco GeneralUser-GS.sf2
+```
+
+Ele faz o backup do core anterior com data no nome antes de sobrescrever, copia o `.so` e o
+`.info`, cria as associações do sistema, acrescenta a chave nos dois JSON e confere o `sha256` no
+fim. Sem um cartão montado o comando **recusa e diz qual partição montar** — foi medido, e é
+melhor que escrever no lugar errado.
+
+O que ele faz por baixo, para quem quiser conferir ou fizer à mão:
+
 1. Copie o `.so` para `/opt/muos/share/core/` e o `.info` para
    `/opt/muos/share/emulator/retroarch/info/`.
 2. Crie `/opt/muos/share/info/assign/Zeebo/` com `global.ini` (`name`, `default=zeebx`,
