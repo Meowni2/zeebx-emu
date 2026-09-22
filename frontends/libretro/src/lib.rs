@@ -1518,7 +1518,13 @@ mod testes {
             retro_set_input_poll(Some(sem_poll));
             retro_set_input_state(Some(entrada));
             retro_init();
-            retro_set_controller_port_device(0, DEVICE_JOYPAD);
+            // O aparelho da porta decide o mapeamento do pad. `ZEEBX_TESTE_APARELHO=zpad` usa o
+            // Z-Pad, que é o controle do console — a Z-Wheel é um app do Zeebo e o lê assim.
+            let aparelho = match std::env::var("ZEEBX_TESTE_APARELHO").as_deref() {
+                Ok("zpad") | Ok("ZPAD") => DEVICE_ZPAD,
+                _ => DEVICE_JOYPAD,
+            };
+            retro_set_controller_port_device(0, aparelho);
             assert!(retro_load_game(&info), "o core recusou {caminho}");
             // Quanto tempo esperar antes de mandar entrada. A Z-Wheel leva mais que os jogos para
             // chegar à tela interativa — a varredura a pega com zero quadros aos seis segundos —,
