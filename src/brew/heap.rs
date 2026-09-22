@@ -115,6 +115,23 @@ impl Heap {
         let livres: u32 = self.free_list.values().sum();
         (self.next - self.base).saturating_sub(livres)
     }
+
+    /// **O maior bloco que uma alocação única consegue obter**, e não a soma do que sobra.
+    ///
+    /// A diferença não é acadêmica: `MALLOC` pede um bloco **contíguo**, e responde por dois
+    /// caminhos — um buraco da lista de livres do tamanho pedido, ou o ponteiro de avanço. Somar
+    /// os buracos com o que resta à frente responde um número que nenhuma alocação consegue.
+    ///
+    /// Medido em 22/09/2026 com a Z-Wheel: ela pergunta quanto há livre, pede **isso** numa
+    /// alocação só (o seu próprio `Free(67001392)` vira um `malloc` de 67001488), e a soma
+    /// mentirosa fazia o pedido ser recusado — `check_malloc: Malloc failed in Tectoy.c at line
+    /// 570` — com o heap longe de estar cheio. Quem decide se o aparelho dá conta é o jogo,
+    /// e ele decide pelo número que nós informamos.
+    pub fn maior_bloco(&self) -> u32 {
+        let a_frente = self.end.saturating_sub(self.next);
+        let buraco = self.free_list.values().copied().max().unwrap_or(0);
+        a_frente.max(buraco)
+    }
 }
 
 
@@ -185,6 +202,33 @@ impl crate::save_state::Guardavel for Heap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **"Quanto há livre" para uma alocação única é o maior bloco contíguo.**
+    ///
+    /// O teste existe por uma medição: a Z-Wheel pergunta quanto há livre e pede isso numa
+    /// alocação só. Somando os buracos ao que resta à frente, a resposta era maior do que qualquer
+    /// alocação consegue — o pedido era recusado com o heap longe de estar cheio, e o jogo
+    /// concluía, corretamente para o número que ouviu, que não havia memória.
+    #[test]
+    fn o_livre_de_uma_alocacao_unica_e_o_maior_bloco() {
+        let mut heap = Heap::new(0x1000, 0x1000);
+        let a = heap.alloc(0x100).unwrap();
+        let b = heap.alloc(0x100).unwrap();
+        let c = heap.alloc(0x100).unwrap();
+        heap.free(b);
+        // 0x1000 no total, 0x300 em uso: à frente restam 0xD00, e o buraco do meio é 0x100.
+        assert_eq!(heap.maior_bloco(), 0xD00, "o buraco não entra na conta");
+        // Com o maior bloco menor que o pedido, o `alloc` recusa — e é isso que o `CheckAvail`
+        // tem de dizer antes, em vez de somar.
+        assert_eq!(heap.alloc(0xD08), None);
+        // 0xD00 ainda cabe à frente, e é de lá que sai: o buraco do meio é pequeno demais para
+        // este pedido, e o alocador não move blocos vivos.
+        assert_eq!(heap.alloc(0xD00), Some(0x1300), "servido pelo ponteiro de avanço");
+        // O que passa a valer é só o buraco: um pedido maior que ele não cabe em lugar nenhum.
+        assert_eq!(heap.maior_bloco(), 0x100, "resta o buraco do meio");
+        assert_eq!(heap.alloc(0x108), None);
+        let _ = (a, c);
+    }
 
     #[test]
     fn aloca_sequencialmente_e_alinhado() {

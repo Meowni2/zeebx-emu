@@ -625,6 +625,48 @@ O que ainda falta nessa tela:
 - **`ISHELL_CloseApplet`** anota o pedido; a sessão entrega o `EVT_APP_STOP` e termina como saída
   normal. Um jogo aberto pela Z-Wheel que sai assim devolve a janela à Z-Wheel.
 
+## 7.5 A prova roteirizada do lançamento (22/09/2026)
+
+O ciclo passou a fechar **na varredura**, sem janela e sem RetroArch, com um comando só:
+
+```bash
+ZEEBX_ROM="Z-Wheel (Brazil) (Es,Pt).zip" \
+ZEEBX_ROM_MS=70000 ZEEBX_ROM_TETO=300 ZEEBX_ROM_INSTALADOS=auto \
+ZEEBX_ROM_TECLAS=30500:k0xe064,33000:k0xe032,35000:k0xe034,36500:k0xe034,38000:k0xe064,45000:k0xe032,48000:k0xe064 \
+cargo test --locked a_rom_indicada_avanca -- --nocapture
+```
+
+e o relatório responde com o desfecho que não engana — `Session::take_launch_request`, o mesmo
+gancho que o core usa para trocar de sessão:
+
+```text
+estado: terminou sozinho
+abertura pedida: 0x0108e356        (Alien Breaker Deluxe)
+```
+
+O roteiro faz o caminho inteiro: confirmar em "Jogar" (`0xe064`), descer às capas (`0xe032`),
+andar duas capas à direita (`0xe034`), confirmar de novo. A grade aparece desenhada a partir de
+37,6 s, com os jogos da biblioteca local em três colunas.
+
+**Duas armadilhas do instrumento, medidas aqui:**
+
+- **O `id` do `--instalados` é obrigatório**, e é o **número da pasta do módulo** dentro do pacote
+  (`fs:/mod/N`). Sem ele a Z-Wheel registra `Tectoy.c:2925 No mod number for this game!!!` e
+  desiste — foi o que aconteceu com a lista de classes sem id. É o que `ZEEBX_ROM_INSTALADOS=auto`
+  resolve: varre a pasta da ROM e monta os pares `0xCLSID:id` dos pacotes.
+- **O cache é estado do jogo.** A Z-Wheel grava `zeeboprefs.dat` e `ttgmrun.tmp` **dentro do pacote
+  extraído**, e no boot seguinte reage a eles — lançando o último jogo em 2 s, sem passar pelo
+  roteiro. Medir o caminho fresco exige limpar `~/.config/zeebx/cache` **e** o perfil do aparelho
+  antes de cada execução; sem isso o mesmo comando dá resultados diferentes em execuções seguidas.
+
+**O que ainda não fecha, medido:** a Z-Wheel registra `check_malloc: Malloc failed in Tectoy.c at
+line 570` depois de alocar ~64 MiB no próprio pool (o `memcheck` dela imprime
+`Free(67001392)`), e sai. O pedido que falha **acompanha o tamanho do heap** — 67 001 488 com
+64 MB, 134 110 352 com 128 MB —, então aumentar o heap só move o alvo: ela pede o que sobra, e
+não uma necessidade própria. O que ficou dessa medição é a contabilidade honesta do "quanto há
+livre" (`Heap::maior_bloco`), que antes somava buracos com o que resta à frente e respondia um
+número que nenhuma alocação consegue.
+
 ## 8. O que ainda não funciona
 
 ### 8.1 Medido em 22/09/2026: a roda não reage a tecla, e a causa era uma classe

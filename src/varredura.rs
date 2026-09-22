@@ -63,10 +63,33 @@ const CHAMADAS_MOSTRADAS: usize = 12;
 /// **Sem isto a roda não pode abrir jogo nenhum.** O `IShell::StartApplet` responde
 /// `ECLASSNOTSUPPORT` para classe que não está na lista, e a lista é do *host* — a bancada tem o
 /// `--instalados=` e a varredura agora aceita a mesma declaração.
-fn instalados_do_ambiente() -> Vec<(u32, String)> {
+fn instalados_do_ambiente(rom: &Path) -> Vec<(u32, String)> {
     let Ok(valor) = std::env::var("ZEEBX_ROM_INSTALADOS") else {
         return Vec::new();
     };
+    // **`auto` instala os jogos que estão ao lado da ROM**, com o número da pasta do módulo que
+    // cada pacote traz — o mesmo que a interface e o core fazem. Sem o número, a Z-Wheel registra
+    // `Tectoy.c:2925 No mod number for this game!!!` e **não lança**: medido, ela chega a pedir a
+    // abertura e desiste. Com ele, `abertura pedida: 0x0108e356`. A pasta é a mesma que a varredura
+    // já usa para o catálogo, e a lista sai ordenada e sem repetição, para o resultado ser o mesmo
+    // entre execuções.
+    if valor.trim().eq_ignore_ascii_case("auto") {
+        let Some(pasta) = rom.parent() else {
+            return Vec::new();
+        };
+        let mut vistas = std::collections::BTreeSet::new();
+        return crate::library::scan(pasta)
+            .into_iter()
+            .filter_map(|jogo| {
+                let classe = jogo.clsid?;
+                let id = crate::library::id_do_modulo(&jogo.path)?;
+                match vistas.insert((classe, id.clone())) {
+                    true => Some((classe, id)),
+                    false => None,
+                }
+            })
+            .collect();
+    }
     valor
         .split(',')
         .filter_map(|item| {
@@ -938,7 +961,7 @@ fn agora_ms(agora: u32, base: u32) -> u64 {
 /// tempo virtual cumprido o mais rápido que a máquina der.
 pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     let comeco = Instant::now();
-    let instalados = instalados_do_ambiente();
+    let instalados = instalados_do_ambiente(arquivo);
     let mut session = match Session::start_with_installed(
         arquivo,
         crate::PORTAS_PADRAO,

@@ -286,7 +286,10 @@ impl<C: CpuBackend> Machine<C> {
 
     /// Quantos bytes o heap do guest ainda pode entregar.
     pub(super) fn heap_available(&self) -> u64 {
-        (loader::HEAP_SIZE as u64).saturating_sub(u64::from(self.heap.used()))
+        // **O que uma alocação única consegue obter**, não a soma do que sobra: ver
+        // [`Heap::maior_bloco`]. A diferença recusava o pedido da Z-Wheel, que pergunta o livre
+        // e pede exatamente ele numa alocação só.
+        u64::from(self.heap.maior_bloco())
     }
 
     /// `realloc`: aloca o novo tamanho e copia o conteúdo antigo.
