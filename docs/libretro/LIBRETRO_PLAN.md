@@ -1744,6 +1744,36 @@ Cada sistema empacota com a ferramenta que tem: `zip` no Linux e no macOS, `Comp
 Windows — o `zip` **não existe** no runner do Windows, e um `shell: bash` com `zip` falharia num
 terço dos alvos no dia da tag.
 
+### Save state: o formato existe, o conteúdo é o que falta
+
+O item 6 pede "serialize/unserialize com formato versionado". O **formato** está feito e testado
+(`src/save_state.rs`): assinatura `ZBXS`, versão, tamanho, `crc32` do conteúdo e seções **nomeadas** —
+uma seção desconhecida é pulada, que é o que deixa um motor velho ler um estado gravado por um novo.
+Oito testes, incluindo os que recusam arquivo cortado, byte trocado, assinatura errada e versão do
+futuro (dizendo qual). 
+
+O **conteúdo** é o que falta, e agora está medido em vez de estimado: o `Machine` tem **190 campos**,
+dos quais ~180 são estado de verdade. Por tipo:
+
+```text
+ 50 HashMap   ·  32 u32   ·  19 Vec   ·  16 Option   ·  13 BTreeSet
+  8 u64       ·   8 bool  ·   7 VecDeque  ·  5 ArrayPointer  ·  3 BTreeMap  ·  2 Heap
+```
+
+Os maiores são tabelas indexadas por **ponteiro do guest**: `objects`, `collections`, `fontes`,
+`databases`, `open_files`, `decoders`, `images`, `sounds`, `ciphers`, `widgets`, `streams`,
+`threads`, `timers`, `signals`… mais o `heap` e o `objects` (contadores de endereço) e a memória do
+guest, que vive no backend de CPU.
+
+**A boa notícia de projeto:** os ponteiros do guest são endereços absolutos, então restaurar a
+memória nos mesmos endereços mantém válido **todo** ponteiro guardado nessas tabelas — não há
+remapeamento. O trabalho é enumerar as seções e cobrir cada uma com ida e volta, não inventar um
+formato de grafo.
+
+**Enquanto não estiver inteiro, o core continua respondendo `retro_serialize_size = 0`**, e há teste
+que cobra isso: zero é como o frontend entende "este core não salva". Estado parcial é o que o
+critério proíbe, e ele não escaparia por descuido porque a porta é essa.
+
 **Ensaio local do passo de empacotamento, porque ele só roda em tag.** Os comandos do workflow,
 executados à mão:
 

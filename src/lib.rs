@@ -14,6 +14,7 @@ pub mod library;
 pub mod machine;
 pub mod ponte;
 pub mod rede;
+pub mod save_state;
 pub mod session;
 pub mod storage;
 #[cfg(feature = "desktop")]
