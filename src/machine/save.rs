@@ -2827,7 +2827,11 @@ impl<C: CpuBackend> Machine<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::unicorn::UnicornCpu;
+    // **O backend padrão, e não o unicorn por nome.** No Windows ARM64 o `unicorn` não existe (o
+    // QEMU de lá precisa de um montador MASM que só há para x86), e o alias resolve para o
+    // `dynarmic`. Usar o nome do unicorn aqui deixava o alvo vermelho no CI — que é justamente
+    // quem enxerga o que o teste local não pode ver.
+    use crate::cpu::BackendPadrao as UnicornCpu;
     use crate::loader::self as loader;
 
     /// O menor módulo que o carregador aceita. Não precisa fazer nada: o alvo aqui é o estado da

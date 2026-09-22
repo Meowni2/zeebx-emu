@@ -897,7 +897,7 @@ mod testes_do_item_id {
         .concat();
         let image = crate::loader::modfile::ModImage::parse(code).unwrap();
         let module = crate::loader::load(&image).unwrap();
-        let mut machine = Machine::new(crate::cpu::unicorn::UnicornCpu::new().unwrap(), module, ".");
+        let mut machine = Machine::new(crate::cpu::BackendPadrao::new().unwrap(), module, ".");
         machine.cpu.reset(&machine.module.mem).unwrap();
         machine.set_installed_applets([
             (0x0102_8e35u32, "274755".to_string()),
