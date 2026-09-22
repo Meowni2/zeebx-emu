@@ -612,6 +612,14 @@ impl<C: CpuBackend> Machine<C> {
             AEECLSID_28E3C => Interface::Classe28e3c,
             AEECLSID_CM => Interface::Cm,
             AEECLSID_SYSTEMCTL => Interface::SystemCtl,
+            // **`0x01006c01` estava de fora**, e a propria Z-Wheel diz o preco: ela registra
+            // `ERROR: Unable to create instance of AEECLSID_LCT_SIMCARDCTL, cannot do SIM check`
+            // (`tectoymain.c:1668`). A interface existe e e atendida desde sempre
+            // ([`Interface::SimCardCtl`]); o que faltava era a fabrica conhecer a classe, como ja
+            // conhecia a vizinha `0x01006c02`. Um `CreateInstance` que devolve nulo vira ponteiro
+            // nulo dentro do applet, e e assim que "falta uma classe" reaparece adiante como
+            // "acesso invalido a 0x0", tres camadas depois.
+            AEECLSID_SIMCARDCTL => Interface::SimCardCtl,
             // **`IFont`, não `ITypeface`.** O `AEECLSID_ROLLER_FONT` (0x0102f67c) é o
             // `FONT_STANDARD18B`, uma fonte do sistema — estava mapeado para o `ITypeface`, que é
             // outra interface, com outros métodos.
