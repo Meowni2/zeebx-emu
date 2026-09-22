@@ -2131,6 +2131,22 @@ mod testes {
             eprintln!("sem ZEEBX_CORE_ROM: nada a percorrer");
             return;
         };
+        // **A tradução, provada no crate do core.** Dois pads construídos à mão: a função é a
+        // mesma do motor, mas quem a chama aqui é o core, e um erro de tipo ou de nome apareceria
+        // exatamente neste ponto.
+        {
+            let antes = zeebx::input::Pad::default();
+            let mut agora = zeebx::input::Pad::default();
+            let indice = zeebx::input::Pad::button_by_name("b1").expect("b1 existe");
+            agora.press(indice, true);
+            let teclas = zeebx::input::teclas_do_controle(&antes, &agora);
+            eprintln!("tradução de b1: {teclas:?}");
+            assert_eq!(
+                teclas,
+                vec![(zeebx::input::avk::CONFIRMA, true)],
+                "a tradução do controle não produziu a tecla do confirmar"
+            );
+        }
         let pasta = std::env::temp_dir().join(format!("zeebx-ciclo-{}", std::process::id()));
         std::fs::create_dir_all(&pasta).unwrap();
         let _ = PASTA.set(CString::new(pasta.to_string_lossy().to_string()).unwrap());

@@ -586,6 +586,19 @@ impl<C: CpuBackend> Machine<C> {
             self.despeja_widgets();
         }
         while let Some((avk, down)) = self.teclas.pop_front() {
+            // **A saída da fila, antes de qualquer atalho.** A linha da entrega, mais abaixo, só
+            // aparece para quem chega aos tratadores: uma seta consumida pelo rolamento do HTML sai
+            // do laço sem deixar rastro, e "não chegou" fica indistinguível de "foi consumida".
+            if self.serial.is_some() {
+                self.registra_serial(format!(
+                    "<fila {avk:#x} {} sai do despacho, {} na fila>",
+                    match down {
+                        true => "aperta",
+                        false => "solta",
+                    },
+                    self.teclas.len()
+                ));
+            }
             let evento = match down {
                 true => input::EVT_KEY,
                 false => input::EVT_KEY + 1,

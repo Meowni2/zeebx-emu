@@ -847,7 +847,25 @@ além dessas duas linhas. O próximo experimento é instrumentar exatamente esse
 commit só: uma linha em `Session::set_key` (entrou na fila) e a linha que já existe em `flush_keys`
 movida para o **topo** do laço (saiu da fila, antes de qualquer atalho consumir).
 
-**12. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
+**12. O quadro que fecha, com dois fatos que ainda não encaixam.** Três medições da mesma execução:
+
+- o pad **muda** em todos os sete passos (`0x1`, `0x4000`, `0x8000`, `0x8000`, `0x1`, `0x1`, `0x4000`);
+- a tradução **funciona no crate do core** — provado com pads construídos à mão:
+  `tradução de b1: [(57444, true)]`, que é `0xe064`, o confirmar;
+- e a captura registra **um** par de teclas, com o relógio virtual **parando em 37 012 ms** depois do
+  confirmar.
+
+O que **encaixa**: com o relógio parado, o guest deixou de chegar às fronteiras de API, e é nelas
+que a fila de teclas é esvaziada — as teclas seguintes ficam **presas na fila**, e é por isso que a
+captura não as mostra. Isso explica o sintoma inteiro (tela parada, teclas sem efeito) sem precisar de
+nenhum defeito novo.
+
+O que **não encaixa ainda**, e é o próximo experimento: o guest executa 84 360 instruções por quadro
+depois do confirmar, e uma volta com esse trabalho deveria voltar de `advance` e passar por
+`deliver_signals`. Se ele não passa, a pergunta é **onde a volta fica presa** — e a medição é uma
+linha em `advance_once_inner`, dizendo se `deliver_signals` roda depois do confirmar.
+
+**13. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
 padrão (a config do usuário) e o do core usa o que o frontend entrega; apontando o teste do core
 para a árvore do usuário (`ZEEBX_CORE_SISTEMA=$HOME/.config/zeebx`), o mesmo número de quadros leva
 a roda a **36,6 s** em vez de **50,6 s** — o estado do aparelho muda quando as coisas acontecem, o
