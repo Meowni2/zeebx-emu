@@ -668,6 +668,16 @@ Ou seja: a consulta ao `tt_game_info` para `class_id = -1` volta **vazia**, o `I
 vezes e não é chamado, e o sinalizador `0x216` é ligado e desligado entre 6 s e 7 s. Depois disso a
 roda fica parada. É ali — e não na entrada — que o item 8 está preso.
 
+**A ponte do catálogo, e o que ela não resolve.** A roda não lê a pasta de ROMs: lê o
+`tt_game_info` do perfil, e quem liga um ao outro é o `catalog.json` que a interface grava
+(`library::sync_catalog`). A varredura não o alimentava — medido: com `ZEEBX_ROM_INSTALADOS`, o
+banco do perfil abria com as 59 linhas oficiais do pacote e a `ZEEBX_LIBRARY` com **zero**. A
+varredura agora varre a pasta da ROM e sincroniza (63 linhas passam a entrar), o que é necessário
+— mas **não suficiente**: a árvore de widgets na primeira tecla continua com os mesmos três, e a
+roda continua sem montar o palco (`0x01028e05`) nem o roller (`0x01028e14`), que são os dois
+objetos por onde passa a montagem do menu (§4 a §5.4). O `0x01028e19` que a §2.2 cita **é** criado,
+uma vez, logo depois do formulário — e é o único do trio.
+
 Duas armadilhas de instrumento saíram desta medição, e as duas estão consertadas no código:
 
 - **O passo do roteiro sem o `k` era descartado em silêncio.** Escrito na forma da bancada

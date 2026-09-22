@@ -965,6 +965,18 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     if perfilando {
         session.machine_mut().enable_api_profile();
     }
+    // **A biblioteca local entra no catálogo antes da partida.** A Z-Wheel não lê a pasta de
+    // ROMs: ela lê o `tt_game_info` do perfil, e o que liga um ao outro é o `catalog.json` que a
+    // interface grava (`library::sync_catalog`). A varredura não o alimentava, e a medida é esta:
+    // com `ZEEBX_ROM_INSTALADOS`, o banco do perfil abre com as 59 linhas oficiais do pacote e a
+    // `ZEEBX_LIBRARY` com **zero** — a roda não tem o que pôr na grade, e nenhuma tecla tem o que
+    // mover. Só a pasta da ROM é varrida, e só quando `ZEEBX_ROM_INSTALADOS` o pede: o efeito
+    // fora do diretório do jogo é o `catalog.json`, o mesmo que a interface mantém.
+    if !instalados.is_empty()
+        && let Some(pasta) = arquivo.parent()
+    {
+        let _ = crate::library::sync_catalog(&crate::library::scan(pasta));
+    }
     // A sonda entra antes da partida, como o rastreio: o que interessa nela são as primeiras
     // chamadas do jogo, que é quando ele monta o que precisa.
     if let Some(sonda) = sonda_pedida() {
