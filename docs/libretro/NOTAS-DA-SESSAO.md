@@ -226,6 +226,29 @@ o pedido saiu, e não saiu.
 absoluto**, que é o certo. Os quatro eixos estão nas palavras 1, 2, 3 e 6, exatamente como o engine
 os escreve (`AXIS_SLOTS`). Quem acertou foi o código; quem errou foi a leitura rápida.
 
+## Onde o gesto da Z-Wheel para, medido
+
+Depois de o roteiro de teclas existir, a pergunta ficou respondível: **a roda chega a pedir a
+abertura?** Rastreando o `IShell` na sequência que avança a tela (`kselect` → `kdown` → `kselect`, e
+a variante com `kright`), o rastreio mostra 39 `CreateInstance`, `SendEvent` e `SetTimer` — e
+**nenhum** `CanStartApplet` nem `StartApplet`.
+
+E antes disso, um instrumento na entrega de tecla respondeu o que faltava saber: com `AVK_SELECT`
+chegando, são **zero tratadores na tela e nenhum formulário atual**. A Z-Wheel **não usa o `IWidget`**
+do motor — ela desenha direto —, então a tecla cai no ramo do `if !tratado` e vai para o applet. E o
+applet reage: a tela muda.
+
+Ou seja, o caminho de entrada está provado de ponta a ponta:
+
+```text
+roteiro de teclas -> core/varredura -> set_key -> flush_keys -> applet -> a tela muda
+```
+
+O que falta é **o gesto**, e ele está dentro da lógica da própria roda: ela recebe a tecla, muda de
+tela e não pede abertura. Fechar isso é engenharia reversa no módulo dela — o trecho que decide
+quando chamar o shell —, ou uma sessão com o controle na mão. Não é falta de instrumento: é falta de
+saber qual aperto ela espera.
+
 ## O defeito que invalidou toda a investigação do gesto
 
 O `ZEEBX_ROM_TECLAS` não chegava combinado ao jogo. O pad do roteiro era recriado a cada passo — e,
