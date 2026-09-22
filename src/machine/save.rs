@@ -146,6 +146,7 @@ impl<C: CpuBackend> Machine<C> {
         self.grava_fontes_e_arquivos(&mut secoes);
         self.grava_conteudo(&mut secoes);
         self.grava_superficies_e_imagens(&mut secoes);
+        self.grava_escalares_e_mapas(&mut secoes);
         self.heap.grava_com_prefixo("heap", &mut secoes);
         self.objects.grava(&mut secoes);
         self.superficies.grava_com_prefixo("surfaces", &mut secoes);
@@ -212,6 +213,7 @@ impl<C: CpuBackend> Machine<C> {
         self.restaura_fontes_e_arquivos(&leitor)?;
         self.restaura_conteudo(&leitor)?;
         self.restaura_superficies_e_imagens(&leitor)?;
+        self.restaura_escalares_e_mapas(&leitor)?;
         self.heap.restaura_com_prefixo("heap", &leitor)?;
         self.objects.restaura(&leitor)?;
         self.superficies
@@ -1046,6 +1048,343 @@ fn bytes_em_pixels(bytes: &[u8]) -> Vec<u16> {
         .collect()
 }
 
+
+/// Os escalares, os conjuntos e os mapas simples.
+///
+/// É a parte do estado que **não tem forma própria**: um contador de segundos, o estado do gerador
+/// aleatório, qual applet está rodando, quais módulos o shell tem instalados. Sozinhos, cada um
+/// seria dez linhas de gravação e dez de leitura; juntos, são uma seção de números e um punhado de
+/// mapas.
+///
+/// ## O que fica de fora, e é decisão
+///
+/// - `stalled`: o motor está **parado no meio de uma sondagem**. Gravar daqui e carregar depois
+///   prometeria um estado que nunca existiu — não se sabe o que a sondagem tinha visto. Enquanto
+///   ele não entrar, o estado não está completo, e a porta do `retro_serialize_size` continua
+///   fechada. É o tipo de buraco que precisa ser dito, e não coberto;
+/// - `serial`: o `BufWriter` de um arquivo aberto. Como os arquivos abertos, ele se refaz do disco
+///   — mas o gravador de log não faz parte do jogo, e fica fora;
+/// - `modulos_instalados` e `enumerations`: listas de **texto**. Precisam do mesmo tratamento de
+///   texto que os caminhos, e ficam para a passada seguinte;
+/// - o relógio em microssegundos (`clock_us`) **não** entra: ele é o contador de instruções
+///   dividido pela taxa, e o contador já entra. Gravar os dois seria guardar a mesma coisa duas
+///   vezes, com a chance de voltarem discordando;
+/// - `z_wheel` é caminho de conteúdo, e quem o conhece é o core.
+impl<C: CpuBackend> Machine<C> {
+    fn grava_escalares_e_mapas(&self, secoes: &mut Secoes) {
+        let mut numeros: Vec<u32> = vec![
+            self.epoch_seconds,
+            self.random_state,
+            self.nesting,
+            self.modo_do_sistema,
+            self.device_bitmap,
+            self.display_target,
+            self.current_applet,
+            self.applet_class,
+            self.egl_next_handle,
+            self.gles_next_name,
+            self.egl_swaps,
+            self.gl_clears,
+            self.unpack_alignment,
+            self.updates_na_volta as u32,
+            u32::from(self.applet_fechado),
+            u32::from(self.wheel_boot_skipped),
+            // Booleanos de presença: 1 e 0, para o campo poder ser conferido na volta.
+            u32::from(self.pending_launch.is_some()),
+            u32::from(self.escritas_do_quadro_gl.is_some()),
+            u32::from(self.scale_source.is_some()),
+            u32::from(self.current_thread.is_some()),
+            u32::from(self.ativacao_pendente.is_some()),
+        ];
+        numeros.push(self.next_vsync_us as u32);
+        numeros.push((self.next_vsync_us >> 32) as u32);
+        numeros.push(self.orcamento as u32);
+        numeros.push((self.orcamento >> 32) as u32);
+        numeros.push(self.proximo_serial as u32);
+        numeros.push((self.proximo_serial >> 32) as u32);
+        // E os valores dos que existem.
+        numeros.push(self.pending_launch.unwrap_or(0));
+        numeros.push(self.escritas_do_quadro_gl.unwrap_or(0) as u32);
+        numeros.push((self.escritas_do_quadro_gl.unwrap_or(0) >> 32) as u32);
+        numeros.push(self.scale_source.unwrap_or((0, 0)).0 as u32);
+        numeros.push(self.scale_source.unwrap_or((0, 0)).1 as u32);
+        numeros.push(self.current_thread.unwrap_or(0));
+        numeros.push(self.ativacao_pendente.unwrap_or((0, 0)).0);
+        numeros.push(self.ativacao_pendente.unwrap_or((0, 0)).1);
+        secoes.poe_u32s("esc.numeros", numeros);
+
+        let mut conjuntos: Vec<u32> = self.installed_applets.iter().copied().collect();
+        conjuntos.sort_unstable();
+        secoes.poe_u32s("esc.applets", conjuntos);
+        let mut herdados: Vec<u32> = self.dib_herdados.iter().copied().collect();
+        herdados.sort_unstable();
+        secoes.poe_u32s("esc.dib_herdados", herdados);
+        let mut avisando: Vec<u32> = self.widgets_avisando.iter().copied().collect();
+        avisando.sort_unstable();
+        secoes.poe_u32s("esc.widgets_avisando", avisando);
+
+        secoes.poe_mapa("esc.mif", self.mif_no_guest.iter().map(|(a, b)| (*a, *b)));
+        secoes.poe_u32s(
+            "esc.ext_modules",
+            self.ext_modules.iter().map(|m| m.unwrap_or(u32::MAX)),
+        );
+        secoes.poe_mapa(
+            "esc.rolagem",
+            self.rolagem_html.iter().map(|(a, b)| (*a, *b as u32)),
+        );
+        secoes.poe_mapa(
+            "esc.rolagem_maxima",
+            self.rolagem_maxima_html.iter().map(|(a, b)| (*a, *b as u32)),
+        );
+        secoes.poe_trios(
+            "esc.image_notify",
+            self.image_notify
+                .iter()
+                .map(|(id, cb)| (*id, cb.function, cb.context)),
+        );
+        secoes.poe_registros(
+            "esc.dib_decodificador",
+            self.dib_do_decodificador
+                .iter()
+                .map(|(id, (a, b))| vec![*id, *a, *b])
+                .collect::<Vec<_>>(),
+        );
+        secoes.poe_registros(
+            "esc.dib_publicado",
+            self.dib_publicado
+                .iter()
+                .map(|(id, quando)| vec![*id, *quando as u32, (*quando >> 32) as u32])
+                .collect::<Vec<_>>(),
+        );
+        // As listas de números por objeto: `vetores` e `collections`. Cada uma tem uma chave, um
+        // bloco de números e um campo solto — o bloco vai como bytes de u32, e o campo na meta.
+        secoes.poe_blocos(
+            "esc.vetores",
+            1,
+            self.vetores
+                .iter()
+                .map(|(id, (valores, extra))| {
+                    let mut bytes = Vec::with_capacity(4 + valores.len() * 4);
+                    bytes.extend_from_slice(&(valores.len() as u32).to_le_bytes());
+                    for valor in valores {
+                        bytes.extend_from_slice(&valor.to_le_bytes());
+                    }
+                    bytes.extend_from_slice(&extra.to_le_bytes());
+                    (vec![*id], bytes)
+                })
+                .collect::<Vec<_>>(),
+        );
+        secoes.poe_blocos(
+            "esc.collections",
+            1,
+            self.collections
+                .iter()
+                .map(|(id, (valores, extra))| {
+                    let mut bytes = Vec::with_capacity(4 + valores.len() * 4);
+                    bytes.extend_from_slice(&(valores.len() as u32).to_le_bytes());
+                    for valor in valores {
+                        bytes.extend_from_slice(&valor.to_le_bytes());
+                    }
+                    bytes.extend_from_slice(&(*extra as u32).to_le_bytes());
+                    (vec![*id], bytes)
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+
+
+}
+
+/// Quantos números a seção `esc.numeros` tem.
+///
+/// Está escrito aqui **e** conferido na leitura: um estado gravado com outro número de campos é
+/// recusa, e não leitura deslocada. É o que obriga quem acrescentar um campo a mexer na conta — e
+/// o teste abaixo cobra que ela esteja certa.
+const ESCALARES: usize = 35;
+
+impl<C: CpuBackend> Machine<C> {
+    fn restaura_escalares_e_mapas(&mut self, leitor: &Leitor<'_>) -> Result<(), Erro> {
+        let numeros = leitor.u32s("esc.numeros")?;
+        if numeros.len() != ESCALARES {
+            return Err(Erro::Secao {
+                nome: "esc.numeros".to_string(),
+                motivo: format!(
+                    "o estado tem {} números e esta versão do motor usa {ESCALARES}",
+                    numeros.len()
+                ),
+            });
+        }
+        let booleano = |indice: usize, campo: &str| -> Result<bool, Erro> {
+            match numeros[indice] {
+                0 => Ok(false),
+                1 => Ok(true),
+                outro => Err(Erro::Secao {
+                    nome: "esc.numeros".to_string(),
+                    motivo: format!("o campo `{campo}` vale {outro}, e é booleano"),
+                }),
+            }
+        };
+        let u64_de = |alto: usize| -> u64 {
+            u64::from(numeros[alto]) | (u64::from(numeros[alto + 1]) << 32)
+        };
+
+        let epoch_seconds = numeros[0];
+        let random_state = numeros[1];
+        let nesting = numeros[2];
+        let modo_do_sistema = numeros[3];
+        let device_bitmap = numeros[4];
+        let display_target = numeros[5];
+        let current_applet = numeros[6];
+        let applet_class = numeros[7];
+        let egl_next_handle = numeros[8];
+        let gles_next_name = numeros[9];
+        let egl_swaps = numeros[10];
+        let gl_clears = numeros[11];
+        let unpack_alignment = numeros[12];
+        let updates_na_volta = numeros[13] as usize;
+        let applet_fechado = booleano(14, "applet_fechado")?;
+        let wheel_boot_skipped = booleano(15, "wheel_boot_skipped")?;
+        let tem_pending_launch = booleano(16, "pending_launch")?;
+        let tem_escritas = booleano(17, "escritas_do_quadro_gl")?;
+        let tem_scale = booleano(18, "scale_source")?;
+        let tem_thread = booleano(19, "current_thread")?;
+        let tem_ativacao = booleano(20, "ativacao_pendente")?;
+        let next_vsync_us = u64_de(21);
+        let orcamento = u64_de(23);
+        let proximo_serial = u64_de(25);
+        // **Os índices do fim são contados a partir do começo da lista**, e não do campo anterior:
+        // foi aqui que eu errei a primeira vez, lendo o `pending_launch` na metade alta do
+        // `proximo_serial`. O teste pegou porque o valor que voltou era o de outro campo.
+        let pending_launch = tem_pending_launch.then_some(numeros[27]);
+        let escritas_do_quadro_gl = tem_escritas.then(|| u64_de(28));
+        let scale_source = tem_scale.then(|| (numeros[30] as i32, numeros[31] as i32));
+        let current_thread = tem_thread.then_some(numeros[32]);
+        let ativacao_pendente = tem_ativacao.then(|| (numeros[33], numeros[34]));
+
+        // Os mapas e conjuntos, lidos antes de qualquer aplicação.
+        let installed_applets: std::collections::HashSet<u32> =
+            leitor.u32s("esc.applets")?.into_iter().collect();
+        let dib_herdados: std::collections::HashSet<u32> =
+            leitor.u32s("esc.dib_herdados")?.into_iter().collect();
+        let widgets_avisando: std::collections::HashSet<u32> =
+            leitor.u32s("esc.widgets_avisando")?.into_iter().collect();
+        let mif_no_guest: std::collections::HashMap<u32, u32> =
+            leitor.pares("esc.mif")?.into_iter().collect();
+        let ext_modules: Vec<Option<u32>> = leitor
+            .u32s("esc.ext_modules")?
+            .into_iter()
+            .map(|m| (m != u32::MAX).then_some(m))
+            .collect();
+        let rolagem_html: std::collections::HashMap<u32, usize> = leitor
+            .pares("esc.rolagem")?
+            .into_iter()
+            .map(|(a, v)| (a, v as usize))
+            .collect();
+        let rolagem_maxima_html: std::collections::HashMap<u32, usize> = leitor
+            .pares("esc.rolagem_maxima")?
+            .into_iter()
+            .map(|(a, v)| (a, v as usize))
+            .collect();
+        let image_notify: std::collections::HashMap<u32, Callback> = leitor
+            .trios("esc.image_notify")?
+            .into_iter()
+            .map(|(id, function, context)| (id, Callback { function, context }))
+            .collect();
+        let mut dib_do_decodificador = std::collections::HashMap::new();
+        for registro in leitor.registros("esc.dib_decodificador", 3)? {
+            dib_do_decodificador.insert(registro[0], (registro[1], registro[2]));
+        }
+        let mut dib_publicado = std::collections::HashMap::new();
+        for registro in leitor.registros("esc.dib_publicado", 3)? {
+            dib_publicado.insert(
+                registro[0],
+                u64::from(registro[1]) | (u64::from(registro[2]) << 32),
+            );
+        }
+        let mut vetores = std::collections::HashMap::new();
+        for (chave, bytes) in leitor.blocos("esc.vetores")? {
+            vetores.insert(chave[0], le_lista_com_extra(&bytes, "esc.vetores")?);
+        }
+        let mut collections = std::collections::HashMap::new();
+        for (chave, bytes) in leitor.blocos("esc.collections")? {
+            let (valores, extra) = le_lista_com_extra(&bytes, "esc.collections")?;
+            collections.insert(chave[0], (valores, extra as usize));
+        }
+
+        // Aplicação.
+        self.epoch_seconds = epoch_seconds;
+        self.random_state = random_state;
+        self.nesting = nesting;
+        self.modo_do_sistema = modo_do_sistema;
+        self.device_bitmap = device_bitmap;
+        self.display_target = display_target;
+        self.current_applet = current_applet;
+        self.applet_class = applet_class;
+        self.egl_next_handle = egl_next_handle;
+        self.gles_next_name = gles_next_name;
+        self.egl_swaps = egl_swaps;
+        self.gl_clears = gl_clears;
+        self.unpack_alignment = unpack_alignment;
+        self.updates_na_volta = updates_na_volta;
+        self.applet_fechado = applet_fechado;
+        self.wheel_boot_skipped = wheel_boot_skipped;
+        self.pending_launch = pending_launch;
+        self.escritas_do_quadro_gl = escritas_do_quadro_gl;
+        self.scale_source = scale_source;
+        self.current_thread = current_thread;
+        self.ativacao_pendente = ativacao_pendente;
+        self.next_vsync_us = next_vsync_us;
+        self.orcamento = orcamento;
+        self.proximo_serial = proximo_serial;
+        self.installed_applets = installed_applets;
+        self.dib_herdados = dib_herdados;
+        self.widgets_avisando = widgets_avisando;
+        self.mif_no_guest = mif_no_guest;
+        self.ext_modules = ext_modules;
+        self.rolagem_html = rolagem_html;
+        self.rolagem_maxima_html = rolagem_maxima_html;
+        self.image_notify = image_notify;
+        self.dib_do_decodificador = dib_do_decodificador;
+        self.dib_publicado = dib_publicado;
+        self.vetores = vetores;
+        self.collections = collections;
+        Ok(())
+    }
+}
+
+/// Lê uma lista de números gravada como bytes, com o campo solto no fim.
+fn le_lista_com_extra(bytes: &[u8], onde: &str) -> Result<(Vec<u32>, u32), Erro> {
+    let malformada = |motivo: String| Erro::Secao {
+        nome: onde.to_string(),
+        motivo,
+    };
+    if bytes.len() < 8 {
+        return Err(malformada(format!(
+            "esperava a contagem e o campo solto, e tem {} bytes",
+            bytes.len()
+        )));
+    }
+    let quantos = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    if bytes.len() != 4 + quantos * 4 + 4 {
+        return Err(malformada(format!(
+            "diz ter {quantos} valores ({} bytes com o campo solto) e tem {}",
+            4 + quantos * 4 + 4,
+            bytes.len()
+        )));
+    }
+    let valores = bytes[4..4 + quantos * 4]
+        .chunks_exact(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    let extra = u32::from_le_bytes([
+        bytes[4 + quantos * 4],
+        bytes[4 + quantos * 4 + 1],
+        bytes[4 + quantos * 4 + 2],
+        bytes[4 + quantos * 4 + 3],
+    ]);
+    Ok((valores, extra))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1627,5 +1966,107 @@ mod tests {
             assert_eq!(bytes.len(), quantos.div_ceil(8), "tamanho com {quantos} bits");
             assert_eq!(desempacota_bits(&bytes, quantos), bits, "com {quantos} bits");
         }
+    }
+
+    /// **Os escalares e os mapas simples voltam** — e a conta de campos está certa.
+    ///
+    /// A primeira metade deste teste é a que protege o formato: se alguém acrescentar um campo sem
+    /// mexer na lista, a contagem deixa de bater e o teste fica vermelho **antes** de um save state
+    /// sair deslocado.
+    #[test]
+    fn os_escalares_vem_de_volta_e_a_conta_esta_certa() {
+        let antes = maquina();
+        let mut secoes = Secoes::nova();
+        antes.grava_escalares_e_mapas(&mut secoes);
+        let arquivo = secoes.fecha();
+        let leitor = crate::save_state::Leitor::abre(&arquivo).expect("abriu");
+        assert_eq!(
+            leitor.u32s("esc.numeros").expect("a seção").len(),
+            ESCALARES,
+            "a conta de campos está desatualizada: quem acrescentou um campo não mexeu em ESCALARES"
+        );
+    }
+
+    #[test]
+    fn escalares_e_mapas_vem_de_volta() {
+        let mut antes = maquina();
+        antes.epoch_seconds = 1_700_000_000;
+        antes.random_state = 0x1234_5678;
+        antes.nesting = 3;
+        antes.current_applet = 0x0102_0304;
+        antes.applet_class = 0x0102_0305;
+        antes.next_vsync_us = 0x1_2345_6789;
+        antes.orcamento = 0x9_8765_4321;
+        antes.proximo_serial = 0x5_5555_5555;
+        antes.applet_fechado = true;
+        antes.wheel_boot_skipped = true;
+        antes.pending_launch = Some(0x0102_8e35);
+        antes.escritas_do_quadro_gl = Some(0x4_4444_4444);
+        antes.scale_source = Some((-2, 7));
+        antes.current_thread = Some(0x5151);
+        antes.ativacao_pendente = Some((0x61, 0x62));
+        antes.installed_applets.insert(0x1);
+        antes.installed_applets.insert(0x2);
+        antes.mif_no_guest.insert(0x70, 0x80);
+        antes.ext_modules = vec![Some(0x90), None, Some(0xa0)];
+        antes.rolagem_html.insert(0xb0, 12);
+        antes.image_notify.insert(
+            0xc0,
+            Callback {
+                function: 0x1000_6000,
+                context: 0xd0,
+            },
+        );
+        antes.dib_do_decodificador.insert(0xe0, (0xf0, 0x11));
+        antes.dib_publicado.insert(0x12, 0x13_0000_0014);
+        antes.vetores.insert(0x14, (vec![1, 2, 3], 9));
+        antes.collections.insert(0x15, (vec![4, 5], 6));
+
+        let arquivo = antes.grava_estado();
+        let mut depois = maquina();
+        depois.restaura_estado(&arquivo).expect("restaurou");
+
+        assert_eq!(depois.epoch_seconds, 1_700_000_000);
+        assert_eq!(depois.random_state, 0x1234_5678);
+        assert_eq!(depois.nesting, 3);
+        assert_eq!(depois.current_applet, 0x0102_0304);
+        assert_eq!(depois.applet_class, 0x0102_0305);
+        assert_eq!(depois.next_vsync_us, 0x1_2345_6789, "o u64 alto não voltou");
+        assert_eq!(depois.orcamento, 0x9_8765_4321);
+        assert_eq!(depois.proximo_serial, 0x5_5555_5555);
+        assert!(depois.applet_fechado);
+        assert!(depois.wheel_boot_skipped);
+        assert_eq!(depois.pending_launch, Some(0x0102_8e35));
+        assert_eq!(depois.escritas_do_quadro_gl, Some(0x4_4444_4444));
+        assert_eq!(depois.scale_source, Some((-2, 7)));
+        assert_eq!(depois.current_thread, Some(0x5151));
+        assert_eq!(depois.ativacao_pendente, Some((0x61, 0x62)));
+        assert_eq!(depois.installed_applets.len(), 2);
+        assert_eq!(depois.mif_no_guest.get(&0x70), Some(&0x80));
+        assert_eq!(depois.ext_modules, vec![Some(0x90), None, Some(0xa0)]);
+        assert_eq!(depois.rolagem_html.get(&0xb0), Some(&12));
+        assert_eq!(
+            depois.image_notify.get(&0xc0).map(|c| c.function),
+            Some(0x1000_6000)
+        );
+        assert_eq!(depois.dib_do_decodificador.get(&0xe0), Some(&(0xf0, 0x11)));
+        assert_eq!(depois.dib_publicado.get(&0x12), Some(&0x13_0000_0014));
+        assert_eq!(depois.vetores.get(&0x14), Some(&(vec![1, 2, 3], 9)));
+        assert_eq!(depois.collections.get(&0x15), Some(&(vec![4, 5], 6)));
+    }
+
+    /// Um `pending_launch` ausente tem de voltar ausente — e não virar zero.
+    #[test]
+    fn a_ausencia_de_pending_launch_nao_vira_zero() {
+        let mut antes = maquina();
+        antes.pending_launch = None;
+        let arquivo = antes.grava_estado();
+        let mut depois = maquina();
+        depois.pending_launch = Some(0x9999);
+        depois.restaura_estado(&arquivo).expect("restaurou");
+        assert_eq!(
+            depois.pending_launch, None,
+            "o estado disse que não havia pedido de abertura, e voltou um"
+        );
     }
 }
