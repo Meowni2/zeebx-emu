@@ -177,6 +177,30 @@ o pedido saiu, e não saiu.
 absoluto**, que é o certo. Os quatro eixos estão nas palavras 1, 2, 3 e 6, exatamente como o engine
 os escreve (`AXIS_SLOTS`). Quem acertou foi o código; quem errou foi a leitura rápida.
 
+## O defeito que invalidou toda a investigação do gesto
+
+O `ZEEBX_ROM_TECLAS` não chegava combinado ao jogo. O pad do roteiro era recriado a cada passo — e,
+depois de uma primeira correção, a cada **quadro** —, então:
+
+```text
+roteiro "18000:x=128,20000:b1"
+   antes:  0x10006b50  00 00 00 00 | 80 00 00 00   ← manche no CENTRO no instante do aperto
+   depois: 0x10006b50  00 00 00 00 | ff 00 00 00   ← manche no MÁXIMO, e o aperto não o solta
+```
+
+O endereço `0x10006b50` é onde a Z-Wheel guarda o que o `GetPositionState` respondeu: o despejo
+mostra o que o jogo **realmente leu**. Segurar o manche e apertar um botão — o gesto que um menu
+pede para abrir — nunca chegava inteiro ao guest. **Toda conclusão anterior de que "o gesto não
+existe" era inválida**: o instrumento estava quebrado, e o defeito era silencioso porque o pad
+funcionava para **um** passo.
+
+Duas coisas ficaram no lugar: `passos_vencidos` deixa o contrato escrito, e com o rastreio ligado
+cada passo do roteiro sai no relatório (`roteiro 20003 ms: passo 1 -> x=255 y=128 botoes=0x0`). Um
+roteiro que não chega ao jogo agora se distingue de um jogo que o ignora.
+
+Com o instrumento funcionando, a roda **reage ao manche** — a tela muda de 2001 para 1904 cores —,
+mas o botão ainda não abre um jogo. O que falta é o gesto, e agora ele pode ser procurado.
+
 É aqui que a investigação headless para, e por um motivo prático: **o instrumento já respondeu o que
 tinha de responder** (a entrada chega, a roda reage, o pedido não sai), e o que falta é o significado
 do gesto — que só o frontend com controle na mão, ou uma sessão de engenharia reversa da própria
