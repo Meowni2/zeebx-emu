@@ -171,7 +171,23 @@ impl Session {
         contexto: Option<std::sync::Arc<glow::Context>>,
         z_wheel: crate::config::ZWheel,
     ) -> Result<Self, StartError> {
-        Self::start_inner(path, Some(portas), serial, placa, contexto, z_wheel)
+        Self::start_inner(path, Some(portas), serial, placa, contexto, z_wheel, &[])
+    }
+
+    /// Como [`Session::start_with`], mas instala os módulos antes do boot do guest.
+    ///
+    /// A Z-Wheel enumera os jogos durante `EVT_APP_START`. Instalar depois que a sessão já existe
+    /// é tarde demais: a lista dela nasce vazia e o gesto nunca pode escolher um jogo.
+    pub fn start_with_installed(
+        path: &Path,
+        portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
+        serial: Option<&Path>,
+        placa: bool,
+        contexto: Option<std::sync::Arc<glow::Context>>,
+        z_wheel: crate::config::ZWheel,
+        instalados: &[(u32, String)],
+    ) -> Result<Self, StartError> {
+        Self::start_inner(path, Some(portas), serial, placa, contexto, z_wheel, instalados)
     }
 
     /// Como [`Session::start_with`], mas recebe a raiz persistente explicitamente.
@@ -196,6 +212,7 @@ impl Session {
             contexto,
             z_wheel,
             storage,
+            &[],
         )
     }
 
@@ -213,7 +230,7 @@ impl Session {
         z_wheel: crate::config::ZWheel,
         storage: &StoragePaths,
     ) -> Result<Self, StartError> {
-        Self::start_inner_with_storage(path, Some(portas), None, false, None, z_wheel, storage)
+        Self::start_inner_with_storage(path, Some(portas), None, false, None, z_wheel, storage, &[])
     }
 
     /// A serial entra **antes de o módulo ser criado**, e não depois de a sessão existir.
@@ -229,9 +246,10 @@ impl Session {
         placa: bool,
         contexto: Option<std::sync::Arc<glow::Context>>,
         z_wheel: crate::config::ZWheel,
+        instalados: &[(u32, String)],
     ) -> Result<Self, StartError> {
         let storage = StoragePaths::from_root(crate::config::config_dir());
-        Self::start_inner_with_storage(path, portas, serial, placa, contexto, z_wheel, &storage)
+        Self::start_inner_with_storage(path, portas, serial, placa, contexto, z_wheel, &storage, instalados)
     }
 
     fn start_inner_with_storage(
@@ -242,6 +260,7 @@ impl Session {
         contexto: Option<std::sync::Arc<glow::Context>>,
         z_wheel: crate::config::ZWheel,
         storage: &StoragePaths,
+        instalados: &[(u32, String)],
     ) -> Result<Self, StartError> {
         // Caminho escolhido no frontend, antes de extrair: é ele que identifica o conteúdo.
         let conteudo = path;
@@ -278,6 +297,8 @@ impl Session {
         };
         let cpu = DynarmicCpu::new().map_err(|e| StartError::NotLoadable(e.to_string()))?;
         let mut machine = Machine::new_with_storage(cpu, module, root, storage, save_root);
+        // A lista precisa existir antes de `run` e `create_applet`: a Z-Wheel a enumera no boot.
+        machine.set_installed_applets(instalados.iter().cloned());
         // Antes de qualquer desenho: ver [`Machine::usa_placa`].
         machine.usa_placa(placa, contexto);
         machine.configura_z_wheel(z_wheel);
@@ -1396,6 +1417,7 @@ fn os_dois_rasterizadores_desenham_o_mesmo_quadro() {
             false,
             None,
             Default::default(),
+            &[],
         );
         assert!(matches!(err, Err(StartError::Unreadable(_))));
     }
@@ -1407,7 +1429,7 @@ fn os_dois_rasterizadores_desenham_o_mesmo_quadro() {
         // legível, porque é ele que a interface mostra.
         let path = std::env::temp_dir().join("zeebx-teste-lixo.mod");
         std::fs::write(&path, b"isto nao e um modulo").unwrap();
-        let Err(err) = Session::start_inner(&path, None, None, false, None, Default::default())
+        let Err(err) = Session::start_inner(&path, None, None, false, None, Default::default(), &[])
         else {
             panic!("um arquivo de lixo não podia virar uma sessão");
         };

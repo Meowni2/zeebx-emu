@@ -71,6 +71,30 @@ const CHAMADAS_MOSTRADAS: usize = 12;
 /// Existe porque havia perguntas que só se respondiam com alguém apertando o controle: se o
 /// caminho de entrada do core chega ao guest, se a Z-Wheel aceita a escolha. Com o roteiro, a
 /// varredura responde isso sozinha, e a resposta fica no relatório.
+/// Lê os applets instalados de `ZEEBX_ROM_INSTALADOS`, no formato da bancada:
+/// `0xCLSID:id,0xCLSID:id`.
+///
+/// **Sem isto a roda não pode abrir jogo nenhum.** O `IShell::StartApplet` responde
+/// `ECLASSNOTSUPPORT` para classe que não está na lista, e a lista é do *host* — a bancada tem o
+/// `--instalados=` e a varredura agora aceita a mesma declaração.
+fn instalados_do_ambiente() -> Vec<(u32, String)> {
+    let Ok(valor) = std::env::var("ZEEBX_ROM_INSTALADOS") else {
+        return Vec::new();
+    };
+    valor
+        .split(',')
+        .filter_map(|item| {
+            let item = item.trim();
+            if item.is_empty() {
+                return None;
+            }
+            let (classe, id) = item.split_once(':').unwrap_or((item, ""));
+            let classe = u32::from_str_radix(classe.trim().trim_start_matches("0x"), 16).ok()?;
+            Some((classe, id.trim().to_string()))
+        })
+        .collect()
+}
+
 fn roteiro_de_teclas() -> Vec<(u64, Passo)> {
     let Ok(valor) = std::env::var("ZEEBX_ROM_TECLAS") else {
         return Vec::new();
@@ -842,7 +866,16 @@ fn agora_ms(agora: u32, base: u32) -> u64 {
 /// tempo virtual cumprido o mais rápido que a máquina der.
 pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     let comeco = Instant::now();
-    let mut session = match Session::start_with(arquivo, crate::PORTAS_PADRAO, None, false, None, Default::default()) {
+    let instalados = instalados_do_ambiente();
+    let mut session = match Session::start_with_installed(
+        arquivo,
+        crate::PORTAS_PADRAO,
+        None,
+        false,
+        None,
+        Default::default(),
+        &instalados,
+    ) {
         Ok(session) => session,
         Err(erro) => return Relatorio::recusado(arquivo, &erro),
     };
