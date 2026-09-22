@@ -831,7 +831,23 @@ Também merece olhar: o `continue` dele não passa pela linha da captura, então
 **não deixa rastro** — o que faz "a tecla não chegou" e "a tecla foi consumida pelo rolamento" se
 parecerem.
 
-**11. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
+**11. O que ficou refutado, para não repetir o caminho.** Duas hipóteses caíram por medição, e as
+duas eram boas:
+
+- **"a sessão parou depois da primeira tecla, e por isso a fila não é esvaziada"** — refutada: a
+  máquina continua executando **84 360 instruções por quadro** depois do confirmar. Sessão parada não
+  executa nada.
+- **"o atalho do rolamento do HTML come as setas"** — insuficiente: ele só consome **cima e baixo**,
+  e a seta da **direita** também não chega à captura.
+
+O que sobra, medido: o pad **muda** em todo passo (`0x0->0x1`, `0x1->0x0`, `0x0->0x4000`), as
+bordas existem, `Session::set_key` delega para a fila da máquina sem intermediário — e a captura
+registra **uma** tecla. Entre "a fila recebeu" e "o despacho entregou" não há mais nada no caminho
+além dessas duas linhas. O próximo experimento é instrumentar exatamente esses dois pontos, num
+commit só: uma linha em `Session::set_key` (entrou na fila) e a linha que já existe em `flush_keys`
+movida para o **topo** do laço (saiu da fila, antes de qualquer atalho consumir).
+
+**12. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
 padrão (a config do usuário) e o do core usa o que o frontend entrega; apontando o teste do core
 para a árvore do usuário (`ZEEBX_CORE_SISTEMA=$HOME/.config/zeebx`), o mesmo número de quadros leva
 a roda a **36,6 s** em vez de **50,6 s** — o estado do aparelho muda quando as coisas acontecem, o
