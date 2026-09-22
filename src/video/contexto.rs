@@ -80,7 +80,7 @@ impl Contexto {
             .next()
             .ok_or("nenhuma configuração com profundidade de 24 e stencil de 8")?;
 
-        // O shader é escrito em GLSL 3.30, então o pedido é por OpenGL 3.3 core. O GLES 3.0 é a
+        // O shader é escrito em GLSL 3.30, então o pedido é por OpenGL 3.3 core. O GLES 3.x é a
         // queda para as placas que só oferecem o perfil embarcado — o mesmo par de tentativas que
         // o pintor da interface já faz.
         let contexto = [
@@ -92,7 +92,7 @@ impl Contexto {
             let attrs = ContextAttributesBuilder::new().with_context_api(api).build(None);
             unsafe { display.create_context(&config, &attrs) }.ok()
         })
-        .ok_or("nem OpenGL 3.3 nem GLES 3.0 foram aceitos")?;
+        .ok_or("nem OpenGL 3.3 nem GLES 3.x foram aceitos")?;
 
         let um = NonZeroU32::new(1).expect("1 não é zero");
         let attrs = SurfaceAttributesBuilder::<PbufferSurface>::new().build(um, um);

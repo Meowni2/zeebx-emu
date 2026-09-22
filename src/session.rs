@@ -216,6 +216,33 @@ impl Session {
         )
     }
 
+    /// Como [`Session::start_with_storage`], com os applets instalados antes do boot.
+    ///
+    /// O core Libretro usa esta entrada para a Z-Wheel: ela enumera a biblioteca no primeiro
+    /// `EVT_APP_START`, portanto `set_installed_applets` depois do retorno não basta.
+    #[allow(dead_code)]
+    pub fn start_with_storage_installed(
+        path: &Path,
+        portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
+        serial: Option<&Path>,
+        placa: bool,
+        contexto: Option<std::sync::Arc<glow::Context>>,
+        z_wheel: crate::config::ZWheel,
+        storage: &StoragePaths,
+        instalados: &[(u32, String)],
+    ) -> Result<Self, StartError> {
+        Self::start_inner_with_storage(
+            path,
+            Some(portas),
+            serial,
+            placa,
+            contexto,
+            z_wheel,
+            storage,
+            instalados,
+        )
+    }
+
     /// Inicia o motor sem janela, dispositivo de áudio ou contexto gráfico do host.
     ///
     /// Sem chamador até `frontends/libretro` existir; o aviso de código morto está silenciado
@@ -231,6 +258,27 @@ impl Session {
         storage: &StoragePaths,
     ) -> Result<Self, StartError> {
         Self::start_inner_with_storage(path, Some(portas), None, false, None, z_wheel, storage, &[])
+    }
+
+    /// Variante software de [`Session::start_software_with_storage`] com a biblioteca conhecida.
+    #[allow(dead_code)]
+    pub fn start_software_with_storage_installed(
+        path: &Path,
+        portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
+        z_wheel: crate::config::ZWheel,
+        storage: &StoragePaths,
+        instalados: &[(u32, String)],
+    ) -> Result<Self, StartError> {
+        Self::start_inner_with_storage(
+            path,
+            Some(portas),
+            None,
+            false,
+            None,
+            z_wheel,
+            storage,
+            instalados,
+        )
     }
 
     /// A serial entra **antes de o módulo ser criado**, e não depois de a sessão existir.

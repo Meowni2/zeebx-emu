@@ -113,6 +113,9 @@ jobs:
       - name: Compila o core
         env:
           CARGO_PROFILE_DEV_DEBUG: "0"
+          # A35 é o denominador comum seguro entre RK3326 e H700/A53. AArch64 continua usando
+          # NEON/AdvSIMD, mas o artefato não ganha instrução exclusiva do Cortex-A53.
+          RUSTFLAGS: ${{ matrix.alvo == 'linux-aarch64' && '-C target-cpu=cortex-a35' || '' }}
         run: cargo build --release --locked -p zeebx-libretro
 
       # A prova principal: abrir a biblioteca como o frontend abre e chamar a ABI.
@@ -128,6 +131,22 @@ jobs:
             exit 1
           fi
           echo "só libc, libm, libstdc++ e libgcc"
+
+      # R36S/R35S/RGB20S (ArkOS, AeolusUX, dArkOS e dArkOSen) e RG40XX-H (muOS Pixie ou
+      # posterior) carregam o mesmo core Linux AArch64. Não basta o nome do job: confira o ELF
+      # que será copiado para o cartão e rejeite um artefato x86 ou uma biblioteca com RPATH da
+      # máquina de build. A checagem de dependências acima continua proibindo bibliotecas desktop.
+      - name: O artefato handheld é AArch64 portátil
+        if: matrix.alvo == 'linux-aarch64'
+        shell: bash
+        run: |
+          file "${{ matrix.biblioteca }}" | grep -Eiq 'ARM aarch64|aarch64'
+          readelf -h "${{ matrix.biblioteca }}" | grep -E 'Class:.*ELF64|Machine:.*AArch64'
+          if readelf -d "${{ matrix.biblioteca }}" | grep -Eiq 'RPATH|RUNPATH'; then
+            echo "o core não pode carregar caminho da máquina de build"
+            exit 1
+          fi
+          echo "ELF Linux AArch64 sem caminho absoluto de build"
 
       - name: Monta o pacote do core
         shell: bash

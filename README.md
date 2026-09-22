@@ -43,12 +43,13 @@ cargo build --release
 
 ### O que mais precisa estar instalado
 
-O `cargo` sozinho não basta: duas dependências compilam **código nativo na hora**, e é aí que o
-build falha em máquina limpa.
+O `cargo` sozinho não basta no **standalone**: as dependências nativas compilam código na hora,
+e é aí que o build falha em máquina limpa. O core Libretro usa `--no-default-features` e não leva
+`unicorn-engine`; para ele basta o JIT `dynarmic` e suas ferramentas CMake/C++.
 
 | Dependência | O que ela constrói | O que ela exige |
 |---|---|---|
-| `unicorn-engine` | o QEMU inteiro, em C | compilador C, `make`, `pkg-config`, Python 3, `glib-2.0` e **`libclang`** (o `bindgen` carrega a biblioteca para gerar os vínculos) |
+| `unicorn-engine` (standalone) | o QEMU inteiro, em C | compilador C, `make`, `pkg-config`, Python 3, `glib-2.0` e **`libclang`** (o `bindgen` carrega a biblioteca para gerar os vínculos) |
 | `dynarmic` | um JIT ARM em C++20, com CMake | `cmake`, `ninja` e compilador **C++20** |
 
 Debian, Ubuntu e derivados:

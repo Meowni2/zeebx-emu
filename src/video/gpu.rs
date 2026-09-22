@@ -617,7 +617,7 @@ impl GpuState {
             // — na Z-Wheel era uma faixa do fundo, entre a linha do horizonte e o chão. Preso em
             // vez de recortado, o comportamento volta a ser o do software.
             //
-            // É core desde o OpenGL 3.2, que é o perfil pedido. Na queda para GLES 3.0 ele não
+            // É core desde o OpenGL 3.2, que é o perfil pedido. Na queda para GLES 3.x ele não
             // existe e a chamada não tem efeito: ali o plano distante volta a recortar.
             gl.enable(glow::DEPTH_CLAMP);
             // O `glScissor` do jogo vem em pixels do console, com o `y` de baixo para cima —

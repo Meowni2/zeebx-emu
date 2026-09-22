@@ -148,11 +148,24 @@ jobs:
       - name: Compila o core
         env:
           CARGO_PROFILE_DEV_DEBUG: "0"
+          # A35 é o denominador comum seguro entre RK3326 e H700/A53. AArch64 continua usando
+          # NEON/AdvSIMD, mas o artefato não ganha instrução exclusiva do Cortex-A53.
+          RUSTFLAGS: ${{ matrix.nome == 'linux-aarch64' && '-C target-cpu=cortex-a35' || '' }}
         run: cargo build --release --locked -p zeebx-libretro
 
       # A mesma prova do `libretro.yml`: abrir a biblioteca como o frontend abre e chamar a ABI.
       - name: A biblioteca carrega e a ABI responde
         run: python3 ferramentas/verifica_core.py "${{ matrix.biblioteca }}"
+
+      # O pacote que vai para R36S/RG40XX-H deve ser o ELF Linux AArch64, não o artefato do
+      # runner por acidente. Os sistemas handhelds não têm RPATH do ambiente de build.
+      - name: Confere o core Linux AArch64 dos handhelds
+        if: matrix.nome == 'linux-aarch64'
+        shell: bash
+        run: |
+          file "${{ matrix.biblioteca }}" | grep -Eiq 'ARM aarch64|aarch64'
+          readelf -h "${{ matrix.biblioteca }}" | grep -E 'Class:.*ELF64|Machine:.*AArch64'
+          ! readelf -d "${{ matrix.biblioteca }}" | grep -Eiq 'RPATH|RUNPATH'
 
       # **Cada sistema empacota com a ferramenta que tem.** O `zip` não existe no runner do
       # Windows, e o `Compress-Archive` não existe nos outros: um `shell: bash` com `zip` falharia

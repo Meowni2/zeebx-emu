@@ -20,6 +20,7 @@ default = ["desktop"]
 desktop = [
     # A UI desktop usa o rasterizador na placa: o desktop implica `gpu`.
     "gpu",
+    "unicorn",
     "dep:cpal",
     "dep:discord-rich-presence",
     "dep:eframe",
@@ -38,6 +39,9 @@ gl = []
 # janela. Aqui entra o `glutin`, que linka EGL/GLX — motivo pelo qual o core não usa esta feature:
 # um core não pode depender de biblioteca de interface do host.
 gpu = ["gl", "dep:glutin", "dep:raw-window-handle"]
+# Backend de referência do standalone. O core Libretro não o habilita: usa Dynarmic e não leva
+# o QEMU/unicorn-engine nem libatomic para os handhelds Linux AArch64.
+unicorn = ["dep:unicorn-engine"]
 
 # O binário é a interface desktop: sem a feature ele nem é construído.
 [[bin]]
@@ -107,7 +111,7 @@ sevenz-rust2 = "0.23.0"
 # o `unicorn-engine-sys` nem chega a compilar (o `ml` não é encontrado). Onde ele falta, o motor
 # usa o `dynarmic`, que recompila os blocos A32 e sustenta o mesmo contrato de `CpuBackend`.
 [target.'cfg(not(all(target_os = "windows", target_arch = "aarch64")))'.dependencies]
-unicorn-engine = "2.1.5"
+unicorn-engine = { version = "2.1.5", optional = true }
 
 # O `ioctl` que lê a escala dos sensores de movimento em `/dev/input`. Já vinha na árvore por
 # várias dependências, então não acrescenta build nenhuma.

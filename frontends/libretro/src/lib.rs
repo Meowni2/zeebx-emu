@@ -4,10 +4,10 @@
 //! Nenhuma janela, placa de som ou controle do host é aberto por este crate: o motor roda pelo
 //! passo virtual de [`zeebx::session::Session::run_frame`].
 //!
-//! Decisões de escopo do primeiro core estão em `docs/libretro/LIBRETRO_PLAN.md`: conteúdo
-//! `.mod`/`.zip`, vídeo RGB565, áudio PCM16 a 44,1 kHz, RetroPad nas duas portas, teclado USB e
-//! Boomerang alimentado pelo sensor do frontend. Save state, renderização em hardware e mouse do
-//! guest ainda não existem e são declarados como ausentes.
+//! O core atende conteúdo `.mod`/`.zip`/`.7z`, vídeo RGB565, áudio PCM16 a 44,1 kHz, RetroPad nas
+//! duas portas, teclado USB e Boomerang alimentado pelo sensor do frontend. Renderização em
+//! hardware OpenGL/GLES 3, save state versionado e troca da Z-Wheel também estão implementados;
+//! mouse do guest continua fora da ABI.
 
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::{Path, PathBuf};
@@ -81,26 +81,30 @@ static ULTIMA_ABERTURA: std::sync::atomic::AtomicU32 = std::sync::atomic::Atomic
 /// O frontend oferece um contexto de placa para o core desenhar.
 const ENV_SET_HW_RENDER: u32 = 14;
 
-/// `RETRO_HW_CONTEXT_OPENGL_CORE` (valor 3 no `libretro.h`) — é o perfil que o motor realmente usa.
+/// Perfil de hardware que o core pede.
 ///
-/// O valor 1 seria `RETRO_HW_CONTEXT_OPENGL`, o de **compatibilidade**, e foi ele que ficou aqui
-/// primeiro. Não fica: ver abaixo por que ele quebra o RetroArch.
+/// Desktop usa `RETRO_HW_CONTEXT_OPENGL_CORE` (3), medido com RetroArch/Mesa. Os handhelds
+/// Linux AArch64 (R36S/R35S/RGB20S com ArkOS/AeolusUX/dArkOS/dArkOSen e RG40XX-H com muOS)
+/// expõem OpenGL ES no RetroArch, não um contexto OpenGL Core 3.3. Neles pedimos GLES 3.2
+/// (`RETRO_HW_CONTEXT_OPENGLES_VERSION`, 5), e o `gpu.rs` usa `#version 300 es`, compatível com
+/// o subconjunto necessário. Se o frontend/driver só oferecer GLES 3.1, ele recusa
+/// o pedido e o core permanece no rasterizador software — nunca depende de X11, Wayland ou EGL.
 ///
-/// O emulador standalone pede `GL 3.3` e o `glutin` entrega um contexto **core**, e é nele que o
-/// motor foi medido (o teste dos dois rasterizadores roda assim). O core pedia o de compatibilidade,
-/// e o defeito só apareceu ao rodar o RetroArch de verdade: com um pedido de versão 3.3 sem máscara
-/// de perfil, o EGL devolve um contexto **core**, e o driver `gl` do RetroArch — que é de
-/// compatibilidade — quebra logo depois, com `GL: Invalid enum`, antes de rodar um quadro:
-///
-/// ```text
-/// [INFO] [GL]: Version: 4.6 (Core Profile) Mesa 25.0.7
-/// [ERROR] [GL]: GL: Invalid enum.
-/// [ERROR] [Video]: Cannot open video driver.. Exiting..
-/// ```
-///
-/// Pedindo o perfil core, o RetroArch usa o caminho de core profile dele e o contexto combina com o
-/// que o motor espera.
-const HW_CONTEXT_OPENGL_CORE: u32 = 3;
+/// No desktop o valor 1 (`RETRO_HW_CONTEXT_OPENGL`, compatibilidade) não serve: em RetroArch/EGL
+/// ele entregava perfil diferente do que o motor esperava e falhava com `GL: Invalid enum`.
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const HW_CONTEXT: u32 = 5; // RETRO_HW_CONTEXT_OPENGLES_VERSION (GLES 3.1+)
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const HW_VERSION_MAJOR: u32 = 3;
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const HW_VERSION_MINOR: u32 = 2;
+
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
+const HW_CONTEXT: u32 = 3; // RETRO_HW_CONTEXT_OPENGL_CORE
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
+const HW_VERSION_MAJOR: u32 = 3;
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
+const HW_VERSION_MINOR: u32 = 3;
 
 /// O valor que o `retro_video_refresh` recebe quando o quadro saiu no framebuffer do frontend.
 ///
@@ -168,7 +172,7 @@ fn pede_o_contexto_de_placa() {
         return;
     }
     let mut oferta = RetroHwRenderCallback {
-        context_type: HW_CONTEXT_OPENGL_CORE,
+        context_type: HW_CONTEXT,
         context_reset: Some(contexto_pronto),
         get_current_framebuffer: None,
         get_proc_address: None,
@@ -177,8 +181,8 @@ fn pede_o_contexto_de_placa() {
         depth: true,
         stencil: true,
         bottom_left_origin: false,
-        version_major: 3,
-        version_minor: 3,
+        version_major: HW_VERSION_MAJOR,
+        version_minor: HW_VERSION_MINOR,
         // Não guardamos recursos de GL entre contextos, e o `libretro` só oferece a opção.
         cache_context: false,
         context_destroy: Some(contexto_perdido),
@@ -1002,6 +1006,7 @@ unsafe fn carrega(
     // fazia a tela do Double Dragon ficar branca e vazia, porque o que ele desenha ali é a
     // mensagem "Memory is insufficient. Please delete some files." em fundo branco.
     let (pasta, jogos) = biblioteca(caminho);
+    let instalados = instalados_da_biblioteca(&jogos);
     #[cfg(test)]
     JOGOS_VISTOS.store(jogos.len() as u32, std::sync::atomic::Ordering::Relaxed);
     let fonte = prepara_fonte(storage, &jogos);
@@ -1018,11 +1023,12 @@ unsafe fn carrega(
     // software já nasceu e é ela que roda até prova em contrário.
     pede_o_contexto_de_placa();
 
-    let mut session = Session::start_software_with_storage(
+    let mut session = Session::start_software_with_storage_installed(
         std::path::Path::new(caminho),
         portas,
         ZWheel::default(),
         storage,
+        &instalados,
     )?;
     let mixer = session.grava_audio(SAMPLE_RATE);
     // **1x e proporção nativa, sempre.** O core entrega o quadro do console em 640×480, sem
@@ -1097,6 +1103,16 @@ fn biblioteca(caminho: &str) -> (Option<PathBuf>, Vec<(u32, PathBuf)>) {
     (pasta, jogos)
 }
 
+/// Converte a biblioteca descoberta para o formato que o shell enumera no boot.
+fn instalados_da_biblioteca(jogos: &[(u32, PathBuf)]) -> Vec<(u32, String)> {
+    jogos
+        .iter()
+        .filter_map(|(classe, caminho)| {
+            Some((*classe, zeebx::library::id_do_modulo(caminho)?))
+        })
+        .collect()
+}
+
 /// Instala a fonte do sistema na raiz do aparelho, se ainda não estiver lá.
 ///
 /// Sai do cache quando a Z-Wheel já foi extraída e, quando não foi, do próprio pacote compactado —
@@ -1124,8 +1140,9 @@ fn troca_para(estado: &mut Core, caminho: &Path, aberto_pela_z_wheel: bool) -> R
     // **Se já se desenha na placa, a sessão nova também nasce nela** — a Z-Wheel abrindo um jogo,
     // o jogo voltando para ela. Sem isto a primeira troca devolveria o desenho ao processador, e o
     // sintoma seria "o render em hardware funciona até o primeiro jogo".
+    let instalados = instalados_da_biblioteca(&estado.jogos);
     let mut session = match placa() {
-        Some(contexto) => Session::start_with_storage(
+        Some(contexto) => Session::start_with_storage_installed(
             caminho,
             estado.portas,
             None,
@@ -1133,23 +1150,16 @@ fn troca_para(estado: &mut Core, caminho: &Path, aberto_pela_z_wheel: bool) -> R
             Some(contexto),
             ZWheel::default(),
             &estado.storage,
+            &instalados,
         )?,
-        None => Session::start_software_with_storage(
+        None => Session::start_software_with_storage_installed(
             caminho,
             estado.portas,
             ZWheel::default(),
             &estado.storage,
+            &instalados,
         )?,
     };
-    // O novo applet nasce sem lista de instalados: sem isto a Z-Wheel volta vazia.
-    session.set_installed_applets(
-        estado
-            .jogos
-            .iter()
-            .filter_map(|(classe, caminho)| {
-                Some((*classe, zeebx::library::id_do_modulo(caminho)?))
-            }),
-    );
     let mixer = session.grava_audio(SAMPLE_RATE);
     session.define_resolucao_interna(1);
     session.define_proporcao(None);

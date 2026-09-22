@@ -1,6 +1,13 @@
 # Plano Libretro — Zeebx
 
-> Estado: planejamento técnico. Nenhum core Libretro foi implementado ainda.
+> Estado: implementação em validação contínua. O core Libretro já está implementado e passa a ABI;
+> as tabelas históricas deste plano preservam as decisões originais.
+>
+> **Estado medido em 2026-09-22:** Linux AArch64 é o alvo de distribuição para R36S/R35S/RGB20S
+> (ArkOS, AeolusUX, dArkOS e dArkOSen) e RG40XX-H (muOS Pixie ou mais novo). Nessa arquitetura o
+> core pede GLES 3 para hardware e recua para software quando o frontend não oferece o contexto.
+> Save state versionado, `.7z` e renderização hardware estão implementados. Ver
+> `docs/libretro/HANDHELDS-ARM64.md`.
 >
 > Branch: `feat/libretro-core`, baseada em `upstream/development` no commit `6c74975` (`v0.2.1`).
 
