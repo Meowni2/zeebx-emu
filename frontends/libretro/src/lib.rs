@@ -96,6 +96,16 @@ static CLASSE_ATUAL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32
 #[cfg(test)]
 static RELOGIO: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
+/// As instruções que a máquina já executou, a cada quadro.
+///
+/// **Instrumento de teste, e só dele.** É o par do [`RELOGIO`] para a pergunta que separa "a roda
+/// está lenta" de "a roda parou": o relógio do guest anda por vsync e por instrução, então
+/// instruções que sobem com o relógio parado são guest girando sem apresentar quadro. Foi o que
+/// mostrou que o caminho do core entrega 1 214 quadros por milissegundo virtual depois do
+/// confirmar, contra ~240 quadros por segundo no regime normal.
+#[cfg(test)]
+static INSTRUCOES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// O frontend oferece um contexto de placa para o core desenhar.
 const ENV_SET_HW_RENDER: u32 = 14;
 
@@ -1241,6 +1251,8 @@ pub extern "C" fn retro_run() {
         CLASSE_ATUAL.store(estado.session.classe(), std::sync::atomic::Ordering::Relaxed);
         #[cfg(test)]
         RELOGIO.store(estado.session.clock_ms(), std::sync::atomic::Ordering::Relaxed);
+        #[cfg(test)]
+        INSTRUCOES.store(estado.session.instrucoes(), std::sync::atomic::Ordering::Relaxed);
         // **A placa entra no primeiro quadro.** O contexto de GL só existe depois que o frontend
         // chama o `context_reset`, que acontece depois do `retro_load_game`; aqui é o primeiro
         // lugar em que ele pode estar pronto. Recriar a sessão custa um reinício que ninguém vê:
@@ -2171,8 +2183,10 @@ mod testes {
             // tela que já estivesse parada não diria nada sobre a tecla.
             let animando = distintas(QUADROS.load(Ordering::Relaxed) as usize - 100);
             eprintln!(
-                "antes da tecla: {animando} imagem(ns) distinta(s) em 100 quadros, relógio {} ms",
-                RELOGIO.load(Ordering::Relaxed)
+                "antes da tecla: {animando} imagem(ns) distinta(s) em 100 quadros, relógio {} ms, \
+                 {} instruções",
+                RELOGIO.load(Ordering::Relaxed),
+                INSTRUCOES.load(Ordering::Relaxed)
             );
             assert!(
                 animando > 3,
@@ -2214,7 +2228,12 @@ mod testes {
             // imagens distintas em cada 24 quadros, em todos os passos. Com a tradução, a primeira
             // confirmação é tratada e a tela para de animar.
             let depois = distintas(QUADROS.load(Ordering::Relaxed) as usize - 100);
-            eprintln!("depois da tecla: {depois} imagem(ns) distinta(s) em 100 quadros");
+            eprintln!(
+                "depois da tecla: {depois} imagem(ns) distinta(s) em 100 quadros, relógio {} ms, \
+                 {} instruções",
+                RELOGIO.load(Ordering::Relaxed),
+                INSTRUCOES.load(Ordering::Relaxed)
+            );
             assert!(
                 depois < animando,
                 "a roda ignorou a tecla: {depois} imagens distintas depois, contra {animando} antes"
@@ -2234,7 +2253,12 @@ mod testes {
             retro_unload_game();
             retro_deinit();
         }
-        eprintln!("quadros entregues ao frontend: {}", QUADROS.load(Ordering::Relaxed));
+        eprintln!(
+            "quadros entregues ao frontend: {}, {} instruções em {} ms virtuais",
+            QUADROS.load(Ordering::Relaxed),
+            INSTRUCOES.load(Ordering::Relaxed),
+            RELOGIO.load(Ordering::Relaxed)
+        );
         let _ = std::fs::remove_dir_all(&pasta);
     }
 

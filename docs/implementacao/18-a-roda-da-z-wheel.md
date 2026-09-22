@@ -747,10 +747,24 @@ a roda a **36,6 s** em vez de **50,6 s** — o estado do aparelho muda quando as
 que confirma que os dois caminhos não se comparam por relógio. Mas a prisão depois do confirmar
 continua igual (1 imagem distinta em 100 quadros, pedido zero). Não é artefato da pasta.
 
-A conta, com os números que saíram: no regime normal o core entrega ~240 quadros por segundo
-virtual (25 008 ms em até 6 000 quadros); **preso, entrega 1 214 quadros por milissegundo virtual**
-— meio milhão de quadros para 426 ms de relógio. Não é a roda que anda devagar: é o quadro do core
-que deixou de representar tempo.
+A conta, com os números que saíram (o teste ganhou `INSTRUCOES` ao lado do `RELOGIO`; o acesso
+`Session::instrucoes` já existia):
+
+```text
+antes da tecla    1 060 495 350 instruções · 55 088 ms virtuais · 55 imagens distintas em 100 quadros
+depois da tecla   1 068 931 395 instruções · 51 012 ms virtuais ·  1 imagem distinta em 100 quadros
+                  -> +8 436 045 instruções em 100 quadros = 84 360 por quadro, e 4,2 ms de relógio
+```
+
+**A roda não está presa nem ociosa: ela roda e não apresenta.** 84 mil instruções por quadro é
+trabalho de verdade (o mesmo patamar da varredura, ~17 milhões por segundo virtual), e o relógio
+anda 4,2 ms por quadro em vez dos 16,67 de um quadro cheio — porque a volta termina antes, com a
+máquina devolvendo o controle sem trocar o buffer. O que ela faz nesse estado é **esperar um
+evento**, e é isso que as teclas do RetroPad não produzem no caminho do core — e que o roteiro da
+varredura produz, porque lá as teclas entram como teclas do console e não como controle.
+
+Some-se a isso o teto de voltas por quadro (o item 4 acima): com o guest num laço que devolve o
+controle sem apresentar, o `run_frame` gasta o orçamento antes do próximo temporizador vencer.
 
 O próximo experimento é este, e ele é de uma pergunta só: **quantas voltas cada caminho gasta por
 quadro virtual, e quantas delas avançam o relógio**. A varredura dá uma volta por iteração e o core
