@@ -293,6 +293,10 @@ pub struct Emulador {
     ///
     /// O Android pode repintar a janela várias vezes sem o jogo tocar no framebuffer. Guardar a
     /// conversão evita recriar/copiar cerca de 600 KiB por repaint numa tela 640x480.
+    ///
+    /// **São dois caches, e nenhum sobra.** Este guarda os bytes e poupa a conversão na CPU; o
+    /// `ultimo_quadro` do `Pintor` guarda o que já subiu e poupa a ida ao barramento. A mesma
+    /// chave `(série, escritas)` governa os dois.
     quadro_565: Option<(u64, u64, std::sync::Arc<[u8]>)>,
     /// Os botões apertados agora, alimentados pela fila nativa.
     pad: Pad,

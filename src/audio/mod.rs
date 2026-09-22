@@ -506,32 +506,24 @@ impl Output {
         let mut stream_config = config.config();
         // O emulador pode ter picos pesados de CPU/GPU. Dar ~21 ms de capacidade ao Oboe evita
         // que uma fatia ruim vire crackle, sem empurrar a latência para valores perceptivelmente
-        // altos. Se algum aparelho recusar, tentamos novamente com o padrão do driver.
+        // altos.
+        //
+        // **Não há recuo para o padrão do driver, e não falta:** o backend Oboe do cpal 0.15.3
+        // traduz `BufferSize::Fixed(n)` em `set_buffer_capacity_in_frames(n)` e não tem caminho
+        // de recusa. Um `match` de retry aqui seria um ramo que nunca roda.
         if cfg!(target_os = "android") {
             stream_config.buffer_size = cpal::BufferSize::Fixed(1024);
         }
 
-        let build_f32 = |stream_config: &cpal::StreamConfig| {
-            let mixer = mixer.clone();
-            device.build_output_stream(
-                stream_config,
-                move |out: &mut [f32], _| mixer.fill(out, channels),
-                |err| eprintln!("erro na saída de áudio: {err}"),
-                None,
-            )
-        };
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => {
-                match build_f32(&stream_config) {
-                    Ok(stream) => Ok(stream),
-                    Err(first) if cfg!(target_os = "android") => {
-                        eprintln!(
-                            "buffer de áudio Android de 1024 quadros recusado ({first}); usando o padrão"
-                        );
-                        build_f32(&config.config())
-                    }
-                    Err(err) => Err(err),
-                }
+                let mixer = mixer.clone();
+                device.build_output_stream(
+                    &stream_config,
+                    move |out: &mut [f32], _| mixer.fill(out, channels),
+                    |err| eprintln!("erro na saída de áudio: {err}"),
+                    None,
+                )
             }
             other => return Err(format!("formato de áudio não suportado: {other}")),
         }

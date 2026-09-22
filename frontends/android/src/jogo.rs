@@ -166,7 +166,8 @@ impl Emulador {
             if pela_placa {
                 // O fecho vai para dentro do egui e é chamado no meio da pintura, com o
                 // contexto corrente: nada daqui pode ser emprestado do `self`, e por isso o
-                // pintor mora atrás de um `Arc<Mutex<_>>` e os bytes vão copiados.
+                // pintor mora atrás de um `Arc<Mutex<_>>` e o quadro vai num `Arc` --
+                // partilhado com o cache, e não copiado a cada pintura.
                 let pintor = self.pintor.clone();
                 let (lg, at) = (largura as i32, altura as i32);
                 let rect = ui
