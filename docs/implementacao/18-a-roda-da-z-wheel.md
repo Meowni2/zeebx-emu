@@ -943,6 +943,16 @@ O que isso delimita: **não é o título nem o número de arquivos** — é o qu
 títulos ela não oferece o foco que o roteiro alcança, e com muitos ela oferece, mas aí o foco cai num
 jogo que não sai sozinho. As duas condições precisam valer ao mesmo tempo, e é isso que falta montar.
 
+**A barra pergunta à lista todo quadro, e nós respondemos zero.** Na captura, o par `(barra,
+endereço da lista)` aparece **14 319 vezes**, uma a cada 5 ms — um laço de consulta da barra
+`0x01028e3f` ao roller `0x30000ad0`, com o **endereço do filho no lugar do seletor**. É o caso que a
+§5.3 já conhece ("o acessador é chamado com o endereço de um filho no lugar do seletor"), e a nossa
+resposta é o `OK` seco daquele ramo.
+
+O que faz disso a próxima pista: **é uma pergunta repetida**, e o que a barra faz com a resposta não
+está medido. Se ela pergunta a cada quadro para saber *qual item está escolhido* — ou *quantos* a
+lista tem —, o zero que devolvemos é a diferença entre a grade escolher e não escolher.
+
 **Onde está a lista de jogos, medido na árvore.** A captura de serial despeja a árvore de widgets na
 primeira tecla, e nela a roda tem **dois** rollers (classe `0x01028e14`):
 
