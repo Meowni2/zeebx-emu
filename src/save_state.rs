@@ -233,6 +233,137 @@ impl<'a> Leitor<'a> {
     }
 }
 
+/// Um pedaço do estado que sabe se gravar e se restaurar.
+///
+/// Cada subsistema do motor implementa isto no próprio arquivo, onde os campos são conhecidos. O
+/// que fica aqui é só o contrato: gravar devolve bytes por nome, restaurar os consome e **recusa**
+/// o que não bate — nunca aplica metade.
+pub trait Guardavel {
+    /// Escreve o estado nas seções.
+    fn grava(&self, destino: &mut Secoes);
+
+    /// Lê o estado das seções.
+    fn restaura(&mut self, origem: &Leitor<'_>) -> Result<(), Erro>;
+}
+
+/// Monta o conteúdo de um estado, seção por seção.
+#[derive(Debug, Default)]
+pub struct Secoes {
+    pares: Vec<(String, Vec<u8>)>,
+}
+
+impl Secoes {
+    pub fn nova() -> Self {
+        Self::default()
+    }
+
+    /// Guarda bytes crus numa seção.
+    pub fn poe(&mut self, nome: &str, bytes: Vec<u8>) {
+        self.pares.push((nome.to_string(), bytes));
+    }
+
+    /// Guarda um número.
+    pub fn poe_u32(&mut self, nome: &str, valor: u32) {
+        self.poe(nome, valor.to_le_bytes().to_vec());
+    }
+
+    /// Guarda uma lista de números, com a contagem na frente.
+    /// Grava um mapa, **em ordem de endereço**, para o arquivo não depender da ordem do `HashMap`.
+    pub fn poe_mapa(&mut self, nome: &str, mapa: impl IntoIterator<Item = (u32, u32)>) {
+        let mut pares: Vec<(u32, u32)> = mapa.into_iter().collect();
+        pares.sort_unstable();
+        self.poe_u32s(nome, pares.into_iter().flat_map(|(a, b)| [a, b]));
+    }
+
+    pub fn poe_u32s(&mut self, nome: &str, valores: impl IntoIterator<Item = u32>) {
+        let valores: Vec<u32> = valores.into_iter().collect();
+        let mut bytes = Vec::with_capacity(4 + valores.len() * 4);
+        bytes.extend_from_slice(&(valores.len() as u32).to_le_bytes());
+        for valor in valores {
+            bytes.extend_from_slice(&valor.to_le_bytes());
+        }
+        self.poe(nome, bytes);
+    }
+
+    /// Quantas seções já foram postas.
+    pub fn quantas(&self) -> usize {
+        self.pares.len()
+    }
+
+    /// Fecha o estado, no formato de [`escreve`].
+    pub fn fecha(self) -> Vec<u8> {
+        escreve(&self.pares)
+    }
+}
+
+impl Leitor<'_> {
+    /// Um número de uma seção, com erro que diz **qual** seção e o que faltou.
+    ///
+    /// Seção ausente é erro, e não zero: um campo que volta a zero em silêncio é a diferença entre
+    /// "o jogo recomeça estranho" e "o carregamento foi recusado".
+    pub fn u32(&self, nome: &str) -> Result<u32, Erro> {
+        let bytes = self.secao(nome).ok_or_else(|| Erro::Secao {
+            nome: nome.to_string(),
+            motivo: "a seção não está no arquivo".to_string(),
+        })?;
+        if bytes.len() < 4 {
+            return Err(Erro::Secao {
+                nome: nome.to_string(),
+                motivo: format!("esperava 4 bytes e tem {}", bytes.len()),
+            });
+        }
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    /// Pares de uma lista gravada por [`Secoes::poe_u32s`], para os mapas.
+    ///
+    /// **Ordena** os pares: a ordem de um `HashMap` não é estável entre execuções, e um estado
+    /// que sai diferente a cada gravação não serve para comparar duas execuções.
+    pub fn pares(&self, nome: &str) -> Result<Vec<(u32, u32)>, Erro> {
+        let valores = self.u32s(nome)?;
+        if valores.len() % 2 != 0 {
+            return Err(Erro::Secao {
+                nome: nome.to_string(),
+                motivo: format!("esperava pares e veio ímpar ({})", valores.len()),
+            });
+        }
+        let mut pares: Vec<(u32, u32)> = valores.chunks_exact(2).map(|p| (p[0], p[1])).collect();
+        pares.sort_unstable();
+        Ok(pares)
+    }
+
+    /// Uma lista de números gravada por [`Secoes::poe_u32s`].
+    pub fn u32s(&self, nome: &str) -> Result<Vec<u32>, Erro> {
+        let bytes = self.secao(nome).ok_or_else(|| Erro::Secao {
+            nome: nome.to_string(),
+            motivo: "a seção não está no arquivo".to_string(),
+        })?;
+        if bytes.len() < 4 {
+            return Err(Erro::Secao {
+                nome: nome.to_string(),
+                motivo: format!("esperava a contagem e tem {} bytes", bytes.len()),
+            });
+        }
+        let quantos = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+        let esperado = 4 + quantos * 4;
+        if bytes.len() < esperado {
+            return Err(Erro::Secao {
+                nome: nome.to_string(),
+                motivo: format!(
+                    "diz ter {quantos} valores ({esperado} bytes) e tem {}",
+                    bytes.len()
+                ),
+            });
+        }
+        Ok((0..quantos)
+            .map(|i| {
+                let p = 4 + i * 4;
+                u32::from_le_bytes([bytes[p], bytes[p + 1], bytes[p + 2], bytes[p + 3]])
+            })
+            .collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,6 +373,73 @@ mod tests {
             ("cpu".to_string(), vec![1, 2, 3, 4]),
             ("heap".to_string(), vec![9; 8]),
         ]
+    }
+
+    /// Um pedaço de estado de mentira, para exercitar o contrato `Guardavel` sem arrastar o motor.
+    #[derive(Debug, PartialEq, Eq)]
+    struct Contador {
+        proximo: u32,
+        livres: Vec<u32>,
+    }
+
+    impl Guardavel for Contador {
+        fn grava(&self, destino: &mut Secoes) {
+            destino.poe_u32("contador.proximo", self.proximo);
+            destino.poe_u32s("contador.livres", self.livres.iter().copied());
+        }
+
+        fn restaura(&mut self, origem: &Leitor<'_>) -> Result<(), Erro> {
+            self.proximo = origem.u32("contador.proximo")?;
+            self.livres = origem.u32s("contador.livres")?;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn um_guardavel_vai_e_volta() {
+        let antes = Contador {
+            proximo: 0x1020_3040,
+            livres: vec![7, 0xabc, 0],
+        };
+        let mut secoes = Secoes::nova();
+        antes.grava(&mut secoes);
+        assert_eq!(secoes.quantas(), 2);
+        let arquivo = secoes.fecha();
+
+        let leitor = Leitor::abre(&arquivo).expect("o estado abriu");
+        let mut depois = Contador {
+            proximo: 0,
+            livres: Vec::new(),
+        };
+        depois.restaura(&leitor).expect("restaurou");
+        assert_eq!(depois, antes);
+    }
+
+    #[test]
+    fn seçao_ausente_e_erro_e_nao_zero() {
+        let mut secoes = Secoes::nova();
+        secoes.poe_u32("so-isto", 1);
+        let arquivo = secoes.fecha();
+        let leitor = Leitor::abre(&arquivo).expect("abriu");
+        match leitor.u32("nao-existe") {
+            Err(Erro::Secao { nome, motivo }) => {
+                assert_eq!(nome, "nao-existe");
+                assert!(motivo.contains("não está"), "{motivo}");
+            }
+            outro => panic!("devia dizer que a seção não está, e devolveu {outro:?}"),
+        }
+    }
+
+    #[test]
+    fn lista_de_numeros_com_contagem_mentirosa_e_recusada() {
+        let mut secoes = Secoes::nova();
+        // Contagem diz 5 valores e só vêm dois: o leitor tem de recusar, e não ler lixo.
+        let mut bytes = 5u32.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&[1, 0, 0, 0, 2, 0, 0, 0]);
+        secoes.poe("mentirosa", bytes);
+        let arquivo = secoes.fecha();
+        let leitor = Leitor::abre(&arquivo).expect("abriu");
+        assert!(matches!(leitor.u32s("mentirosa"), Err(Erro::Secao { .. })));
     }
 
     #[test]
