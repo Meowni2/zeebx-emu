@@ -1795,6 +1795,42 @@ Duas decisões que valem registro, porque uma delas eu escrevi errado primeiro:
    alocadores delas seria mais barato, mas os livros delas ainda não entram no formato, e um
    tamanho que a volta não pode conferir é pior que um tamanho maior.
 
+### O inventário do que já entra, e o que falta
+
+O `Machine` tem **190 campos**. O estado que já vai e volta, com teste de ida e volta cada:
+
+```text
+cpu              registradores, CPSR, relógio virtual, memória de toda região gravável
+livros           heap, objetos (com a interface codificada), superfícies
+entrada          filas de tecla e de botão, aparelho de cada porta, avisos de aparelho
+agenda           timers, retornos registrados e pendentes
+tabelas          ~20 mapas e tabelas numéricas (dib, streams, sons, imagens, transparência…)
+conteúdo         preferências, parâmetros, IConfig, fontes, páginas, texto decifrado
+pixels           superfícies, tela, imagens decodificadas
+texto            módulos instalados, enumerações, caminhos de arquivo aberto
+parada           o ponto onde o motor parou, variante por variante
+resto            GL (vetores de cliente), IGraphics, teclados, threads, quadros do Update
+widgets          os três mapas, texto, coordenadas e as três duplas de função
+cifra/zip/peek   o estado de biblioteca que tem forma fechada
+```
+
+Ficam **fora de propósito**, com o motivo escrito no código: os campos de instrumento e diagnóstico
+(`api_time`, `profiling_api`, `tracing`, `fault_*`, `ignored_gl`, `*_log`, `missing_*`, `bad_pointers`),
+o `Mixer` do host, o `clock_us` (derivado do contador de instruções), e os **caches do que está em
+disco** (`vfs`, `resources`, `interned`, `CargaDeMidia`) — gravar esses seria duplicar o pacote e o
+arquivo dentro do save state.
+
+Faltam **três peças**, e nenhuma é mecânica:
+
+| Peça | Tamanho | Por que não entrou ainda |
+|---|---|---|
+| `gl` — a máquina de estados de GL do guest | 60+ campos | matrizes, névoa, stencil, funções de mistura, cadeias de mipmap por textura, e os três buffers (cor, profundidade, stencil). É a peça mais arriscada: textura ou nível errado não dá erro, dá imagem corrompida |
+| `decoders` | por objeto | decodificador de imagem no meio de um fluxo: expor o de dentro, ou aceitar perder o que estava em curso |
+| `databases` | por objeto | banco SQL aberto — a mesma decisão |
+
+**Enquanto essas três não entrarem, o core responde `retro_serialize_size = 0`**, com teste que
+cobra. O critério proíbe estado parcial, e é por isso que a porta não abre antes.
+
 ### O livro dos objetos, e a codificação das interfaces
 
 O `enum Interface` tem **62 variantes, todas sem payload, com discriminante explícito de 0 a 61** —

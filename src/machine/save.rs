@@ -26,7 +26,7 @@
 use super::{
     Callback, CipherState, DecodedImage, FluxoPcm, Machine, MediaState, MemStream, ModeloDeValor,
     OpenFile, Outcome, Peek, PendingBlit, RecorteDeImagem, SoundState, ThreadState, Timer,
-    UnzipState,
+    UnzipState, Widget,
 };
 use crate::input::Pad;
 use crate::machine::{default_colors, ArrayPointer, AES_BLOCK, CLR_COUNT, GraphicsState};
@@ -155,6 +155,7 @@ impl<C: CpuBackend> Machine<C> {
         self.grava_listas_e_parada(&mut secoes);
         self.grava_resto_das_tabelas(&mut secoes);
         self.grava_o_resto(&mut secoes);
+        self.grava_widgets(&mut secoes);
         self.heap.grava_com_prefixo("heap", &mut secoes);
         self.objects.grava(&mut secoes);
         self.superficies.grava_com_prefixo("surfaces", &mut secoes);
@@ -225,6 +226,7 @@ impl<C: CpuBackend> Machine<C> {
         self.restaura_listas_e_parada(&leitor)?;
         self.restaura_resto_das_tabelas(&leitor)?;
         self.restaura_o_resto(&leitor)?;
+        self.restaura_widgets(&leitor)?;
         self.heap.restaura_com_prefixo("heap", &leitor)?;
         self.objects.restaura(&leitor)?;
         self.superficies
@@ -2454,6 +2456,102 @@ impl<C: CpuBackend> Machine<C> {
 /// leitura deslocada. O teste cobra que a conta esteja certa.
 const REST0: usize = 63 + CLR_COUNT * 3 + crate::input::PORTAS * 5 + crate::input::PORTAS * 3 + 30 + 3;
 
+
+/// **Os widgets do `IWidget`** — a última tabela grande.
+///
+/// Cada widget tem três mapas de números dentro (filhos, propriedades e modelos), dois pares de
+/// coordenadas, texto, e três duplas de função e contexto (tratador, desenho e liberadores).
+///
+/// O identificador entra no nome das seções, como nas superfícies e nos arquivos: assim o mapa de
+/// dentro vai num bloco próprio, e não misturado com os números do widget.
+///
+/// A `serial` vai junto porque é ela que ordena os widgets em [`Machine::formulario_atual`]: sem
+/// ela, o widget que o jogo desenhou por último passaria a ser outro depois de carregar.
+impl<C: CpuBackend> Machine<C> {
+    fn grava_widgets(&self, secoes: &mut Secoes) {
+        secoes.poe_u32s("wid.ids", self.widgets.keys().copied());
+        for (id, widget) in &self.widgets {
+            secoes.poe_u32s(
+                &format!("wid.{id}.meta"),
+                [
+                    widget.tamanho.0,
+                    widget.tamanho.1,
+                    widget.posicao.0 as u32,
+                    widget.posicao.1 as u32,
+                    widget.classe,
+                    widget.serial as u32,
+                    (widget.serial >> 32) as u32,
+                    u32::from(widget.visivel),
+                    widget.pai,
+                    widget.tratador.0,
+                    widget.tratador.1,
+                    widget.desenho.0,
+                    widget.desenho.1,
+                    widget.liberadores.0,
+                    widget.liberadores.1,
+                    u32::from(widget.partiu),
+                ],
+            );
+            secoes.poe_mapa(
+                &format!("wid.{id}.filhos"),
+                widget.filhos.iter().map(|(a, b)| (*a, *b)),
+            );
+            secoes.poe_mapa(
+                &format!("wid.{id}.propriedades"),
+                widget.propriedades.iter().map(|(a, b)| (*a, *b)),
+            );
+            secoes.poe_mapa(
+                &format!("wid.{id}.modelos"),
+                widget.modelos.iter().map(|(a, b)| (*a, *b)),
+            );
+            secoes.poe_u32s(&format!("wid.{id}.anexados"), widget.anexados.iter().copied());
+            secoes.poe_texto(&format!("wid.{id}.texto"), &widget.texto);
+        }
+    }
+
+    fn restaura_widgets(&mut self, leitor: &Leitor<'_>) -> Result<(), Erro> {
+        let ids = leitor.u32s("wid.ids")?;
+        let mut widgets = std::collections::HashMap::new();
+        for id in ids {
+            let meta = leitor.u32s(&format!("wid.{id}.meta"))?;
+            if meta.len() != 16 {
+                return Err(Erro::Secao {
+                    nome: format!("wid.{id}.meta"),
+                    motivo: format!("esperava 16 números e veio {}", meta.len()),
+                });
+            }
+            let filhos = leitor.pares(&format!("wid.{id}.filhos"))?.into_iter().collect();
+            let propriedades = leitor
+                .pares(&format!("wid.{id}.propriedades"))?
+                .into_iter()
+                .collect();
+            let modelos = leitor.pares(&format!("wid.{id}.modelos"))?.into_iter().collect();
+            widgets.insert(
+                id,
+                Widget {
+                    filhos,
+                    propriedades,
+                    modelos,
+                    tamanho: (meta[0], meta[1]),
+                    posicao: (meta[2] as i32, meta[3] as i32),
+                    classe: meta[4],
+                    texto: leitor.texto(&format!("wid.{id}.texto"))?,
+                    serial: u64::from(meta[5]) | (u64::from(meta[6]) << 32),
+                    anexados: leitor.u32s(&format!("wid.{id}.anexados"))?,
+                    visivel: meta[7] != 0,
+                    pai: meta[8],
+                    tratador: (meta[9], meta[10]),
+                    desenho: (meta[11], meta[12]),
+                    liberadores: (meta[13], meta[14]),
+                    partiu: meta[15] != 0,
+                },
+            );
+        }
+        self.widgets = widgets;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3516,5 +3614,67 @@ mod tests {
         assert_eq!(depois.pending_threads, vec![0xaaa]);
         let quadro = depois.quadros_do_update.front().expect("o quadro voltou");
         assert_eq!(quadro.pixels(), &[0xbeef, 0x0000]);
+    }
+
+    /// **Os widgets voltam inteiros** — os três mapas, o texto, as coordenadas e as duplas de
+    /// função e contexto.
+    ///
+    /// A `serial` tem prova própria de propósito: é ela que ordena os widgets no
+    /// `formulario_atual`, e um widget que perde a ordem vira outro formulário depois de carregar.
+    #[test]
+    fn os_widgets_vem_de_volta() {
+        let mut antes = maquina();
+        let mut filhos = std::collections::HashMap::new();
+        filhos.insert(0x11u32, 0x22u32);
+        filhos.insert(0x33, 0x44);
+        let mut propriedades = std::collections::HashMap::new();
+        propriedades.insert(6u32, 0x55u32);
+        let mut modelos = std::collections::HashMap::new();
+        modelos.insert(0x8000u32, 0x8001u32);
+        antes.widgets.insert(
+            0x1000,
+            Widget {
+                filhos,
+                propriedades,
+                modelos,
+                tamanho: (640, 480),
+                posicao: (-7, 9),
+                classe: 0x0102_8e3f,
+                texto: "Abrir".to_string(),
+                serial: 0x1_0000_0002,
+                anexados: vec![0x66, 0x67],
+                visivel: true,
+                pai: 0x68,
+                tratador: (0x69, 0x6a),
+                desenho: (0x6b, 0x6c),
+                liberadores: (0x6d, 0x6e),
+                partiu: true,
+            },
+        );
+
+        let arquivo = antes.grava_estado();
+        let mut depois = maquina();
+        depois.restaura_estado(&arquivo).expect("restaurou");
+
+        let widget = depois.widgets.get(&0x1000).expect("o widget voltou");
+        assert_eq!(widget.tamanho, (640, 480));
+        assert_eq!(widget.posicao, (-7, 9));
+        assert_eq!(widget.classe, 0x0102_8e3f);
+        assert_eq!(widget.texto, "Abrir");
+        assert_eq!(widget.serial, 0x1_0000_0002, "a `serial` não voltou inteira");
+        assert_eq!(widget.anexados, vec![0x66, 0x67]);
+        assert!(widget.visivel);
+        assert_eq!(widget.pai, 0x68);
+        assert_eq!(widget.tratador, (0x69, 0x6a));
+        assert_eq!(widget.desenho, (0x6b, 0x6c));
+        assert_eq!(widget.liberadores, (0x6d, 0x6e));
+        assert!(widget.partiu);
+        assert_eq!(
+            widget.filhos.get(&0x11),
+            Some(&0x22),
+            "o mapa de filhos não voltou"
+        );
+        assert_eq!(widget.propriedades.get(&6), Some(&0x55));
+        assert_eq!(widget.modelos.get(&0x8000), Some(&0x8001));
     }
 }
