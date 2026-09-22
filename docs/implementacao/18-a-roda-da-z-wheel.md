@@ -740,6 +740,13 @@ com o guest num laço que não avança o relógio, o orçamento de voltas acaba 
 temporizador vencer, e o relógio — que é quem dispara os temporizadores da roda — nunca anda. A
 roda não fica lenta: ela para.
 
+**5. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
+padrão (a config do usuário) e o do core usa o que o frontend entrega; apontando o teste do core
+para a árvore do usuário (`ZEEBX_CORE_SISTEMA=$HOME/.config/zeebx`), o mesmo número de quadros leva
+a roda a **36,6 s** em vez de **50,6 s** — o estado do aparelho muda quando as coisas acontecem, o
+que confirma que os dois caminhos não se comparam por relógio. Mas a prisão depois do confirmar
+continua igual (1 imagem distinta em 100 quadros, pedido zero). Não é artefato da pasta.
+
 A conta, com os números que saíram: no regime normal o core entrega ~240 quadros por segundo
 virtual (25 008 ms em até 6 000 quadros); **preso, entrega 1 214 quadros por milissegundo virtual**
 — meio milhão de quadros para 426 ms de relógio. Não é a roda que anda devagar: é o quadro do core
