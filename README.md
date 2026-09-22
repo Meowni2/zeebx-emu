@@ -68,10 +68,13 @@ São dois formatos em cada um dos quatro sistemas, e o nome do arquivo diz qual 
 | `zeebx-standalone-windows-x86_64-setup.exe` | idem, no Windows |
 | `zeebx-standalone-macos-arm64.dmg`, `-x86_64.dmg` | idem, nos dois Macs |
 | `zeebx-headless-<sistema>.zip` | o binário sem interface, com o `config.ini` e o leia-me |
+| `zeebx-android-arm64-v8a.apk` | o aplicativo de Android |
 
-O APK do Android **não sai daqui**: ele é montado pelo
-[`frontends/android/compilar.sh`](frontends/android/compilar.sh), que precisa do NDK e do Gradle,
-e sai como `zeebx-android-arm64-v8a.apk`.
+A APK sai assinada com a **chave de depuração**, que é a que o Gradle gera sozinho: serve para
+instalar de lado (`adb install`), não para a Play Store — aquela pede a chave de publicação, que
+não pode morar num repositório público. O mesmo
+[`compilar.sh`](frontends/android/compilar.sh) que se usa na máquina é o que roda no CI; ele
+aceita o `ANDROID_SDK_ROOT` que os runners exportam e o `gradle` que estiver no caminho.
 
 ## Usando
 

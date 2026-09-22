@@ -6,7 +6,10 @@ set -euo pipefail
 
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RAIZ="$(cd "$AQUI/../.." && pwd)"
-: "${ANDROID_SDK_HOME:=$HOME/Android/sdk}"
+# O SDK: o do `$HOME`, ou o que o sistema já apontar. O `ANDROID_SDK_ROOT` é o que os runners
+# do GitHub exportam, e aceitá-lo é o que permite este mesmo script rodar no CI sem uma segunda
+# cópia dos caminhos dentro do workflow.
+: "${ANDROID_SDK_HOME:=${ANDROID_SDK_ROOT:-$HOME/Android/sdk}}"
 : "${ANDROID_NDK_VERSAO:=27.3.13750724}"
 : "${ZEEBX_ANDROID_ABI:=arm64-v8a}"
 : "${ZEEBX_ANDROID_PLATFORM:=android-35}"
@@ -60,8 +63,14 @@ echo "== .so =="
 ls -lh "$JNI/$ZEEBX_ANDROID_ABI/"
 
 if [ "${1:-}" = "--apk" ]; then
+  # O Gradle apontado, o que estiver no caminho, ou o do `$HOME`. Não há wrapper neste projeto:
+  # o `apk/` é um módulo mínimo que só empacota o `.so`, e um `gradlew` versionado seria mais
+  # uma coisa a manter atualizada do que a leitura de uma variável.
+  if [ -z "${GRADLE:-}" ]; then
+    GRADLE="$(command -v gradle || echo "$HOME/Android/gradle/bin/gradle")"
+  fi
   cd "$AQUI/apk"
-  "${GRADLE:-$HOME/Android/gradle/bin/gradle}" --no-daemon assembleDebug
+  "$GRADLE" --no-daemon assembleDebug
 
   # O Gradle nomeia pelo módulo e pela variante: `app-debug.apk`, igual em todo projeto que
   # começou pelo assistente. Ao lado dos pacotes de desktop — `zeebx-standalone-…`,

@@ -113,6 +113,16 @@ devolve um `content://`, e o carregador do núcleo abre caminho de arquivo.
 ./frontends/android/compilar.sh --apk    # o .so e a APK
 ```
 
+A APK sai em `apk/app/build/outputs/apk/debug/`, com dois nomes: o `app-debug.apk` do Gradle,
+que é de onde o `installDebug` e o Android Studio se servem, e uma cópia como
+`zeebx-android-<abi>.apk`, que é o nome que a release usa — ao lado de um
+`zeebx-standalone-linux-x86_64.deb`, um `app-debug.apk` não diz de qual programa é.
+
+Este mesmo script é o que roda no CI, sem uma segunda cópia dos caminhos dentro do workflow: ele
+aceita o `ANDROID_SDK_ROOT` que os runners do GitHub exportam e o `gradle` que estiver no
+caminho, caindo no `$HOME` quando não há nenhum dos dois. Ver
+[`release.yml`](../../.github/workflows/release.yml).
+
 O script espera a toolchain no `$HOME`, sem `sudo`:
 
 | O quê | Onde | De onde |
