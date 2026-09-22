@@ -15,29 +15,15 @@
 
 name: libretro
 
+# **Só à mão, pela aba Actions.** Nenhum push ou merge dispara isto: quem gasta runner sozinho é
+# o `release.yml`, na tag. Rode daqui quando quiser conferir o core antes de marcar uma versão.
 on:
-  push:
-    branches: [development, master, main, "feat/**", "fix/**"]
-    paths:
-      - "frontends/libretro/**"
-      - "src/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "build.rs"
-      - ".github/workflows/libretro.yml"
-  pull_request:
-    paths:
-      - "frontends/libretro/**"
-      - "src/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/libretro.yml"
   workflow_dispatch:
 
-# Ver a nota do `ci.yml`: em push, a execucao nova espera em vez de derrubar a que esta rodando.
+# Uma execução nova espera a anterior do mesmo ref terminar, em vez de derrubá-la no meio.
 concurrency:
   group: libretro-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 jobs:
   core:
@@ -46,10 +32,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Em PR, só o alvo barato: a matriz inteira é coisa de push.
-        alvo: ${{ github.event_name == 'pull_request'
-                  && fromJSON('["linux-x86_64"]')
-                  || fromJSON('["linux-x86_64","linux-aarch64","windows-x86_64","windows-aarch64","macos-x86_64","macos-arm64"]') }}
+        # Disparo à mão é sempre a matriz inteira: quem pede o run quer a resposta dos seis alvos.
+        alvo:
+          - linux-x86_64
+          - linux-aarch64
+          - windows-x86_64
+          - windows-aarch64
+          - macos-x86_64
+          - macos-arm64
         include:
           - alvo: linux-x86_64
             nome: linux-x86_64

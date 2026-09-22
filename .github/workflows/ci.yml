@@ -13,42 +13,22 @@
 # C++20, que é justamente a combinação que cross-build faz sofrer (toolchain C++ e sysroot). Runner
 # ARM64 nativo existe para Linux, Windows e macOS, e sai mais barato que manter cross.
 #
-# Custo: cada alvo compila o QEMU e o JIT, uns 15 minutos por runner. Por isso a matriz completa roda
-# em **push** para as ramas de desenvolvimento e sob demanda; em PR roda só o Linux x86_64, onde o
-# retorno precisa ser rápido.
-#
-# **A lista de PR é escolhida por expressão, não por `if` de job**: o contexto `matrix` não existe
-# em `jobs.<id>.if` — o GitHub rejeita o arquivo inteiro, e o sintoma é um run sem job nenhum.
+# Custo: cada alvo compila o QEMU e o JIT, uns 15 minutos por runner. Seis runners por execução é
+# caro demais para gastar em cada push — por isso este trabalho **só roda à mão**, pela aba Actions.
 
 name: ci
 
+# **Nenhum push ou merge dispara isto.** O único gatilho automático do repositório é a tag, no
+# `release.yml`; aqui é você quem pede o run, quando quer a resposta antes de marcar uma versão.
 on:
-  push:
-    branches: [development, master, main, "feat/**", "fix/**"]
-    # Só o que pode mudar o binário. Um commit de documentação não deve gastar seis runners — nem
-    # cancelar, pela `concurrency`, um build de verdade que estava no meio do caminho.
-    paths:
-      - "src/**"
-      - "assets/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "build.rs"
-      - ".github/workflows/**"
-  pull_request:
-    paths:
-      - "src/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "build.rs"
   workflow_dispatch:
 
-# **Push não cancela push.** Medido: quatro execuções seguidas do `ci` terminaram "cancelled" porque
-# cada push novo derrubava o build de seis alvos que estava no meio — e nenhuma delas chegou a
-# dizer se o standalone compila no Windows ou no macOS. Em PR o cancelamento continua, que é onde a
-# pressa importa.
+# **Um run não cancela o outro.** Medido: quatro execuções seguidas do `ci` terminaram "cancelled"
+# porque a nova derrubava o build de seis alvos que estava no meio — e nenhuma delas chegou a dizer
+# se o standalone compila no Windows ou no macOS.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 jobs:
   compila:
@@ -60,9 +40,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        alvo: ${{ github.event_name == 'pull_request'
-                  && fromJSON('["linux-x86_64"]')
-                  || fromJSON('["linux-x86_64","linux-aarch64","windows-x86_64","windows-aarch64","macos-x86_64","macos-arm64"]') }}
+        # Disparo à mão é sempre a matriz inteira: quem pede o run quer a resposta dos seis alvos.
+        alvo:
+          - linux-x86_64
+          - linux-aarch64
+          - windows-x86_64
+          - windows-aarch64
+          - macos-x86_64
+          - macos-arm64
         include:
           - alvo: linux-x86_64
             nome: linux-x86_64
@@ -170,8 +155,3 @@ jobs:
           $prova = Start-Process -FilePath "${{ matrix.binario }}" -ArgumentList "controles" -PassThru -NoNewWindow
           if (-not $prova.WaitForExit(60000)) { $prova.Kill(); throw "o binario pendurou" }
           if ($prova.ExitCode -ne 0) { throw "o binario saiu com $($prova.ExitCode)" }
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: zeebx-${{ matrix.nome }}
-          path: ${{ matrix.binario }}
