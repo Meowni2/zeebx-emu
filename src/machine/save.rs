@@ -25,9 +25,12 @@
 
 use super::{
     Callback, CipherState, DecodedImage, FluxoPcm, Machine, MediaState, MemStream, ModeloDeValor,
-    OpenFile, Outcome, Peek, PendingBlit, RecorteDeImagem, SoundState, Timer, UnzipState,
+    OpenFile, Outcome, Peek, PendingBlit, RecorteDeImagem, SoundState, ThreadState, Timer,
+    UnzipState,
 };
-use crate::machine::AES_BLOCK;
+use crate::input::Pad;
+use crate::machine::{default_colors, ArrayPointer, AES_BLOCK, CLR_COUNT, GraphicsState};
+use crate::video::display::{Rect, Rgb};
 use crate::video::display::Framebuffer;
 use crate::cpu::{CpuBackend, Reg};
 use crate::save_state::{Erro, Guardavel, Leitor, Secoes};
@@ -151,6 +154,7 @@ impl<C: CpuBackend> Machine<C> {
         self.grava_escalares_e_mapas(&mut secoes);
         self.grava_listas_e_parada(&mut secoes);
         self.grava_resto_das_tabelas(&mut secoes);
+        self.grava_o_resto(&mut secoes);
         self.heap.grava_com_prefixo("heap", &mut secoes);
         self.objects.grava(&mut secoes);
         self.superficies.grava_com_prefixo("surfaces", &mut secoes);
@@ -220,6 +224,7 @@ impl<C: CpuBackend> Machine<C> {
         self.restaura_escalares_e_mapas(&leitor)?;
         self.restaura_listas_e_parada(&leitor)?;
         self.restaura_resto_das_tabelas(&leitor)?;
+        self.restaura_o_resto(&leitor)?;
         self.heap.restaura_com_prefixo("heap", &leitor)?;
         self.objects.restaura(&leitor)?;
         self.superficies
@@ -1971,6 +1976,484 @@ impl<C: CpuBackend> Machine<C> {
     }
 }
 
+
+/// O que resta sem forma própria: escalares, buffers, o estado de `IGraphics` e `IGL`, os teclados
+/// e as threads.
+///
+/// ## O que continua de fora, e por que
+///
+/// - **`widgets`**: o maior. Cada widget tem mapas de filhos, propriedades e modelos, mais texto.
+///   Precisa de um esquema de chave composta que ainda não existe no formato;
+/// - **`gl`**: o objeto do rasterizador, com a máquina de estados de GL do guest — matrizes, cor
+///   corrente, pilhas. É estado de verdade (**o jogo pode estar no meio de um `glBegin`**), e por
+///   isso não entra de qualquer jeito: precisa da própria codificação, com o mesmo cuidado das
+///   superfícies;
+/// - **`decoders`** e **`databases`**: decodificador de imagem no meio de um fluxo e banco SQL
+///   aberto. Os dois são estados de biblioteca, e cada um pede a mesma decisão que o `Md5` — expor
+///   o de dentro, ou aceitar perder o que estava em curso;
+/// - **`vfs`** e **`resources`**: são **cache do que está em disco** (o sistema de arquivos do
+///   aparelho e os recursos do pacote). Derrubá-los faz recarregar, e é o certo: gravar seria
+///   duplicar o pacote dentro do save state;
+/// - **`audio`**: o `Mixer` do host. O que o jogo pediu está nos `sounds`, e o mixer se refaz;
+/// - **`ignored_gl`**, **`api_time`**, **`profiling_api`**, **`tracing`**, **`fault_*`**: instrumento
+///   e diagnóstico, pela mesma razão de sempre — salvar faria dois save states legitimamente
+///   diferentes.
+impl<C: CpuBackend> Machine<C> {
+    /// Os escalares e as listas pequenas.
+    fn numeros_do_resto(&self) -> Vec<u32> {
+        let mut n: Vec<u32> = vec![
+            self.file_error,
+            self.surface_manip,
+            self.imageon_ext,
+            self.gles11_ext,
+            self.gles10_ext,
+            self.egl_get_power_level,
+            self.egl_oes_swap_interval,
+            self.egl_get_color_buffer,
+            self.gles11_ext_pak,
+            u32::from(self.boomerang_sequencia),
+            self.spin_polls,
+            self.enumeracao_de_applets as u32,
+            u32::from(self.bridge),
+            self.buffer_de_fluxo,
+            self.bloco_de_aviso_de_midia,
+            u32::from(self.despejou),
+            self.formulario_pintado,
+            self.egl_error,
+            u32::from(self.egl_viewport_inicial),
+            self.gles_object,
+            self.egl_surface,
+            self.egl_context,
+            self.gl_array_buffer,
+            self.gl_element_buffer,
+            self.ultimo_desenho_us as u32,
+            (self.ultimo_desenho_us >> 32) as u32,
+            self.ultimo_relatorio_boomerang_us as u32,
+            (self.ultimo_relatorio_boomerang_us >> 32) as u32,
+            self.ultimo_pacote_boomerang_us as u32,
+            (self.ultimo_pacote_boomerang_us >> 32) as u32,
+            self.calibracoes.0,
+            self.calibracoes.1,
+            u32::from(self.pending_end.is_some()),
+            self.pending_end.unwrap_or(0),
+            u32::from(self.pending_response.is_some()),
+            self.pending_response.unwrap_or((0, 0, 0)).0,
+            self.pending_response.unwrap_or((0, 0, 0)).1,
+            self.pending_response.unwrap_or((0, 0, 0)).2,
+            u32::from(self.egl_color_dimensions.is_some()),
+            self.egl_color_dimensions.unwrap_or((0, 0)).0 as u32,
+            self.egl_color_dimensions.unwrap_or((0, 0)).1 as u32,
+            self.egl_color_buffer.0,
+            self.egl_color_buffer.1 as u32,
+            u32::from(self.clip.is_some()),
+            u32::from(self.network),
+            u32::from(self.network_to.is_some()),
+        ];
+        // Os retângulos assinados e os `Rgb` de IGraphics.
+        if let Some(recorte) = self.clip {
+            n.extend([
+                recorte.x as u32,
+                recorte.y as u32,
+                recorte.width as u32,
+                recorte.height as u32,
+            ]);
+        } else {
+            n.extend([0, 0, 0, 0]);
+        }
+        n.extend([
+            u32::from(self.graphics.stroke.r),
+            u32::from(self.graphics.stroke.g),
+            u32::from(self.graphics.stroke.b),
+            u32::from(self.graphics.fill.r),
+            u32::from(self.graphics.fill.g),
+            u32::from(self.graphics.fill.b),
+            u32::from(self.graphics.background.r),
+            u32::from(self.graphics.background.g),
+            u32::from(self.graphics.background.b),
+            u32::from(self.graphics.fill_mode),
+            u32::from(self.graphics.point_size),
+            self.graphics.origin.0 as u32,
+            self.graphics.origin.1 as u32,
+        ]);
+        // A paleta de `IGraphics`: dezessete `Rgb`, três bytes cada.
+        for cor in &self.colors {
+            n.extend([u32::from(cor.r), u32::from(cor.g), u32::from(cor.b)]);
+        }
+        // Os dois controles, cada um com os botões e os quatro eixos.
+        for pad in &self.pads {
+            n.push(pad.buttons);
+            n.extend(pad.axes.iter().map(|eixo| *eixo as u32));
+        }
+        // O movimento do Boomerang, em bits: são `f32`.
+        for aceleracao in &self.movimento {
+            for componente in aceleracao {
+                n.push(componente.to_bits());
+            }
+        }
+        // Os cinco vetores de cliente de GL: seis números cada.
+        for ponteiro in [
+            &self.gl_vertices,
+            &self.gl_colors,
+            &self.gl_texcoords,
+            &self.gl_texcoords1,
+            &self.gl_normals,
+        ] {
+            n.extend([
+                ponteiro.size,
+                ponteiro.kind,
+                ponteiro.stride,
+                ponteiro.address,
+                u32::from(ponteiro.enabled),
+                ponteiro.buffer,
+            ]);
+        }
+        for componente in self.gl_normal_atual {
+            n.push(componente.to_bits());
+        }
+        n
+    }
+
+    fn grava_o_resto(&self, secoes: &mut Secoes) {
+        secoes.poe_u32s("resto.numeros", self.numeros_do_resto());
+        secoes.poe_texto("resto.network_to", self.network_to.as_deref().unwrap_or(""));
+        let mut teclas: Vec<u32> = self.teclas_da_rolagem.iter().copied().collect();
+        teclas.sort_unstable();
+        secoes.poe_u32s("resto.teclas_rolagem", teclas);
+        let mut lidos: Vec<u32> = self.recursos_lidos.iter().map(|r| u32::from(*r)).collect();
+        lidos.sort_unstable();
+        secoes.poe_u32s("resto.recursos_lidos", lidos);
+        secoes.poe_registros(
+            "resto.avisos_de_midia",
+            self.avisos_de_midia
+                .iter()
+                .map(|(a, b, c, cb)| vec![*a, *b, *c, cb.function, cb.context])
+                .collect::<Vec<_>>(),
+        );
+        secoes.poe_blocos(
+            "resto.gl_buffers",
+            1,
+            self.gl_buffers
+                .iter()
+                .map(|(nome, bytes)| (vec![*nome], bytes.clone()))
+                .collect::<Vec<_>>(),
+        );
+        secoes.poe("resto.egl_bytes", self.egl_color_bytes.clone());
+        secoes.poe("resto.egl_readback", self.egl_color_readback.clone());
+
+        // As threads: os catorze registradores de contexto, os sinalizadores e quem espera por ela.
+        secoes.poe_u32s("th.ids", self.threads.keys().copied());
+        for (id, thread) in &self.threads {
+            let mut numeros = vec![
+                thread.stack,
+                thread.resume_cb,
+                thread.resume_pc,
+                u32::from(thread.started),
+                u32::from(thread.suspended),
+                u32::from(thread.finished),
+                thread.exit_code,
+            ];
+            numeros.extend(thread.context);
+            secoes.poe_u32s(&format!("th.{id}.meta"), numeros);
+            secoes.poe_registros(
+                &format!("th.{id}.joiners"),
+                thread
+                    .joiners
+                    .iter()
+                    .map(|(cb, valor)| vec![cb.function, cb.context, *valor])
+                    .collect::<Vec<_>>(),
+            );
+        }
+        secoes.poe_mapa("th.resume", self.resume_callbacks.iter().map(|(a, b)| (*a, *b)));
+        secoes.poe_u32s("th.pendentes", self.pending_threads.iter().copied());
+
+        // Os quadros do `Update`: são superfícies, e vão pela mesma rotina delas.
+        secoes.poe_u32s("upd.quantos", [self.quadros_do_update.len() as u32]);
+        for (indice, quadro) in self.quadros_do_update.iter().enumerate() {
+            grava_superficie(secoes, &format!("upd.{indice}"), quadro);
+        }
+    }
+
+    /// Lê e aplica o resto: escalares, buffers, `IGraphics`, `IGL`, teclados e threads.
+    fn restaura_o_resto(&mut self, leitor: &Leitor<'_>) -> Result<(), Erro> {
+        let n = leitor.u32s("resto.numeros")?;
+        if n.len() != REST0 {
+            return Err(Erro::Secao {
+                nome: "resto.numeros".to_string(),
+                motivo: format!(
+                    "o estado tem {} números e esta versão do motor usa {REST0}",
+                    n.len()
+                ),
+            });
+        }
+        let booleano = |indice: usize, campo: &str| -> Result<bool, Erro> {
+            match n[indice] {
+                0 => Ok(false),
+                1 => Ok(true),
+                outro => Err(Erro::Secao {
+                    nome: "resto.numeros".to_string(),
+                    motivo: format!("o campo `{campo}` vale {outro}, e é booleano"),
+                }),
+            }
+        };
+        let u64_de = |indice: usize| u64::from(n[indice]) | (u64::from(n[indice + 1]) << 32);
+
+        // Os 49 primeiros; os demais vêm depois, em blocos de tamanho fixo.
+        let file_error = n[0];
+        let surface_manip = n[1];
+        let imageon_ext = n[2];
+        let gles11_ext = n[3];
+        let gles10_ext = n[4];
+        let egl_get_power_level = n[5];
+        let egl_oes_swap_interval = n[6];
+        let egl_get_color_buffer = n[7];
+        let gles11_ext_pak = n[8];
+        let boomerang_sequencia = n[9] as u8;
+        let spin_polls = n[10];
+        let enumeracao_de_applets = n[11] as usize;
+        let bridge = booleano(12, "bridge")?;
+        let buffer_de_fluxo = n[13];
+        let bloco_de_aviso_de_midia = n[14];
+        let despejou = booleano(15, "despejou")?;
+        let formulario_pintado = n[16];
+        let egl_error = n[17];
+        let egl_viewport_inicial = booleano(18, "egl_viewport_inicial")?;
+        let gles_object = n[19];
+        let egl_surface = n[20];
+        let egl_context = n[21];
+        let gl_array_buffer = n[22];
+        let gl_element_buffer = n[23];
+        let ultimo_desenho_us = u64_de(24);
+        let ultimo_relatorio_boomerang_us = u64_de(26);
+        let ultimo_pacote_boomerang_us = u64_de(28);
+        let calibracoes = (n[30], n[31]);
+        let pending_end = booleano(32, "pending_end")?.then_some(n[33]);
+        let pending_response = booleano(34, "pending_response")?.then(|| (n[35], n[36], n[37]));
+        let egl_color_dimensions =
+            booleano(38, "egl_color_dimensions")?.then(|| (n[39] as usize, n[40] as usize));
+        let egl_color_buffer = (n[41], n[42] as usize);
+        // A ordem aqui **é** a do escritor, e não a que parece mais natural: os dois campos de
+        // rede vêm antes do retângulo. Quando eu escrevi o leitor na ordem "bonita", os valores
+        // saíram trocados — o `network` voltou com a largura do retângulo. O teste pegou.
+        let clip = booleano(43, "clip")?.then(|| Rect {
+            x: n[46] as i16,
+            y: n[47] as i16,
+            width: n[48] as i16,
+            height: n[49] as i16,
+        });
+        let network = booleano(44, "network")?;
+        let tem_network_to = booleano(45, "network_to")?;
+        let cor = |base: usize| Rgb {
+            r: n[base] as u8,
+            g: n[base + 1] as u8,
+            b: n[base + 2] as u8,
+        };
+        let graphics = GraphicsState {
+            stroke: cor(50),
+            fill: cor(53),
+            background: cor(56),
+            fill_mode: n[59] != 0,
+            point_size: n[60] as u8,
+            origin: (n[61] as i32, n[62] as i32),
+        };
+        let mut colors = default_colors();
+        for (indice, destino) in colors.iter_mut().enumerate() {
+            let base = 63 + indice * 3;
+            *destino = Rgb {
+                r: n[base] as u8,
+                g: n[base + 1] as u8,
+                b: n[base + 2] as u8,
+            };
+        }
+        let base_dos_pads = 63 + CLR_COUNT * 3;
+        let mut pads = [Pad::default(); crate::input::PORTAS];
+        for (indice, destino) in pads.iter_mut().enumerate() {
+            let base = base_dos_pads + indice * 5;
+            destino.buttons = n[base];
+            for (eixo, valor) in destino.axes.iter_mut().enumerate() {
+                *valor = n[base + 1 + eixo] as i32;
+            }
+        }
+        let base_do_movimento = base_dos_pads + crate::input::PORTAS * 5;
+        let mut movimento = [[0.0f32; 3]; crate::input::PORTAS];
+        for (indice, aceleracao) in movimento.iter_mut().enumerate() {
+            for (componente, valor) in aceleracao.iter_mut().enumerate() {
+                *valor = f32::from_bits(n[base_do_movimento + indice * 3 + componente]);
+            }
+        }
+        let base_dos_ponteiros = base_do_movimento + crate::input::PORTAS * 3;
+        let mut ponteiros = [ArrayPointer::default(); 5];
+        for (indice, destino) in ponteiros.iter_mut().enumerate() {
+            let base = base_dos_ponteiros + indice * 6;
+            *destino = ArrayPointer {
+                size: n[base],
+                kind: n[base + 1],
+                stride: n[base + 2],
+                address: n[base + 3],
+                enabled: n[base + 4] != 0,
+                buffer: n[base + 5],
+            };
+        }
+        let base_do_normal = base_dos_ponteiros + 30;
+        let gl_normal_atual = [
+            f32::from_bits(n[base_do_normal]),
+            f32::from_bits(n[base_do_normal + 1]),
+            f32::from_bits(n[base_do_normal + 2]),
+        ];
+
+        // Listas e blocos, lidos antes de aplicar.
+        let network_to = {
+            let texto = leitor.texto("resto.network_to")?;
+            tem_network_to.then_some(texto)
+        };
+        let teclas_da_rolagem: std::collections::HashSet<u32> =
+            leitor.u32s("resto.teclas_rolagem")?.into_iter().collect();
+        let recursos_lidos: std::collections::BTreeSet<u16> = leitor
+            .u32s("resto.recursos_lidos")?
+            .into_iter()
+            .map(|r| r as u16)
+            .collect();
+        let avisos_de_midia: Vec<(u32, u32, u32, Callback)> = leitor
+            .registros("resto.avisos_de_midia", 5)?
+            .into_iter()
+            .map(|r| {
+                (
+                    r[0],
+                    r[1],
+                    r[2],
+                    Callback {
+                        function: r[3],
+                        context: r[4],
+                    },
+                )
+            })
+            .collect();
+        let gl_buffers: std::collections::HashMap<u32, Vec<u8>> =
+            leitor.blocos("resto.gl_buffers")?.into_iter().map(|(c, b)| (c[0], b)).collect();
+        let egl_color_bytes = secao_exigida(leitor, "resto.egl_bytes")?;
+        let egl_color_readback = secao_exigida(leitor, "resto.egl_readback")?;
+
+        let ids = leitor.u32s("th.ids")?;
+        let mut threads = std::collections::HashMap::new();
+        for id in ids {
+            let meta = leitor.u32s(&format!("th.{id}.meta"))?;
+            if meta.len() != 21 {
+                return Err(Erro::Secao {
+                    nome: format!("th.{id}.meta"),
+                    motivo: format!("esperava 21 números e veio {}", meta.len()),
+                });
+            }
+            let mut context = [0u32; 14];
+            context.copy_from_slice(&meta[7..21]);
+            let joiners = leitor
+                .registros(&format!("th.{id}.joiners"), 3)?
+                .into_iter()
+                .map(|r| {
+                    (
+                        Callback {
+                            function: r[0],
+                            context: r[1],
+                        },
+                        r[2],
+                    )
+                })
+                .collect();
+            threads.insert(
+                id,
+                ThreadState {
+                    stack: meta[0],
+                    resume_cb: meta[1],
+                    resume_pc: meta[2],
+                    started: meta[3] != 0,
+                    suspended: meta[4] != 0,
+                    finished: meta[5] != 0,
+                    exit_code: meta[6],
+                    context,
+                    joiners,
+                },
+            );
+        }
+        let resume_callbacks: std::collections::HashMap<u32, u32> =
+            leitor.pares("th.resume")?.into_iter().collect();
+        let pending_threads = leitor.u32s("th.pendentes")?;
+
+        let quantos_quadros = leitor.u32s("upd.quantos")?;
+        if quantos_quadros.len() != 1 {
+            return Err(Erro::Secao {
+                nome: "upd.quantos".to_string(),
+                motivo: format!("esperava 1 número e veio {}", quantos_quadros.len()),
+            });
+        }
+        let mut quadros_do_update = std::collections::VecDeque::new();
+        for indice in 0..quantos_quadros[0] as usize {
+            quadros_do_update.push_back(le_superficie(leitor, &format!("upd.{indice}"))?);
+        }
+
+        // Aplicação.
+        self.file_error = file_error;
+        self.surface_manip = surface_manip;
+        self.imageon_ext = imageon_ext;
+        self.gles11_ext = gles11_ext;
+        self.gles10_ext = gles10_ext;
+        self.egl_get_power_level = egl_get_power_level;
+        self.egl_oes_swap_interval = egl_oes_swap_interval;
+        self.egl_get_color_buffer = egl_get_color_buffer;
+        self.gles11_ext_pak = gles11_ext_pak;
+        self.boomerang_sequencia = boomerang_sequencia;
+        self.spin_polls = spin_polls;
+        self.enumeracao_de_applets = enumeracao_de_applets;
+        self.bridge = bridge;
+        self.buffer_de_fluxo = buffer_de_fluxo;
+        self.bloco_de_aviso_de_midia = bloco_de_aviso_de_midia;
+        self.despejou = despejou;
+        self.formulario_pintado = formulario_pintado;
+        self.egl_error = egl_error;
+        self.egl_viewport_inicial = egl_viewport_inicial;
+        self.gles_object = gles_object;
+        self.egl_surface = egl_surface;
+        self.egl_context = egl_context;
+        self.gl_array_buffer = gl_array_buffer;
+        self.gl_element_buffer = gl_element_buffer;
+        self.ultimo_desenho_us = ultimo_desenho_us;
+        self.ultimo_relatorio_boomerang_us = ultimo_relatorio_boomerang_us;
+        self.ultimo_pacote_boomerang_us = ultimo_pacote_boomerang_us;
+        self.calibracoes = calibracoes;
+        self.pending_end = pending_end;
+        self.pending_response = pending_response;
+        self.egl_color_dimensions = egl_color_dimensions;
+        self.egl_color_buffer = egl_color_buffer;
+        self.clip = clip;
+        self.network = network;
+        self.network_to = network_to;
+        self.graphics = graphics;
+        self.colors = colors;
+        self.pads = pads;
+        self.movimento = movimento;
+        self.gl_vertices = ponteiros[0];
+        self.gl_colors = ponteiros[1];
+        self.gl_texcoords = ponteiros[2];
+        self.gl_texcoords1 = ponteiros[3];
+        self.gl_normals = ponteiros[4];
+        self.gl_normal_atual = gl_normal_atual;
+        self.teclas_da_rolagem = teclas_da_rolagem;
+        self.recursos_lidos = recursos_lidos;
+        self.avisos_de_midia = avisos_de_midia;
+        self.gl_buffers = gl_buffers;
+        self.egl_color_bytes = egl_color_bytes;
+        self.egl_color_readback = egl_color_readback;
+        self.threads = threads;
+        self.resume_callbacks = resume_callbacks;
+        self.pending_threads = pending_threads;
+        self.quadros_do_update = quadros_do_update;
+        Ok(())
+    }
+}
+
+/// Quantos números a seção `resto.numeros` tem.
+///
+/// Conferido na leitura, como o `ESCALARES`: um estado com outro número de campos é recusa, e não
+/// leitura deslocada. O teste cobra que a conta esteja certa.
+const REST0: usize = 63 + CLR_COUNT * 3 + crate::input::PORTAS * 5 + crate::input::PORTAS * 3 + 30 + 3;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2885,5 +3368,153 @@ mod tests {
         assert_eq!(midia.buffer, (0x12, 0x13));
         assert_eq!(midia.ends_us, 0x2_0000_000b);
         assert_eq!(midia.notify.function, 0x1000_7000);
+    }
+
+    /// **O resto: escalares, GL, IGraphics, teclados e threads** — e a conta de campos certa.
+    #[test]
+    fn o_resto_vem_de_volta_e_a_conta_esta_certa() {
+        let antes = maquina();
+        let mut secoes = Secoes::nova();
+        antes.grava_o_resto(&mut secoes);
+        let arquivo = secoes.fecha();
+        let leitor = crate::save_state::Leitor::abre(&arquivo).expect("abriu");
+        assert_eq!(
+            leitor.u32s("resto.numeros").expect("a seção").len(),
+            REST0,
+            "a conta de campos está desatualizada: quem acrescentou um campo não mexeu em REST0"
+        );
+    }
+
+    #[test]
+    fn escalares_gl_e_threads_vem_de_volta() {
+        let mut antes = maquina();
+        antes.file_error = 12;
+        antes.surface_manip = 0x2222;
+        antes.gles11_ext = 0x3333;
+        antes.boomerang_sequencia = 7;
+        antes.calibracoes = (0x44, 0x55);
+        antes.pending_response = Some((1, 2, 3));
+        antes.pending_end = Some(9);
+        antes.egl_color_dimensions = Some((640, 480));
+        antes.egl_color_buffer = (0x66, 480 * 640 * 2);
+        antes.clip = Some(Rect {
+            x: -1,
+            y: -2,
+            width: 300,
+            height: 200,
+        });
+        antes.network = true;
+        antes.network_to = Some("127.0.0.1:80".to_string());
+        antes.graphics.fill_mode = true;
+        antes.graphics.point_size = 3;
+        antes.graphics.origin = (-4, 5);
+        antes.graphics.stroke = Rgb { r: 1, g: 2, b: 3 };
+        antes.colors[7] = Rgb { r: 200, g: 100, b: 50 };
+        let mut pad = Pad::default();
+        pad.press(2, true);
+        pad.set_axis(1, -100);
+        antes.pads[0] = pad;
+        antes.movimento[1] = [0.5, -0.25, 1.0];
+        antes.gl_vertices = ArrayPointer {
+            size: 3,
+            kind: 0x1406,
+            stride: 12,
+            address: 0x7000,
+            enabled: true,
+            buffer: 0x88,
+        };
+        antes.gl_normal_atual = [0.0, 1.0, 0.0];
+        antes.teclas_da_rolagem.insert(0x99);
+        antes.recursos_lidos.insert(0x1234);
+        antes.avisos_de_midia.push((
+            0xaa,
+            0xbb,
+            0xcc,
+            Callback {
+                function: 0x1000_8000,
+                context: 0xdd,
+            },
+        ));
+        antes.gl_buffers.insert(0xee, vec![1, 2, 3, 4]);
+        antes.egl_color_bytes = vec![5, 6];
+        antes.egl_color_readback = vec![7, 8, 9];
+        let mut contexto = [0u32; 14];
+        contexto[5] = 0xff00;
+        antes.threads.insert(
+            0x111,
+            ThreadState {
+                stack: 0x222,
+                resume_cb: 0x333,
+                resume_pc: 0x444,
+                started: true,
+                suspended: false,
+                finished: false,
+                exit_code: 0,
+                context: contexto,
+                joiners: vec![(
+                    Callback {
+                        function: 0x555,
+                        context: 0x666,
+                    },
+                    0x777,
+                )],
+            },
+        );
+        antes.resume_callbacks.insert(0x888, 0x999);
+        antes.pending_threads.push(0xaaa);
+        let mut quadro = Framebuffer::new(2, 1);
+        quadro.set_pixel_native(0, 0, 0xbeef);
+        antes.quadros_do_update.push_back(quadro);
+
+        let arquivo = antes.grava_estado();
+        let mut depois = maquina();
+        depois.restaura_estado(&arquivo).expect("restaurou");
+
+        assert_eq!(depois.file_error, 12);
+        assert_eq!(depois.surface_manip, 0x2222);
+        assert_eq!(depois.gles11_ext, 0x3333);
+        assert_eq!(depois.boomerang_sequencia, 7);
+        assert_eq!(depois.calibracoes, (0x44, 0x55));
+        assert_eq!(depois.pending_response, Some((1, 2, 3)));
+        assert_eq!(depois.pending_end, Some(9));
+        assert_eq!(depois.egl_color_dimensions, Some((640, 480)));
+        assert_eq!(depois.egl_color_buffer, (0x66, 480 * 640 * 2));
+        let recorte = depois.clip.expect("o clip voltou");
+        assert_eq!(
+            (recorte.x, recorte.y, recorte.width, recorte.height),
+            (-1, -2, 300, 200)
+        );
+        assert!(depois.network);
+        assert_eq!(depois.network_to.as_deref(), Some("127.0.0.1:80"));
+        assert!(depois.graphics.fill_mode);
+        assert_eq!(depois.graphics.point_size, 3);
+        assert_eq!(depois.graphics.origin, (-4, 5));
+        assert_eq!((depois.graphics.stroke.r, depois.graphics.stroke.g), (1, 2));
+        assert_eq!(depois.colors[7].r, 200);
+        assert_eq!(depois.pads[0].buttons, antes.pads[0].buttons, "os botões do pad");
+        assert_eq!(depois.pads[0].axes[1], -100, "o eixo do pad");
+        assert_eq!(depois.movimento[1], [0.5, -0.25, 1.0], "o movimento é f32");
+        assert_eq!(depois.gl_vertices.size, 3);
+        assert_eq!(depois.gl_vertices.address, 0x7000);
+        assert!(depois.gl_vertices.enabled);
+        assert_eq!(depois.gl_vertices.buffer, 0x88);
+        assert_eq!(depois.gl_normal_atual, [0.0, 1.0, 0.0]);
+        assert!(depois.teclas_da_rolagem.contains(&0x99));
+        assert!(depois.recursos_lidos.contains(&0x1234));
+        assert_eq!(depois.avisos_de_midia.len(), 1);
+        assert_eq!(depois.avisos_de_midia[0].3.function, 0x1000_8000);
+        assert_eq!(depois.gl_buffers.get(&0xee), Some(&vec![1, 2, 3, 4]));
+        assert_eq!(depois.egl_color_bytes, vec![5, 6]);
+        assert_eq!(depois.egl_color_readback, vec![7, 8, 9]);
+        let thread = depois.threads.get(&0x111).expect("a thread voltou");
+        assert_eq!(thread.stack, 0x222);
+        assert_eq!(thread.context[5], 0xff00, "o contexto da thread não voltou");
+        assert!(thread.started);
+        assert_eq!(thread.joiners.len(), 1);
+        assert_eq!(thread.joiners[0].1, 0x777);
+        assert_eq!(depois.resume_callbacks.get(&0x888), Some(&0x999));
+        assert_eq!(depois.pending_threads, vec![0xaaa]);
+        let quadro = depois.quadros_do_update.front().expect("o quadro voltou");
+        assert_eq!(quadro.pixels(), &[0xbeef, 0x0000]);
     }
 }
