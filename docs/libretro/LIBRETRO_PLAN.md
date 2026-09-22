@@ -1774,6 +1774,35 @@ formato de grafo.
 que cobra isso: zero é como o frontend entende "este core não salva". Estado parcial é o que o
 critério proíbe, e ele não escaparia por descuido porque a porta é essa.
 
+### O que já entra no estado, e o que falta
+
+Entrou, com ida e volta testada:
+
+- **registradores** (16, na ordem fixa da seção — gravar "todos na ordem do `enum`" deixaria o
+  formato refém de alguém reordenar a enumeração);
+- **memória de toda região gravável**, lida do núcleo (é lá que a memória vive depois do `reset`,
+  e não no mapa do carregador);
+- **o livro do heap** (base, fim, primeiro endereço nunca usado, livres e em uso), com duas
+  checagens na volta: o heap tem de ser desta máquina, e um endereço não pode estar livre e em uso
+  ao mesmo tempo.
+
+Duas decisões que valem registro, porque uma delas eu escrevi errado primeiro:
+
+1. **O corte no heap sai do próprio estado**, e não da máquina de agora. Quem carrega um save state
+   carrega o heap que estava lá — eu tinha tratado "o heap do estado é maior" como erro, e é o caso
+   normal.
+2. **A região de objetos e a de superfícies ainda vão inteiras.** Truncá-las pelo `next` dos
+   alocadores delas seria mais barato, mas os livros delas ainda não entram no formato, e um
+   tamanho que a volta não pode conferir é pior que um tamanho maior.
+
+Medido: o estado de uma máquina mínima sai com **14,07 MB**, contra os 84 MB de memória mapeada.
+A maior parte do que sobra são as duas regiões acima, que caem quando os livros delas entrarem.
+
+Falta, para fechar: o `ObjectStore` (depende de codificação estável do `enum Interface`), as ~50
+tabelas de estado por objeto, o contador de instruções (é o relógio virtual, e o trait do núcleo
+ainda não tem como recebê-lo de volta) e as **flags** da CPU — o `CpuBackend` expõe 16 registradores
+e o modo Thumb, e não o `CPSR`.
+
 **Ensaio local do passo de empacotamento, porque ele só roda em tag.** Os comandos do workflow,
 executados à mão:
 

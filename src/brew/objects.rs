@@ -38,6 +38,11 @@ pub struct ObjectStore {
 }
 
 impl ObjectStore {
+    /// O primeiro endereço nunca usado. Mesma função do [`crate::brew::heap::Heap::proximo`].
+    pub fn proximo(&self) -> u32 {
+        self.next
+    }
+
     pub fn new(base: u32, size: usize) -> Self {
         Self {
             end: base + size as u32,

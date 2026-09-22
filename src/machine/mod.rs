@@ -26,6 +26,7 @@ use crate::video::gles;
 use crate::video::paltex;
 use crate::video::rasterizer::{self, GlState, Rasterizador, Vertex};
 
+mod save;
 mod bitmap;
 mod cifra;
 mod diagnostico;

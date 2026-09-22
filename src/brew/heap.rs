@@ -38,6 +38,14 @@ impl Heap {
     ///
     /// Um `size` zero ainda recebe endereço próprio: o BREW devolve ponteiro válido nesse caso,
     /// e devolver o mesmo endereço duas vezes confundiria o `free`.
+    /// O primeiro endereço nunca usado.
+    ///
+    /// É o que delimita o que vale gravar num save state: abaixo dele está tudo o que o jogo
+    /// pediu, e acima é zero desde a construção da região.
+    pub fn proximo(&self) -> u32 {
+        self.next
+    }
+
     pub fn alloc(&mut self, size: u32) -> Option<u32> {
         let total = size.max(1).div_ceil(ALIGN) * ALIGN;
 
