@@ -301,6 +301,24 @@ impl Pad {
 ///
 /// Fica fora da UI porque **todo frontend** precisa desta tradução: a janela do desktop e o core
 /// Libretro entregam o mesmo par de quadros e esperam as mesmas teclas.
+/// Converte uma tecla do frontend para o código virtual BREW correspondente.
+///
+/// Fica no motor porque desktop, headless e Android precisam da mesma convenção.
+pub fn avk_de(key: egui::Key) -> Option<u32> {
+    use egui::Key::*;
+    Some(match key {
+        ArrowUp => avk::UP,
+        ArrowDown => avk::DOWN,
+        ArrowLeft => avk::LEFT,
+        ArrowRight => avk::RIGHT,
+        Enter | Space => avk::CONFIRMA,
+        Backspace | Delete => avk::CLR,
+        Num0 | Num1 | Num2 | Num3 | Num4 | Num5 | Num6 | Num7 | Num8 | Num9 =>
+            avk::ZERO + (key as u32 - Num0 as u32),
+        _ => return None,
+    })
+}
+
 pub fn teclas_do_controle(antes: &Pad, agora: &Pad) -> Vec<(u32, bool)> {
     // Os dois botões de face seguem a ajuda da própria Z-Wheel (`assets/zeebo/pt/controls.html`):
     // "Sim (Botão 1)" escolhe e "Voltar (Botão 2)" cancela. Voltar é o `AVK_CLR`, medido: na tela

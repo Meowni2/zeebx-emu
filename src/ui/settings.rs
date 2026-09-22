@@ -6,7 +6,6 @@
 
 use std::path::{Path, PathBuf};
 
-use eframe::egui;
 use serde::{Deserialize, Serialize};
 
 const FILE_NAME: &str = "settings.json";

@@ -14,6 +14,21 @@ Em desenvolvimento. Hoje 50 dos 62 títulos de teste passam do carregamento e de
 
 [GitHub: https://github.com/ZeebxTeam](https://github.com/ZeebxTeam)
 
+# Notas para Colaboradores
+
+Por favor, ao abrir uma PR, sempre aponte para a branch development ou a branch correspondente ao ajuste que está sendo feito.
+Não abra PR para a branch master, visto que é onde organizamos e concentramos nossos CI de build de relases.
+
+Para novos targets de frontend, siga sempre a regrinha de mantê-lo dentro da pasta "frontends", exemplo:
+frontends/android/
+frontends/headless/
+frontends/libretro/
+frontends/standalone-qt/
+
+E também ajuste o [.github/workflows/release.yml](release.yml) para apontar um alvo de build durante nosso CI, assim garante que o target seja fornecido junto durante a criação da release!
+
+Esses são detalhes sugeridos apenas para manter a organização do nosso repositório!
+
 ## Como funciona
 
 Emular Zeebo não é emular um console: é reimplementar o Qualcomm BREW 4.0.2. O jogo é um binário
@@ -28,10 +43,12 @@ O desenho completo está em [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Compatibilidade
 
-Poucas ROMs ainda rodam sem problemas, diversos jogos podem apresentar travamentos antes da inicialização ou durante a execução.
+A maioria das ROMs rodam sem problemas, alguns jogos podem apresentar travamentos antes da inicialização ou durante a execução.
 
 O estado de cada título, com os endereços de cada parada, está em
 [docs/implementacao/11-compatibilidade.md](docs/implementacao/11-compatibilidade.md).
+
+Para frontends como Android e Libretro, essa listagem de compatibilidade pode não se aplicar. Pedimos que reportem quaisquer problemas nessas versões também.
 
 ## Compilando
 
@@ -43,63 +60,25 @@ cargo build --release
 
 ### O que mais precisa estar instalado
 
-O `cargo` sozinho não basta no **standalone**: as dependências nativas compilam código na hora,
-e é aí que o build falha em máquina limpa. O core Libretro usa `--no-default-features` e não leva
-`unicorn-engine`; para ele basta o JIT `dynarmic` e suas ferramentas CMake/C++.
-
-| Dependência | O que ela constrói | O que ela exige |
-|---|---|---|
-| `unicorn-engine` (standalone) | o QEMU inteiro, em C | compilador C, `make`, `pkg-config`, Python 3, `glib-2.0` e **`libclang`** (o `bindgen` carrega a biblioteca para gerar os vínculos) |
-| `dynarmic` | um JIT ARM em C++20, com CMake | `cmake`, `ninja` e compilador **C++20** |
-
+O standalone usa dependências nativas para `unicorn-engine`, `dynarmic`, áudio, janela e controles.
 Debian, Ubuntu e derivados:
 
 ```bash
-sudo apt install build-essential cmake ninja-build pkg-config python3 \
-    libclang-dev libglib2.0-dev \
-    libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+sudo apt install build-essential cmake ninja-build pkg-config python3 clang libclang-dev \
+    libglib2.0-dev libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
 ```
 
-Arch:
-
-```bash
-sudo pacman -S --needed base-devel cmake ninja pkgconf python clang glib2 \
-    alsa-lib systemd-libs wayland libxkbcommon
-```
-
-Fedora:
-
-```bash
-sudo dnf install gcc-c++ cmake ninja-build pkgconf-pkg-config python3 clang-devel \
-    glib2-devel alsa-lib-devel systemd-devel wayland-devel libxkbcommon-devel
-```
-
-As cinco últimas linhas de cada lista são da **interface**: áudio (ALSA), controles (udev), janela
-(Wayland, X11 e xkbcommon). Quem só quer o **core Libretro** não precisa delas — o motor compila sem
-nenhuma dessas bibliotecas:
+O core Libretro não linka a interface desktop nem bibliotecas de áudio/controle do host:
 
 ```bash
 cargo build --release -p zeebx-libretro
 ```
 
-Para conferir a máquina antes de tentar (e saber **o que** falta, em vez de ler "failed to run
-custom build command" sem causa):
+Para conferir dependências antes do build standalone:
 
 ```bash
 python3 ferramentas/prepara_build.py
 ```
-
-### Quando o build falha
-
-`failed to run custom build command for dynarmic` ou `for unicorn-engine-sys` é só o topo da
-mensagem: a causa está no bloco `--- stderr` logo acima dela. As quatro que aparecem:
-
-| Sintoma | Causa |
-|---|---|
-| `Unable to find libclang` | falta a biblioteca do `libclang` (pacote acima) |
-| `ninja: command not found` / erro de gerador do CMake | falta `ninja` — o `dynarmic` pede `Ninja` explicitamente |
-| `GLIB_2.0 not found` ou erro de `pkg-config` | falta `glib2` de desenvolvimento |
-| `No space left on device`, no meio de centenas de alvos do CMake | o `dynarmic` sozinho passa de 5 GiB com debuginfo. Use `CARGO_PROFILE_DEV_DEBUG=0 CARGO_BUILD_JOBS=1` e libere espaço |
 
 ### Instaladores e releases
 
@@ -117,9 +96,24 @@ Os arquivos ficam em `target/pacotes/`. No Arch, o AppImage precisa de `NO_STRIP
 linuxdeploy não reconhece as bibliotecas do sistema.
 
 Uma tag de versão (`v0.1.0` ou `0.1.0`) enviada ao GitHub dispara o
-[`release.yml`](.github/workflows/release.yml), que gera os quatro pacotes — Linux, Windows, macOS
-Apple Silicon e macOS Intel — e monta a release como rascunho, com o título igual à tag. O
-emulador procura versões novas nessas releases ao abrir.
+[`release.yml`](.github/workflows/release.yml), que monta a release como rascunho, com o título
+igual à tag. O emulador procura versões novas nessas releases ao abrir.
+
+São dois formatos em cada um dos quatro sistemas, e o nome do arquivo diz qual é qual:
+
+| | |
+|---|---|
+| `zeebx-standalone-linux-x86_64.deb`, `.AppImage` | o emulador com a interface, para instalar |
+| `zeebx-standalone-windows-x86_64-setup.exe` | idem, no Windows |
+| `zeebx-standalone-macos-arm64.dmg`, `-x86_64.dmg` | idem, nos dois Macs |
+| `zeebx-headless-<sistema>.zip` | o binário sem interface, com o `config.ini` e o leia-me |
+| `zeebx-android-arm64-v8a.apk` | o aplicativo de Android |
+
+A APK sai assinada com a **chave de depuração**, que é a que o Gradle gera sozinho: serve para
+instalar de lado (`adb install`), não para a Play Store — aquela pede a chave de publicação, que
+não pode morar num repositório público. O mesmo
+[`compilar.sh`](frontends/android/compilar.sh) que se usa na máquina é o que roda no CI; ele
+aceita o `ANDROID_SDK_ROOT` que os runners exportam e o `gradle` que estiver no caminho.
 
 ## Usando
 
@@ -129,11 +123,8 @@ Sem argumentos, abre a interface. Pela linha de comando:
 cargo run --release -- run "roms/Quake.zip" --window
 ```
 
-Pacotes `.zip` e `.7z` são extraídos para um cache e o `.mod` certo é escolhido sozinho — o formato
-é reconhecido pela assinatura do arquivo, então um `.7z` renomeado para `.zip` também abre. O que
-não for extraído com segurança é recusado antes de escrever qualquer coisa: caminho com `..`,
-link simbólico, entradas demais ou tamanho além do teto. `--seconds=N` define quantos segundos de
-tempo virtual emular quando não há janela; com janela, roda até você fechar.
+Zips são extraídos para um cache e o `.mod` certo é escolhido sozinho. `--seconds=N` define
+quantos segundos de tempo virtual emular quando não há janela; com janela, roda até você fechar.
 
 Os controles no teclado:
 
@@ -149,14 +140,32 @@ O `run` informa onde o jogo parou, o que ele pediu e não temos, e o log que os 
 desenvolvedores deixaram no binário — por `DBGPRINTF` e por semihosting do ARM. Esse relatório é
 o backlog do projeto. As opções de depuração estão em [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Integração contínua
+### Com um frontend seu
 
-Cada push nas ramas de desenvolvimento compila e testa o emulador em cinco plataformas — Linux
-x86_64 e AArch64, Windows x86_64 e macOS Intel e Apple Silicon. Em pull request roda só o Linux
-x86_64, que é onde o retorno precisa ser rápido.
+Quem já tem um frontend — um que simula a carcaça do console, uma estante de jogos, um gabinete
+de fliperama — não quer a interface do Zeebx por cima da tela que ele mesmo montou. Para isso há
+um binário sem interface nenhuma, configurado por um `config.ini`:
 
-As dependências nativas do build estão na seção acima, e `python3 ferramentas/prepara_build.py`
-confere quais faltam na sua máquina.
+```bash
+cargo build --release -p zeebx-headless
+./target/release/zeebx-headless "roms/Quake.zip"
+```
+
+O jogo é obrigatório e não há padrão: este binário é chamado por outro programa, que sabe o que
+quer abrir. Na primeira execução ele escreve um `config.ini` completo e comentado, e diz onde.
+As opções e as chaves do arquivo são em inglês, como os comandos; os comentários são em
+português.
+
+Ele abre uma janela só com o jogo — ou nenhuma, mandando os quadros por um cano para o seu
+programa pintar. Gráficos, áudio e controles saem dos mesmos campos que a interface grava, só
+que em INI. Ver [`frontends/headless/LEIAME.md`](frontends/headless/LEIAME.md).
+
+## Core Libretro e muOS
+
+O core Libretro é empacotado com o `.info` e pode ser instalado no RetroArch. O cartão muOS usa o
+core AArch64 em `opt/muos/share/core` e o banco MIDI é opcional. A instalação documentada está em
+[`docs/libretro/LIBRETRO_PLAN.md`](docs/libretro/LIBRETRO_PLAN.md). A playlist, o DAT e as capas de
+Zeebo são gerados pelas ferramentas da pasta `ferramentas/`.
 
 ## Plataformas
 

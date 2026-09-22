@@ -1,8 +1,6 @@
-//! Motor reutilizável do Zeebx.
+//! Núcleo reutilizável do Zeebx.
 //!
-//! O binário desktop ainda declara módulos próprios durante a migração. Este alvo é a fronteira
-//! que o frontend Libretro passará a depender, permitindo retirar UI e dispositivos do host por
-//! feature sem duplicar o motor BREW.
+//! O motor é compartilhado pelo desktop, Libretro, headless e Android.
 
 pub mod audio;
 pub mod brew;
@@ -17,17 +15,13 @@ pub mod rede;
 pub mod save_state;
 pub mod session;
 pub mod storage;
-#[cfg(feature = "desktop")]
 pub mod ui;
 pub mod video;
 
 /// Configuração histórica da linha de comando: um Dragon na primeira porta e segunda livre.
-/// Frontends devem escolher explicitamente os aparelhos que o guest enxerga.
 pub const PORTAS_PADRAO: [Option<input::bindings::Aparelho>; input::PORTAS] =
     [Some(input::bindings::Aparelho::Controle), None];
 
-/// Varredura de ROMs por teste. Depende de `PORTAS_PADRAO`, logo fica junto do motor enquanto os
-/// testes de compatibilidade ainda usam `Session`.
 #[cfg(test)]
 pub mod scratch;
 

@@ -18,6 +18,12 @@ use crate::machine::{AppletResult, Machine, Outcome};
 use crate::storage::StoragePaths;
 use crate::video::display::Framebuffer;
 
+/// Maior fatia de tempo real que os frontends podem pedir em uma volta.
+///
+/// Compartilhada para que desktop, headless e Android não reintroduzam um teto de 16 ms e
+/// reduzam jogos rápidos como Crash Nitro Kart a uma fração da velocidade.
+pub const FATIA_MAXIMA: Duration = Duration::from_millis(100);
+
 /// Teto de instruções por fatia entre duas chamadas de API — evita que um laço infinito no
 /// guest trave o emulador.
 const INSTRUCTION_BUDGET: u64 = 500_000_000;
