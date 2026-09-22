@@ -788,6 +788,17 @@ impl<C: CpuBackend> Machine<C> {
                 self.modo_do_sistema = self.cpu.read_reg(Reg::R1);
                 SUCCESS
             }
+            // O slot 5 guarda o modo **pelo mesmo caminho** do slot 3 — o firmware desmontado
+            // mostra que o corpo é o mesmo (`0x10e9fdb6`) — e recebe ainda um terceiro argumento,
+            // a opção. Não há hardware para acender, então o modo é guardado e o slot 6 o devolve,
+            // como no slot 3; a opção fica registrada na hipótese.
+            "DefinirModoComOpcao" => {
+                self.modo_do_sistema = self.cpu.read_reg(Reg::R1);
+                self.assumptions.insert(
+                    "o controle de sistema recebeu modo e opção; só o modo é guardado",
+                );
+                SUCCESS
+            }
             _ => SUCCESS,
         };
         Ok(Some(result))

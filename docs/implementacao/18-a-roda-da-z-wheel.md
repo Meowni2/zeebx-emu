@@ -668,6 +668,36 @@ Ou seja: a consulta ao `tt_game_info` para `class_id = -1` volta **vazia**, o `I
 vezes e não é chamado, e o sinalizador `0x216` é ligado e desligado entre 6 s e 7 s. Depois disso a
 roda fica parada. É ali — e não na entrada — que o item 8 está preso.
 
+### 8.1.1 O slot 5 do controle de sistema: a primeira tecla não é inerte
+
+Pressionar o confirmar **cedo** (3 s, e não os 30 s do roteiro da doc) não é inerte: a varredura
+abortava com
+
+```text
+erro: laço parou em Unimplemented { addr: 0xf0030014, args: [0x300006d0, 2, 0, 0xf0030014], caller: 0x81898 }
+```
+
+e o endereço decodifica pelo próprio esquema do emulador — `API_BASE + interface*0x1000 + slot*4`,
+com `API_BASE = 0xf0000000` — em **`Interface::SystemCtl` (48), slot 5**. Ou seja: no confirmar, a
+Z-Wheel chama o slot 5 do controle de sistema, com o modo em `r1 = 2`, e nós não o tínhamos.
+
+A tabela de slots traz `"slot5"`, que é **marcador**: `aee::e_marcador` faz o despacho devolver
+`None`, e a execução para ali de propósito — "um travamento é melhor que uma abertura errada". O
+nome veio do firmware, desmontado de `1.1.2_APPS.bin` (`ferramentas/firmware.py`, Thumb):
+
+```text
+vtable 0x10691ea8     slot[3] = 0x10e9fdb6   (DefinirModo)
+                      slot[4] = 0x10e9fe7a
+                      slot[5] = 0x10e9fe92   <- o que a roda chama
+                      slot[6] = 0x10e9ff84   (Consultar)
+```
+
+O slot 5 recebe `(this, modo, opção)` — a opção com `-1` valendo "a do aparelho", lida de
+`0x114287ec` — e a **última coisa que faz é `bl 0x10e9fdb6`**, que é o corpo do `DefinirModo`. É o
+slot 3 com um argumento a mais. Implementado assim, o abort **desaparece** e a roda passa a receber
+as sete teclas do roteiro sem parar — mas **não redesenha**: os sete quadros continuam idênticos
+(`sha1` igual), e o pedido de abertura não aparece.
+
 **A ponte do catálogo, e o que ela não resolve.** A roda não lê a pasta de ROMs: lê o
 `tt_game_info` do perfil, e quem liga um ao outro é o `catalog.json` que a interface grava
 (`library::sync_catalog`). A varredura não o alimentava — medido: com `ZEEBX_ROM_INSTALADOS`, o

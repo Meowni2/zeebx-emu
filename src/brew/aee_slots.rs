@@ -1180,7 +1180,12 @@ pub const SYSTEM_CTL: &[&str] = &[
     "QueryInterface",
     "DefinirModo",
     "slot4",
-    "slot5",
+    // **O slot 5 tem nome, e o nome vem do firmware.** Desmontado em `1.1.2_APPS.bin` (Thumb,
+    // `0x10e9fe92`): ele recebe `(this, modo, opção)` — a opção com `-1` valendo "a do aparelho",
+    // lida de `0x114287ec` — e **termina chamando o corpo do `DefinirModo`** (`bl 0x10e9fdb6`, o
+    // slot 3). Medido: é a chamada que a Z-Wheel faz no **confirmar** (`0xe064`), e sem ela a
+    // varredura parava em `Unimplemented` na primeira tecla.
+    "DefinirModoComOpcao",
     "Consultar",
 ];
 
