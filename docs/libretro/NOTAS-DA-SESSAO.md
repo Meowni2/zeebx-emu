@@ -249,6 +249,31 @@ tela e não pede abertura. Fechar isso é engenharia reversa no módulo dela —
 quando chamar o shell —, ou uma sessão com o controle na mão. Não é falta de instrumento: é falta de
 saber qual aperto ela espera.
 
+### O gatilho, lido no desmonte, com endereço
+
+Lendo o tratador da roda (`0x7b310`, pelo desmonte com o `ferramentas/desmonta.py`), o gatilho do
+lançamento aparece em duas linhas:
+
+```asm
+0x07b4bc  cmp  r0, #0x7000      ; o EVENTO
+0x07b4c0  beq  #0x7b51c
+0x07b51c  sub  ip, r6, #0x400
+0x07b520  subs ip, ip, #0xea    ; e o wParam == 0x4ea
+0x07b524  bne  #0x7b574
+0x07b53c  ldr  r0, [r5, #0x580] ; o item escolhido
+0x07b544  beq  #0x7b640         ; sem item escolhido, não lança
+0x07b55c  ldr  r3, [r1, #0x14]  ; IShell::StartApplet
+```
+
+Medido, com o evento injetado pelo roteiro (`ZEEBX_ROM_TECLAS="…:e0x7000=0x4ea"`): o evento **chega
+ao applet** e o `StartApplet` **não é chamado**, porque a roda não tem item escolhido — a navegação
+por tecla muda a tela sem preencher o campo `+0x580` dela.
+
+Duas coisas ficaram de ferramenta: o roteiro sabe entregar evento de widget, e há teste do **texto**
+até a ordem (`o_texto_do_roteiro_vira_evento`) e da ordem até a entrega
+(`o_roteiro_entrega_evento_de_widget`). Quem continuar daqui pode injetar o gatilho e observar o que
+a roda faz, sem repetir a leitura do desmonte.
+
 ## O defeito que invalidou toda a investigação do gesto
 
 O `ZEEBX_ROM_TECLAS` não chegava combinado ao jogo. O pad do roteiro era recriado a cada passo — e,

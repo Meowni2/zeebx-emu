@@ -90,6 +90,19 @@ fn roteiro_de_teclas() -> Vec<(u64, Passo)> {
         };
         let nome = nome.trim();
         let passo = match nome.split_once('=') {
+            // **O evento vem antes do eixo, e a ordem importa.** Eu o tinha posto depois, e o
+            // ramo dos eixos o engolia com o `_ => continue`: `e0x7000=0x4ea` não virava evento
+            // nenhum, e o passo era descartado em silêncio. A mesma armadilha do pad recriado,
+            // uma camada acima.
+            // `e0x7000=0x4ea`: evento de widget, com o número e o `wParam`.
+            Some((evt, valor)) if evt.trim().starts_with('e') => {
+                let evt = u32::from_str_radix(evt.trim().trim_start_matches('e').trim_start_matches("0x"), 16);
+                let valor = valor.trim().trim_start_matches("0x");
+                match (evt, u16::from_str_radix(valor, 16)) {
+                    (Ok(evt), Ok(w)) => Passo::Evento(evt, w),
+                    _ => continue,
+                }
+            }
             Some((eixo, valor)) => {
                 let eixo = eixo_do_nome(eixo.trim());
                 let valor = valor.trim().parse::<i32>().ok();
@@ -140,8 +153,8 @@ fn aplica_o_passo(mut pad: crate::input::Pad, passo: Passo) -> crate::input::Pad
     match passo {
         Passo::Botao(indice) => pad.press(indice, true),
         Passo::Eixo(eixo, valor) => pad.set_axis(eixo, valor),
-        // A tecla não vive no pad: quem a entrega é `passos_vencidos`, pela sessão.
-        Passo::Tecla(_) => {}
+        // Tecla e evento não vivem no pad: quem os entrega é `passos_vencidos`, pela sessão.
+        Passo::Tecla(_) | Passo::Evento(_, _) => {}
         Passo::Solto => pad = crate::input::Pad::default(),
     }
     pad
@@ -160,12 +173,15 @@ fn passos_vencidos(
     passo: &mut usize,
     decorrido: u64,
     teclas: &mut Vec<(u32, bool)>,
+    eventos: &mut Vec<(u32, u16)>,
 ) -> crate::input::Pad {
     while *passo < roteiro.len() && roteiro[*passo].0 <= decorrido {
         match roteiro[*passo].1 {
             // Tecla e "soltar tudo" precisam do motor, e não só do pad: viram ordens para quem
             // chama, que é quem tem a sessão em mãos.
             Passo::Tecla(avk) => teclas.push((avk, true)),
+            // O evento de widget precisa do motor, e a sessão está com quem chama.
+            Passo::Evento(evt, w) => eventos.push((evt, w)),
             Passo::Solto => {
                 let presas: Vec<u32> = teclas
                     .iter()
@@ -191,6 +207,13 @@ enum Passo {
     Botao(usize),
     /// Põe um eixo no valor dado, no curso do manche.
     Eixo(usize, i32),
+    /// Entrega ao applet um evento de **widget**, pelo número e pelo `wParam`.
+    ///
+    /// Existe para exercitar o que o widget faria e o emulador ainda não tem: no console, quem
+    /// manda o `0x7000` que a Z-Wheel lê para abrir um jogo é o widget da lista. Com o roteiro
+    /// entregando o evento, o resto do ciclo — pedido de abertura, troca de sessão e volta — fica
+    /// exercitável sem ele. Formato: `ms:e0x7000=0x4ea`.
+    Evento(u32, u16),
     /// Aperta uma **tecla do console** (`AVK_*`), que não sai de botão nenhum.
     ///
     /// É o que a Z-Wheel espera para o formulário de abertura andar: ela pede `AVK_0` e `AVK_CLR`,
@@ -913,15 +936,20 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
                 let decorrido_total = agora_ms(session.clock_ms(), base_ms);
                 let antes_do_roteiro = passo_do_roteiro;
                 let mut ordens_de_tecla = Vec::new();
+                let mut ordens_de_evento = Vec::new();
                 pad_do_roteiro = passos_vencidos(
                     pad_do_roteiro,
                     &roteiro,
                     &mut passo_do_roteiro,
                     decorrido_total,
                     &mut ordens_de_tecla,
+                    &mut ordens_de_evento,
                 );
                 for (avk, baixo) in ordens_de_tecla {
                     session.set_key(avk, baixo);
+                }
+                for (evt, w) in ordens_de_evento {
+                    let _ = session.entrega_evento_ao_applet(evt, w);
                 }
                 // Com o rastreio ligado, o pad depois de cada passo sai no relatório. Sem isto, um
                 // roteiro que não chega ao jogo é indistinguível de um jogo que o ignora — foi
@@ -1700,6 +1728,51 @@ fn exige_espaco(dirs: &[PathBuf]) {
         assert_eq!(pad.buttons, 0, "o passo vazio solta os botões");
     }
 
+
+
+    /// **O parser do roteiro entende o evento**, e não só a entrega.
+    ///
+    /// O teste anterior exercita `passos_vencidos`, que recebe o passo já pronto; este exercita o
+    /// **texto** que o jogador escreve. Os dois juntos fecham a linha: texto → passo → ordem.
+    #[test]
+    fn o_texto_do_roteiro_vira_evento() {
+        // SAFETY: teste de thread única, e a variável é lida logo abaixo.
+        unsafe { std::env::set_var("ZEEBX_ROM_TECLAS", "1000:e0x7000=0x4ea,2000:kselect") };
+        let passos = roteiro_de_teclas();
+        unsafe { std::env::remove_var("ZEEBX_ROM_TECLAS") };
+        assert_eq!(
+            passos,
+            vec![
+                (1_000, Passo::Evento(0x7000, 0x4ea)),
+                (2_000, Passo::Tecla(crate::input::avk::SELECT)),
+            ],
+            "o texto do roteiro não virou evento e tecla"
+        );
+    }
+
+    /// **O roteiro sabe entregar evento de widget**, e o passo não é descartado em silêncio.
+    ///
+    /// O teste existe porque eu escrevi o ramo **depois** do ramo dos eixos, e o `_ => continue`
+    /// dele engolia `e0x7000=0x4ea`: o passo virava nada, sem aviso. É a mesma armadilha do pad
+    /// recriado a cada quadro, uma camada acima — instrumento que descarta entrada em silêncio.
+    #[test]
+    fn o_roteiro_entrega_evento_de_widget() {
+        // O caminho do parser é o mesmo do roteiro de teclas: aqui ele é exercitado direto.
+        let passos = vec![(1_000u64, Passo::Evento(0x7000, 0x4ea))];
+        let mut passo = 0usize;
+        let mut teclas = Vec::new();
+        let mut eventos = Vec::new();
+        let _ = passos_vencidos(
+            crate::input::Pad::default(),
+            &passos,
+            &mut passo,
+            1_500,
+            &mut teclas,
+            &mut eventos,
+        );
+        assert_eq!(eventos, vec![(0x7000u32, 0x4eau16)]);
+    }
+
     /// O roteiro sabe apertar **tecla**, e o passo vazio solta o que estiver preso.
     ///
     /// A Z-Wheel pede `AVK_0` e `AVK_CLR` para o formulário de abertura andar, e nenhum dos dois
@@ -1713,12 +1786,14 @@ fn exige_espaco(dirs: &[PathBuf]) {
         ];
         let mut passo = 0usize;
         let mut teclas = Vec::new();
+        let mut eventos = Vec::new();
         let _ = passos_vencidos(
             crate::input::Pad::default(),
             &roteiro,
             &mut passo,
             1_500,
             &mut teclas,
+            &mut eventos,
         );
         assert_eq!(teclas, vec![(crate::input::avk::ZERO, true)]);
 
@@ -1728,6 +1803,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
             &mut passo,
             2_500,
             &mut teclas,
+            &mut eventos,
         );
         assert_eq!(
             teclas,
@@ -1752,18 +1828,20 @@ fn exige_espaco(dirs: &[PathBuf]) {
 
         // Primeiro quadro depois dos 18 s: só o manche venceu.
         let mut teclas = Vec::new();
+        let mut eventos = Vec::new();
         let pad = passos_vencidos(
             crate::input::Pad::default(),
             &roteiro,
             &mut passo,
             18_500,
             &mut teclas,
+            &mut eventos,
         );
         assert_eq!(pad.eixo_do_console(0), 255);
         assert_eq!(passo, 1);
 
         // Quadros intermediários: nada novo vence, e o manche continua onde estava.
-        let pad = passos_vencidos(pad, &roteiro, &mut passo, 19_000, &mut teclas);
+        let pad = passos_vencidos(pad, &roteiro, &mut passo, 19_000, &mut teclas, &mut eventos);
         assert_eq!(
             pad.eixo_do_console(0),
             255,
@@ -1771,7 +1849,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
         );
 
         // Segundo passo: o botão aperta **sem** soltar o manche. É este o gesto de abrir.
-        let pad = passos_vencidos(pad, &roteiro, &mut passo, 20_500, &mut teclas);
+        let pad = passos_vencidos(pad, &roteiro, &mut passo, 20_500, &mut teclas, &mut eventos);
         assert_eq!(
             pad.eixo_do_console(0),
             255,

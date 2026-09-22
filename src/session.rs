@@ -742,6 +742,11 @@ impl Session {
         self.machine.take_launch_request()
     }
 
+    /// Entrega um evento de widget ao applet. Ver [`Machine::entrega_evento_ao_applet`].
+    pub fn entrega_evento_ao_applet(&mut self, evt: u32, w: u16) -> Result<u32, crate::cpu::CpuError> {
+        self.machine.entrega_evento_ao_applet(evt, w)
+    }
+
     pub fn set_key(&mut self, avk: u32, apertada: bool) {
         self.machine.set_key(avk, apertada);
     }

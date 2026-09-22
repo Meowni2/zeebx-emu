@@ -577,6 +577,17 @@ impl<C: CpuBackend> Machine<C> {
         self.installed_applets = self.modulos_instalados.iter().map(|(c, _)| *c).collect();
     }
 
+    /// Entrega ao applet um evento com `wParam`, como um widget faria ao ser ativado.
+    ///
+    /// **É instrumento de teste, e só isso.** O evento `0x7000` com `w = 0x4ea` é o que o tratador
+    /// da Z-Wheel lê para chamar `IShell::StartApplet` (medido no desmonte, em `0x7b4c0` e
+    /// `0x7b51c`): quem o manda no console é um widget, e no emulador a lista de widgets da roda
+    /// está vazia. Isto permite exercitar **o resto do ciclo** — o pedido de abertura, a troca de
+    /// sessão e a volta — sem depender do widget que falta.
+    pub fn entrega_evento_ao_applet(&mut self, evt: u32, w: u16) -> Result<u32, CpuError> {
+        self.send_applet_event(self.applet_class, evt, w, 0)
+    }
+
     /// O host troca de sessão depois que a chamada do guest terminou.
     pub fn take_launch_request(&mut self) -> Option<u32> {
         self.pending_launch.take()
