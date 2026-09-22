@@ -646,6 +646,28 @@ instruções; 7 353 → 7 394 chamadas de API), mas a roda ainda **não monta o 
 pulso descrito em §4 — um timer, 2 582 voltas de 16,6 ms lendo pontos e fila de download, sem
 desenhar nada de novo. É ali que a investigação está agora.
 
+**A árvore de widgets na primeira tecla explica o "não reage".** Com a captura de serial ligada na
+varredura (`ZEEBX_ROM_SERIAL`), o despejo da primeira tecla (30 533 ms) mostra **três** widgets: o
+formulário raiz `0x1028e51` com dois filhos, e mais dois objetos de classe `0x0`, sem tratador, sem
+tamanho e sem texto. Não há palco, roller, barra nem grade — não existe o que uma tecla mova. O que
+se vê na tela é o *splash* herdado da sessão, e não desenho da roda.
+
+E a captura diz o que ela faz no lugar disso, na ordem:
+
+```text
+  0 ms  classe 0x0100104f  ... abriu tt_prefs.db, asset_cache, tt_game_info, tt_dlqueue.db
+  0 ms  sql SELECT * FROM GAMEINFO, TITLETEXT WHERE ... AND GAMEINFO.class_id = -1 -> 0 linha(s)
+  0 ms  classe 0x01028e47 (formulário) · 0x01028e19 · 0x01028e3f (barra) · 0x0100550d (IWeb) 2x
+  0 ms  prop 0x216=0x1 em 0x30000650
+  6000 ms  prop 0x216=0x0
+  7000 ms  prop 0x216=0x0 · classe 0x01006c01 (cartão SIM)
+30533 ms  primeira tecla: 3 widgets
+```
+
+Ou seja: a consulta ao `tt_game_info` para `class_id = -1` volta **vazia**, o `IWeb` é criado duas
+vezes e não é chamado, e o sinalizador `0x216` é ligado e desligado entre 6 s e 7 s. Depois disso a
+roda fica parada. É ali — e não na entrada — que o item 8 está preso.
+
 Duas armadilhas de instrumento saíram desta medição, e as duas estão consertadas no código:
 
 - **O passo do roteiro sem o `k` era descartado em silêncio.** Escrito na forma da bancada
@@ -653,6 +675,11 @@ Duas armadilhas de instrumento saíram desta medição, e as duas estão consert
   dizia que a roda não responde — quando quem não apertou nada foi o roteiro. Agora o `k` é
   opcional (o botão vem primeiro, porque `up` e `down` são nomes dos dois) e o que for descartado
   sai como aviso.
+- **A varredura não tinha captura de serial.** A árvore de widgets da primeira tecla, as classes
+  criadas e os bancos abertos vão para a captura de serial, que é onde a instrumentação escreve sem
+  se misturar com o log do jogo — e ela só existia no `run` (`--serial=`). Sem ela, "para quem foi
+  esta tecla?" só se respondia com janela aberta, que é o que a varredura existe para não exigir.
+  Agora é `ZEEBX_ROM_SERIAL=<arquivo>`.
 - **A varredura não tinha sonda nem a mostrava.** `ZEEBX_ROM_SONDA=0xCLSID,…` responde a classe
   com um objeto de observação e o relatório ganhou a seção "o que o jogo chamou nas classes de
   sonda", slot a slot, com os textos que os argumentos apontam. Foi assim que se viu que a roda

@@ -280,6 +280,21 @@ fn rastreio_pedido() -> Option<String> {
     }
 }
 
+/// Lê o caminho da captura de serial de `ZEEBX_ROM_SERIAL`.
+///
+/// A captura é onde a **instrumentação** escreve sem se misturar com o log do jogo: a árvore de
+/// widgets da primeira tecla, as classes criadas, os bancos abertos. Ela existe no `run` desde
+/// sempre (`--serial=`), e faltava aqui — e sem ela a pergunta "**para quem** foi esta tecla?"
+/// só se respondia com janela aberta, que é justamente o que a varredura existe para não exigir.
+fn serial_pedido() -> Option<std::path::PathBuf> {
+    let valor = std::env::var("ZEEBX_ROM_SERIAL").ok()?;
+    let valor = valor.trim();
+    match valor.is_empty() {
+        true => None,
+        false => Some(std::path::PathBuf::from(valor)),
+    }
+}
+
 /// Lê as classes a atender por **sonda** de `ZEEBX_ROM_SONDA`, como `0x01000000,0x0102c4e8`.
 ///
 /// É o instrumento para a pergunta "que classe é esta, e o que o jogo chama nela?" sem desmontar
@@ -954,6 +969,10 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     // chamadas do jogo, que é quando ele monta o que precisa.
     if let Some(sonda) = sonda_pedida() {
         session.machine_mut().probe_classes(&sonda);
+    }
+    // A captura de serial entra antes da partida: o que interessa nela é o começo.
+    if let Some(caminho) = serial_pedido() {
+        let _ = session.machine_mut().liga_serial(&caminho);
     }
     let mut som = Audio::default();
     let mut soma = 0.0_f64;
