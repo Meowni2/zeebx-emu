@@ -176,6 +176,30 @@ pub fn toca(banco: &Banco, bytes: &[u8], taxa: u32) -> Option<Sound> {
     })
 }
 
+
+/// Onde o banco deve ficar, e se já há um — em uma linha, para o frontend mostrar.
+///
+/// Existe porque a busca é por diretório e a pasta não é óbvia: no core Libretro ela sai da raiz
+/// de sistema que o frontend entregou, e quem instala o core não tem como adivinhar o caminho. A
+/// alternativa — inventar mais um diretório de busca — troca um aviso claro por um palpite, e
+/// palpite em caminho de arquivo é o defeito que se paga com "não funciona e não diz por quê".
+pub fn relato(aparelho: &Path) -> String {
+    match primeiro_banco(aparelho) {
+        Some(caminho) => format!(
+            "Zeebx: banco de amostras do MIDI em {}; a trilha toca com as amostras",
+            caminho.display()
+        ),
+        None => {
+            let pasta = aparelho.join("soundfonts");
+            format!(
+                "Zeebx: sem banco de amostras do MIDI; a trilha toca com a tabela de timbres. \
+                 Para ouvir com amostras, ponha um .sf2 em {} (ou aponte ZEEBX_SOUNDFONT)",
+                pasta.display()
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1017,6 +1017,11 @@ unsafe fn carrega(
             jogos.len()
         )),
     }
+    // **Onde o banco de amostras deve ficar, dito no log.** A busca é por diretório e a pasta sai
+    // da raiz de sistema que o frontend entregou: sem esta linha, quem instala o core não tem como
+    // saber o caminho, e "o banco não funciona" fica indistinguível de "o arquivo está no lugar
+    // errado".
+    log(&zeebx::audio::soundfont::relato(&storage.device));
 
     // **Pede o contexto de placa ao frontend, se ele tiver um.** Quem aceita é ele; nós só usamos
     // mais tarde, quando o `context_reset` chegar. Recusar aqui não muda nada: a sessão de

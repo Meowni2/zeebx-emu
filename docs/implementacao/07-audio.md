@@ -546,6 +546,27 @@ linha de base não tem áudio, e ligar o banco mudaria só os números do relat�
 quiser ver o efeito do banco na varredura precisa passar `--features soundfont` **e** apontar
 `ZEEBX_SOUNDFONT`; sem uma das duas coisas, o caminho é o da tabela de timbres.
 
+#### O core diz onde o banco deve ficar
+
+A busca é por diretório, e a pasta sai da raiz de sistema que o frontend entrega — quem instala o
+core não tem como adivinhar. Então o core **diz**, no log, em uma linha. Medido no RetroArch desta
+máquina (1.20, driver `glcore`):
+
+```text
+sem banco   Zeebx: sem banco de amostras do MIDI; a trilha toca com a tabela de timbres.
+            Para ouvir com amostras, ponha um .sf2 em
+            /home/…/RetroArch/system/zeebx/aparelho/soundfonts (ou aponte ZEEBX_SOUNDFONT)
+
+com banco   Zeebx: banco de amostras do MIDI em
+            /home/…/RetroArch/system/zeebx/aparelho/soundfonts/GeneralUser-GS.sf2;
+            a trilha toca com as amostras
+```
+
+A escolha de **avisar** em vez de acrescentar mais um diretório de busca é deliberada: um caminho a
+mais é um palpite, e palpite em caminho de arquivo se paga com "não funciona e não diz por quê". A
+compilação sem a feature também responde — dizendo que não tem o sintetizador —, porque silêncio
+aqui vira a mesma conclusão errada.
+
 ### Um `IAStream` do jogo como fonte
 
 O Aviãozinho, um port do Quake feito por fãs, monta o `ISource` de outro jeito: escreve um

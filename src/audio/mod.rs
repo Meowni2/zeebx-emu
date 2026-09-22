@@ -16,6 +16,24 @@ pub mod wav;
 #[cfg(feature = "soundfont")]
 pub mod soundfont;
 
+/// Onde o banco de amostras deve ficar, quando a build não tem o sintetizador de banco.
+///
+/// A mensagem existe nos dois casos de propósito: uma compilação sem a feature precisa dizer que
+/// **não tem** o recurso, e não calar — silêncio aqui vira "o banco não funciona".
+#[cfg(not(feature = "soundfont"))]
+pub mod soundfont {
+    use std::path::Path;
+
+    pub fn relato(aparelho: &Path) -> String {
+        let pasta = aparelho.join("soundfonts");
+        format!(
+            "Zeebx: esta compilação não tem o sintetizador de banco de amostras; o MIDI toca com a \
+             tabela de timbres (o .sf2 iria em {})",
+            pasta.display()
+        )
+    }
+}
+
 use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "desktop")]
