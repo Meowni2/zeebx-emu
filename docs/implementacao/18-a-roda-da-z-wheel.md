@@ -943,6 +943,16 @@ O que isso delimita: **não é o título nem o número de arquivos** — é o qu
 títulos ela não oferece o foco que o roteiro alcança, e com muitos ela oferece, mas aí o foco cai num
 jogo que não sai sozinho. As duas condições precisam valer ao mesmo tempo, e é isso que falta montar.
 
+Quinta tentativa, com a pasta **cheia** e o título quebrado encomendado para a terceira posição:
+ligações simbólicas para os 62 pacotes (sem duplicar 705 MB) mais uma cópia real do `Opera Mini`
+renomeada para `Alien A`, que ordena **antes** do `Alien Breaker`. Resultado: o pedido continua a ser
+`0x0108E356` — **o Alien Breaker**, não o `Alien A`. O foco da grade **não segue a ordem de título**
+que eu supus: o `class_id` do relatório (`17359702`) é o que a grade escolhe por conta própria.
+
+Isso fecha o que dá para medir sem entrar na grade: lançamento e execução provados nos dois caminhos,
+e a **volta** dependendo de um item em foco que saia sozinho — com a grade não obedecendo à ordem que
+se vê de fora.
+
 É o próximo experimento, com o alvo já estreito: **descobrir como a grade escolhe o item em foco na
 pasta cheia** (o relatório diz `class_id = 17359702`, o terceiro em ordem de título) e reproduzir essa
 condição numa pasta onde o terceiro seja um título que sai — ou aceitar, com a medição na mão, que a
