@@ -270,6 +270,48 @@ do gesto — que só o frontend com controle na mão, ou uma sessão de engenhar
 roda, resolve. Fica escrito para quem pegar: os três descartes acima poupam a repetição de três
 medições, e a lista de tentativas é a metade do caminho de volta.
 
+## A Z-Wheel navega por TECLA, não pelo controle
+
+Isto foi medido, e explica uma investigação inteira que corria atrás do gesto errado. O motor já
+trazia a pista escrita — *"quem recebe tecla primeiro é o widget, não o aplicativo"* —, e a roda
+confirma:
+
+| Entrada | Efeito na tela |
+|---|---|
+| `AVK_SELECT` (`Return`) | sai de 1904 para 6427 cores: muda de tela |
+| seta direita + `SELECT` | 1892 cores |
+| seta baixo + `SELECT` | 86 cores, dominante branca (tela de carregamento) |
+| `AVK_CONFIRMA` (`0xe064`) | 214 cores |
+| manche, botões de controle, `AVK_0`, `AVK_CLR` | **nada** |
+
+O manche e os botões não movem um pixel. Não é falta de gesto: é que a lista é um **widget**, e no
+BREW widget recebe `EVT_KEY`. Registrado no `IHID` a roda só *lê a posição* — o que levou a uma
+conclusão errada por um bom tempo, porque o instrumento de teste não sabia apertar tecla.
+
+Consertado o instrumento (`ZEEBX_ROM_TECLAS` aceita `k0`, `kclr`, `kselect`, `kright`, `kconfirma`),
+a navegação apareceu na primeira leva.
+
+### O que a roda abre, e o que não abre
+
+Ela percorre `assets/stage_slides/5008X/slidebanner.qxt` — que é pasta **da própria roda**
+(`mod/274755`), não de um jogo — e chama `IShell::CreateInstance` 46 vezes, montando a lista. O
+pedido de abertura (`StartApplet`) **não veio** em nenhuma das doze execuções medidas. Ou seja: a
+roda avança, reage e desenha, mas ainda não escolheu um jogo — o ciclo não fechou.
+
+### Um defeito real no caminho
+
+```
+tectoymain.c:1668  ERROR: Unable to create instance of AEECLSID_LCT_SIMCARDCTL, cannot do SIM check
+```
+
+A interface `0x01006c01` já existia e já era atendida; o que faltava era a **fábrica** conhecer a
+classe, como já conhecia a vizinha `0x01006c02`. A constante estava definida e nunca usada. Depois
+da correção a classe sai da lista de faltantes e o log da roda deixa de acusar o erro — e a mesma
+sequência que quebrava com `acesso inválido a 0x0` passou a terminar em `roda`.
+
+Ainda falta, das classes, só `0x01000000`, que o SDK não lista como classe (é `QVERSION`) e que a
+roda pede uma vez sem reclamar.
+
 ## Como fechar o item 8 (o ciclo da Z-Wheel)
 
 É a única coisa que nenhum teste daqui alcança: a roda **não desenha** no caminho da varredura
