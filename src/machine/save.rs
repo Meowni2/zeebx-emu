@@ -24,8 +24,10 @@
 //! proíbe, e a porta é essa.
 
 use super::{
-    Callback, DecodedImage, Machine, MemStream, OpenFile, Outcome, SoundState, Timer,
+    Callback, CipherState, DecodedImage, FluxoPcm, Machine, MediaState, MemStream, ModeloDeValor,
+    OpenFile, Outcome, Peek, PendingBlit, RecorteDeImagem, SoundState, Timer, UnzipState,
 };
+use crate::machine::AES_BLOCK;
 use crate::video::display::Framebuffer;
 use crate::cpu::{CpuBackend, Reg};
 use crate::save_state::{Erro, Guardavel, Leitor, Secoes};
@@ -148,6 +150,7 @@ impl<C: CpuBackend> Machine<C> {
         self.grava_superficies_e_imagens(&mut secoes);
         self.grava_escalares_e_mapas(&mut secoes);
         self.grava_listas_e_parada(&mut secoes);
+        self.grava_resto_das_tabelas(&mut secoes);
         self.heap.grava_com_prefixo("heap", &mut secoes);
         self.objects.grava(&mut secoes);
         self.superficies.grava_com_prefixo("surfaces", &mut secoes);
@@ -216,6 +219,7 @@ impl<C: CpuBackend> Machine<C> {
         self.restaura_superficies_e_imagens(&leitor)?;
         self.restaura_escalares_e_mapas(&leitor)?;
         self.restaura_listas_e_parada(&leitor)?;
+        self.restaura_resto_das_tabelas(&leitor)?;
         self.heap.restaura_com_prefixo("heap", &leitor)?;
         self.objects.restaura(&leitor)?;
         self.superficies
@@ -1570,6 +1574,403 @@ fn monta(numeros: &[u32]) -> Result<Option<Outcome>, Erro> {
     })
 }
 
+
+/// As tabelas de objeto que restam: cifra, descompressão, espiada, recorte, modelo de valor,
+/// fluxo de PCM, entregas pendentes e o estado de mídia.
+///
+/// Todas usam os mesmos três ajudantes do formato — números, registros de tamanho fixo e blocos de
+/// bytes —, e a diferença entre elas é só a forma do que guardam. É a vantagem de ter começado pelo
+/// formato: esta é a parte do trabalho em que cada tabela nova custa poucas linhas.
+///
+/// ## O que **não** entra, e é decisão
+///
+/// - `CargaDeMidia`: guarda um `Arc<Sound>` — um WAV já decodificado, do tamanho do arquivo. É
+///   cache do que está no disco, e derrubá-lo faz o som ser recarregado na próxima vez que o jogo
+///   o pedir. O que se perde é o som que **estava tocando** no instante do save: ele volta do
+///   começo, não do meio. Vai dito;
+/// - `HashState`: um `Md5` no meio de um cálculo. A implementação não expõe o estado interno, e
+///   guardar o resultado parcial por fora seria inventar um formato para um algoritmo de terceiro.
+///   Um jogo que salve um state exatamente entre dois `Update` de um MD5 perde aquele cálculo — e
+///   é o único caso;
+/// - `Widget`: o maior dos que faltam, com mapas dentro de mapas e texto. Fica para a passada
+///   seguinte, e é o que resta antes de a porta poder abrir.
+impl<C: CpuBackend> Machine<C> {
+    fn grava_resto_das_tabelas(&self, secoes: &mut Secoes) {
+        secoes.poe_u32s("cif.ids", self.ciphers.keys().copied());
+        for (id, cifra) in &self.ciphers {
+            secoes.poe_u32s(
+                &format!("cif.{id}.meta"),
+                [u32::from(cifra.key.is_some()), cifra.padding],
+            );
+            let mut chaves = Vec::with_capacity(2 * AES_BLOCK);
+            if let Some(chave) = cifra.key {
+                chaves.extend_from_slice(&chave);
+            } else {
+                chaves.extend(std::iter::repeat_n(0u8, AES_BLOCK));
+            }
+            chaves.extend_from_slice(&cifra.iv);
+            secoes.poe(&format!("cif.{id}.chaves"), chaves);
+            secoes.poe(&format!("cif.{id}.pendente"), cifra.pending.clone());
+        }
+
+        secoes.poe_u32s("zip.ids", self.unzips.keys().copied());
+        for (id, descompressor) in &self.unzips {
+            secoes.poe_u32s(
+                &format!("zip.{id}.meta"),
+                [
+                    descompressor.source,
+                    descompressor.position as u32,
+                    u32::from(descompressor.expanded),
+                ],
+            );
+            secoes.poe(&format!("zip.{id}.saida"), descompressor.output.clone());
+        }
+
+        secoes.poe_u32s("peek.ids", self.peeks.keys().copied());
+        for (id, espiada) in &self.peeks {
+            secoes.poe_u32s(
+                &format!("peek.{id}.meta"),
+                [espiada.posicao as u32, espiada.buffer],
+            );
+            secoes.poe(&format!("peek.{id}.bytes"), espiada.bytes.clone());
+        }
+
+        secoes.poe_u32s("rec.ids", self.recortes_de_imagem.keys().copied());
+        for (id, recorte) in &self.recortes_de_imagem {
+            let (tem, largura, altura) = match recorte.tamanho {
+                Some((l, a)) => (1u32, l as u32, a as u32),
+                None => (0, 0, 0),
+            };
+            secoes.poe_u32s(
+                &format!("rec.{id}.meta"),
+                [
+                    recorte.x as u32,
+                    recorte.y as u32,
+                    tem,
+                    largura,
+                    altura,
+                    u32::from(recorte.transparente),
+                ],
+            );
+        }
+
+        secoes.poe_u32s("mod.ids", self.modelos_de_valor.keys().copied());
+        for (id, modelo) in &self.modelos_de_valor {
+            secoes.poe_u32s(
+                &format!("mod.{id}.meta"),
+                [modelo.valor, modelo.tamanho],
+            );
+            secoes.poe_registros(
+                &format!("mod.{id}.ouvintes"),
+                modelo
+                    .ouvintes
+                    .iter()
+                    .map(|(a, b, c)| vec![*a, *b, *c])
+                    .collect::<Vec<_>>(),
+            );
+        }
+
+        secoes.poe_u32s("pcm.ids", self.fluxos_pcm.keys().copied());
+        for (id, fluxo) in &self.fluxos_pcm {
+            secoes.poe_u32s(
+                &format!("pcm.{id}.meta"),
+                [
+                    fluxo.fonte,
+                    fluxo.taxa,
+                    u32::from(fluxo.canais),
+                    u32::from(fluxo.bits),
+                    u32::from(fluxo.sem_sinal),
+                    u32::from(fluxo.tocando),
+                    fluxo.inicio_us as u32,
+                    (fluxo.inicio_us >> 32) as u32,
+                    fluxo.quadros_lidos as u32,
+                    (fluxo.quadros_lidos >> 32) as u32,
+                ],
+            );
+        }
+
+        secoes.poe_registros(
+            "blit.registros",
+            self.pending_blits
+                .iter()
+                .map(|blit| {
+                    vec![
+                        blit.image,
+                        blit.target,
+                        blit.x as u32,
+                        blit.y as u32,
+                        u32::from(blit.frame.is_some()),
+                        blit.frame.unwrap_or(0),
+                    ]
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        secoes.poe_u32s("mid.ids", self.media.keys().copied());
+        for (id, midia) in &self.media {
+            secoes.poe_u32s(
+                &format!("mid.{id}.meta"),
+                [
+                    midia.state,
+                    midia.carga as u32,
+                    (midia.carga >> 32) as u32,
+                    midia.pendente.0,
+                    midia.pendente.1,
+                    midia.buffer.0,
+                    midia.buffer.1,
+                    u32::from(midia.tocar_ao_ler),
+                    midia.volume,
+                    midia.repeat,
+                    u32::from(midia.muted),
+                    midia.notify.function,
+                    midia.notify.context,
+                    midia.ends_us as u32,
+                    (midia.ends_us >> 32) as u32,
+                ],
+            );
+        }
+    }
+
+    fn restaura_resto_das_tabelas(&mut self, leitor: &Leitor<'_>) -> Result<(), Erro> {
+        let ids = leitor.u32s("cif.ids")?;
+        let mut ciphers = std::collections::HashMap::new();
+        for id in ids {
+            let meta = leitor.u32s(&format!("cif.{id}.meta"))?;
+            if meta.len() != 2 {
+                return Err(Erro::Secao {
+                    nome: format!("cif.{id}.meta"),
+                    motivo: format!("esperava 2 números e veio {}", meta.len()),
+                });
+            }
+            let chaves = secao_exigida(leitor, &format!("cif.{id}.chaves"))?;
+            if chaves.len() != 2 * AES_BLOCK {
+                return Err(Erro::Secao {
+                    nome: format!("cif.{id}.chaves"),
+                    motivo: format!(
+                        "esperava {} bytes e veio {}",
+                        2 * AES_BLOCK,
+                        chaves.len()
+                    ),
+                });
+            }
+            let mut iv = [0u8; AES_BLOCK];
+            iv.copy_from_slice(&chaves[AES_BLOCK..]);
+            let key = match meta[0] {
+                0 => None,
+                1 => {
+                    let mut chave = [0u8; AES_BLOCK];
+                    chave.copy_from_slice(&chaves[..AES_BLOCK]);
+                    Some(chave)
+                }
+                outro => {
+                    return Err(Erro::Secao {
+                        nome: format!("cif.{id}.meta"),
+                        motivo: format!("o campo `key` vale {outro}, e é booleano"),
+                    })
+                }
+            };
+            ciphers.insert(
+                id,
+                CipherState {
+                    key,
+                    iv,
+                    padding: meta[1],
+                    pending: secao_exigida(leitor, &format!("cif.{id}.pendente"))?,
+                },
+            );
+        }
+
+        let ids = leitor.u32s("zip.ids")?;
+        let mut unzips = std::collections::HashMap::new();
+        for id in ids {
+            let meta = leitor.u32s(&format!("zip.{id}.meta"))?;
+            if meta.len() != 3 {
+                return Err(Erro::Secao {
+                    nome: format!("zip.{id}.meta"),
+                    motivo: format!("esperava 3 números e veio {}", meta.len()),
+                });
+            }
+            unzips.insert(
+                id,
+                UnzipState {
+                    source: meta[0],
+                    output: secao_exigida(leitor, &format!("zip.{id}.saida"))?,
+                    position: meta[1] as usize,
+                    expanded: meta[2] != 0,
+                },
+            );
+        }
+
+        let ids = leitor.u32s("peek.ids")?;
+        let mut peeks = std::collections::HashMap::new();
+        for id in ids {
+            let meta = leitor.u32s(&format!("peek.{id}.meta"))?;
+            if meta.len() != 2 {
+                return Err(Erro::Secao {
+                    nome: format!("peek.{id}.meta"),
+                    motivo: format!("esperava 2 números e veio {}", meta.len()),
+                });
+            }
+            peeks.insert(
+                id,
+                Peek {
+                    bytes: secao_exigida(leitor, &format!("peek.{id}.bytes"))?,
+                    posicao: meta[0] as usize,
+                    buffer: meta[1],
+                },
+            );
+        }
+
+        let ids = leitor.u32s("rec.ids")?;
+        let mut recortes_de_imagem = std::collections::HashMap::new();
+        for id in ids {
+            let meta = leitor.u32s(&format!("rec.{id}.meta"))?;
+            if meta.len() != 6 {
+                return Err(Erro::Secao {
+                    nome: format!("rec.{id}.meta"),
+                    motivo: format!("esperava 6 números e veio {}", meta.len()),
+                });
+            }
+            let tamanho = match meta[2] {
+                0 => None,
+                1 => Some((meta[3] as i32, meta[4] as i32)),
+                outro => {
+                    return Err(Erro::Secao {
+                        nome: format!("rec.{id}.meta"),
+                        motivo: format!("o campo `tamanho` vale {outro}, e é booleano"),
+                    })
+                }
+            };
+            recortes_de_imagem.insert(
+                id,
+                RecorteDeImagem {
+                    x: meta[0] as i32,
+                    y: meta[1] as i32,
+                    tamanho,
+                    transparente: meta[5] != 0,
+                },
+            );
+        }
+
+        let ids = leitor.u32s("mod.ids")?;
+        let mut modelos_de_valor = std::collections::HashMap::new();
+        for id in ids {
+            let meta = leitor.u32s(&format!("mod.{id}.meta"))?;
+            if meta.len() != 2 {
+                return Err(Erro::Secao {
+                    nome: format!("mod.{id}.meta"),
+                    motivo: format!("esperava 2 números e veio {}", meta.len()),
+                });
+            }
+            let ouvintes = leitor
+                .registros(&format!("mod.{id}.ouvintes"), 3)?
+                .into_iter()
+                .map(|r| (r[0], r[1], r[2]))
+                .collect();
+            modelos_de_valor.insert(
+                id,
+                ModeloDeValor {
+                    valor: meta[0],
+                    tamanho: meta[1],
+                    ouvintes,
+                },
+            );
+        }
+
+        let ids = leitor.u32s("pcm.ids")?;
+        let mut fluxos_pcm = std::collections::HashMap::new();
+        for id in ids {
+            let meta = leitor.u32s(&format!("pcm.{id}.meta"))?;
+            if meta.len() != 10 {
+                return Err(Erro::Secao {
+                    nome: format!("pcm.{id}.meta"),
+                    motivo: format!("esperava 10 números e veio {}", meta.len()),
+                });
+            }
+            let menor = |indice: usize, campo: &str| -> Result<u16, Erro> {
+                u16::try_from(meta[indice]).map_err(|_| Erro::Secao {
+                    nome: format!("pcm.{id}.meta"),
+                    motivo: format!("o campo `{campo}` vale {}, que não cabe num u16", meta[indice]),
+                })
+            };
+            fluxos_pcm.insert(
+                id,
+                FluxoPcm {
+                    fonte: meta[0],
+                    taxa: meta[1],
+                    canais: menor(2, "canais")?,
+                    bits: menor(3, "bits")?,
+                    sem_sinal: meta[4] != 0,
+                    inicio_us: u64::from(meta[6]) | (u64::from(meta[7]) << 32),
+                    quadros_lidos: u64::from(meta[8]) | (u64::from(meta[9]) << 32),
+                    tocando: meta[5] != 0,
+                },
+            );
+        }
+
+        let mut pending_blits = Vec::new();
+        for registro in leitor.registros("blit.registros", 6)? {
+            let frame = match registro[4] {
+                0 => None,
+                1 => Some(registro[5]),
+                outro => {
+                    return Err(Erro::Secao {
+                        nome: "blit.registros".to_string(),
+                        motivo: format!("o campo `frame` vale {outro}, e é booleano"),
+                    })
+                }
+            };
+            pending_blits.push(PendingBlit {
+                image: registro[0],
+                target: registro[1],
+                x: registro[2] as i32,
+                y: registro[3] as i32,
+                frame,
+            });
+        }
+
+        let ids = leitor.u32s("mid.ids")?;
+        let mut media = std::collections::HashMap::new();
+        for id in ids {
+            let meta = leitor.u32s(&format!("mid.{id}.meta"))?;
+            if meta.len() != 15 {
+                return Err(Erro::Secao {
+                    nome: format!("mid.{id}.meta"),
+                    motivo: format!("esperava 15 números e veio {}", meta.len()),
+                });
+            }
+            media.insert(
+                id,
+                MediaState {
+                    state: meta[0],
+                    carga: u64::from(meta[1]) | (u64::from(meta[2]) << 32),
+                    pendente: (meta[3], meta[4]),
+                    buffer: (meta[5], meta[6]),
+                    tocar_ao_ler: meta[7] != 0,
+                    volume: meta[8],
+                    repeat: meta[9],
+                    muted: meta[10] != 0,
+                    notify: Callback {
+                        function: meta[11],
+                        context: meta[12],
+                    },
+                    ends_us: u64::from(meta[13]) | (u64::from(meta[14]) << 32),
+                },
+            );
+        }
+
+        self.ciphers = ciphers;
+        self.unzips = unzips;
+        self.peeks = peeks;
+        self.recortes_de_imagem = recortes_de_imagem;
+        self.modelos_de_valor = modelos_de_valor;
+        self.fluxos_pcm = fluxos_pcm;
+        self.pending_blits = pending_blits;
+        self.media = media;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2338,5 +2739,151 @@ mod tests {
         // E desfecho desconhecido é recusa, não invenção.
         assert!(monta(&[99]).is_err());
         assert!(monta(&[2]).is_err(), "campos faltando devia ser recusa");
+    }
+
+    /// **As sete tabelas do último lote vão e voltam** — cifra, descompressão, espiada, recorte,
+    /// modelo de valor, fluxo de PCM, entregas pendentes e estado de mídia.
+    #[test]
+    fn o_resto_das_tabelas_vem_de_volta() {
+        let mut antes = maquina();
+        antes.ciphers.insert(
+            0x100,
+            CipherState {
+                key: Some([7u8; 16]),
+                iv: [9u8; 16],
+                padding: 2,
+                pending: vec![1, 2, 3],
+            },
+        );
+        antes.ciphers.insert(
+            0x101,
+            CipherState {
+                key: None,
+                iv: [0u8; 16],
+                padding: 0,
+                pending: Vec::new(),
+            },
+        );
+        antes.unzips.insert(
+            0x200,
+            UnzipState {
+                source: 0x300,
+                output: vec![4, 5, 6],
+                position: 2,
+                expanded: true,
+            },
+        );
+        antes.peeks.insert(
+            0x400,
+            Peek {
+                bytes: vec![7, 8],
+                posicao: 1,
+                buffer: 0x500,
+            },
+        );
+        antes.recortes_de_imagem.insert(
+            0x600,
+            RecorteDeImagem {
+                x: -3,
+                y: 4,
+                tamanho: Some((10, 20)),
+                transparente: true,
+            },
+        );
+        antes.recortes_de_imagem.insert(
+            0x601,
+            RecorteDeImagem {
+                x: 0,
+                y: 0,
+                tamanho: None,
+                transparente: false,
+            },
+        );
+        antes.modelos_de_valor.insert(
+            0x700,
+            ModeloDeValor {
+                valor: 42,
+                tamanho: 4,
+                ouvintes: vec![(0x800, 0x900, 0xa00)],
+            },
+        );
+        antes.fluxos_pcm.insert(
+            0xb00,
+            FluxoPcm {
+                fonte: 0xc00,
+                taxa: 44_100,
+                canais: 2,
+                bits: 16,
+                sem_sinal: false,
+                inicio_us: 0x1_0000_0005,
+                quadros_lidos: 0x2_0000_0007,
+                tocando: true,
+            },
+        );
+        antes.pending_blits.push(PendingBlit {
+            image: 0xd00,
+            target: 0xe00,
+            x: -5,
+            y: 6,
+            frame: Some(3),
+        });
+        antes.media.insert(
+            0xf00,
+            MediaState {
+                state: 5,
+                carga: 0x1_0000_0009,
+                pendente: (0x10, 0x11),
+                buffer: (0x12, 0x13),
+                tocar_ao_ler: true,
+                volume: 80,
+                repeat: 2,
+                muted: false,
+                notify: Callback {
+                    function: 0x1000_7000,
+                    context: 0x14,
+                },
+                ends_us: 0x2_0000_000b,
+            },
+        );
+
+        let arquivo = antes.grava_estado();
+        let mut depois = maquina();
+        depois.restaura_estado(&arquivo).expect("restaurou");
+
+        assert_eq!(depois.ciphers.get(&0x100).map(|c| c.key), Some(Some([7u8; 16])));
+        assert_eq!(depois.ciphers.get(&0x100).map(|c| c.padding), Some(2));
+        assert_eq!(depois.ciphers.get(&0x100).map(|c| c.pending.clone()), Some(vec![1, 2, 3]));
+        assert_eq!(depois.ciphers.get(&0x101).map(|c| c.key), Some(None));
+        let descompressor = depois.unzips.get(&0x200).expect("a descompressão voltou");
+        assert_eq!(descompressor.output, vec![4, 5, 6]);
+        assert_eq!(descompressor.position, 2);
+        assert!(descompressor.expanded);
+        assert_eq!(depois.peeks.get(&0x400).map(|p| p.bytes.clone()), Some(vec![7, 8]));
+        assert_eq!(
+            depois.recortes_de_imagem.get(&0x600).map(|r| (r.x, r.y, r.tamanho)),
+            Some((-3, 4, Some((10, 20))))
+        );
+        assert_eq!(
+            depois.recortes_de_imagem.get(&0x601).and_then(|r| r.tamanho),
+            None,
+            "o recorte sem tamanho voltou com um"
+        );
+        assert_eq!(
+            depois.modelos_de_valor.get(&0x700).map(|m| (m.valor, m.ouvintes.clone())),
+            Some((42, vec![(0x800, 0x900, 0xa00)]))
+        );
+        let fluxo = depois.fluxos_pcm.get(&0xb00).expect("o fluxo voltou");
+        assert_eq!((fluxo.canais, fluxo.bits), (2, 16));
+        assert_eq!(fluxo.inicio_us, 0x1_0000_0005, "o u64 de início não voltou");
+        assert_eq!(fluxo.quadros_lidos, 0x2_0000_0007);
+        assert!(fluxo.tocando);
+        assert_eq!(depois.pending_blits.len(), 1);
+        assert_eq!(depois.pending_blits[0].frame, Some(3));
+        let midia = depois.media.get(&0xf00).expect("a mídia voltou");
+        assert_eq!(midia.carga, 0x1_0000_0009);
+        assert_eq!(midia.pendente, (0x10, 0x11));
+        assert_eq!(midia.buffer, (0x12, 0x13));
+        assert_eq!(midia.ends_us, 0x2_0000_000b);
+        assert_eq!(midia.notify.function, 0x1000_7000);
     }
 }
