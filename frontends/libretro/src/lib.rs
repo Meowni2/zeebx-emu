@@ -86,6 +86,16 @@ static ULTIMA_ABERTURA: std::sync::atomic::AtomicU32 = std::sync::atomic::Atomic
 #[cfg(test)]
 static CLASSE_ATUAL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
+/// O relógio virtual da sessão, em milissegundos, a cada quadro.
+///
+/// **Instrumento de teste, e só dele.** É o que diz se a roda está no mesmo ponto da linha do tempo
+/// nos dois caminhos — o da varredura e o do core —, e é a primeira coisa a conferir quando o mesmo
+/// roteiro dá desfechos diferentes: a tecla pode estar certa e o instante, não. Medido com ele:
+/// cada `retro_run` avança ~26 ms de relógio virtual, e não os 16 ms de um quadro a 60 Hz, porque a
+/// volta do core termina quando a máquina **apresenta** um quadro.
+#[cfg(test)]
+static RELOGIO: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 /// O frontend oferece um contexto de placa para o core desenhar.
 const ENV_SET_HW_RENDER: u32 = 14;
 
@@ -1225,6 +1235,7 @@ pub extern "C" fn retro_run() {
         // ou o jogo que ela abriu. Ver [`CLASSE_ATUAL`].
         #[cfg(test)]
         CLASSE_ATUAL.store(estado.session.classe(), std::sync::atomic::Ordering::Relaxed);
+        RELOGIO.store(estado.session.clock_ms(), std::sync::atomic::Ordering::Relaxed);
         // **A placa entra no primeiro quadro.** O contexto de GL só existe depois que o frontend
         // chama o `context_reset`, que acontece depois do `retro_load_game`; aqui é o primeiro
         // lugar em que ele pode estar pronto. Recriar a sessão custa um reinício que ninguém vê:
@@ -2154,7 +2165,10 @@ mod testes {
             // **A roda anima antes da tecla**, e é isso que dá sentido à medida de depois: uma
             // tela que já estivesse parada não diria nada sobre a tecla.
             let animando = distintas(QUADROS.load(Ordering::Relaxed) as usize - 100);
-            eprintln!("antes da tecla: {animando} imagem(ns) distinta(s) em 100 quadros");
+            eprintln!(
+                "antes da tecla: {animando} imagem(ns) distinta(s) em 100 quadros, relógio {} ms",
+                RELOGIO.load(Ordering::Relaxed)
+            );
             assert!(
                 animando > 3,
                 "a Z-Wheel não estava animando antes da tecla ({animando} imagens distintas)"

@@ -710,9 +710,27 @@ com a tradução   55 imagens distintas nos 100 quadros antes da tecla (animando
 applet do jeito que ele lê". No aparelho isso é o RetroArch entregando o controle a um aplicativo
 que só entende teclas do console.
 
-**O que este caminho ainda não fecha, medido:** o pedido de abertura. Com as **mesmas teclas** e a
-mesma máquina, a varredura pede (`abertura pedida: 0x0108e356`) e o core não. A diferença está em
-como o core conduz a sessão, e não na tecla — é o próximo experimento.
+**O que este caminho ainda não fecha, medido.** Com as **mesmas teclas** e a mesma máquina, a
+varredura pede (`abertura pedida: 0x0108e356`) e o core não. Três medições estreitaram onde está a
+diferença, e nenhuma delas é a tecla:
+
+1. **Não é paciência.** Depois do roteiro, mais 6 000 quadros (100 s de relógio virtual) e o pedido
+   continua zero: a roda fica **presa** depois do confirmar (1 imagem distinta em 100 quadros), não
+   lenta.
+2. **O compasso não é a contagem de quadros.** Medido com um relógio de teste: cada `retro_run`
+   avança **~26 ms** de relógio virtual, e não os 16 ms de um quadro a 60 Hz, porque a volta do
+   core termina quando a máquina **apresenta** um quadro. Contando quadros, o roteiro começava aos
+   **50,6 s** em vez dos 30,5 s do roteiro da varredura — outro ponto da linha do tempo, outra
+   tela, outro desfecho.
+3. **E o mesmo instante não é o mesmo estado.** Conduzindo pelo relógio, aos **30,5 s** a roda no
+   caminho do core está **parada** (1 imagem distinta em 100 quadros) enquanto no da varredura
+   anima. Ou seja: os dois caminhos não estão no mesmo ponto da linha do tempo quando o relógio
+   marca o mesmo número — e é isso que o próximo experimento tem de separar (o que a varredura
+   apresenta que o core não apresenta, ou o contrário).
+
+Os instrumentos ficam no teste: `CLASSE_ATUAL` (quem roda) e `RELOGIO` (em que instante), e os
+mesmos instantes do roteiro da varredura (30 500 / 33 000 / 35 000 / 36 500 / 38 000 ms) valem para
+os dois caminhos.
 
 ## 8. O que ainda não funciona
 
