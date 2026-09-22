@@ -236,6 +236,22 @@ E o ensaio do empacotamento do core confirmou o que importa para o usuário: o `
 **A lição que fica:** caminho que só roda em dia de release é caminho sem teste. Ensaia-lo à mão
 custou minutos e pegou três defeitos.
 
+## O formato do `.rdb` não é SQLite (e quase "consertamos" um arquivo bom)
+
+Registro porque custa uma investigação: o `.rdb` do RetroArch **parece** banco de dados e a extensão
+convida a abri-lo com `sqlite3` — que responde `file is not a database`. Não é defeito: o formato é
+o do próprio RetroArch, com a assinatura `RARCHDB\0` seguida de **msgpack**. O nosso arquivo abre
+assim:
+
+```text
+magic: RARCHDB\0  ·  blocos: 119  ·  titulos distintos: 62
+chaves de cada bloco: crc, description, name, rom_name, size
+os cinco titulos fora do DAT estao la, com o nome certo
+```
+
+O `Mobile - Zeebo.lpl` também já traz os 62, com os cinco nomeados. Ou seja: quem abrir o RetroArch
+agora vê os títulos com nome e capa, sem depender de nada do banco.
+
 ## Antes de abrir o RetroArch, nada a limpar
 
 Vale registrar porque é um susto comum: o RetroArch guarda um `core_info.cache` com as informações
