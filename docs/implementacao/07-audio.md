@@ -388,6 +388,74 @@ da placa interpolando entre dois quadros, guarda meio segundo no máximo — se 
 rápido do que a placa consome, o excesso mais antigo sai em vez de o atraso crescer — e, faltando
 amostra, segura o último valor em vez de estalar para o zero.
 
+### Etapa 1 feita: a tabela de timbres refeita contra a medição
+
+O plano era corrigir o que a comparação mediu. O que estava errado não era só um valor: era o
+**modelo**. A tabela mapeava **família de oito** para uma forma fixa e uma envoltória fixa, e o
+resultado medido é que 29 (*overdrive*), 30 (distorcida), 42 (violoncelo) e 48 (cordas) saíam com a
+**mesma onda** — 23,2% das notas do Double Dragon entre as três primeiras.
+
+Três mudanças, todas com a medição como alvo:
+
+1. **A forma virou contínua.** Em vez de quatro degraus fixos, a série harmônica é `1/k^expoente`, e
+   o expoente de cada família foi **ajustado por varredura**: renderiza, mede o centroide, compara
+   com o do soundfont. Os degraus fixos erravam justamente porque os alvos caíam **entre** eles.
+2. **O teto de harmônicos passou a ser o de Nyquist.** Era 12 para o dente e 9 para quadrada e
+   triângulo. Com `1/k^e` pequeno o bastante os harmônicos altos **são** o timbre: cortados em 24, o
+   lead de dente de serra media 2823 Hz onde a amostra real mede 3497 Hz.
+3. **A normalização passou a ser calculada por nota**, varrendo 96 fases (20 µs por nota), porque o
+   pico da série depende do expoente **e** do número de harmônicos que a altura da nota permite.
+   Sem isso, o baixo (`e = 2,45`) sairia quase três vezes mais alto que o lead (`e = 0,70`), e o
+   timbre mudaria o balanço da música junto.
+
+Erro de centroide contra o soundfont, nos nove casos de referência:
+
+| caso | soundfont | Zeebx antes | Zeebx agora | erro antes | erro agora |
+|---|---:|---:|---:|---:|---:|
+| piano (0) | 755 Hz | 398 | 695 | 357 | **60** |
+| baixo (33) | 467 Hz | 396 | 465 | 71 | **2** |
+| guitarra *over* (29) | 1379 Hz | 1011 | 1398 | 368 | **19** |
+| guitarra dist. (30) | 2195 Hz | 1011 | 2233 | 1185 | **38** |
+| cordas (48) | 1707 Hz | 1009 | 1717 | 697 | **10** |
+| violoncelo (42) | 1573 Hz | 1009 | 1498 | 563 | **75** |
+| metais (61) | 1926 Hz | 730 | 1988 | 1196 | **62** |
+| lead serra (81) | 3497 Hz | 730 | 3492 | 2767 | **5** |
+| bateria | 7092 Hz | 6661 | 6661 | 430 | 430 |
+| **total** | | | | **7635** | **701** |
+
+E as envoltórias, que é o que mais se ouve numa linha de baixo:
+
+```text
+baixo     soundfont 1.00 0.74 0.60 0.53 0.48
+          antes     1.00 0.69 0.65 0.65 0.64   ← travava em 0,65: sustentava como órgão
+          agora     1.00 0.93 0.86 0.79 0.71
+piano     soundfont 1.00 0.82 0.69 0.60 0.54
+          antes     1.00 0.65 0.34 0.29 0.29   ← decaía rápido demais e travava
+          agora     1.00 0.90 0.80 0.70 0.59
+bateria   soundfont 1.00 0.90 0.32 0.28 0.60
+          antes     1.00 0.80 0.60 0.30 0.42   ← chimbau alto demais, condução baixa demais
+          agora     1.00 0.90 0.35 0.44 0.64
+```
+
+Na música real do Double Dragon (o SMF de 47,5 s): pico 0,8 (por construção, o mesmo `normaliza()`)
+e RMS **0,159**, contra **0,1488** do soundfont — era 0,1459.
+
+**Um defeito de robustez apareceu no caminho.** Ao medir o SMF extraído do `.ggz`, a duração saiu
+**168 s** onde o jogo toca 47,5 s: o parser varria todos os blocos `MTrk` do buffer, e o membro
+extraído traz as músicas seguintes coladas. O jogo entrega um SMF por `Play`, então o defeito não
+aparece em jogo — mas qualquer arquivo com duas músicas concatenadas rendia duração errada, que é o
+sintoma que menos se nota. Agora a leitura para no número de trilhas que o cabeçalho declara.
+
+Quatro testes travam o que foi corrigido, cada um falhando no código anterior: a distorcida não
+pode ser a mesma onda da *overdrive*; o lead 81 tem harmônico par (dente de serra) e o 80 não
+(quadrada); o baixo decai em vez de ficar plano; e duas músicas coladas não viram uma.
+
+**O que continua de fora, medido:** a razão de harmônicos das cordas (8,37 na amostra real contra
+0,6 do que uma série `1/k^e` consegue), a da distorção (4,58 contra 0,84), o centroide da bateria
+(6661 contra 7092 Hz, porque ruído filtrado não tem a ressonância de um tambor) e a ondulação de
+naipe de cordas (tremolo e coro do banco). Isso é material de amostra, e é o assunto da etapa
+seguinte — o wavetable com `rustysynth`.
+
 ### Um `IAStream` do jogo como fonte
 
 O Aviãozinho, um port do Quake feito por fãs, monta o `ISource` de outro jeito: escreve um

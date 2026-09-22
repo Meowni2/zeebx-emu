@@ -243,15 +243,24 @@ fn le(data: &[u8]) -> Option<Partitura> {
         return None;
     }
 
+    // **O número de trilhas é o que o cabeçalho declara, e a leitura para nele.** Sem isto, dois
+    // SMF colados no mesmo buffer viram uma música só: medido, um membro extraído de um `.ggz`
+    // mal recortado rendeu 168 s de música onde o jogo toca 47,5 s, porque os `MTrk` do arquivo
+    // seguinte entravam como se fossem trilhas deste. O jogo entrega um SMF por `Play`, então o
+    // defeito não aparece em jogo — mas apareceria em qualquer arquivo com duas músicas
+    // concatenadas, e a duração errada é o sintoma que menos se nota.
+    let trilhas = u16::from_be_bytes(corpo.get(2..4)?.try_into().ok()?) as usize;
     let mut eventos = Vec::new();
     let mut pos = 8 + cabecalho;
-    while pos + 8 <= data.len() {
+    let mut lidas = 0usize;
+    while pos + 8 <= data.len() && lidas < trilhas.max(1) {
         let tamanho = u32::from_be_bytes(data[pos + 4..pos + 8].try_into().ok()?) as usize;
         let corpo = data.get(pos + 8..(pos + 8 + tamanho).min(data.len()))?;
         // Um bloco que não é `MTrk` é pulado pelo tamanho: a especificação manda ignorar bloco
         // desconhecido, e há arquivo com bloco de autoria antes das trilhas.
         if &data[pos..pos + 4] == b"MTrk" {
             eventos.extend(le_trilha(corpo));
+            lidas += 1;
         }
         pos += 8 + tamanho;
     }
@@ -313,23 +322,70 @@ impl Partitura {
 }
 
 /// A forma de onda de uma voz.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// As formas de "todos os harmônicos" são **parametrizadas pelo expoente da queda** — `1/k^e` —
+/// em vez de serem casos fixos. A razão é medida: com quatro formas fixas (dente = `1/k`, e os
+/// outros três degraus) os alvos do soundfont caíam **entre** elas, e o erro de centroide ficava
+/// em 1379 Hz para guitarra, 1706 Hz para cordas, 1926 Hz para metais e 2195 Hz para distorção —
+/// quatro instrumentos que passavam a ter o mesmo timbre. Com o expoente contínuo, cada família
+/// recebe o ponto que a medição pediu.
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Forma {
     Senoide,
+    /// Só harmônicos ímpares, caindo com `1/k²`. É a mais escura de todas.
     Triangulo,
+    /// Só harmônicos ímpares, caindo com `1/k`.
     Quadrada,
-    Dente,
+    /// **Todos** os harmônicos, caindo com `1/k^expoente`.
+    ///
+    /// O expoente grande é o que dá o harmônico par forte que nenhuma das formas de ímpares tem —
+    /// e é justamente isso que o baixo do Double Dragon precisava: a amostra real tem H2/H1 = 1,1,
+    /// e o triângulo que estava lá dava **zero**.
+    Parcial {
+        expoente: f32,
+    },
     /// Percussão: ruído com decaimento, sem altura definida.
     Ruido,
+}
+
+/// Quantas fases são varridas para achar o pico da série harmônica de uma voz.
+///
+/// Noventa e seis pontos acham o pico de uma soma suave com erro abaixo de 0,5% — e é **uma vez
+/// por nota**, não por amostra: 96 × 48 harmônicos são vinte microssegundos, contra milhões de
+/// amostras por nota.
+const FASES_DO_PICO: usize = 96;
+
+/// O pico da série `Σ sin(2πk·fase)/k^e` com `harmonicos` termos.
+///
+/// Precisa ser calculado, e não tabelado, por dois motivos medidos: o pico depende do **número de
+/// harmônicos** (que o teto de Nyquist faz variar com a altura da nota — de 42 numa nota grave a 3
+/// numa aguda), e varia por um fator de quase 3 entre o expoente do baixo (2,6) e o do lead
+/// (0,2). Com a série normalizada por uma tabela fixa, o baixo ficava quase duas vezes mais alto
+/// que a distorção, e o balanço da música mudava junto com o timbre.
+fn pico_da_serie(expoente: f32, harmonicos: u32) -> f32 {
+    use std::f32::consts::TAU;
+    let mut maior: f32 = 0.0;
+    for passo in 0..FASES_DO_PICO {
+        let fase = passo as f32 / FASES_DO_PICO as f32;
+        let mut soma = 0.0;
+        for k in 1..=harmonicos.max(1) {
+            soma += (fase * TAU * k as f32).sin() / (k as f32).powf(expoente);
+        }
+        maior = maior.max(soma.abs());
+    }
+    match maior > 1e-6 {
+        true => maior,
+        false => 1.0,
+    }
 }
 
 impl Forma {
     /// A amostra da forma na fase `fase` (uma volta é 1,0).
     ///
-    /// Quadrada e dente são somadas por harmônicos até abaixo de Nyquist, e não geradas pela
-    /// forma crua. Uma quadrada crua a 22 kHz **rebate**: os harmônicos acima da metade da taxa
-    /// voltam como frequências que não existem na partitura, e o resultado é uma nota
-    /// acompanhada de um assobio que sobe quando ela desce.
+    /// As formas de harmônicos são **somadas**, e não geradas pela forma crua. Uma quadrada crua a
+    /// 22 kHz **rebate**: os harmônicos acima da metade da taxa voltam como frequências que não
+    /// existem na partitura, e o resultado é uma nota acompanhada de um assobio que sobe quando
+    /// ela desce.
     fn amostra(self, fase: f32, harmonicos: u32, ruido: &mut u32) -> f32 {
         use std::f32::consts::TAU;
         match self {
@@ -356,12 +412,16 @@ impl Forma {
                 }
                 soma * 4.0 / std::f32::consts::PI
             }
-            Self::Dente => {
+            Self::Parcial { expoente } => {
+                // O teto é o de Nyquist, e não um número fixo: com `1/k^e` pequeno o bastante os
+                // harmônicos altos **são** o timbre, e cortá-los em 24 deixava o lead de dente de
+                // serra em 2823 Hz quando a amostra real mede 3497 Hz. Nos expoentes grandes os
+                // harmônicos altos já não pesam, então o custo extra só aparece onde ele é o som.
                 let mut soma = 0.0;
-                for k in 1..=harmonicos.min(12) {
-                    soma += (fase * TAU * k as f32).sin() / k as f32;
+                for k in 1..=harmonicos.min(48) {
+                    soma += (fase * TAU * k as f32).sin() / (k as f32).powf(expoente);
                 }
-                soma * 2.0 / std::f32::consts::PI
+                soma
             }
             Self::Ruido => {
                 // Congruência linear: barato, determinístico e suficiente para percussão. Ruído
@@ -382,36 +442,94 @@ struct Timbre {
     sustentacao: f32,
     liberacao: f32,
     ganho: f32,
+    /// Quanto dividir a soma harmônica para ela ficar com pico 1. Ver [`pico_da_serie`].
+    ///
+    /// Nasce em 1,0 na tabela de timbres e é preenchido quando a voz é criada, porque depende do
+    /// número de harmônicos — que depende da altura da nota.
+    normalizacao: f32,
 }
 
-/// O timbre de um programa do General MIDI, pela família dele.
+/// O timbre de um programa do General MIDI.
 ///
-/// **Isto é a parte que é palpite**, e é palpite por falta de dado, não por preguiça: o banco de
-/// instrumentos do console está no firmware que ainda não lemos. O que a tabela tenta acertar é o
-/// **comportamento** de cada família — piano decai, órgão sustenta, metal ataca devagar —, porque
-/// é isso que faz a música ser reconhecível mesmo com o timbre errado.
+/// **Isto continua sendo aproximação**, e por falta de dado, não por preguiça: o banco de
+/// instrumentos do console está no firmware que ainda não lemos. Mas a aproximação era **por
+/// família de oito**, e isso custava caro de um jeito medido: 29 (guitarra *overdrive*), 30
+/// (distorcida), 42 (violoncelo) e 48 (cordas) saíam com a **mesma onda**, e o 81 (*lead* de dente
+/// de serra) saía quadrado. No Double Dragon essas três primeiras famílias são 23,2% das notas.
+///
+/// Agora cada programa que a partitura usa é atendido em separado quando ele difere do vizinho, e
+/// as famílias ficam para o resto. O alvo da correção é o que a comparação com o soundfont mediu,
+/// não o gosto:
+///
+/// | programa | medido no soundfont | o que a tabela fazia |
+/// |---|---|---|
+/// | 0 piano | H2/H1 = 0,59, decai até 0,49 em 1,2 s | triângulo (H2 = 0) e parava em 0,29 |
+/// | 33 baixo | H2/H1 = 1,10, decai até 0,42 em 1,2 s | H2 = 0 e **plano** em 0,65 |
+/// | 29 guitarra | H2/H1 = 0,82, sustenta em 0,75 | decaía para 0,36 e travava |
+/// | 30 distorcida | H2/H1 = 4,58, centroide 2195 Hz | idêntica à 29 |
+/// | 48 cordas | H2/H1 = 8,37, centroide 1706 Hz | idêntica à 29 |
+/// | 42 violoncelo | H2/H1 = 0,69, sobe e sustenta | idêntica à 29 |
+///
+/// Sustentação e decaimento têm de ser lidos junto com o tempo da nota: numa linha de baixo as
+/// notas são curtas, e um `sustentacao` alto vira um zumbido plano em vez de nota.
 fn timbre(programa: u8) -> Timbre {
     let (forma, ataque, decaimento, sustentacao, liberacao, ganho) = match programa {
-        // Piano e percussão cromática: ataque imediato e decaimento, sem sustentação.
-        0..=15 => (Forma::Triangulo, 0.002, 0.50, 0.25, 0.15, 0.9),
+        // Piano: todos os harmônicos, ataque seco e cauda longa. O decaimento longo, com
+        // sustentação baixa, é o que faz a nota **continuar caindo** em vez de travar.
+        0..=3 => (Forma::Parcial { expoente: 2.00 }, 0.002, 1.60, 0.22, 0.18, 0.9),
+        // Piano elétrico e cravo: mais brilhante e mais curto.
+        4..=7 => (Forma::Parcial { expoente: 1.70 }, 0.002, 0.90, 0.20, 0.15, 0.85),
+        // Percussão cromática (sino, marimba, xilofone): brilho com cauda média.
+        8..=15 => (Forma::Parcial { expoente: 1.00 }, 0.002, 0.80, 0.15, 0.14, 0.8),
         // Órgão e acordeão: soam enquanto a tecla está apertada.
-        16..=23 => (Forma::Quadrada, 0.01, 0.05, 0.90, 0.08, 0.6),
-        // Violão e guitarra.
-        24..=31 => (Forma::Dente, 0.004, 0.40, 0.30, 0.12, 0.7),
-        // Baixo: fundamental forte, pouco harmônico.
-        32..=39 => (Forma::Triangulo, 0.005, 0.30, 0.55, 0.10, 1.0),
-        // Cordas e conjunto: ataque lento.
-        40..=55 => (Forma::Dente, 0.06, 0.20, 0.80, 0.25, 0.6),
-        // Metais.
-        56..=63 => (Forma::Quadrada, 0.03, 0.15, 0.85, 0.12, 0.6),
-        // Palheta e sopro.
-        64..=79 => (Forma::Senoide, 0.02, 0.10, 0.85, 0.12, 0.8),
-        // Lead sintetizado.
-        80..=87 => (Forma::Quadrada, 0.005, 0.10, 0.80, 0.10, 0.6),
+        16..=20 => (Forma::Quadrada, 0.010, 0.05, 0.90, 0.08, 0.6),
+        // Órgão de palheta e gaita: quadrada com corpo em cima.
+        21..=23 => (Forma::Parcial { expoente: 1.20 }, 0.015, 0.08, 0.88, 0.09, 0.55),
+        // Violão de nylon e de aço: palheta, decai.
+        24 | 25 => (Forma::Parcial { expoente: 1.80 }, 0.004, 0.90, 0.20, 0.12, 0.75),
+        // Guitarra elétrica limpa e *jazz*: ataque macio, sustenta.
+        26..=28 => (Forma::Parcial { expoente: 1.50 }, 0.008, 0.35, 0.62, 0.14, 0.7),
+        // *Overdrive*: sustenta, e é 10,8% do Double Dragon.
+        29 => (Forma::Parcial { expoente: 1.45 }, 0.006, 0.30, 0.76, 0.16, 0.68),
+        // Distorcida e harmônicos: mais brilhante que a *overdrive* — medido no soundfont,
+        // H2/H1 = 4,6 e centroide de 2195 Hz contra 1379 Hz da 29. Era a **mesma onda**.
+        30..=31 => (Forma::Parcial { expoente: 1.10 }, 0.005, 0.30, 0.78, 0.16, 0.6),
+        // Baixo: harmônico par forte (a amostra real tem H2 acima da fundamental) e cauda longa.
+        32..=35 => (Forma::Parcial { expoente: 2.45 }, 0.005, 2.00, 0.30, 0.12, 1.0),
+        // Baixo *pick*, *slap* e sintetizado: mais curto e mais brilhante.
+        36..=39 => (Forma::Parcial { expoente: 1.80 }, 0.004, 0.80, 0.32, 0.10, 0.95),
+        // Violino, viola e violoncelo: arco, ataque médio, sustenta com ondulação.
+        40..=42 => (Forma::Parcial { expoente: 1.40 }, 0.090, 0.30, 0.80, 0.22, 0.7),
+        // Contrabasso dos conjuntos: mais grave e mais escuro.
+        43 => (Forma::Parcial { expoente: 2.20 }, 0.080, 0.40, 0.72, 0.22, 0.85),
+        // *Tremolo*, *pizzicato* e harpa: palhetados curtos.
+        44 | 45 | 46 => (Forma::Parcial { expoente: 1.60 }, 0.004, 0.60, 0.25, 0.14, 0.75),
+        // Tímpano: ruído com cauda, tratado como percussão sem altura definida.
+        47 => (Forma::Parcial { expoente: 1.20 }, 0.003, 0.70, 0.20, 0.20, 0.9),
+        // Naipe de cordas: a família mais brilhante do soundfont (H2/H1 = 8,4), ataque lento.
+        48..=55 => (Forma::Parcial { expoente: 1.30 }, 0.075, 0.35, 0.78, 0.28, 0.62),
+        // Metais: ricos, com ataque médio e boa sustentação.
+        56..=60 => (Forma::Parcial { expoente: 1.19 }, 0.035, 0.25, 0.78, 0.14, 0.62),
+        // Metais abafados e sintetizados: mais escuros.
+        61..=63 => (Forma::Parcial { expoente: 1.19 }, 0.030, 0.30, 0.75, 0.13, 0.62),
+        // Palheta (sax, clarinete): quadrada com corpo.
+        64..=71 => (Forma::Parcial { expoente: 1.50 }, 0.025, 0.25, 0.78, 0.12, 0.7),
+        // Flauta e sopro: quase senoide, ataque médio.
+        72..=79 => (Forma::Senoide, 0.035, 0.20, 0.82, 0.14, 0.8),
+        // *Lead*: 80 é quadrada e **81 é dente de serra** — era o defeito mais audível da tabela.
+        80 => (Forma::Quadrada, 0.006, 0.20, 0.78, 0.11, 0.6),
+        81 => (Forma::Parcial { expoente: 0.70 }, 0.006, 0.20, 0.78, 0.11, 0.55),
+        82 | 83 => (Forma::Parcial { expoente: 1.80 }, 0.010, 0.25, 0.75, 0.12, 0.7),
+        84..=87 => (Forma::Parcial { expoente: 1.40 }, 0.008, 0.25, 0.76, 0.12, 0.62),
         // Pad e efeito: entrada e saída longas.
-        88..=103 => (Forma::Senoide, 0.10, 0.30, 0.75, 0.40, 0.7),
-        // Étnico, percussivo e efeito sonoro.
-        _ => (Forma::Triangulo, 0.005, 0.35, 0.30, 0.15, 0.7),
+        88..=95 => (Forma::Parcial { expoente: 1.20 }, 0.150, 0.40, 0.75, 0.40, 0.6),
+        96..=103 => (Forma::Parcial { expoente: 1.60 }, 0.100, 0.40, 0.70, 0.40, 0.6),
+        // Étnico: palhetado, como o violão.
+        104..=111 => (Forma::Parcial { expoente: 1.80 }, 0.006, 0.70, 0.25, 0.14, 0.75),
+        // Percussivo com altura (sino, tambor afinado): decai rápido.
+        112..=119 => (Forma::Parcial { expoente: 1.00 }, 0.002, 0.40, 0.10, 0.12, 0.7),
+        // Efeitos sonoros.
+        _ => (Forma::Parcial { expoente: 1.60 }, 0.005, 0.50, 0.30, 0.15, 0.7),
     };
     Timbre {
         forma,
@@ -420,6 +538,7 @@ fn timbre(programa: u8) -> Timbre {
         sustentacao,
         liberacao,
         ganho,
+        normalizacao: 1.0,
     }
 }
 
@@ -448,12 +567,15 @@ fn percussao(nota: u8) -> (Timbre, Filtro) {
     let (decaimento, filtro, ganho) = match nota {
         // Bombo e surdo: só o grave.
         35 | 36 | 41 | 43 | 45 | 47 | 48 | 50 => (0.18, Filtro::Baixa(120.0), 1.0),
-        // Caixa e palmas: corpo no meio, com o estalo em cima.
-        37..=40 => (0.14, Filtro::Alta(700.0), 0.8),
-        // Pratos de condução e ataque: os mais longos, e os mais agudos.
-        49 | 51 | 52 | 53 | 55 | 57 | 59 => (0.45, Filtro::Alta(4_000.0), 0.5),
-        // Chimbau e o resto: curtos e agudos.
-        _ => (0.07, Filtro::Alta(5_000.0), 0.6),
+        // Caixa e palmas: corpo no meio, com o estalo em cima. É o tambor mais forte da caixa,
+        // medido no soundfont (0,90 do pico, contra 0,32 do chimbau).
+        37..=40 => (0.14, Filtro::Alta(700.0), 0.9),
+        // Condução (ride) e pratos de ataque: longos e agudos, e **mais altos** que o chimbau —
+        // era o inverso, e o efeito medido era a condução sumir atrás do chimbau fechado.
+        49 | 51 | 52 | 53 | 55 | 57 | 59 => (0.45, Filtro::Alta(4_000.0), 0.75),
+        // Chimbau fechado e o resto: curtos, agudos e **fracos**. No soundfont ele é 0,32 do
+        // pico; aqui era 0,60, e é o que fazia a bateria soar "tss-tss" por cima de tudo.
+        _ => (0.07, Filtro::Alta(5_000.0), 0.35),
     };
     (
         Timbre {
@@ -463,6 +585,7 @@ fn percussao(nota: u8) -> (Timbre, Filtro) {
             sustentacao: 0.0,
             liberacao: 0.02,
             ganho,
+            normalizacao: 1.0,
         },
         filtro,
     )
@@ -594,13 +717,22 @@ pub fn decode(data: &[u8]) -> Option<crate::audio::wav::Sound> {
                         let (timbre, filtro) = percussao(nota);
                         (timbre, filtro, 0.0)
                     }
-                    false => (
-                        timbre(programa[canal_idx]),
-                        Filtro::Nenhum,
+                    false => {
+                        let mut timbre = timbre(programa[canal_idx]);
                         // A afinação do MIDI: a nota 69 é o lá de 440 Hz, e cada semitom é a raiz
                         // duodécima de dois.
-                        440.0 * 2.0f32.powf((f32::from(nota) - 69.0) / 12.0),
-                    ),
+                        let frequencia = 440.0 * 2.0f32.powf((f32::from(nota) - 69.0) / 12.0);
+                        // Quantos harmônicos cabem abaixo de Nyquist nesta altura. É o mesmo
+                        // número que a síntese vai usar, e é o que a normalização precisa saber.
+                        let harmonicos = match frequencia > 0.0 {
+                            true => (RATE as f32 / 2.0 / frequencia) as u32,
+                            false => 1,
+                        };
+                        if let Forma::Parcial { expoente } = timbre.forma {
+                            timbre.normalizacao = pico_da_serie(expoente, harmonicos.max(1));
+                        }
+                        (timbre, Filtro::Nenhum, frequencia)
+                    }
                 };
                 soando.push(Voz {
                     canal,
@@ -691,7 +823,8 @@ fn toca_voz(voz: &Voz, samples: &mut [f32]) {
         let crua = voz
             .timbre
             .forma
-            .amostra(fase, harmonicos.max(1), &mut ruido);
+            .amostra(fase, harmonicos.max(1), &mut ruido)
+            / voz.timbre.normalizacao;
         fase = (fase + passo).fract();
         polo[0] += alpha * (crua - polo[0]);
         let valor = match voz.filtro {
@@ -787,6 +920,123 @@ mod tests {
         out.extend([0x80, nota, 0x40]);
         out.extend([0x00, 0xff, 0x2f, 0x00]);
         out
+    }
+
+    /// Uma nota longa num programa, para medir o comportamento do timbre.
+    fn nota_de(programa: u8, nota: u8, duracao: u32) -> Vec<u8> {
+        let mut trilha = vec![0x00, 0xc0, programa];
+        trilha.extend([0x00, 0x90, nota, 100]);
+        trilha.extend(delta(duracao));
+        trilha.extend([0x80, nota, 0x40]);
+        trilha.extend([0x00, 0xff, 0x2f, 0x00]);
+        smf(96, &trilha)
+    }
+
+    /// A energia de uma janela de 200 ms do som, pelo índice da janela.
+    fn energia_da_janela(som: &crate::audio::wav::Sound, janela: usize) -> f32 {
+        let amostras = &som.samples[janela * 4410..(janela + 1) * 4410];
+        (amostras.iter().map(|s| s * s).sum::<f32>() / amostras.len() as f32).sqrt()
+    }
+
+    /// A amplitude de um harmônico, em **quadratura**.
+    ///
+    /// A primeira versão disto correlacionava com um seno de fase fixa, e o resultado não dizia
+    /// nada: a fase do som não começa em zero na amostra escolhida, então a correlação podia cair
+    /// perto de zero para um harmônico que estava lá. Medido: a distorcida e a *overdrive* davam
+    /// 0,123 e 0,122 — indistinguíveis. Com seno **e** cosseno, a magnitude não depende de fase, e
+    /// é a mesma conta que a análise de fora do repositório faz por FFT.
+    fn harmonico(som: &crate::audio::wav::Sound, f0: f32, k: u32) -> f32 {
+        let trecho = &som.samples[4410..4410 * 3];
+        let taxa = RATE as f32;
+        let (mut re, mut im) = (0.0f32, 0.0f32);
+        for (i, amostra) in trecho.iter().enumerate() {
+            let angulo = (i as f32 / taxa) * f0 * k as f32 * std::f32::consts::TAU;
+            re += amostra * angulo.cos();
+            im += amostra * angulo.sin();
+        }
+        (re * re + im * im).sqrt() * 2.0 / trecho.len() as f32
+    }
+
+    /// A razão entre um harmônico e a fundamental.
+    fn harmonico_sobre_fundamental(som: &crate::audio::wav::Sound, f0: f32, k: u32) -> f32 {
+        let base = harmonico(som, f0, 1).max(1e-6);
+        harmonico(som, f0, k) / base
+    }
+
+    /// **A guitarra distorcida não pode ser a mesma onda da *overdrive*.**
+    ///
+    /// Era: as duas caíam na mesma faixa `24..=31` da tabela, com a mesma forma e a mesma
+    /// envoltória. Medido no Double Dragon, são 11,6% e 10,8% das notas — e soavam como um
+    /// instrumento só. O soundfont distingue as duas por 816 Hz de centroide e por um H2/H1 de
+    /// 4,58 contra 0,82.
+    #[test]
+    fn a_distorcida_nao_e_a_mesma_onda_da_overdrive() {
+        let overdrive = decode(&nota_de(29, 60, 192)).expect("overdrive");
+        let distorcida = decode(&nota_de(30, 60, 192)).expect("distorcida");
+        let a = harmonico_sobre_fundamental(&overdrive, 261.63, 2);
+        let b = harmonico_sobre_fundamental(&distorcida, 261.63, 2);
+        assert!(
+            b > a * 1.15,
+            "a distorcida tinha de ser mais rica em harmônicos que a overdrive: {b:.3} contra {a:.3}"
+        );
+    }
+
+    /// **O lead de dente de serra tem harmônicos pares; a quadrada não.**
+    ///
+    /// O programa 81 (Lead 1, *square*) é quadrado, e o 80 é o de dente de serra. A tabela dava
+    /// quadrada para os dois — medido no soundfont, o 81 tem H2/H1 = 1,02, e uma quadrada tem
+    /// **zero** de harmônico par. Era o defeito mais audível da tabela.
+    #[test]
+    fn o_lead_de_dente_de_serra_nao_e_quadrado() {
+        let quadrado = decode(&nota_de(80, 60, 192)).expect("80");
+        let serra = decode(&nota_de(81, 60, 192)).expect("81");
+        let h2_quadrado = harmonico_sobre_fundamental(&quadrado, 261.63, 2);
+        let h2_serra = harmonico_sobre_fundamental(&serra, 261.63, 2);
+        assert!(
+            h2_quadrado < 0.05,
+            "quadrada não tem harmônico par: {h2_quadrado:.3}"
+        );
+        assert!(
+            h2_serra > 0.3,
+            "o dente de serra tem harmônico par forte: {h2_serra:.3}"
+        );
+    }
+
+    /// **O baixo decai; não fica plano como um órgão.**
+    ///
+    /// Medido no soundfont: a nota de baixo cai para 0,42 da energia inicial em 1,2 s. A tabela
+    /// antiga tinha `sustentacao` de 0,55 com decaimento de 0,3 s e **travava** ali — o baixo
+    /// sustentava como órgão, e num jogo com baixo contínuo isso é o fundo inteiro errado.
+    #[test]
+    fn o_baixo_decai_em_vez_de_ficar_plano() {
+        let som = decode(&nota_de(33, 48, 384)).expect("baixo");
+        let segunda = energia_da_janela(&som, 1);
+        let ultima = energia_da_janela(&som, 4);
+        assert!(
+            ultima < segunda * 0.85,
+            "o baixo tinha de decair: janela 2 vale {segunda:.4} e a 5 vale {ultima:.4}"
+        );
+    }
+
+    /// **Duas músicas coladas não viram uma.** O cabeçalho declara quantas trilhas o arquivo tem,
+    /// e a leitura para ali: sem isso, os `MTrk` do arquivo seguinte entravam como trilhas deste.
+    ///
+    /// Medido num membro extraído de um `.ggz`: 168 s de música onde o jogo toca 47,5 s. O jogo
+    /// entrega um SMF por `Play`, então o defeito não aparece em jogo — mas um arquivo com duas
+    /// músicas concatenadas dava duração errada, que é o sintoma que menos se nota.
+    #[test]
+    fn duas_musicas_coladas_nao_viram_uma() {
+        let primeira = smf(96, &uma_nota(69, 96));
+        let segunda = smf(96, &uma_nota(60, 384));
+        let mut colado = primeira.clone();
+        colado.extend(segunda);
+        let sozinha = decode(&primeira).expect("uma música");
+        let junto = decode(&colado).expect("duas coladas");
+        assert_eq!(
+            junto.samples.len(),
+            sozinha.samples.len(),
+            "a segunda música não pode entrar na primeira"
+        );
     }
 
     #[test]
