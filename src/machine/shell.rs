@@ -399,15 +399,48 @@ impl<C: CpuBackend> Machine<C> {
     /// A documentação manda devolver 0 quando a classe não é de um módulo baixado, que é o
     /// que fazemos para qualquer classe que não seja a do applet carregado.
     pub(super) fn shell_get_class_item_id(&mut self) -> u32 {
-        if self.cpu.read_reg(Reg::R1) != self.applet_class {
-            return 0;
+        let cls = self.cpu.read_reg(Reg::R1);
+        self.item_id_de(cls)
+    }
+
+    /// O item ID de uma classe instalada. Ver [`Machine::shell_get_class_item_id`].
+    ///
+    /// **Esta correção não foi a causa do gesto da Z-Wheel, e é bom que fique dito.** Eu cheguei a
+    /// ela lendo o desmonte do tratador de evento da roda, que chama um método por um deslocamento
+    /// de vtable — e o instrumento mostrou que `GetClassItemID` **nunca é despachado**. O
+    /// deslocamento era de outro objeto. O que fica é o que a API manda: o item ID é do módulo
+    /// instalado, e devolver zero para um applet que existe é resposta errada, com ou sem a
+    /// Z-Wheel.
+    fn item_id_de(&self, cls: u32) -> u32 {
+        // **O item ID vale para qualquer applet instalado, e não só para o carregado.** Era aqui
+        // que a Z-Wheel parava: ela pergunta o id do jogo **escolhido**, que por definição não é a
+        // classe dela, e a resposta era sempre zero. Sem o id, o lançamento nunca acontece — ela
+        // navega, a tela muda, e `StartApplet` jamais é chamado. Medido no rastreio do `IShell`,
+        // com a chamada aparecendo a cada tecla e o valor sempre zero.
+        //
+        // O número sai do nome do `.mif`, que é o número da pasta do módulo — a mesma numeração do
+        // caminho e do `ISHELL_GetClassItemID` do console.
+        if let Some((_, nome)) = self
+            .modulos_instalados
+            .iter()
+            .find(|(classe, _)| *classe == cls)
+        {
+            if let Ok(id) = nome.parse() {
+                return id;
+            }
         }
-        self.vfs
-            .root()
-            .file_name()
-            .and_then(|name| name.to_str())
-            .and_then(|name| name.parse().ok())
-            .unwrap_or(0)
+        // A classe do applet carregado responde pelo próprio diretório, como antes: é o caso do
+        // jogo que roda sozinho e pergunta o id de si mesmo.
+        if cls == self.applet_class {
+            return self
+                .vfs
+                .root()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.parse().ok())
+                .unwrap_or(0);
+        }
+        0
     }
 
     /// `ISHELL_GetDeviceInfo(IShell *po, AEEDeviceInfo *pi)`.
@@ -831,5 +864,37 @@ impl<C: CpuBackend> Machine<C> {
             }),
             other => Ok(AppletResult::Stopped(other)),
         }
+    }
+}
+
+#[cfg(test)]
+mod testes_do_item_id {
+    use super::*;
+
+    /// **O item ID vale para qualquer applet instalado**, e não só para o carregado.
+    ///
+    /// O número é o da pasta do módulo, que é o nome do `.mif`. Devolver zero para um applet que
+    /// existe é resposta errada: a documentação manda zero só para classe que **não** é de módulo
+    /// baixado.
+    #[test]
+    fn o_item_id_sai_para_applet_instalado() {
+        // O menor módulo que o carregador aceita: o alvo aqui é a tabela de applets, não o código.
+        let code = [
+            0xe3a0_0010u32.to_le_bytes(), // mov r0, #16
+            0xe12f_ff1eu32.to_le_bytes(), // bx lr
+        ]
+        .concat();
+        let image = crate::loader::modfile::ModImage::parse(code).unwrap();
+        let module = crate::loader::load(&image).unwrap();
+        let mut machine = Machine::new(crate::cpu::unicorn::UnicornCpu::new().unwrap(), module, ".");
+        machine.cpu.reset(&machine.module.mem).unwrap();
+        machine.set_installed_applets([
+            (0x0102_8e35u32, "274755".to_string()),
+            (0x0102_8e36, "279888".to_string()),
+        ]);
+        assert_eq!(machine.item_id_de(0x0102_8e35), 274755);
+        assert_eq!(machine.item_id_de(0x0102_8e36), 279888);
+        // Classe que não é de módulo instalado continua devolvendo zero, como a API manda.
+        assert_eq!(machine.item_id_de(0x0100_0001), 0);
     }
 }
