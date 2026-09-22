@@ -574,3 +574,43 @@ O banco é a decisão que continua aberta e não é técnica: o GeneralUser GS c
 redistribuir, mas o texto da licença admite origem desconhecida de parte das amostras. Os
 candidatos, com tamanho, licença e presets medidos, estão na tabela do `07-audio.md`.
 
+## O item 8, do "não reage" ao "abre e executa" — o que mudou nesta sessão
+
+O ciclo da Z-Wheel estava dado como bloqueado num caminho sem janela. Ele abre, escolhe, **abre o jogo
+e executa**, nos dois caminhos (a varredura e o core Libretro), com o pedido de abertura provado por
+`Session::take_launch_request` — e foram **quatro defeitos reais** derrubados no caminho, nenhum deles
+o que se procurava:
+
+1. **A classe do `IDownload` (`0x01000000`) era recusada.** O `AEEClassIDs.h` do SDK diz, em três
+   linhas seguidas, que `AEECLSID_PRIV` é `QVERSION` e que `AEECLSID_DOWNLOAD` é `AEECLSID_PRIV`; a
+   leitura anterior parou na primeira. Recusada, a Z-Wheel abortava a biblioteca de jogos.
+2. **O `SystemCtl::slot5` não tinha nome.** Lido no firmware (é o `DefinirModo` com um argumento a
+   mais), o confirmar deixou de abortar a varredura.
+3. **A classe do cartão SIM estava sendo oferecida.** O comentário longo de `Interface::SimCardCtl`
+   já dizia que o `Unable to create instance of AEECLSID_LCT_SIMCARDCTL` **é o caminho certo**; um
+   commit de 21/09 a pôs na fábrica para calar o log. A/B: 474 692 instruções e quadro congelado,
+   contra **750 milhões** e cinco quadros distintos.
+4. **O core não consumia as telas intermediárias do `Update`.** A janela e o `run` consomem; o core
+   não — e com a fila cheia o `advance_once` devolvia "apresentou" para sempre, sem rodar o guest e
+   sem esvaziar a fila de teclas. Medido: relógio parado em 37 012 ms e **uma** tecla entregue, contra
+   78 983 ms e as oito do roteiro, uma a uma.
+
+Com isso, no caminho do RetroArch: `abertura 0x0108e356` (o Alien Breaker), a sessão trocada para o
+jogo e 61 814 ms virtuais executados.
+
+**O que falta, com o número:** a **volta à roda** — o core devolve o controle ao shell quando o jogo
+termina, e isso não ficou provado. O limite está medido em cinco tentativas: o lançamento só acontece
+com o catálogo cheio, e ali o foco cai num jogo que não sai sozinho; com poucos títulos a grade não
+oferece o foco que o roteiro alcança. Falta ler a própria grade (o censo do acessador e a árvore de
+widgets já existem nos dois caminhos).
+
+**Instrumentos que ficaram no repositório**, úteis para isso e para o aparelho: a captura de serial no
+core (`ZEEBX_CORE_SERIAL`), a linha da **entrega de cada tecla** e a da **saída da fila**, o censo do
+acessador por classe de widget (`ZEEBX_ROM_SELETORES`), e no teste do core a classe que roda
+(`CLASSE_ATUAL`), o relógio virtual (`RELOGIO`), as instruções (`INSTRUCOES`) e o roteiro
+configurável (`ZEEBX_CORE_TECLAS=ms:id`).
+
+**Bloqueado por hardware, declarado:** teste físico em R36S/RG40XX-H (item 5), validação no aparelho
+(item 8), e o core no cartão do muOS — adiado pelo Rafael, com o comando pronto
+(`ferramentas/instala_core.py --muos /media/ROOTFS --banco GeneralUser-GS.sf2`).
+
