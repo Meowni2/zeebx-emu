@@ -236,6 +236,23 @@ E o ensaio do empacotamento do core confirmou o que importa para o usuário: o `
 **A lição que fica:** caminho que só roda em dia de release é caminho sem teste. Ensaia-lo à mão
 custou minutos e pegou três defeitos.
 
+## Antes de abrir o RetroArch, nada a limpar
+
+Vale registrar porque é um susto comum: o RetroArch guarda um `core_info.cache` com as informações
+dos cores, e um cache velho faz ele **recusar** extensões que o `.info` já declara — o que parece
+defeito nosso. Conferido nesta máquina:
+
+```text
+~/.config/retroarch/cores/zeebx_libretro.info   332 bytes, 21:09
+  supported_extensions = "mod|zip|7z"
+  database = "Mobile - Zeebo"
+core_info.cache: não existe
+diff contra o repositório: idêntico
+```
+
+Ou seja: não há cache para limpar, e o core instalado é byte a byte o do repositório. Se algum dia
+o `.info` mudar e o RetroArch insistir na versão antiga, apagar o `core_info.cache` resolve.
+
 ## Como capturar o que o core diz
 
 O core escreve em dois lugares, e os dois servem para diagnosticar sem abrir depurador:
