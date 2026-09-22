@@ -169,6 +169,10 @@ fn gira(app: AndroidApp, emulador: &mut Emulador) {
                 }
             }
             PollEvent::Main(MainEvent::Pause) | PollEvent::Main(MainEvent::LostFocus) => {
+                // O Android pode tirar o foco antes de entregar o KeyUp/MotionEvent final do
+                // controle. Se mantivermos o estado, a direção fica presa quando a atividade
+                // volta. No console, perder o aparelho equivale a soltar tudo.
+                emulador.pad = Pad::default();
                 visivel = false
             }
             PollEvent::Main(MainEvent::Destroy) => sair = true,
@@ -285,6 +289,11 @@ pub struct Emulador {
     /// repinta mais vezes que o jogo desenha, e sem esta chave cada repintura refaria a
     /// conversão inteira.
     quadro: Option<(u64, u64, bool)>,
+    /// O quadro 2D em RGB565 para o caminho direto pela placa.
+    ///
+    /// O Android pode repintar a janela várias vezes sem o jogo tocar no framebuffer. Guardar a
+    /// conversão evita recriar/copiar cerca de 600 KiB por repaint numa tela 640x480.
+    quadro_565: Option<(u64, u64, std::sync::Arc<[u8]>)>,
     /// Os botões apertados agora, alimentados pela fila nativa.
     pad: Pad,
     /// O "voltar" foi apertado com um jogo aberto: a pergunta está na tela.
@@ -346,6 +355,7 @@ impl Emulador {
             sessao: None,
             textura: None,
             quadro: None,
+            quadro_565: None,
             pad: Pad::default(),
             confirmando: false,
             pausado: false,
@@ -441,6 +451,7 @@ impl Emulador {
         self.sessao = None;
         self.textura = None;
         self.quadro = None;
+        self.quadro_565 = None;
         self.confirmando = false;
         self.pausado = false;
         self.pad = Pad::default();

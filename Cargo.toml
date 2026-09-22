@@ -25,11 +25,12 @@ default = ["desktop"]
 desktop = [
     # A UI desktop usa o rasterizador na placa: o desktop implica `gpu`.
     "gpu",
+    # A placa de som: o desktop implica `audio`.
+    "audio",
     # O banco de amostras para o MIDI é Rust puro e sem dependência de host, então entra por
     # padrão: sem um `.sf2` instalado ele nem é carregado, e sem ele a música é a mesma de antes.
     "soundfont",
     "unicorn",
-    "dep:cpal",
     "dep:discord-rich-presence",
     "dep:eframe",
     "dep:gilrs",
@@ -43,6 +44,14 @@ desktop = [
 # vínculo com a API, e quem entrega o contexto é quem chama. É o que o core Libretro precisa: ele
 # recebe o contexto do frontend e não pode criar um próprio.
 gl = []
+# A saída de som pela placa do host, com o `cpal`.
+#
+# **Separada do `desktop` de propósito.** O `cpal` não é interface: no Android ele fala com o
+# Oboe, que é a saída nativa do aparelho, e o frontend de lá precisa dele sem precisar do eframe,
+# do gilrs ou do rfd. O core Libretro continua sem: lá quem toca é o frontend, e a regra da casa
+# é que o core não linka placa de som.
+audio = ["dep:cpal"]
+
 # Síntese por banco de amostras (SoundFont) para o MIDI, em vez da tabela de timbres.
 #
 # O `rustysynth` é Rust puro e MIT, então entra tanto no core Libretro quanto no standalone sem
@@ -210,3 +219,11 @@ opt-level = 2
 # As dependências não mudam entre uma compilação e outra, então otimizá-las é custo único.
 [profile.dev.package."*"]
 opt-level = 3
+
+# O Android e o rasterizador passam por várias camadas/crates pequenas no caminho quente.
+# ThinLTO deixa o LLVM atravessar essas fronteiras no pacote final sem o custo de build do LTO
+# completo. Uma unidade de código dá ao otimizador a visão mais ampla possível no release; só
+# muda tempo/tamanho de compilação, não o comportamento do emulador.
+[profile.release]
+lto = "thin"
+codegen-units = 1

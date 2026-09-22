@@ -51,6 +51,8 @@ pub struct Pintor {
     /// Tamanho da textura que já está na placa, para reaproveitá-la enquanto não muda.
     medida: (i32, i32),
     suave: bool,
+    /// Identidade/conteúdo do último framebuffer subido pelo caminho cacheado.
+    ultimo_quadro: Option<(u64, u64)>,
 }
 
 impl Pintor {
@@ -70,6 +72,7 @@ impl Pintor {
                 textura,
                 medida: (0, 0),
                 suave: false,
+                ultimo_quadro: None,
             })
         }
     }
@@ -83,6 +86,36 @@ impl Pintor {
         bytes: &[u8],
         largura: i32,
         altura: i32,
+        vp: &egui::epaint::ViewportInPixels,
+        suave: bool,
+    ) {
+        self.desenha_impl(gl, bytes, largura, altura, None, vp, suave);
+    }
+
+    /// Como desenha, mas não reenvia os pixels se o framebuffer não mudou.
+    ///
+    /// A chave é (série, escritas) do framebuffer: a série separa superfícies diferentes e
+    /// escritas cresce toda vez que o jogo toca naquela superfície.
+    pub fn desenha_quadro(
+        &mut self,
+        gl: &glow::Context,
+        bytes: &[u8],
+        largura: i32,
+        altura: i32,
+        chave: (u64, u64),
+        vp: &egui::epaint::ViewportInPixels,
+        suave: bool,
+    ) {
+        self.desenha_impl(gl, bytes, largura, altura, Some(chave), vp, suave);
+    }
+
+    fn desenha_impl(
+        &mut self,
+        gl: &glow::Context,
+        bytes: &[u8],
+        largura: i32,
+        altura: i32,
+        chave: Option<(u64, u64)>,
         vp: &egui::epaint::ViewportInPixels,
         suave: bool,
     ) {
@@ -112,17 +145,22 @@ impl Pintor {
                     glow::PixelUnpackData::Slice(None),
                 );
             }
-            gl.tex_sub_image_2d(
-                glow::TEXTURE_2D,
-                0,
-                0,
-                0,
-                largura,
-                altura,
-                glow::RGB,
-                glow::UNSIGNED_SHORT_5_6_5,
-                glow::PixelUnpackData::Slice(Some(bytes)),
-            );
+            let precisa_subir =
+                self.medida != (largura, altura) || chave.is_none() || self.ultimo_quadro != chave;
+            if precisa_subir {
+                gl.tex_sub_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    largura,
+                    altura,
+                    glow::RGB,
+                    glow::UNSIGNED_SHORT_5_6_5,
+                    glow::PixelUnpackData::Slice(Some(bytes)),
+                );
+                self.ultimo_quadro = chave;
+            }
             if self.medida != (largura, altura) || self.suave != suave {
                 self.medida = (largura, altura);
                 self.suave = suave;

@@ -112,7 +112,7 @@ pub struct Session {
     /// jogo já tinha tocado.
     partida: Option<(u32, u32)>,
     /// A saída de som do host. Um frontend Libretro não tem esta peça: ele recebe o mixer.
-    #[cfg(feature = "desktop")]
+    #[cfg(feature = "audio")]
     audio: Option<crate::audio::Output>,
     title: String,
     /// O ClassID do applet desta sessão.
@@ -404,7 +404,7 @@ impl Session {
         Ok(Self {
             machine,
             partida: Some((applet, clsid)),
-            #[cfg(feature = "desktop")]
+            #[cfg(feature = "audio")]
             audio: None,
             title: library::title_for(path),
             classe: clsid,
@@ -784,7 +784,7 @@ impl Session {
     ///
     /// Um host sem placa de áudio não pode impedir o jogo de rodar: o motivo é devolvido para
     /// quem quiser mostrá-lo, e o emulador segue mudo.
-    #[cfg(feature = "desktop")]
+    #[cfg(feature = "audio")]
     pub fn set_audio(&mut self, enabled: bool, volume: u8) -> Option<String> {
         let level = f32::from(volume.min(100)) / 100.0;
         if !enabled {
