@@ -740,10 +740,18 @@ com o guest num laço que não avança o relógio, o orçamento de voltas acaba 
 temporizador vencer, e o relógio — que é quem dispara os temporizadores da roda — nunca anda. A
 roda não fica lenta: ela para.
 
+A conta, com os números que saíram: no regime normal o core entrega ~240 quadros por segundo
+virtual (25 008 ms em até 6 000 quadros); **preso, entrega 1 214 quadros por milissegundo virtual**
+— meio milhão de quadros para 426 ms de relógio. Não é a roda que anda devagar: é o quadro do core
+que deixou de representar tempo.
+
 O próximo experimento é este, e ele é de uma pergunta só: **quantas voltas cada caminho gasta por
 quadro virtual, e quantas delas avançam o relógio**. A varredura dá uma volta por iteração e o core
 acumula até o teto; se o teto é atingido em laço sem relógio, a diferença entre os dois caminhos
-está aí, e não no roteiro nem na tecla.
+está aí, e não no roteiro nem na tecla. O instrumento para isso (contar voltas do motor por quadro)
+ainda não existe no core: `Session::machine` é privado do motor, e expor um acesso público é
+mudança no `src/`, que custa os doze trabalhos de CI — vale a pena fazer isso junto de outra
+mudança, não sozinho.
 
 ## 8. O que ainda não funciona
 
