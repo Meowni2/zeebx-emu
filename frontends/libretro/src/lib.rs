@@ -1592,13 +1592,11 @@ mod testes {
                         "x" => &EIXO_X,
                         _ => &EIXO_Y,
                     };
-                    // Empurra o manche, solta, e confirma.
+                    // **Empurra o manche e confirma sem soltar.** A primeira versão soltava antes
+                    // de apertar, e essa combinação — manche parado numa direção com o botão
+                    // apertado — é justamente como um carrossel confirma a peça em foco.
                     alvo.store(valor, Ordering::Relaxed);
                     for _ in 0..30 {
-                        retro_run();
-                    }
-                    alvo.store(0, Ordering::Relaxed);
-                    for _ in 0..20 {
                         retro_run();
                     }
                     BOTAO.store(botao, Ordering::Relaxed);
@@ -1606,6 +1604,7 @@ mod testes {
                         retro_run();
                     }
                     BOTAO.store(u32::MAX, Ordering::Relaxed);
+                    alvo.store(0, Ordering::Relaxed);
                     // **Depois de confirmar, a roda anima a transição** antes de pedir a abertura —
                     // vinte quadros não bastam, e o pedido chega durante a animação.
                     for _ in 0..180 {

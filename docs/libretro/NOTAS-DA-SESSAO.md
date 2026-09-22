@@ -130,8 +130,19 @@ confirmar — a transição da roda é animada. O pedido não veio. O que já es
 medição: a entrada (chega), o tempo de carregamento (vinte segundos bastam), o tempo depois do
 botão (180 quadros), e a árvore de aparelho vazia (o teste foi rodado com `ZEEBX_CORE_SISTEMA`
 apontando para a pasta real, com os 63 jogos instalados). O que sobra é a **sequência** — qual
-gesto a roda espera para confirmar — e é o próximo passo, agora com o instrumento que diz se o
-pedido saiu (`ULTIMA_ABERTURA`).
+gesto a roda espera para confirmar.
+
+O teste agora cobre, e nada disso abriu jogo: manche nas quatro direções; cada um dos quatro botões
+de face **e** o Start; o manche empurrado com o botão apertado sem soltar **e** solto antes de
+apertar; 180 quadros de espera depois do confirmar (a transição é animada); e a árvore de aparelho
+verdadeira, com os 63 jogos instalados. Tudo com o `ULTIMA_ABERTURA` como instrumento — ele diz se
+o pedido saiu, e não saiu.
+
+É aqui que a investigação headless para, e por um motivo prático: **o instrumento já respondeu o que
+tinha de responder** (a entrada chega, a roda reage, o pedido não sai), e o que falta é o significado
+do gesto — que só o frontend com controle na mão, ou uma sessão de engenharia reversa da própria
+roda, resolve. Fica escrito para quem pegar: os três descartes acima poupam a repetição de três
+medições, e a lista de tentativas é a metade do caminho de volta.
 
 ## Como fechar o item 8 (o ciclo da Z-Wheel)
 
