@@ -732,6 +732,19 @@ Os instrumentos ficam no teste: `CLASSE_ATUAL` (quem roda) e `RELOGIO` (em que i
 mesmos instantes do roteiro da varredura (30 500 / 33 000 / 35 000 / 36 500 / 38 000 ms) valem para
 os dois caminhos.
 
+**4. O relógio virtual para, e é isto que prende a roda.** Medido com um roteiro que tecla de dois
+em dois segundos e meio entre 25 s e 75 s: **517 036 quadros entregues ao frontend com o relógio
+virtual em ~25,4 s** — 426 ms de tempo virtual em meio milhão de quadros. O `run_frame` fecha cada
+volta quando a máquina apresenta um quadro *ou* quando gasta `MAX_STEPS_PER_FRAME` (200 000) voltas;
+com o guest num laço que não avança o relógio, o orçamento de voltas acaba **antes** do próximo
+temporizador vencer, e o relógio — que é quem dispara os temporizadores da roda — nunca anda. A
+roda não fica lenta: ela para.
+
+O próximo experimento é este, e ele é de uma pergunta só: **quantas voltas cada caminho gasta por
+quadro virtual, e quantas delas avançam o relógio**. A varredura dá uma volta por iteração e o core
+acumula até o teto; se o teto é atingido em laço sem relógio, a diferença entre os dois caminhos
+está aí, e não no roteiro nem na tecla.
+
 ## 8. O que ainda não funciona
 
 ### 8.1 Medido em 22/09/2026: a roda não reage a tecla, e a causa era uma classe
