@@ -3886,6 +3886,23 @@ impl crate::save_state::Guardavel for GlState {
             luz.extend(floats(&fonte.attenuation));
         }
         destino.poe_u32s("gl.iluminacao", luz);
+        destino.poe_u32s(
+            "gl.buffers",
+            [
+                self.width as u32,
+                self.height as u32,
+                self.color.len() as u32,
+                self.depth.len() as u32,
+                self.stencil.len() as u32,
+            ],
+        );
+        destino.poe("gl.buffer.cor", bytes_dos_rgba(&self.color));
+        let mut profundidade = Vec::with_capacity(self.depth.len() * 4);
+        for valor in &self.depth {
+            profundidade.extend_from_slice(&valor.to_bits().to_le_bytes());
+        }
+        destino.poe("gl.buffer.profundidade", profundidade);
+        destino.poe("gl.buffer.stencil", self.stencil.clone());
         grava_texturas(&self.textures, destino);
     }
 
@@ -4091,6 +4108,66 @@ impl crate::save_state::Guardavel for GlState {
             quatro!(self.lights[indice].attenuation);
         }
 
+        // **Os três buffers.** Medido antes de decidir: o de cor NÃO é duplicata da tela. A tela
+        // que o core apresenta é o bitmap do aparelho, e o buffer de cor é a superfície de desenho
+        // do GL — o `eglSwapBuffers` lê um e entrega o outro. Os dois têm de ser gravados.
+        let buffers = origem.u32s("gl.buffers")?;
+        if buffers.len() != 5 {
+            return Err(Erro::Secao {
+                nome: "gl.buffers".to_string(),
+                motivo: format!("esperava 5 números e veio {}", buffers.len()),
+            });
+        }
+        let (largura, altura) = (buffers[0] as usize, buffers[1] as usize);
+        let teto = largura * altura;
+        // **Um teto no tamanho declarado.** Um arquivo corrompido — ou escrito por uma versão com
+        // outra resolução — não pode fazer o carregamento pedir memória absurda. Acima do tamanho
+        // da superfície é recusa, e não alocação.
+        let conferir_tamanho = |nome: &str, declarado: usize, por_pixel: usize| -> Result<usize, Erro> {
+            if declarado > teto {
+                return Err(Erro::Secao {
+                    nome: nome.to_string(),
+                    motivo: format!(
+                        "o estado diz ter {declarado} element(s) e a superfície é {largura}x{altura}"
+                    ),
+                });
+            }
+            let esperado = declarado * por_pixel;
+            Ok(esperado)
+        };
+        let quantos = conferir_tamanho("gl.buffer.cor", buffers[2] as usize, 4)?;
+        let cor = secao_do_estado(origem, "gl.buffer.cor")?;
+        if cor.len() != quantos {
+            return Err(Erro::Secao {
+                nome: "gl.buffer.cor".to_string(),
+                motivo: format!("esperava {quantos} bytes e veio {}", cor.len()),
+            });
+        }
+        let quantos = conferir_tamanho("gl.buffer.profundidade", buffers[3] as usize, 4)?;
+        let profundidade = secao_do_estado(origem, "gl.buffer.profundidade")?;
+        if profundidade.len() != quantos {
+            return Err(Erro::Secao {
+                nome: "gl.buffer.profundidade".to_string(),
+                motivo: format!("esperava {quantos} bytes e veio {}", profundidade.len()),
+            });
+        }
+        let quantos = conferir_tamanho("gl.buffer.stencil", buffers[4] as usize, 1)?;
+        let stencil = secao_do_estado(origem, "gl.buffer.stencil")?;
+        if stencil.len() != quantos {
+            return Err(Erro::Secao {
+                nome: "gl.buffer.stencil".to_string(),
+                motivo: format!("esperava {quantos} bytes e veio {}", stencil.len()),
+            });
+        }
+        let cor: Vec<[u8; 4]> = cor.chunks_exact(4).map(|p| [p[0], p[1], p[2], p[3]]).collect();
+        let profundidade: Vec<f32> = profundidade
+            .chunks_exact(4)
+            .map(|p| f32::from_bits(u32::from_le_bytes([p[0], p[1], p[2], p[3]])))
+            .collect();
+
+        self.color = cor;
+        self.depth = profundidade;
+        self.stencil = stencil;
         self.textures = le_texturas(origem)?;
         Ok(())
     }
@@ -4144,6 +4221,15 @@ fn grava_texturas(
         destino.poe_u32s(&format!("tex.{id}.mips"), medidas);
         destino.poe(&format!("tex.{id}.mip_pixels"), pixels);
     }
+}
+
+/// Os pixels RGBA como bytes, num vetor só.
+fn bytes_dos_rgba(pixels: &[[u8; 4]]) -> Vec<u8> {
+    let mut saida = Vec::with_capacity(pixels.len() * 4);
+    for pixel in pixels {
+        saida.extend_from_slice(pixel);
+    }
+    saida
 }
 
 /// Os pixels RGBA como bytes.
@@ -4566,6 +4652,70 @@ mod testes_do_estado_de_gl {
                 assert!(motivo.contains("16"), "{motivo}");
             }
             outro => panic!("devia recusar a textura curta, e devolveu {outro:?}"),
+        }
+    }
+
+    /// **Os três buffers vão e voltam** — cor, profundidade e stencil, cada um no seu formato.
+    ///
+    /// Medido antes de decidir: o buffer de cor **não** é duplicata da tela. A tela que o core
+    /// apresenta é o bitmap do aparelho, e o buffer de cor é a superfície de desenho do GL; o
+    /// `eglSwapBuffers` lê um e entrega o outro. Gravar só um dos dois deixaria a próxima cena
+    /// desenhada sobre nada.
+    #[test]
+    fn os_buffers_de_cor_profundidade_e_stencil_vem_de_volta() {
+        let mut antes = GlState::new(4, 2);
+        assert_eq!(antes.color.len(), 8, "o estado novo já tem os buffers da superfície");
+        antes.color[0] = [1, 2, 3, 4];
+        antes.color[7] = [5, 6, 7, 8];
+        antes.depth[3] = 0.25;
+        antes.depth[7] = 0.75;
+        antes.stencil[5] = 9;
+
+        let mut secoes = Secoes::nova();
+        antes.grava(&mut secoes);
+        let arquivo = secoes.fecha();
+        let leitor = Leitor::abre(&arquivo).expect("abriu");
+        let mut depois = GlState::new(4, 2);
+        depois.restaura(&leitor).expect("restaurou");
+
+        assert_eq!(depois.color.len(), 8);
+        assert_eq!(depois.color[0], [1, 2, 3, 4], "o primeiro pixel da cor");
+        assert_eq!(depois.color[7], [5, 6, 7, 8], "o último pixel da cor");
+        assert_eq!(depois.depth.len(), 8);
+        assert_eq!(depois.depth[3], 0.25, "a profundidade é f32");
+        assert_eq!(depois.depth[7], 0.75);
+        assert_eq!(depois.stencil.len(), 8);
+        assert_eq!(depois.stencil[5], 9);
+    }
+
+    /// **Um buffer maior que a superfície é recusado**, e não alocado.
+    ///
+    /// É o teto que impede um arquivo corrompido — ou escrito por uma versão com outra resolução —
+    /// de fazer o carregamento pedir memória absurda. O teste monta um estado **válido** e estraga
+    /// só o campo do stencil: refazer as seções à mão faria ele medir outra coisa.
+    #[test]
+    fn buffer_maior_que_a_superficie_e_recusado() {
+        let mut antes = GlState::new(4, 2);
+        let mut secoes = Secoes::nova();
+        antes.grava(&mut secoes);
+        // Os cinco números do cabeçalho dos buffers, com o último mentindo. O primeiro número é a
+        // **contagem** da seção (5), e não um valor: errar isso faz o leitor recusar a seção
+        // inteira, e foi o que o teste mostrou antes de eu acertar.
+        let mut mentiroso = 5u32.to_le_bytes().to_vec();
+        for valor in [4u32, 2, 8, 8, 9999] {
+            mentiroso.extend_from_slice(&valor.to_le_bytes());
+        }
+        secoes.troca("gl.buffers", mentiroso);
+        let arquivo = secoes.fecha();
+        let leitor = Leitor::abre(&arquivo).expect("abriu");
+
+        let mut depois = GlState::new(4, 2);
+        match depois.restaura(&leitor) {
+            Err(crate::save_state::Erro::Secao { nome, motivo }) => {
+                assert_eq!(nome, "gl.buffer.stencil");
+                assert!(motivo.contains("9999"), "{motivo}");
+            }
+            outro => panic!("devia recusar o buffer gigante, e devolveu {outro:?}"),
         }
     }
 }

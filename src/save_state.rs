@@ -360,6 +360,18 @@ impl Secoes {
         self.poe_u32s(nome, valores);
     }
 
+    /// Troca o conteúdo de uma seção, ou acrescenta se ela não existir.
+    ///
+    /// Existe para os testes de recusa: a maneira honesta de provar que um estado corrompido é
+    /// recusado é montar um estado **válido** e estragar um campo dele. Refazer as seções à mão
+    /// faria o teste depender de todas as outras estarem certas, e ele passaria a medir outra coisa.
+    pub fn troca(&mut self, nome: &str, bytes: Vec<u8>) {
+        match self.pares.iter_mut().find(|(n, _)| n == nome) {
+            Some((_, dados)) => *dados = bytes,
+            None => self.poe(nome, bytes),
+        }
+    }
+
     /// Quantas seções já foram postas.
     pub fn quantas(&self) -> usize {
         self.pares.len()
