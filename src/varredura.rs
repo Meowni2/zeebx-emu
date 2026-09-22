@@ -57,20 +57,6 @@ const TETO_PLACAR: u64 = 30;
 /// Quantos métodos mais chamados o relatório mostra. É onde gargalo aparece.
 const CHAMADAS_MOSTRADAS: usize = 12;
 
-/// Lê o roteiro de controle de `ZEEBX_ROM_TECLAS`.
-///
-/// Formato: `ms:botão` separado por vírgula, aplicado no **relógio virtual** — `1000:b1,2000:up`.
-/// Um passo sem botão (`3000:`) solta tudo. Os nomes são os de
-/// [`crate::input::BUTTON_NAMES`], os mesmos da linha de comando e do mapeamento de teclas.
-///
-/// **Eixo entra como `ms:eixo=valor`**: `1000:x=-128` empurra o manche para a esquerda, e
-/// `1500:x=0` devolve ao repouso. Os eixos são `x`, `y`, `z` e `rz`, com o curso do manche em
-/// `-128..=128` — a mesma faixa que o `Pad` guarda. Isto não é enfeite: **a Z-Wheel é navegada
-/// pelo manche**, e um roteiro só de botões não a move um pixel.
-///
-/// Existe porque havia perguntas que só se respondiam com alguém apertando o controle: se o
-/// caminho de entrada do core chega ao guest, se a Z-Wheel aceita a escolha. Com o roteiro, a
-/// varredura responde isso sozinha, e a resposta fica no relatório.
 /// Lê os applets instalados de `ZEEBX_ROM_INSTALADOS`, no formato da bancada:
 /// `0xCLSID:id,0xCLSID:id`.
 ///
@@ -95,6 +81,21 @@ fn instalados_do_ambiente() -> Vec<(u32, String)> {
         .collect()
 }
 
+/// Lê o roteiro de controle de `ZEEBX_ROM_TECLAS`.
+///
+/// Formato: `ms:botão` separado por vírgula, aplicado no **relógio virtual** — `1000:b1,2000:up`.
+/// Um passo sem botão (`3000:`) solta tudo. Os nomes são os de
+/// [`crate::input::BUTTON_NAMES`], os mesmos da linha de comando e do mapeamento de teclas.
+///
+/// **Eixo entra como `ms:eixo=valor`**: `1000:x=-128` empurra o manche para a esquerda, e
+/// `1500:x=0` devolve ao repouso. Os eixos são `x`, `y`, `z` e `rz`, com o curso do manche em
+/// `-128..=128` — a mesma faixa que o `Pad` guarda. Isto não é enfeite: **a Z-Wheel é navegada
+/// pelo manche**, e um roteiro só de botões não a move um pixel.
+///
+/// **Tecla do console entra como `ms:k0xe064`**, e o `k` é opcional desde que o nome não seja de
+/// botão: `kselect` e `select` valem o mesmo **se** `select` não for nome de botão. Existe porque
+/// há perguntas que só se respondem com alguém apertando o controle: se o caminho de entrada chega
+/// ao guest, se a Z-Wheel aceita a escolha.
 fn roteiro_de_teclas() -> Vec<(u64, Passo)> {
     let Ok(valor) = std::env::var("ZEEBX_ROM_TECLAS") else {
         return Vec::new();
@@ -148,7 +149,21 @@ fn roteiro_de_teclas() -> Vec<(u64, Passo)> {
                 .position(|candidato| candidato.eq_ignore_ascii_case(nome))
             {
                 Some(indice) => Passo::Botao(indice),
-                None => continue,
+                // **O nome de tecla sem o `k` também vale.** Antes, `0xe064` não era botão nem
+                // tecla (faltava o `k`) e o passo era descartado **em silêncio**: um roteiro
+                // inteiro de teclas virou "nenhuma tecla", e a medição disse que a roda não
+                // responde — quando quem não apertou nada foi o roteiro. A ordem importa: botão
+                // primeiro, porque `up` e `down` são nomes dos dois.
+                None => match crate::input::avk::por_nome(&nome.to_ascii_lowercase()) {
+                    Some(avk) => Passo::Tecla(avk),
+                    None => {
+                        eprintln!(
+                            "aviso: o passo {parte:?} do roteiro não é botão nem tecla, e foi \
+                             descartado"
+                        );
+                        continue;
+                    }
+                },
             },
         };
         passos.push((ms, passo));
@@ -262,6 +277,25 @@ fn rastreio_pedido() -> Option<String> {
     match valor.is_empty() || valor == "0" {
         true => None,
         false => Some(valor),
+    }
+}
+
+/// Lê as classes a atender por **sonda** de `ZEEBX_ROM_SONDA`, como `0x01000000,0x0102c4e8`.
+///
+/// É o instrumento para a pergunta "que classe é esta, e o que o jogo chama nela?" sem desmontar
+/// o módulo: a sonda devolve um objeto que responde sucesso a tudo e anota cada slot com os
+/// argumentos e com os textos que os argumentos apontam. Foi por ela que o `IDownload` saiu: a
+/// Z-Wheel pede `0x01000000` em `ShopAction_Init`, era recusado, e sem ele a biblioteca de jogos
+/// da roda não monta — a grade nunca aparece e nenhuma tecla faz nada.
+fn sonda_pedida() -> Option<Vec<u32>> {
+    let valor = std::env::var("ZEEBX_ROM_SONDA").ok()?;
+    let classes: Vec<u32> = valor
+        .split(',')
+        .filter_map(|parte| u32::from_str_radix(parte.trim().trim_start_matches("0x"), 16).ok())
+        .collect();
+    match classes.is_empty() {
+        true => None,
+        false => Some(classes),
     }
 }
 
@@ -438,6 +472,8 @@ pub struct Pendencias {
     pub classes_pedidas: Vec<String>,
     /// O texto que o jogo desenhou, com o instante virtual — o que está escrito na tela.
     pub desenhados: Vec<String>,
+    /// O que o jogo chamou nas classes atendidas por **sonda** (`ZEEBX_ROM_SONDA`), slot a slot.
+    pub sonda: Vec<String>,
     /// Alocações que o heap recusou, como `tamanho em quem pediu (lr)`.
     ///
     /// É a pista que faltava quando um jogo mostrasse a tela de falta de memória sem nada no
@@ -486,6 +522,26 @@ impl Pendencias {
                 .drawn_text()
                 .map(|(ms, x, y, texto)| format!("{ms:>7} ms  ({x}, {y})  {texto}"))
                 .collect(),
+            sonda: machine
+                .probe_log()
+                .iter()
+                .map(|(classe, objeto, slot, args, textos, vezes)| {
+                    let mostrar = |i: usize| match &textos[i] {
+                        Some(texto) => format!("{texto:?}"),
+                        None => format!("{:#x}", args[i]),
+                    };
+                    let repetido = match vezes {
+                        1 => String::new(),
+                        n => format!("   ({n}x)"),
+                    };
+                    format!(
+                        "classe {classe:#010x}, objeto {objeto:#x}: slot[{slot:>2}] ({}, {}, {}){repetido}",
+                        mostrar(1),
+                        mostrar(2),
+                        mostrar(3)
+                    )
+                })
+                .collect(),
             alocacoes: ordenar(
                 machine
                     .refused_allocations()
@@ -508,7 +564,7 @@ impl Pendencias {
     }
 
     /// As seções, na ordem em que valem a pena ser lidas — a mesma do relatório do `run`.
-    fn secoes(&self) -> [(&'static str, &Vec<String>); 12] {
+    fn secoes(&self) -> [(&'static str, &Vec<String>); 13] {
         [
             ("APIs que faltaram", &self.apis),
             ("classes que o jogo pediu e não temos", &self.classes),
@@ -520,6 +576,7 @@ impl Pendencias {
             ("APIs atendidas por hipótese", &self.hipoteses),
             ("texto desenhado na tela", &self.desenhados),
             ("alocações recusadas pelo heap", &self.alocacoes),
+            ("o que o jogo chamou nas classes de sonda", &self.sonda),
             ("texto que não soubemos desenhar", &self.texto),
             ("GL atendido sem fazer nada", &self.gl_ignorado),
         ]
@@ -892,6 +949,11 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     let perfilando = std::env::var("ZEEBX_ROM_PERFIL").is_ok();
     if perfilando {
         session.machine_mut().enable_api_profile();
+    }
+    // A sonda entra antes da partida, como o rastreio: o que interessa nela são as primeiras
+    // chamadas do jogo, que é quando ele monta o que precisa.
+    if let Some(sonda) = sonda_pedida() {
+        session.machine_mut().probe_classes(&sonda);
     }
     let mut som = Audio::default();
     let mut soma = 0.0_f64;
@@ -1780,6 +1842,31 @@ fn exige_espaco(dirs: &[PathBuf]) {
                 (2_000, Passo::Tecla(crate::input::avk::SELECT)),
             ],
             "o texto do roteiro não virou evento e tecla"
+        );
+    }
+
+    /// **A tecla sem o `k` também é tecla** — o `k` é opcional, não obrigatório.
+    ///
+    /// O teste existe por uma medição que saiu errada: eu escrevi o roteiro de teclas da Z-Wheel
+    /// com a forma da bancada (`30500:0xe064`) e a varredura **descartou todos os passos em
+    /// silêncio**, porque ali a tecla exigia o `k`. O relatório não mudou de forma, e a conclusão
+    /// que saiu dele — "as teclas não chegam à roda" — era do instrumento, não do emulador. Com o
+    /// `k` opcional, a medida passou a dizer o que se queria medir.
+    #[test]
+    fn a_tecla_do_roteiro_dispensa_o_k() {
+        // SAFETY: teste de thread única, e a variável é lida logo abaixo.
+        unsafe { std::env::set_var("ZEEBX_ROM_TECLAS", "30500:0xe064,31000:k0xe032,32000:up") };
+        let passos = roteiro_de_teclas();
+        unsafe { std::env::remove_var("ZEEBX_ROM_TECLAS") };
+        assert_eq!(
+            passos,
+            vec![
+                (30_500, Passo::Tecla(0xe064)),
+                (31_000, Passo::Tecla(0xe032)),
+                // `up` continua sendo **botão**: é nome dos dois, e o botão vem primeiro.
+                (32_000, Passo::Botao(12)),
+            ],
+            "o nome de tecla sem o `k` virou passo, ou `up` deixou de ser botão"
         );
     }
 

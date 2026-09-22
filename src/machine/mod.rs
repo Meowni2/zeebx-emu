@@ -582,6 +582,14 @@ const AEECLSID_QEGL: u32 = 0x0103_d8ec;
 const AEECLSID_EGL: u32 = 0x0101_4bc4;
 /// `AEECLSID_WEB`, do `BMPIds.csv` do SDK: o cliente HTTP do BREW.
 const AEECLSID_WEB: u32 = 0x0100_5000;
+/// `AEECLSID_DOWNLOAD`, do SDK 4.0.2 — e a resposta para o enigma do `0x01000000`.
+///
+/// O `AEE_CLSIDs.h` diz, em três linhas seguidas: `QVERSION` é `0x01000000`, `AEECLSID_PRIV` é
+/// `QVERSION` e **`AEECLSID_DOWNLOAD` é `AEECLSID_PRIV`**. A leitura anterior parou na primeira
+/// das três e registrou que a classe era "só o `QVERSION`", sem interface. Medido: é o
+/// `IDownload`, e é ele que a Z-Wheel pede em `ShopAction_Init` — recusado, a biblioteca de jogos
+/// da roda não monta.
+const AEECLSID_DOWNLOAD: u32 = 0x0100_0000;
 /// Quantos blocos de texto claro o registro guarda, e quanto de cada um.
 const PLAINTEXT_MAX: usize = 8;
 const PLAINTEXT_BYTES: usize = 512;

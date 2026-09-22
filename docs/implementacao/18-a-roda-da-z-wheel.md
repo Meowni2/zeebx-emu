@@ -627,6 +627,39 @@ O que ainda falta nessa tela:
 
 ## 8. O que ainda não funciona
 
+### 8.1 Medido em 22/09/2026: a roda não reage a tecla, e a causa era uma classe
+
+Com o roteiro da varredura (`ZEEBX_ROM_TECLAS=30500:k0xe064,33000:k0xe032,…`) a roda sobe, desenha
+e **não reage**: os cinco quadros gravados um meio segundo depois de cada tecla saem **idênticos**
+(mesmo `sha1`), 86% brancos, e o log dela termina em
+`Shop_Action.c:77 Unable to create instance of IDOWNLOAD in ShopAction_Init` seguido de
+`GameLib_Form.c:1315 Unable to init ShopAction in Gamelib_CheckPreLoaded` — a biblioteca de jogos
+não monta, e sem grade nenhuma tecla tem o que mover.
+
+O `IDOWNLOAD` é a classe **`0x01000000`**, que estava recusada como "só o `QVERSION`". O
+`AEEClassIDs.h` do SDK 4.0.2 diz, em três linhas seguidas: `QVERSION` é `0x01000000`,
+`AEECLSID_PRIV` é `QVERSION` e **`AEECLSID_DOWNLOAD` é `AEECLSID_PRIV`**. A leitura anterior parou
+na primeira das três.
+
+Atendida por sonda, o abort **desaparece** do log e a execução sobe (473 828 → 474 692
+instruções; 7 353 → 7 394 chamadas de API), mas a roda ainda **não monta o menu**: ela fica no
+pulso descrito em §4 — um timer, 2 582 voltas de 16,6 ms lendo pontos e fila de download, sem
+desenhar nada de novo. É ali que a investigação está agora.
+
+Duas armadilhas de instrumento saíram desta medição, e as duas estão consertadas no código:
+
+- **O passo do roteiro sem o `k` era descartado em silêncio.** Escrito na forma da bancada
+  (`30500:0xe064`), o roteiro inteiro virou "nenhuma tecla" sem uma linha de aviso, e a medida
+  dizia que a roda não responde — quando quem não apertou nada foi o roteiro. Agora o `k` é
+  opcional (o botão vem primeiro, porque `up` e `down` são nomes dos dois) e o que for descartado
+  sai como aviso.
+- **A varredura não tinha sonda nem a mostrava.** `ZEEBX_ROM_SONDA=0xCLSID,…` responde a classe
+  com um objeto de observação e o relatório ganhou a seção "o que o jogo chamou nas classes de
+  sonda", slot a slot, com os textos que os argumentos apontam. Foi assim que se viu que a roda
+  pega o objeto, pergunta o slot 2 (`QueryInterface`), usa e solta.
+
+### 8.2 O que continua apoiado em hipótese
+
 Honestidade sobre o estado: a roda sobe, desenha, compõe na tela e gira — mas boa parte do caminho
 continua apoiada em hipótese registrada, não em leitura confirmada. O que **ainda não foi
 verificado** depois do conserto de §5.8: se a rotação percorre os quinze itens e volta, se a

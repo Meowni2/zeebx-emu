@@ -698,6 +698,24 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 return Ok(SUCCESS);
             }
+            // **`AEECLSID_DOWNLOAD`.** Ver [`AEECLSID_DOWNLOAD`]: a classe do `IDownload`, que
+            // o SDK lista como `AEECLSID_PRIV` (= `QVERSION` = `0x01000000`). Atendida pela
+            // sonda por enquanto — o que a Z-Wheel chama nela sai no relatório com
+            // `ZEEBX_ROM_SONDA`, e é essa medição que diz quais slots valem implementar.
+            AEECLSID_DOWNLOAD => {
+                let object = self.new_object(Interface::Probe)?;
+                if object == 0 {
+                    return Ok(ENOMEMORY);
+                }
+                self.assumptions.insert(
+                    "a classe do download é atendida por um objeto que responde sucesso a tudo",
+                );
+                self.probe_objects.insert(object, clsid);
+                if out != 0 {
+                    self.cpu.write_u32(out, object)?;
+                }
+                return Ok(SUCCESS);
+            }
             // Uma classe do firmware que o jogo usa sem conferir: ver [`CLASSES_POR_OBSERVACAO`].
             _ if CLASSES_POR_OBSERVACAO.contains(&clsid) => {
                 let object = self.new_object(Interface::Probe)?;
