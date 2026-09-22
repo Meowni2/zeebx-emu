@@ -10,15 +10,24 @@
          dá em Ajustes › Aplicativos › Zeebx. Sem ele o Zeebx só enxerga a própria pasta. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
+    <!-- `appCategory="game"` não é enfeite de vitrine: é o que **mantém o travamento de
+         orientação valendo**. A partir do Android 16, num alvo 36 ou maior, o sistema passa a
+         ignorar `screenOrientation`, `resizeableActivity` e as razões de aspecto em telas com
+         600dp ou mais de menor lado — tablet, dobrável, desktop —, e o Android 17 tira até a
+         opção de recusar. Jogos são a exceção que sobrou, e um emulador de console é um jogo.
+         Hoje o alvo é 35 e nada disso nos alcança; quando ele subir, esta linha é o que evita a
+         tela girar sozinha no meio de uma corrida. -->
     <application
         android:label="Zeebx"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
+        android:appCategory="game"
         android:hasCode="false">
         <activity
             android:name="android.app.NativeActivity"
             android:exported="true"
             android:screenOrientation="landscape"
+            android:resizeableActivity="false"
             android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|density|uiMode">
             <meta-data
                 android:name="android.app.lib_name"

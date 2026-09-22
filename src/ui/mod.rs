@@ -7,6 +7,17 @@
 //! onde há uma janela de desktop: no Android quem monta a tela é outro frontend, sobre o mesmo
 //! núcleo.
 
+/// O repositório do projeto.
+///
+/// Mora aqui, e não em cada frontend, porque é o mesmo projeto visto de telas diferentes. A
+/// primeira versão da tela "sobre" do Android trazia a própria cópia destes dois endereços, e o
+/// do Discord estava simplesmente errado — um convite inventado, que não levava a lugar nenhum.
+/// Uma constante duplicada não avisa quando as cópias divergem; uma constante só, sim.
+pub const REPOSITORIO: &str = "https://github.com/ZeebxTeam/zeebx-emu";
+
+/// O convite do servidor de conversa.
+pub const DISCORD: &str = "https://discord.gg/D96HjsKTPa";
+
 pub mod acervo;
 pub mod depuracao;
 pub mod gpu;

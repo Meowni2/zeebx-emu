@@ -400,8 +400,8 @@ impl Emulador {
         // Um link aqui não abre nada sozinho: é a `Intent` de VIEW que manda o endereço para o
         // navegador do aparelho.
         for (chave, endereco) in [
-            ("about.repository", "https://github.com/ZeebxTeam/zeebx-emu"),
-            ("about.discord", "https://discord.gg/zeebx"),
+            ("about.repository", zeebx::ui::REPOSITORIO),
+            ("about.discord", zeebx::ui::DISCORD),
         ] {
             if widgets::navega(ui, self.tr(chave), endereco) {
                 sistema::abre_endereco(&self.app, endereco);

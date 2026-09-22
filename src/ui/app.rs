@@ -140,11 +140,6 @@ impl Tab {
     }
 }
 
-/// O repositório do projeto.
-const REPOSITORY: &str = "https://github.com/ZeebxTeam/zeebx-emu";
-/// O convite do servidor de conversa.
-const DISCORD: &str = "https://discord.gg/D96HjsKTPa";
-
 pub struct App {
     /// Qual porta a tela de controles está editando. Ver [`crate::input::PORTAS`].
     porta_editada: usize,
@@ -1710,9 +1705,9 @@ impl App {
                 egui::special_emojis::GITHUB,
                 self.catalog.get("about.repository")
             ),
-            REPOSITORY,
+            crate::ui::REPOSITORIO,
         );
-        ui.hyperlink_to(format!("💬 {}", self.catalog.get("about.discord")), DISCORD);
+        ui.hyperlink_to(format!("💬 {}", self.catalog.get("about.discord")), crate::ui::DISCORD);
         false
     }
 
