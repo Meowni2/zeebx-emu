@@ -943,6 +943,25 @@ O que isso delimita: **não é o título nem o número de arquivos** — é o qu
 títulos ela não oferece o foco que o roteiro alcança, e com muitos ela oferece, mas aí o foco cai num
 jogo que não sai sozinho. As duas condições precisam valer ao mesmo tempo, e é isso que falta montar.
 
+**A lista é fundida, e a ordem não é a alfabética.** Medido no catálogo que a roda abre: **59
+títulos oficiais** (curtos — `Alice`, `Alien Breaker`) mais **61 locais** (o nome do pacote —
+`Alice no Pais das Maravilhas (Brazil) (Es,Pt)`), **120 linhas** na consulta da grade. Ordenados por
+título, os seis primeiros são:
+
+```text
+Action Hero 3D                                  (oficial)
+Action Hero 3D - Wild Dog & IMICRO3D (...)      (local)
+Alice                                           (oficial)
+Alice no Pais das Maravilhas (...)              (local)
+Alien A (Brazil) (Es,Pt)                        (a copia quebrada, renomeada por mim)
+Alien Breaker                                   (oficial)
+```
+
+O lançamento, mesmo assim, foi `0x0108E356` — **o Alien Breaker**, o sexto. Logo o foco da grade
+**não é a terceira linha da lista fundida**. O que sobra como explicação medida é a ordem da própria
+roda: ela guarda `dt_lastplayed` e tem a aba "Novos / Recentes", e `Alien Breaker` é exatamente o
+jogo que **estas execuções vêm abrindo** — o mais recente é o primeiro.
+
 Quinta tentativa, com a pasta **cheia** e o título quebrado encomendado para a terceira posição:
 ligações simbólicas para os 62 pacotes (sem duplicar 705 MB) mais uma cópia real do `Opera Mini`
 renomeada para `Alien A`, que ordena **antes** do `Alien Breaker`. Resultado: o pedido continua a ser
