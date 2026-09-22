@@ -108,6 +108,27 @@ aparece" por `dlopen` recusado.
 A **Z-Wheel precisa dos jogos na mesma pasta**: ela enumera os applets instalados ao lado do
 conteúdo, então abrir a roda de dentro de `ROMS/Zeebo` mostra os 63 títulos.
 
+
+## Banco de amostras do MIDI (opcional)
+
+Onze jogos tocam a trilha como MIDI, e a partitura não tem som dentro — quem vira som é o
+sintetizador. Sem banco, o Zeebx usa a tabela de timbres dele; com banco, toca as amostras de
+verdade. Medido na música do Double Dragon: com o banco o centroide fica a 2,5% do de referência
+(o Zeebulator com o GeneralUser GS), contra 38% da tabela.
+
+Instalar é copiar **um arquivo**:
+
+```text
+<raiz do aparelho ou perfil>/soundfonts/*.sf2
+```
+
+No muOS a raiz do aparelho é o diretório de sistema do core; no desktop, `~/.config/zeebx/aparelho`.
+Para experimentar sem instalar nada, `ZEEBX_SOUNDFONT=/caminho/para/Banco.sf2`.
+
+Sem o arquivo o core funciona igual — muda o som, não a carga. Medido: o `.so` do core fica em
+15,2 MB com o sintetizador de banco compilado dentro, e o `ldd` continua só com libstdc++, libgcc,
+libm e libc.
+
 ## Verificação sem adivinhar
 
 O workflow `libretro` confere no próprio artefato:

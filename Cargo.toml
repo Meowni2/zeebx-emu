@@ -20,6 +20,9 @@ default = ["desktop"]
 desktop = [
     # A UI desktop usa o rasterizador na placa: o desktop implica `gpu`.
     "gpu",
+    # O banco de amostras para o MIDI é Rust puro e sem dependência de host, então entra por
+    # padrão: sem um `.sf2` instalado ele nem é carregado, e sem ele a música é a mesma de antes.
+    "soundfont",
     "unicorn",
     "dep:cpal",
     "dep:discord-rich-presence",
@@ -35,6 +38,13 @@ desktop = [
 # vínculo com a API, e quem entrega o contexto é quem chama. É o que o core Libretro precisa: ele
 # recebe o contexto do frontend e não pode criar um próprio.
 gl = []
+# Síntese por banco de amostras (SoundFont) para o MIDI, em vez da tabela de timbres.
+#
+# O `rustysynth` é Rust puro e MIT, então entra tanto no core Libretro quanto no standalone sem
+# trazer biblioteca de host nenhuma — que é a regra da casa. O **banco** não é embutido: são 32 MB,
+# e o motor procura um `.sf2` na pasta do aparelho, exatamente como faz com a fonte do sistema. Sem
+# banco, o MIDI volta para a tabela de timbres, que é o que já toca hoje.
+soundfont = ["dep:rustysynth"]
 # Abrir contexto de OpenGL **nosso**, para a janela do desktop e para a linha de comando sem
 # janela. Aqui entra o `glutin`, que linka EGL/GLX — motivo pelo qual o core não usa esta feature:
 # um core não pode depender de biblioteca de interface do host.
@@ -103,6 +113,9 @@ symphonia = { version = "0.5.5", default-features = false, features = ["mp1", "m
 discord-rich-presence = { version = "1.1", optional = true }
 ureq = "3"
 sevenz-rust2 = "0.23.0"
+# Síntese por banco de amostras, ver a feature `soundfont`. MIT e Rust puro: nada de C, nada de
+# biblioteca de host, e por isso pode entrar no core Libretro.
+rustysynth = { version = "1.3.6", optional = true }
 
 # Tudo o que existe **só onde o unicorn compila**, como as dependências de sistema abaixo.
 #

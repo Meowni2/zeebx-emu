@@ -456,6 +456,50 @@ pode ser a mesma onda da *overdrive*; o lead 81 tem harmônico par (dente de ser
 naipe de cordas (tremolo e coro do banco). Isso é material de amostra, e é o assunto da etapa
 seguinte — o wavetable com `rustysynth`.
 
+### Etapa 2 feita: o banco de amostras, opcional, com recuo
+
+A tabela de timbres chegou ao limite do que uma soma de harmônicos alcança. O que falta é
+**material de amostra**, e para isso entrou um sintetizador de SoundFont: `rustysynth`, MIT e Rust
+puro.
+
+**Por que `rustysynth` e não o código do Zeebulator.** O Zeebulator é **GPLv3** e o Zeebx é
+`GPL-2.0-only`; as duas licenças não se combinam, então nada dele pode ser copiado — nem o
+invólucro em volta do TinySoundFont. O `rustysynth` é MIT, então pode.
+
+**Por que o banco não vem embutido.** São 32 MB (o GeneralUser GS mede 32.319.396 B) e a carga pede
++64 MiB de RSS, porque as amostras viram `float`. Embutido, o `.so` do core iria de 15,6 MB para
+~48 MB em seis alvos de CI — 48 MB para rodar um jogo de 1 MB não se paga. O banco é procurado em
+`<raiz do aparelho>/soundfonts/*.sf2`, e `ZEEBX_SOUNDFONT` aponta um arquivo direto.
+
+**Sem banco, nada muda.** O MIDI volta para a tabela de timbres, e o relatório diz qual dos dois
+caminhos tocou, pela hipótese em uso. O `rustysynth` é Rust puro: o core continua com zero
+dependências de host, e o `ldd` só mostra libstdc++, libgcc, libm e libc.
+
+Medido na música real do Double Dragon (o SMF de 47,5 s), janela de 1 s aos 20 s:
+
+| render | centroide | rolloff 85% | pico | RMS |
+|---|---:|---:|---:|---:|
+| Zeebulator com soundfont (referência) | 3114 Hz | 6369 Hz | 0,785 | 0,1489 |
+| **Zeebx com o banco** | **3193 Hz** | **6740 Hz** | 0,800 | 0,1432 |
+| Zeebx com a tabela de timbres | 4310 Hz | 8820 Hz | 0,800 | 0,1592 |
+
+Ou seja: com o banco, o que sai do Zeebx fica a **2,5%** do centroide da referência (79 Hz de
+diferença), contra **38%** da tabela de timbres. A diferença que sobra é do sintetizador, não do
+material: os dois tocam as mesmas amostras.
+
+Dois defeitos apareceram na medição, os dois por comparação com a referência:
+
+1. **O teto de duração era 36 s num caminho e 300 s no outro**, e a música de 47,5 s saía cortada
+   pelo caminho do banco. Dois caminhos que dizem tocar a mesma partitura não podem ter tetos
+   diferentes. Agora os dois usam o mesmo.
+2. **O nível não era o mesmo.** A tabela deixa o pico em 0,8 (ver `midi::normaliza`) e o banco
+   saía em 0,53: a mesma música trocava de volume conforme o aparelho tivesse ou não um `.sf2`
+   instalado, e no jogo isso mexe no balanço entre a trilha e os efeitos, que passam pelo mesmo
+   misturador. Agora o banco normaliza igual.
+
+Custo medido: a carga do banco mais a renderização da música de 47,5 s levam **295 ms**, uma vez
+por música e com o banco guardado por caminho (o jogo toca doze).
+
 ### Um `IAStream` do jogo como fonte
 
 O Aviãozinho, um port do Quake feito por fãs, monta o `ISource` de outro jeito: escreve um
@@ -473,6 +517,8 @@ fluxo chama o código do jogo como já fazia com os ports de arcade. O formato v
 como soava — e o caminho para ele é o mesmo das classes que faltam: o leitor de EFS2 (ver
 [14](14-z-wheel-e-o-efs2.md) e [15](15-o-que-falta-da-nand.md)).
 
-Enquanto o banco do console não aparece, a referência de fidelidade é a comparação medida da
-seção anterior: o wavetable GM com `rustysynth` (MIT) e o banco como arquivo opcional ao lado do
-core. A correção da tabela de timbres vem antes, porque é barata e ataca o que mais se ouve.
+Enquanto o banco do console não aparece, a referência de fidelidade é a comparação medida: o
+wavetable com `rustysynth` e um banco General MIDI instalado ao lado do core. Falta **um banco
+padrão** para distribuir — o GeneralUser GS serve e a licença permite, mas o texto dele admite
+origem desconhecida de parte das amostras, então quem publica precisa decidir isso com os olhos
+abertos.

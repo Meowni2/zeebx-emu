@@ -251,3 +251,29 @@ estava sendo protegido.
 **O teste mede comportamento, não implementação.** Chamar o método pelo slot, como o jogo chama, e
 conferir o que saiu na superfície ou no registrador de retorno — não conferir que uma função
 interna foi chamada. É o que permite reescrever o miolo sem reescrever o teste.
+
+## A varredura precisa de cache limpo, e o motivo não é óbvio
+
+A varredura das 62 ROMs compara o resumo de cada jogo com a linha de base commitada. Ela falhou em
+seis lotes de oito depois de uma mudança de áudio, e o susto era falso: **o jogo grava os próprios
+arquivos dentro do pacote extraído** — `udata/dooopt.sav`, `udata/options`, `default.opt` — e o
+cache de extração sobrevive entre execuções.
+
+O efeito é exatamente o inverso do que parece: com o arquivo já gravado por uma execução anterior,
+o `open` que antes falhava passa a funcionar, o relatório **perde** uma pendência, e a linha de base
+acusa diferença. Cinco jogos "mudaram" por causa de save deixado para trás:
+
+```text
+Iron Sight        - udata/dooopt.sav
+Karnov's Revenge  - open falhou: .../udata/options
+                  - open falhou: .../default.opt
+```
+
+Limpar o cache **antes** de cada lote devolve o mesmo resultado de sempre: nenhuma diferença.
+
+Duas coisas ficam desta medição:
+
+1. O script de varredura limpa o cache nas duas pontas do lote, não só no fim.
+2. Nem toda falha do teste é regressão. O teste falha por dois motivos — categoria que não passa
+   (jogo sabidamente fora da lista) e diferença de linha de base —, e só a segunda interessa. O
+   resumo do script separa as duas, senão seis jogos conhecidos escondem a resposta que se quer.

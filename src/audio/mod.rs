@@ -12,6 +12,10 @@ pub mod midi;
 pub mod mp3;
 pub mod wav;
 
+/// Síntese por banco de amostras. Ver a feature `soundfont` e o cabeçalho do módulo.
+#[cfg(feature = "soundfont")]
+pub mod soundfont;
+
 use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "desktop")]

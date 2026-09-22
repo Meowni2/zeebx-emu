@@ -1917,6 +1917,16 @@ fn font_do_modulo(raiz: &std::path::Path) -> Option<crate::video::font::Font> {
     crate::video::font::Font::load(std::fs::read(caminho).ok()?, nome)
 }
 
+/// O banco de amostras do MIDI, procurado na pasta do aparelho.
+///
+/// Devolve `None` em silêncio quando não há banco: é o caso comum, e o motor continua com a tabela
+/// de timbres. O relatório é que diz, pela hipótese em uso, qual dos dois caminhos tocou.
+#[cfg(feature = "soundfont")]
+fn banco_do_aparelho(aparelho: &std::path::Path) -> Option<std::sync::Arc<crate::audio::soundfont::Banco>> {
+    let caminho = crate::audio::soundfont::primeiro_banco(aparelho)?;
+    crate::audio::soundfont::abre(&caminho)
+}
+
 /// A fonte do aparelho, para quem não trouxe a sua.
 ///
 /// Sem ela, todo `DrawText` de um jogo sem `.ttf` ia só para o relatório: o menu do Kingdom
@@ -2569,6 +2579,12 @@ pub struct Machine<C: CpuBackend> {
     pending_text: Vec<String>,
     /// A fonte do próprio jogo, quando ele empacota uma.
     font: Option<crate::video::font::Font>,
+    /// O banco de amostras com que o MIDI é tocado, quando o aparelho tem um.
+    ///
+    /// `None` é o caso comum: o banco não vem embutido (medido: 32.319.396 B e +64 MiB de RSS na
+    /// carga), então quem não instalou um `.sf2` continua ouvindo a tabela de timbres.
+    #[cfg(feature = "soundfont")]
+    banco_de_som: Option<std::sync::Arc<crate::audio::soundfont::Banco>>,
     /// Quantas vezes cada método foi chamado — o retrato do que o jogo usa.
     calls: BTreeMap<(u32, u32), u64>,
     /// Total de chamadas atendidas, para aplicar o teto.
@@ -2977,6 +2993,10 @@ impl<C: CpuBackend> Machine<C> {
             // A fonte do aparelho sai da raiz que este motor recebeu, não da configuração do
             // desktop: é isso que faz a fonte instalada pelo frontend ser encontrada.
             font: font_do_modulo(&raiz).or_else(|| fonte_do_console(&aparelho)),
+            // O banco de amostras do MIDI, quando o aparelho tem um. É opcional de propósito: o
+            // banco não vem embutido, e sem ele a música volta para a tabela de timbres.
+            #[cfg(feature = "soundfont")]
+            banco_de_som: banco_do_aparelho(&aparelho),
             calls: BTreeMap::new(),
             calls_total: 0,
         }

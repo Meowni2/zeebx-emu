@@ -27,6 +27,10 @@
 /// 22.050 Hz é a taxa das próprias trilhas dos jogos e metade da placa: o misturador reamostra
 /// de qualquer jeito, e sintetizar em 44.100 dobraria o custo e a memória para agudo que não
 /// existe na partitura.
+///
+/// É a **mesma** taxa para a tabela de timbres e para o banco de amostras: o misturador reamostra
+/// para a taxa da placa de qualquer forma, e manter as duas no mesmo número faz a comparação entre
+/// elas ser de timbre, e não de taxa.
 pub const RATE: u32 = 22_050;
 
 /// Teto de duração sintetizada, em segundos.
@@ -332,8 +336,6 @@ impl Partitura {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Forma {
     Senoide,
-    /// Só harmônicos ímpares, caindo com `1/k²`. É a mais escura de todas.
-    Triangulo,
     /// Só harmônicos ímpares, caindo com `1/k`.
     Quadrada,
     /// **Todos** os harmônicos, caindo com `1/k^expoente`.
@@ -390,19 +392,6 @@ impl Forma {
         use std::f32::consts::TAU;
         match self {
             Self::Senoide => (fase * TAU).sin(),
-            Self::Triangulo => {
-                let mut soma = 0.0;
-                let mut k = 1;
-                while k <= harmonicos.min(9) {
-                    let sinal = match (k / 2) % 2 {
-                        0 => 1.0,
-                        _ => -1.0,
-                    };
-                    soma += sinal * (fase * TAU * k as f32).sin() / (k * k) as f32;
-                    k += 2;
-                }
-                soma * 8.0 / (std::f32::consts::PI * std::f32::consts::PI)
-            }
             Self::Quadrada => {
                 let mut soma = 0.0;
                 let mut k = 1;
@@ -870,7 +859,7 @@ fn toca_voz(voz: &Voz, samples: &mut [f32]) {
 /// Somar dezenas de vozes passa de 1,0 com facilidade, e o que passa de 1,0 **corta** — vira
 /// distorção no misturador, que é o defeito mais fácil de confundir com "o sintetizador é ruim".
 /// Escalar a música inteira preserva a proporção entre as vozes.
-fn normaliza(samples: &mut [f32]) {
+pub(crate) fn normaliza(samples: &mut [f32]) {
     let pico = samples.iter().fold(0.0f32, |a, s| a.max(s.abs()));
     if pico <= 0.0 {
         return;

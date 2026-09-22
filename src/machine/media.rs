@@ -413,6 +413,27 @@ impl<C: CpuBackend> Machine<C> {
             .retain(|chave, _| *chave == nova || em_uso.contains(chave));
     }
 
+
+    /// Toca uma partitura com o banco de amostras, quando o aparelho tem um.
+    ///
+    /// Só tenta quando os bytes começam com `MThd`: reconhecer o formato **antes** de abrir o banco
+    /// evita gastar 32 MB de carga por causa de um som que não é partitura, e evita que o banco
+    /// mude o desfecho de um formato que a tabela já tratava.
+    #[cfg(feature = "soundfont")]
+    fn toca_com_banco(&self, bytes: &[u8]) -> Option<crate::audio::wav::Sound> {
+        if !bytes.starts_with(b"MThd") {
+            return None;
+        }
+        let banco = self.banco_de_som.as_ref()?;
+        crate::audio::soundfont::toca(banco, bytes, crate::audio::midi::RATE)
+    }
+
+    /// Sem a feature, o caminho é sempre o da tabela de timbres.
+    #[cfg(not(feature = "soundfont"))]
+    fn toca_com_banco(&self, _bytes: &[u8]) -> Option<crate::audio::wav::Sound> {
+        None
+    }
+
     /// Decodifica um som pelo que ele é, e não pelo nome.
     fn decodifica_som(&mut self, bytes: &[u8]) -> CargaDeMidia {
         // RIFF/WAVE primeiro porque é o que quase todo som é, e é o mais barato de reconhecer.
@@ -422,7 +443,19 @@ impl<C: CpuBackend> Machine<C> {
             Ok(sound) => Some(sound),
             Err(sem_wav) => match crate::audio::mp3::decode_detalhado(bytes) {
                 Ok(sound) => Some(sound),
-                Err(porque) => match crate::audio::midi::decode(bytes) {
+                // **O banco de amostras vem antes da tabela de timbres.** Quando ele existe, a
+                // partitura é tocada com as amostras de verdade, e o que a tabela não alcança (a
+                // razão de harmônicos das cordas e da distorção, a ressonância da bateria) passa a
+                // vir do banco. Sem banco, o caminho é o de sempre.
+                Err(porque) => match self.toca_com_banco(bytes) {
+                    Some(sound) => {
+                        self.assumptions.insert(concat!(
+                            "a música MIDI é tocada com o banco de amostras do aparelho, e não com ",
+                            "a tabela de timbres; o banco do console está no firmware que ainda não lemos"
+                        ));
+                        Some(sound)
+                    }
+                    None => match crate::audio::midi::decode(bytes) {
                     Some(sound) => {
                         self.assumptions.insert(concat!(
                             "a música MIDI é sintetizada aqui, com timbre aproximado — ",
@@ -456,6 +489,7 @@ impl<C: CpuBackend> Machine<C> {
                         ));
                         None
                     }
+                    },
                 },
             },
         };
