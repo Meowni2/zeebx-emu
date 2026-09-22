@@ -171,6 +171,12 @@ apertar; 180 quadros de espera depois do confirmar (a transição é animada); e
 verdadeira, com os 63 jogos instalados. Tudo com o `ULTIMA_ABERTURA` como instrumento — ele diz se
 o pedido saiu, e não saiu.
 
+**E os valores que ela lê estão certos, conferido no SDK.** Cheguei a desconfiar de um defeito no
+`GetPositionState` — o primeiro campo é escrito como zero, e eu li ali o estado dos botões. O
+`AEEIHIDDevice.h` diz o contrário: o primeiro campo é `bRelativeAxes`, e zero ali significa **eixo
+absoluto**, que é o certo. Os quatro eixos estão nas palavras 1, 2, 3 e 6, exatamente como o engine
+os escreve (`AXIS_SLOTS`). Quem acertou foi o código; quem errou foi a leitura rápida.
+
 É aqui que a investigação headless para, e por um motivo prático: **o instrumento já respondeu o que
 tinha de responder** (a entrada chega, a roda reage, o pedido não sai), e o que falta é o significado
 do gesto — que só o frontend com controle na mão, ou uma sessão de engenharia reversa da própria
