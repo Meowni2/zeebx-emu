@@ -647,8 +647,16 @@ impl<C: CpuBackend> Machine<C> {
                 .tratadores_em_ordem(&dentro)
                 .into_iter()
                 .partition(|(esta_dentro, _)| *esta_dentro);
-            // As contagens saem antes dos laços: depois deles as listas foram consumidas.
+            // As contagens e os endereços saem antes dos laços: depois deles as listas foram
+            // consumidas. **Os endereços são o que responde "a tecla chegou ao tratador da lista?"**
+            // — a lista de jogos da Z-Wheel é o roller `0x30000ad0`, tratador `0x75724`.
             let (quantos_na_tela, quantos_fora) = (na_tela.len(), fora.len());
+            let quem: Vec<String> = na_tela
+                .iter()
+                .chain(fora.iter())
+                .take(4)
+                .map(|(_, (funcao, _))| format!("{funcao:#x}"))
+                .collect();
             for (_, (funcao, contexto)) in na_tela {
                 let saida = self.call_guest(funcao, [contexto, evento, avk, 0], QSORT_BUDGET)?;
                 if matches!(saida, Outcome::Returned { code } if code != 0) {
@@ -673,13 +681,14 @@ impl<C: CpuBackend> Machine<C> {
             // indistinguíveis.
             if self.serial.is_some() {
                 self.registra_serial(format!(
-                    "<tecla {avk:#x} {} para {} tratador(es) na tela e {} fora{}>",
+                    "<tecla {avk:#x} {} para {} tratador(es) na tela e {} fora ({}){}>",
                     match down {
                         true => "aperta",
                         false => "solta",
                     },
                     quantos_na_tela,
                     quantos_fora,
+                    quem.join(" "),
                     match tratado {
                         true => ", tratada",
                         false => ", ninguém tratou",

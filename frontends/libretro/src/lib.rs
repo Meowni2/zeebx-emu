@@ -2336,8 +2336,12 @@ mod testes {
             // primeiro título da pasta: com um jogo que sai sozinho ao lado da Z-Wheel (o `Zeebo
             // Clube`, medido na varredura), o core devolve o controle ao shell — e é o que este
             // laço espera. Sem um título desses, ele é relatado e não cobrado.
+            // **A janela tem de ser maior que o jogo.** O retorno só acontece depois de o título
+            // terminar, e o que a grade põe em foco roda ~62 s de relógio virtual — mais que os
+            // 3600 quadros (60 s) da primeira versão, que por isso relatava `false` num caso em que
+            // a volta **aconteceu** (as teclas seguintes chegam aos tratadores da roda).
             let mut voltou = false;
-            for _ in 0..3600 {
+            for _ in 0..9000 {
                 retro_run();
                 if CLASSE_ATUAL.load(Ordering::Relaxed) == zeebx::session::Z_WHEEL {
                     voltou = true;
