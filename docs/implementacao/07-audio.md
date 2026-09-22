@@ -612,6 +612,35 @@ quadros seguintes. O misturador já tem voz de fluxo (`open_stream`/`feed_stream
 jogo entrega aos poucos, mas o sequenciador teria de sobreviver entre chamadas, e isso mexe no save
 state. Com 183 ms por música, não se paga.
 
+#### Os outros dois jogos que usam MIDI, e uma hipótese que a medição derrubou
+
+Três jogos do acervo entregam a trilha como MIDI: Double Dragon, Ultimate Chess 3D e Zuma's
+Revenge. Os dois últimos trazem **um** SMF curto cada (326 B em formato 1 com seis trilhas, e 228 B
+em formato 0), escondidos em contêineres próprios — `.sar` e `.dat`, os dois com `MThd` no meio.
+
+Medido contra a mesma referência:
+
+| música | referência | tabela de timbres | erro |
+|---|---:|---:|---:|
+| Ultimate Chess 3D | 583 Hz | 499 Hz | 14,4% |
+| Zuma's Revenge | 3703 Hz | 3373 Hz | 8,9% |
+
+Ou seja, **9% a 14%** nestes dois, contra a média de 40% no Double Dragon. Não é contradição: o
+erro da aproximação depende de **quais instrumentos a música usa**, e o Double Dragon usa 25
+programas GM, com 23% de guitarras — justamente onde a tabela confundia 29, 30, 42 e 48.
+
+**A hipótese que caiu.** No Chess a energia (RMS) do nosso render saiu **duas vezes** a da
+referência, e a leitura fácil era "a normalização de pico está comprimindo tudo para o mesmo
+volume". Medido: **não**. O pico bruto da soma sai em 2,64 e 6,59 nesses dois jogos, então a
+normalização **sempre atenua** (fatores 0,30 e 0,12) — ela nunca amplifica. O que difere é o nível
+da referência, que varia por música (0,78 no Double Dragon, cerca de 0,42 no Chess), enquanto o
+nosso é fixo em 0,8 por construção.
+
+Fica como está, e o motivo é honesto: o nível do hardware não é conhecido — o caminho do Zeebulator
+aplica −16 dB de folga por escolha dele, não por medida do console —, e um pico fixo é o que evita
+corte quando a música entra no mesmo misturador que os efeitos. Trocar isso por um palpite não
+seria fidelidade, seria outra escolha.
+
 ### Um `IAStream` do jogo como fonte
 
 O Aviãozinho, um port do Quake feito por fãs, monta o `ISource` de outro jeito: escreve um
