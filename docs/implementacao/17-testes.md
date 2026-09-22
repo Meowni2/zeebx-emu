@@ -277,3 +277,13 @@ Duas coisas ficam desta medição:
 2. Nem toda falha do teste é regressão. O teste falha por dois motivos — categoria que não passa
    (jogo sabidamente fora da lista) e diferença de linha de base —, e só a segunda interessa. O
    resumo do script separa as duas, senão seis jogos conhecidos escondem a resposta que se quer.
+
+O script é `ferramentas/varredura_por_lotes.py`, e ele carrega as duas lições:
+
+```bash
+python3 ferramentas/varredura_por_lotes.py --roms /caminho/das/roms --ms 6000
+```
+
+O `--ms` tem de ser o mesmo com que a linha de base foi gravada (6000). Medido: com 3000 o mesmo
+jogo aparece como diferença de linha de base — o resumo tem a tela e as pendências do instante em
+que a medição parou, e parar noutro instante muda os dois.
