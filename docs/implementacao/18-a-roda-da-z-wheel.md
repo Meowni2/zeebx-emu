@@ -740,7 +740,13 @@ com o guest num laço que não avança o relógio, o orçamento de voltas acaba 
 temporizador vencer, e o relógio — que é quem dispara os temporizadores da roda — nunca anda. A
 roda não fica lenta: ela para.
 
-**5. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
+**5. A soltura da tecla não é o fator.** No roteiro da varredura a tecla é **presa e nunca solta**
+(não há passo `Solto` no roteiro que pede a abertura, e o `Passo::Tecla` empurra só `(avk, true)`),
+enquanto no caminho do core o botão era apertado e solto 300 ms depois. Mantendo o botão preso no
+teste do core, o desfecho é **o mesmo**: 1 imagem distinta em 100 quadros e pedido zero. A
+diferença não está no par aperta/solta.
+
+**6. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
 padrão (a config do usuário) e o do core usa o que o frontend entrega; apontando o teste do core
 para a árvore do usuário (`ZEEBX_CORE_SISTEMA=$HOME/.config/zeebx`), o mesmo número de quadros leva
 a roda a **36,6 s** em vez de **50,6 s** — o estado do aparelho muda quando as coisas acontecem, o
