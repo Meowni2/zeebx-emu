@@ -402,6 +402,7 @@ mod tests {
     }
 
 
+
     /// **O caminho do banco é exercitado sempre**, com um banco montado aqui.
     ///
     /// Os outros testes do módulo usam um `.sf2` de verdade e se dispensam quando não há um — e no

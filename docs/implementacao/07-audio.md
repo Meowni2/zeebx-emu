@@ -475,17 +475,23 @@ invólucro em volta do TinySoundFont. O `rustysynth` é MIT, então pode.
 caminhos tocou, pela hipótese em uso. O `rustysynth` é Rust puro: o core continua com zero
 dependências de host, e o `ldd` só mostra libstdc++, libgcc, libm e libc.
 
-Medido na música real do Double Dragon (o SMF de 47,5 s), janela de 1 s aos 20 s:
+Medido **nas doze músicas** do pacote, e não numa só: cada SMF foi extraído do `sound.ggz` e
+renderizado pelos três caminhos, com a janela de 1 s a 40% da duração de cada música.
 
-| render | centroide | rolloff 85% | pico | RMS |
-|---|---:|---:|---:|---:|
-| Zeebulator com soundfont (referência) | 3114 Hz | 6369 Hz | 0,785 | 0,1489 |
-| **Zeebx com o banco** | **3193 Hz** | **6740 Hz** | 0,800 | 0,1432 |
-| Zeebx com a tabela de timbres | 4310 Hz | 8820 Hz | 0,800 | 0,1592 |
+| render | erro médio de centroide | pior caso | melhor caso |
+|---|---:|---:|---:|
+| **Zeebx com o banco de amostras** | **11,3%** | 27,2% | 0,2% |
+| Zeebx com a tabela de timbres | **40,3%** | 115,9% | 1,5% |
 
-Ou seja: com o banco, o que sai do Zeebx fica a **2,5%** do centroide da referência (79 Hz de
-diferença), contra **38%** da tabela de timbres. A diferença que sobra é do sintetizador, não do
-material: os dois tocam as mesmas amostras.
+Na música principal e mais longa (47,5 s) os números são melhores que a média — **2,5%** com o
+banco contra **38%** com a tabela —, e é por isso que a medição nas doze importa: a média é a
+resposta honesta, e ela diz que o banco é **3,6× mais próximo** da referência, não que seja igual.
+
+O que sobra dos 11,3% é do **sintetizador**, não do material: os dois tocam as mesmas amostras, mas
+o `rustysynth` e o TinySoundFont interpolam e tratam envoltória de formas diferentes, e o caminho
+do Zeebulator ainda passa por mono com −16 dB de folga. Também é honesto registrar que a tabela
+acerta em cheio em duas músicas (1,7% e 1,5%) e erra feio em duas outras (114,7% e 115,9%): a
+aproximação não é uniformemente ruim, ela depende de quais instrumentos a música usa.
 
 Dois defeitos apareceram na medição, os dois por comparação com a referência:
 
