@@ -169,14 +169,31 @@ precisa do console na mão, e fica declarada aqui.
 
 ## O que falta
 
-- **Item 5** (render em hardware): o rasterizador da placa está **verificado contra o de software**
-  (idêntico em Double Dragon e Crash; 2,6% de arredondamento no Peteca), e falta o encanamento com
-  o frontend. O mapa está em `docs/libretro/LIBRETRO_PLAN.md`.
-- **Item 6** (save states): o core declara que não tem, e o teste trava o critério ("sem estado
-  parcial"). O estado completo precisa da descrição de cada objeto vivo.
-- **Item 8** (ciclo da Z-Wheel): verificado que a varredura **não** consegue exercitá-lo — doze
-  segundos com e sem manche diferem em mil instruções de 133 milhões. Só o RetroArch responde.
-- **Item 9** (capas e No-Intro): local pronto; falta publicar.
+**Reescrito em 22/09/2026 com o que está medido hoje.** O que estava aqui antes dizia que a
+varredura não conseguia exercitar a roda e que os save states não existiam — as duas coisas caíram,
+e a segunda caiu por medição, não por opinião.
+
+- **Item 5** (render em hardware): o rasterizador da placa está verificado contra o de software
+  (idêntico em Double Dragon e Crash; 2,6% de arredondamento no Peteca) e o encanamento com o
+  frontend existe. O que falta é o **teste físico no aparelho** — bloqueio de hardware, declarado.
+- **Item 6** (save states): **feito, e provado pela ABI**. `retro_serialize_size` devolve o tamanho
+  real do arquivo da sessão, e o teste `o_save_state_atravessa_a_abi` grava, suja o estado, carrega
+  e **grava de novo byte a byte igual** — que é o que um save state promete. O que continua
+  proibido é o estado **parcial**: o portão só abre quando a sessão inteira pode ser descrita.
+- **Item 8** (ciclo da Z-Wheel): **o lançamento está provado no harness headless**, roteirizado,
+  com `Session::take_launch_request` como desfecho — `abertura pedida: 0x0108e356`, com a grade da
+  biblioteca desenhada antes. O caminho do **core** ganhou duas peças medidas (a tradução do
+  controle em teclas do console, sem a qual a roda ignorava o RetroPad, e o catálogo da biblioteca
+  local), mas **ainda não pede a abertura**: a diferença está em como o core conduz a sessão, não
+  na tecla. A validação **no aparelho** continua bloqueada por hardware.
+- **Item 9** (capas e No-Intro): local pronto e medido — playlist com 62 entradas e **nenhuma sem
+  arquivo**, 58 capas no formato e no nome que o repositório de thumbnails do Libretro procura
+  (`Mobile - Zeebo`), DAT No-Intro de 57 jogos. **Publicar depende de conta**, e é decisão do
+  Rafael; nada foi publicado e nenhum repositório externo foi criado.
+
+**Bloqueado por hardware, sem contorno:** item 5 (teste físico), a validação no aparelho do item 8,
+e o core no cartão do muOS — este último adiado pelo Rafael até a noite, com o comando pronto
+(`ferramentas/instala_core.py --muos /media/ROOTFS --banco GeneralUser-GS.sf2`).
 
 ## O que o teste headless já responde sobre a Z-Wheel
 
