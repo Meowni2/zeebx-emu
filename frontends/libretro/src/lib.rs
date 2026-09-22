@@ -1361,7 +1361,17 @@ pub extern "C" fn retro_run() {
             }
             estado.pad_antes[porta] = pad;
         }
-        if let Step::Stopped = estado.session.run_frame() {
+        // **As telas intermediárias de um `Update` dentro de um callback passam como na janela.**
+        // A máquina guarda uma tela por `IDISPLAY_Update` que o guest chama dentro do callback (a
+        // transição da Z-Wheel desliza a tela num laço síncrono, umas duzentas vezes), e quem as
+        // mostra é o frontend, uma por quadro, sem avançar o relógio. A janela as consumia; o core
+        // **não** — e com a fila cheia o `advance_once` devolvia "apresentou" para sempre, sem
+        // rodar o guest: nenhuma fronteira de API, nenhuma tecla esvaziada da fila, e o applet
+        // parado. Medido: a Z-Wheel congelava depois do confirmar (relógio virtual parado em
+        // 37 012 ms) e só uma tecla chegava.
+        if !estado.session.mostra_quadro_intermediario()
+            && let Step::Stopped = estado.session.run_frame()
+        {
             if !estado.parou {
                 estado.parou = true;
                 let relogio = estado.session.clock_ms();
@@ -2266,11 +2276,35 @@ mod testes {
                 depois < animando,
                 "a roda ignorou a tecla: {depois} imagens distintas depois, contra {animando} antes"
             );
+            // **O pedido de abertura chega, e o core troca de sessão.** Antes da correção das
+            // telas intermediárias isto era `0x00000000` e a roda ficava parada; agora é a classe
+            // do jogo que a grade tinha em foco — o mesmo `0x0108E356` que a varredura pede.
+            assert_ne!(aberto, 0, "o roteiro não chegou a pedir a abertura de jogo nenhum");
+            let mut rodando = CLASSE_ATUAL.load(Ordering::Relaxed);
+            for _ in 0..900 {
+                retro_run();
+                rodando = CLASSE_ATUAL.load(Ordering::Relaxed);
+                if rodando != 0 && rodando != zeebx::session::Z_WHEEL {
+                    break;
+                }
+            }
             assert_eq!(
-                CLASSE_ATUAL.load(Ordering::Relaxed),
-                zeebx::session::Z_WHEEL,
-                "quem roda depois da navegação continua sendo a Z-Wheel"
+                rodando, aberto,
+                "o core não abriu o jogo que o shell pediu ({aberto:#010x})"
             );
+            // **A volta à roda** depende do jogo terminar sozinho, e o que a grade tem em foco é o
+            // primeiro título da pasta: com um jogo que sai sozinho ao lado da Z-Wheel (o `Zeebo
+            // Clube`, medido na varredura), o core devolve o controle ao shell — e é o que este
+            // laço espera. Sem um título desses, ele é relatado e não cobrado.
+            let mut voltou = false;
+            for _ in 0..3600 {
+                retro_run();
+                if CLASSE_ATUAL.load(Ordering::Relaxed) == zeebx::session::Z_WHEEL {
+                    voltou = true;
+                    break;
+                }
+            }
+            eprintln!("voltou à Z-Wheel depois do jogo: {voltou}");
 
             // **O que este teste ainda NÃO prova, e fica medido em vez de suposto:** o pedido de
             // abertura. No caminho da varredura ele sai (`abertura pedida: 0x0108e356`, com as

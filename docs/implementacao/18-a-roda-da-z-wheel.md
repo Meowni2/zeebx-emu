@@ -865,6 +865,36 @@ depois do confirmar, e uma volta com esse trabalho deveria voltar de `advance` e
 `deliver_signals`. Se ele não passa, a pergunta é **onde a volta fica presa** — e a medição é uma
 linha em `advance_once_inner`, dizendo se `deliver_signals` roda depois do confirmar.
 
+### 7.8 A causa estava no core: as telas intermediárias do `Update` não eram consumidas
+
+Quando o guest chama `IDISPLAY_Update` **dentro de um callback** — e a transição da Z-Wheel faz isso
+num laço síncrono, umas duzentas vezes —, a máquina guarda uma tela por chamada
+(`quadros_do_update`). Quem as mostra é o frontend, **uma por quadro**, sem avançar o relógio: a
+janela as consome (`ui/mod.rs`) e a sessão sem janela também (`main.rs`). **O core Libretro não as
+consumia.**
+
+Com a fila cheia, `advance_once` devolvia "apresentou" **para sempre** — sem rodar o guest, sem
+fronteira de API, sem esvaziar a fila de teclas. Medido, na Z-Wheel pelo caminho do core:
+
+```text
+antes    relógio parado em 37 012 ms · 1 par de teclas em toda a execução · pedido de abertura 0x0
+depois   relógio chega a 78 983 ms  · as 8 teclas do roteiro, uma a uma, cada uma tratada
+```
+
+E o ciclo fecha, no caminho que o RetroArch usa:
+
+```text
+passo 1: abertura 0x0108e356, 11 assinatura(s) distinta(s)
+depois da tecla: 11 imagens distintas em 100 quadros, relógio 566 ms   <- a sessão nova, o jogo rodando
+pedido de abertura no caminho do core: 0x0108e356
+6886 quadros, 19 088 154 instruções em 61 814 ms virtuais
+```
+
+`0x0108E356` é o **Alien Breaker**, o mesmo jogo que a varredura pede — e o relógio em 566 ms é a
+sessão do jogo, que começou do zero: o core **abriu e executou**. A volta à roda fica medida e não
+cobrada: depende de o jogo terminar sozinho, e o que a grade põe em foco é o primeiro título da
+pasta.
+
 **13. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
 padrão (a config do usuário) e o do core usa o que o frontend entrega; apontando o teste do core
 para a árvore do usuário (`ZEEBX_CORE_SISTEMA=$HOME/.config/zeebx`), o mesmo número de quadros leva
