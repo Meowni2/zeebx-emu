@@ -2060,9 +2060,20 @@ frontend de verdade, que é o que o item 8 pede.
 
 ### Item 9 — capas e No-Intro: depende de conta
 
-Local está feito: 58 capas oficiais do Z-Wheel, playlist de 62 entradas (nenhuma sem arquivo),
-banco No-Intro, catálogo em JSON. O que falta é publicar no repositório de thumbnails e enviar os
-cinco títulos fora do No-Intro — os dois precisam de conta e de conferência humana.
+Local está feito, e remedido em 22/09/2026:
+
+```text
+playlist  Mobile - Zeebo.lpl        62 entradas, 0 sem arquivo
+capas     Named_Boxarts            116 arquivos (58 títulos, em .jpg e .png)
+          Named_Titles              44 arquivos (icone do .mif, provisorio)
+banco     Mobile-Zeebo-No-Intro-libretro.dat   12 372 bytes, 57 jogos, versao 2026.08.01
+RDB       Mobile - Zeebo.rdb       instalado, e o que faz o "Scan Content" casar por hash
+```
+
+O que falta é publicar no repositório de thumbnails do Libretro (o diretório tem de se chamar
+`Mobile - Zeebo`, que é o nome do banco — as capas já estão nesse formato e nesse nome) e enviar os
+cinco títulos fora do No-Intro. **Os dois precisam de conta e de conferência humana**, e é decisão do
+Rafael: nada foi publicado e nenhum repositório externo foi criado.
 
 **O formato estava errado para o destino, e isso foi corrigido.** Os repositórios de thumbnails do
 RetroArch aceitam **só PNG**, e as capas que a Z-Wheel entrega são JPEG — os cinquenta e oito
