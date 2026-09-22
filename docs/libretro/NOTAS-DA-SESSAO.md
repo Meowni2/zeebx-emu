@@ -274,6 +274,30 @@ até a ordem (`o_texto_do_roteiro_vira_evento`) e da ordem até a entrega
 (`o_roteiro_entrega_evento_de_widget`). Quem continuar daqui pode injetar o gatilho e observar o que
 a roda faz, sem repetir a leitura do desmonte.
 
+### O bloqueio, no nível do componente
+
+**Quem manda o `0x7000` no console é o widget da lista**, e a roda **cria** esse widget: entre as
+classes que ela pede está `0x01028e19`, que é da família de widgets do motor
+(`FAMILIA_DOS_WIDGETS`). O que não existe é o **comportamento** dele: a nossa implementação responde
+`Interface::Widget` e para aí. No console, é esse widget que preenche o item escolhido e manda o
+evento ao ser ativado.
+
+Isso fecha a explicação do ciclo inteiro:
+
+```text
+manche/tecla -> widget da lista (0x01028e19) escolhe o item e escreve [roda+0x580]
+             -> widget manda evento 0x7000 com wParam 0x4ea
+             -> a roda chama IShell::StartApplet
+             -> o shell troca de sessão, e o core já sabe fazer a volta
+```
+
+O único elo que falta é o segundo. Sem ele a roda navega, muda de tela e **nunca** chega ao
+`StartApplet` — que é exatamente o que as medições mostraram, uma por uma.
+
+**O caminho para fechar**: implementar o comportamento dessa família de widgets a partir do SDK, e
+não por tentativa. O que já existe é a rede de segurança: o roteiro injeta o evento, e o relatório
+diz se a abertura foi pedida.
+
 ## O defeito que invalidou toda a investigação do gesto
 
 O `ZEEBX_ROM_TECLAS` não chegava combinado ao jogo. O pad do roteiro era recriado a cada passo — e,
