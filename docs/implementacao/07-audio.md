@@ -524,6 +524,28 @@ próprio texto diz que não se sabe a origem de todas as amostras. Quem publica 
 Um caminho aberto: o `rustysynth-ext` lê SF3, e aí o MuseScore_General (MIT, 32,6 MB) entra — não
 foi testado aqui.
 
+#### O caminho de produção, provado pelo relatório
+
+O módulo tem teste próprio, mas o que importa é o caminho que o jogo percorre:
+`Machine::decodifica_som` → `toca_com_banco` → `soundfont::toca`. Medido com a varredura apontada
+para o Double Dragon, 30 s virtuais, mesma ROM:
+
+```text
+sem banco        hipótese: "a música MIDI é sintetizada aqui, com timbre aproximado"
+                 áudio: rms 0,1511
+com banco        hipótese: "a música MIDI é tocada com o banco de amostras do aparelho"
+                 áudio: rms 0,1375
+```
+
+A linha de hipótese é a prova: ela só aparece quando o banco **entrou**, e é escrita no relatório do
+jogo, não no teste. E o RMS muda junto — 9% menor, que é o banco trocando o material.
+
+**Uma nota que evita confusão na próxima varredura:** a varredura das 62 ROMs roda com
+`--no-default-features`, e a feature `soundfont` **não** está ligada ali. É de propósito: o resumo da
+linha de base não tem áudio, e ligar o banco mudaria só os números do relatório completo. Quem
+quiser ver o efeito do banco na varredura precisa passar `--features soundfont` **e** apontar
+`ZEEBX_SOUNDFONT`; sem uma das duas coisas, o caminho é o da tabela de timbres.
+
 ### Um `IAStream` do jogo como fonte
 
 O Aviãozinho, um port do Quake feito por fãs, monta o `ISource` de outro jeito: escreve um
