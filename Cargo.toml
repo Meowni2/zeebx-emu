@@ -145,3 +145,11 @@ opt-level = 2
 # As dependências não mudam entre uma compilação e outra, então otimizá-las é custo único.
 [profile.dev.package."*"]
 opt-level = 3
+
+# O Android e o rasterizador passam por várias camadas/crates pequenas no caminho quente.
+# ThinLTO deixa o LLVM atravessar essas fronteiras no pacote final sem o custo de build do LTO
+# completo. Uma unidade de código dá ao otimizador a visão mais ampla possível no release; só
+# muda tempo/tamanho de compilação, não o comportamento do emulador.
+[profile.release]
+lto = "thin"
+codegen-units = 1
