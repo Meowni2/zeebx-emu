@@ -625,6 +625,35 @@ impl Default for Material {
 /// chamada, ele só escreve o que a fronteira é. Quem for implementar outro backend começa por
 /// esta lista, e o que não estiver nela não é usado pelo emulador.
 pub trait Rasterizador {
+    /// Grava, numa seção por grupo, o estado que as chamadas de GL do jogo mudaram.
+    ///
+    /// **É o par de [`Rasterizador::restaura_estado`], e os dois são obrigatórios de propósito.** Um
+    /// rasterizador que não saiba se gravar tem de dizer isso, e não gravar nada em silêncio: um
+    /// save state que perde o estado de desenho volta com a cena errada, e nada aponta para ele.
+    fn grava_estado(&self, destino: &mut crate::save_state::Secoes);
+
+    /// Repõe o estado gravado por [`Rasterizador::grava_estado`].
+    fn restaura_estado(
+        &mut self,
+        origem: &crate::save_state::Leitor<'_>,
+    ) -> Result<(), crate::save_state::Erro>;
+
+    /// Termina o desenho que estava na fila.
+    ///
+    /// Existe por causa do save state, e ele é a resposta certa para o caso comum: um lote de
+    /// triângulos esperando a vez **não é** um desenho pela metade — é trabalho que ia ser feito no
+    /// quadro seguinte de qualquer maneira. Recusar o save por causa dele seria bloquear o jogador
+    /// por algo que o motor resolve sozinho. Depois de drenar, o que sobrar é o desenho de
+    /// verdade interrompido, e aí [`Rasterizador::desenho_em_curso`] responde sim.
+    fn descarrega_o_desenho(&mut self);
+
+    /// Se há um desenho **começado e não terminado**.
+    ///
+    /// O frontend serializa entre quadros, nunca dentro de um `retro_run`, então isto responde
+    /// `false` em todo save normal. Quem grava pergunta, e **recusa** quando a resposta é sim: um
+    /// estado salvo no meio de um `glBegin` prometeria um desenho que nunca existiu.
+    fn desenho_em_curso(&self) -> bool;
+
     fn set_matrix_mode(&mut self, mode: u32);
     fn load_identity(&mut self);
     fn load_matrix(&mut self, m: Matrix);
@@ -762,6 +791,36 @@ pub struct QuadroNaPlaca {
 }
 
 impl Rasterizador for GlState {
+    fn grava_estado(&self, destino: &mut crate::save_state::Secoes) {
+        crate::save_state::Guardavel::grava(self, destino);
+    }
+
+    fn restaura_estado(
+        &mut self,
+        origem: &crate::save_state::Leitor<'_>,
+    ) -> Result<(), crate::save_state::Erro> {
+        crate::save_state::Guardavel::restaura(self, origem)
+    }
+
+    /// Os três acumuladores de um desenho em curso.
+    ///
+    /// `transformed` é o que sobra de um `glBegin` sem `glEnd`, e `batch`/`pending` são o lote
+    /// esperando a vez de ser submetido. Vazios, não há desenho pela metade.
+    fn descarrega_o_desenho(&mut self) {
+        self.flush();
+    }
+
+    /// O lote que ainda não foi submetido.
+    ///
+    /// **`transformed` fica de fora, e não por esquecimento**: ele é área de **rascunho** da etapa
+    /// de vértice — o `etapa_de_vertice` faz `mem::take` e reaproveita o vetor. Sobra dele é o que
+    /// ficou do último lote, e não um desenho interrompido. Eu o incluí na primeira versão e o
+    /// resultado foi o save state recusado **sempre**: os quatro vértices de um quad ficavam lá
+    /// entre quadros, e gravar virou impossível. Foi o instrumento que mostrou os quatro.
+    fn desenho_em_curso(&self) -> bool {
+        !self.batch.triangles.is_empty() || !self.pending.triangles.is_empty()
+    }
+
     fn set_matrix_mode(&mut self, mode: u32) {
         GlState::set_matrix_mode(self, mode)
     }
@@ -942,48 +1001,48 @@ impl Rasterizador for GlState {
 }
 
 pub struct GlState {
-    width: usize,
-    height: usize,
+    pub(crate) width: usize,
+    pub(crate) height: usize,
     /// Cor do quadro, em RGBA de 8 bits — convertida para RGB565 só na apresentação.
-    color: Vec<[u8; 4]>,
+    pub(crate) color: Vec<[u8; 4]>,
     /// Profundidade normalizada em `[0, 1]`.
-    depth: Vec<f32>,
+    pub(crate) depth: Vec<f32>,
     /// O stencil, de oito bits — o tamanho que o `GL_STENCIL_BITS` do console anuncia.
     ///
     /// Existe por causa do reflexo do palco da Z-Wheel: ela marca o chão aqui e desenha o
     /// modelo espelhado só onde a marca ficou. Sem o buffer, o espelhado saía por fora do chão
     /// e virava um rastro esticado ao lado do modelo.
-    stencil: Vec<u8>,
+    pub(crate) stencil: Vec<u8>,
 
-    matrix_mode: u32,
-    modelview: Vec<Matrix>,
-    projection: Vec<Matrix>,
-    texture_matrix: Vec<Matrix>,
+    pub(crate) matrix_mode: u32,
+    pub(crate) modelview: Vec<Matrix>,
+    pub(crate) projection: Vec<Matrix>,
+    pub(crate) texture_matrix: Vec<Matrix>,
 
-    viewport: (i32, i32, i32, i32),
+    pub(crate) viewport: (i32, i32, i32, i32),
     /// O `glScissor`, já com o `y` contado do topo, e só quando o `GL_SCISSOR_TEST` está ligado.
     ///
     /// O Peggle desenha a folha de fontes inteira e conta com ele para aparecer uma letra só —
     /// o mesmo truque que o Pac-Mania faz com o recorte do `IDisplay`. Ignorá-lo punha a folha
     /// inteira na tela.
-    tesoura: Option<(i32, i32, i32, i32)>,
+    pub(crate) tesoura: Option<(i32, i32, i32, i32)>,
     /// O retângulo cru do `glScissor`, com o `y` de baixo para cima, como o jogo o passou.
-    tesoura_crua: (i32, i32, i32, i32),
-    tesoura_ligada: bool,
-    surface: Option<(usize, usize)>,
+    pub(crate) tesoura_crua: (i32, i32, i32, i32),
+    pub(crate) tesoura_ligada: bool,
+    pub(crate) surface: Option<(usize, usize)>,
     /// Se a superfície vai esticada à tela inteira. Ver [`GlState::superficie_esticada`].
-    esticada: bool,
-    clear_color: [f32; 4],
-    clear_depth: f32,
-    current_color: [f32; 4],
+    pub(crate) esticada: bool,
+    pub(crate) clear_color: [f32; 4],
+    pub(crate) clear_depth: f32,
+    pub(crate) current_color: [f32; 4],
 
-    textures: HashMap<u32, Texture>,
-    bound_texture: u32,
-    texture_env: TexEnv,
+    pub(crate) textures: HashMap<u32, Texture>,
+    pub(crate) bound_texture: u32,
+    pub(crate) texture_env: TexEnv,
     /// A unidade 1. A 0 são os campos soltos acima, de antes de haver outra.
-    unidade1: UnidadeDeTextura,
+    pub(crate) unidade1: UnidadeDeTextura,
 
-    texture_2d: bool,
+    pub(crate) texture_2d: bool,
     /// Unidade de textura ativa, contada de zero. O `glActiveTexture` a escolhe.
     ///
     /// O pipeline lê uma textura por fragmento, então só a unidade zero tem efeito e as outras
@@ -992,56 +1051,56 @@ pub struct GlState {
     /// unidades e termina cada bloco na unidade 1; como o `glActiveTexture` não era tratado,
     /// tudo caía num estado só, a última ligação vencia e a textura base era perdida — a vila
     /// inteira saía branca.
-    active_unit: u32,
+    pub(crate) active_unit: u32,
     /// Unidade escolhida pelo `glClientActiveTexture`, que vale para o vetor de coordenadas.
-    client_unit: u32,
-    depth_test: bool,
-    depth_mask: bool,
+    pub(crate) client_unit: u32,
+    pub(crate) depth_test: bool,
+    pub(crate) depth_mask: bool,
     /// A névoa do `glFog*`: ligada, curva, cor e os parâmetros de cada curva.
     ///
     /// O Resident Evil 4 a usa para escurecer o fundo dos cenários, e é assim que ele separa o
     /// que está perto do que está longe. Ignorá-la deixava a cena inteira com o mesmo brilho.
-    fog: Neblina,
+    pub(crate) fog: Neblina,
     /// O `glDepthRange`: `(perto, longe)`, de 0 a 1.
     ///
     /// **Ignorá-lo fazia a pista do Crash Nitro Kart surgir do nada perto do jogador.** O jogo
     /// desenha partes da cena em faixas de profundidade diferentes — `(0, 0,985)` e `(0, 1)` —
     /// para que umas fiquem sempre à frente de outras. Com todas na faixa inteira, um pedaço de
     /// pista distante perdia o teste de profundidade para o cenário e só aparecia de perto.
-    depth_range: (f32, f32),
+    pub(crate) depth_range: (f32, f32),
     /// Quais canais de cor podem ser escritos, do `glColorMask`.
-    color_mask: [bool; 4],
-    depth_func: u32,
-    blend: bool,
-    blend_src: u32,
-    blend_dst: u32,
-    alpha_test: bool,
-    alpha_func: u32,
-    alpha_ref: f32,
-    cull_face: bool,
-    cull_mode: u32,
-    front_face: u32,
-    stencil_test: bool,
+    pub(crate) color_mask: [bool; 4],
+    pub(crate) depth_func: u32,
+    pub(crate) blend: bool,
+    pub(crate) blend_src: u32,
+    pub(crate) blend_dst: u32,
+    pub(crate) alpha_test: bool,
+    pub(crate) alpha_func: u32,
+    pub(crate) alpha_ref: f32,
+    pub(crate) cull_face: bool,
+    pub(crate) cull_mode: u32,
+    pub(crate) front_face: u32,
+    pub(crate) stencil_test: bool,
     /// `glStencilFunc(func, ref, mask)`.
-    stencil_func: u32,
-    stencil_ref: i32,
-    stencil_value_mask: u32,
+    pub(crate) stencil_func: u32,
+    pub(crate) stencil_ref: i32,
+    pub(crate) stencil_value_mask: u32,
     /// `glStencilMask` — que bits o desenho pode escrever.
-    stencil_write_mask: u32,
+    pub(crate) stencil_write_mask: u32,
     /// `glStencilOp(sfail, dpfail, dppass)`.
-    stencil_op: [u32; 3],
-    clear_stencil: u8,
+    pub(crate) stencil_op: [u32; 3],
+    pub(crate) clear_stencil: u8,
 
     /// `GL_LIGHTING`. Com ele ligado a cor do vértice **deixa de valer**, a menos que o
     /// `GL_COLOR_MATERIAL` diga o contrário: é o que a especificação manda, e o palco da
     /// Z-Wheel depende disso — os modelos dele chegam com cor de vértice branca e é a luz que
     /// dá o relevo.
-    lighting: bool,
-    color_material: bool,
-    lights: [Light; gles::LUZES],
-    material: Material,
-    light_model_ambient: [f32; 4],
-    shade_model: u32,
+    pub(crate) lighting: bool,
+    pub(crate) color_material: bool,
+    pub(crate) lights: [Light; gles::LUZES],
+    pub(crate) material: Material,
+    pub(crate) light_model_ambient: [f32; 4],
+    pub(crate) shade_model: u32,
 
     /// Lote de triângulos da draw call em curso. Vive na struct só para reaproveitar a
     /// alocação de uma chamada para a outra.

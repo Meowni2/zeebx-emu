@@ -1447,22 +1447,95 @@ pub extern "C" fn retro_set_controller_port_device(port: u32, device: u32) {
     estado.session.set_portas(estado.portas);
 }
 
-/// `retro_serialize_size`: save state ainda não existe.
+/// O último estado gravado, para o `retro_serialize` entregar o que o `_size` mediu.
+///
+/// A ABI chama as duas em sequência — primeiro o tamanho, depois a gravação —, e o tamanho varia
+/// com o que o jogo tem em memória: as texturas, as imagens decodificadas e os buffers de GL são a
+/// maior parte dele. Recalcular na gravação daria um estado **diferente** do que foi medido, e o
+/// frontend teria alocado o buffer pelo número errado. Por isso o tamanho medido guarda os bytes.
+static ESTADO_MEDIDO: std::sync::Mutex<Option<Vec<u8>>> = std::sync::Mutex::new(None);
+
+/// `retro_serialize_size`: o tamanho do estado, ou zero quando não há o que salvar.
+///
+/// **Zero só acontece sem sessão ou com um desenho em curso** — e as duas são respostas honestas:
+/// sem sessão não há estado, e no meio de um desenho começado o estado prometeria algo que nunca
+/// existiu. Em qualquer outro momento o número é o do estado de verdade.
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_serialize_size() -> usize {
-    0
+    let Ok(mut guard) = core().lock() else {
+        return 0;
+    };
+    let Some(EstadoDoCore(estado)) = guard.as_mut() else {
+        return 0;
+    };
+    if let Err(motivo) = estado.session.pode_salvar() {
+        aviso(&format!("Zeebx: não dá para salvar agora: {motivo}"));
+        return 0;
+    }
+    let arquivo = estado.session.grava_estado();
+    let tamanho = arquivo.len();
+    if let Ok(mut guarda) = ESTADO_MEDIDO.lock() {
+        *guarda = Some(arquivo);
+    }
+    tamanho
 }
 
-/// `retro_serialize`: sem suporte declarado, sempre falha.
+/// `retro_serialize`: entrega o estado medido.
+///
+/// Devolve `false` — sem escrever nada — quando não cabe no buffer que o frontend ofereceu. É o
+/// contrato: o frontend aloca pelo tamanho que pediu, e mentir sobre ele corromperia a memória
+/// dele.
 #[unsafe(no_mangle)]
-pub extern "C" fn retro_serialize(_data: *mut c_void, _size: usize) -> bool {
-    false
+pub extern "C" fn retro_serialize(data: *mut c_void, size: usize) -> bool {
+    if data.is_null() {
+        return false;
+    }
+    let Ok(guarda) = ESTADO_MEDIDO.lock() else {
+        return false;
+    };
+    let Some(arquivo) = guarda.as_ref() else {
+        return false;
+    };
+    if arquivo.len() > size {
+        aviso(&format!(
+            "Zeebx: o estado tem {} bytes e o frontend ofereceu {size}",
+            arquivo.len()
+        ));
+        return false;
+    }
+    // SAFETY: o frontend garante `size` bytes válidos em `data`, e o bloco acima conferiu que o
+    // estado cabe.
+    unsafe {
+        std::ptr::copy_nonoverlapping(arquivo.as_ptr(), data as *mut u8, arquivo.len());
+    }
+    true
 }
 
-/// `retro_unserialize`: sem suporte declarado, sempre falha.
+/// `retro_unserialize`: põe o estado de volta.
+///
+/// A recusa vem do motor, com o motivo: seção faltando, tamanho que não bate, `crc32` trocado. Um
+/// estado pela metade dentro de uma máquina em execução é pior que um estado recusado, e é por isso
+/// que a leitura acontece **antes** de qualquer escrita.
 #[unsafe(no_mangle)]
-pub extern "C" fn retro_unserialize(_data: *const c_void, _size: usize) -> bool {
-    false
+pub extern "C" fn retro_unserialize(data: *const c_void, size: usize) -> bool {
+    if data.is_null() || size == 0 {
+        return false;
+    }
+    // SAFETY: o frontend garante `size` bytes válidos em `data`.
+    let arquivo = unsafe { std::slice::from_raw_parts(data as *const u8, size) };
+    let Ok(mut guard) = core().lock() else {
+        return false;
+    };
+    let Some(EstadoDoCore(estado)) = guard.as_mut() else {
+        return false;
+    };
+    match estado.session.restaura_estado(arquivo) {
+        Ok(()) => true,
+        Err(erro) => {
+            aviso(&format!("Zeebx: o save state foi recusado: {erro}"));
+            false
+        }
+    }
 }
 
 /// `retro_cheat_reset`.
@@ -1780,19 +1853,19 @@ mod testes {
 
     extern "C" fn sem_poll() {}
 
-    /// **O core declara que não tem save state — e declara direito.**
+    /// **Sem sessão não há o que salvar**, e a recusa não escreve nada.
     ///
-    /// É o critério de aceite do plano para este item: **sem estado parcial**. Um `serialize` que
-    /// gravasse meia máquina seria pior que nenhum: o RetroArch deixaria salvar, e o carregamento
-    /// devolveria um jogo com memória e registradores certos e a mesa de objetos errada — chamando
-    /// API com identificador que não existe mais. Enquanto o estado completo não existir, o
-    /// tamanho é zero, as duas funções recusam, e **nada é escrito** no buffer do frontend.
+    /// Zero continua sendo a resposta certa aqui — não porque o core não saiba salvar, mas porque
+    /// não há máquina nenhuma montada. Um `serialize` que gravasse meia máquina seria pior que
+    /// nenhum: o RetroArch deixaria salvar, e o carregamento devolveria um jogo com memória e
+    /// registradores certos e a mesa de objetos errada, chamando API com identificador que não
+    /// existe mais.
     #[test]
-    fn declara_que_nao_tem_save_state() {
+    fn sem_sessao_nao_ha_o_que_salvar() {
         assert_eq!(
             retro_serialize_size(),
             0,
-            "tamanho zero é como o frontend entende \"este core não salva\""
+            "sem sessão, o tamanho é zero"
         );
         let mut destino = [0u8; 16];
         assert!(
@@ -1932,6 +2005,137 @@ mod testes {
             "jogos ao lado do conteúdo: {}",
             JOGOS_VISTOS.load(Ordering::Relaxed)
         );
+        let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    /// **O save state atravessa a ABI, e volta igual.**
+    ///
+    /// É a prova de ponta a ponta do item 6, e ela é feita pelo caminho que o RetroArch usa: pedir
+    /// o tamanho, gravar, sujar o estado, carregar e conferir. A conferência que importa é a
+    /// última — **gravar de novo depois de carregar tem de dar byte a byte o mesmo arquivo** —,
+    /// porque é isso que um save state promete. Comparar campos seria mais fraco: o que o jogador
+    /// vê é o jogo continuar do mesmo ponto.
+    ///
+    /// **Sem `ZEEBX_CORE_ROM` ele não roda**, pela mesma razão do teste acima.
+    #[test]
+    fn o_save_state_atravessa_a_abi() {
+        let Ok(caminho) = std::env::var("ZEEBX_CORE_ROM") else {
+            eprintln!("sem ZEEBX_CORE_ROM: nada a salvar");
+            return;
+        };
+        let pasta = std::env::temp_dir().join(format!("zeebx-estado-{}", std::process::id()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        let _ = PASTA.set(CString::new(pasta.to_string_lossy().to_string()).unwrap());
+        if let Ok(fora) = std::env::var("ZEEBX_CORE_SISTEMA") {
+            let _ = SISTEMA.set(CString::new(fora).unwrap());
+        }
+        QUADROS.store(0, Ordering::Relaxed);
+        let caminho_c = CString::new(caminho.clone()).unwrap();
+        let quadros_pedidos = std::env::var("ZEEBX_CORE_QUADROS")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(60u32);
+
+        let info = RetroGameInfo {
+            path: caminho_c.as_ptr(),
+            data: std::ptr::null(),
+            size: 0,
+            meta: std::ptr::null(),
+        };
+        unsafe {
+            retro_set_environment(Some(ambiente));
+            retro_set_video_refresh(Some(video));
+            retro_set_audio_sample_batch(Some(audio));
+            retro_init();
+            retro_set_controller_port_device(0, DEVICE_JOYPAD);
+            assert!(retro_load_game(&info), "o core recusou {caminho}");
+            for _ in 0..quadros_pedidos {
+                retro_run();
+            }
+
+            // 1) O tamanho, medido pelo frontend.
+            let tamanho = retro_serialize_size();
+            assert!(tamanho > 0, "com sessão montada, o tamanho tem de ser positivo");
+            eprintln!("save state: {tamanho} bytes");
+            let mut primeiro = vec![0u8; tamanho];
+            assert!(
+                retro_serialize(primeiro.as_mut_ptr() as *mut c_void, primeiro.len()),
+                "a gravação foi recusada"
+            );
+
+            // 2) O jogo continua: o estado tem de ficar **diferente**.
+            for _ in 0..quadros_pedidos {
+                retro_run();
+            }
+            let tamanho_depois = retro_serialize_size();
+            let mut segundo = vec![0u8; tamanho_depois];
+            assert!(retro_serialize(
+                segundo.as_mut_ptr() as *mut c_void,
+                segundo.len()
+            ));
+            assert_ne!(
+                primeiro, segundo,
+                "o estado não mudou depois de rodar mais quadros: o teste não estaria medindo nada"
+            );
+
+            // 3) Carregar o primeiro, e conferir que gravar de novo dá o mesmo arquivo.
+            assert!(
+                retro_unserialize(primeiro.as_ptr() as *const c_void, primeiro.len()),
+                "o carregamento foi recusado"
+            );
+            let tamanho_de_volta = retro_serialize_size();
+            let mut terceiro = vec![0u8; tamanho_de_volta];
+            assert!(retro_serialize(
+                terceiro.as_mut_ptr() as *mut c_void,
+                terceiro.len()
+            ));
+            if terceiro != primeiro {
+                // **Onde** os dois divergem, e não a comparação inteira: um `assert_eq!` de dois
+                // vetores de sete megabytes escreve sete megabytes na saída e não diz nada. O nome
+                // da seção está no arquivo em texto, então a primeira diferença aponta o culpado.
+                let posicao = terceiro
+                    .iter()
+                    .zip(primeiro.iter())
+                    .position(|(a, b)| a != b)
+                    .unwrap_or(terceiro.len().min(primeiro.len()));
+                let inicio = posicao.saturating_sub(64);
+                let texto = String::from_utf8_lossy(&terceiro[inicio..posicao + 8]);
+                let texto = texto
+                    .chars()
+                    .filter(|c| c.is_ascii_graphic() || *c == ' ')
+                    .collect::<String>();
+                let antes = String::from_utf8_lossy(&primeiro[inicio..posicao + 8]);
+                let antes = antes
+                    .chars()
+                    .filter(|c| c.is_ascii_graphic() || *c == ' ')
+                    .collect::<String>();
+                panic!(
+                    "o estado carregado não é o que foi gravado: primeira diferença no byte {posicao} \
+                     de {} (gravado {inicio}..{}: {antes:?}; carregado: {texto:?})",
+                    terceiro.len(),
+                    posicao + 8
+                );
+            }
+
+            // 4) Um byte trocado é recusado, e **não** muda a máquina.
+            let mut estragado = primeiro.clone();
+            let meio = estragado.len() / 2;
+            estragado[meio] ^= 0xff;
+            assert!(
+                !retro_unserialize(estragado.as_ptr() as *const c_void, estragado.len()),
+                "um estado corrompido foi aceito"
+            );
+            let tamanho_final = retro_serialize_size();
+            let mut quarto = vec![0u8; tamanho_final];
+            assert!(retro_serialize(quarto.as_mut_ptr() as *mut c_void, quarto.len()));
+            assert_eq!(
+                quarto, primeiro,
+                "a recusa de um estado corrompido mexeu na máquina"
+            );
+
+            retro_unload_game();
+            retro_deinit();
+        }
         let _ = std::fs::remove_dir_all(&pasta);
     }
 }

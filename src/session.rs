@@ -754,6 +754,21 @@ impl Session {
         self.machine.set_portas(portas);
     }
 
+    /// Grava o estado da máquina, no formato versionado de [`crate::save_state`].
+    pub fn grava_estado(&self) -> Vec<u8> {
+        self.machine.grava_estado()
+    }
+
+    /// Põe de volta um estado gravado por [`Session::grava_estado`].
+    pub fn restaura_estado(&mut self, arquivo: &[u8]) -> Result<(), crate::save_state::Erro> {
+        self.machine.restaura_estado(arquivo)
+    }
+
+    /// Se dá para gravar agora. Ver [`crate::machine::Machine::pode_salvar`].
+    pub fn pode_salvar(&mut self) -> Result<(), String> {
+        self.machine.pode_salvar()
+    }
+
     /// Assinatura do conteúdo da tela, para o frontend evitar reenvio de quadro repetido.
     pub fn screen_signature(&self) -> u64 {
         self.screen().signature()

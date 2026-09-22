@@ -1860,8 +1860,35 @@ nunca dentro de um `retro_run`, então no instante do save eles estão vazios �
 dispensáveis. O certo não é confiar nisso: é **recusar** o save se algum deles não estiver vazio, e o
 teste cobrir os dois lados.
 
-**Enquanto essas três peças não entrarem, o core responde `retro_serialize_size = 0`**, com teste que
-cobra. O critério proíbe estado parcial, e é por isso que a porta não abre antes.
+### O save state está de pé
+
+As três peças entraram, e com elas o **estado completo**. O core deixou de responder zero:
+
+```text
+retro_serialize_size   o tamanho do estado, medido agora (7.084.619 bytes com o Double Dragon)
+retro_serialize        entrega o que o `_size` mediu, e recusa se não couber no buffer
+retro_unserialize      põe de volta, e recusa com o motivo quando alguma seção não bate
+```
+
+Duas decisões de encaixe que valem registro:
+
+- **o tamanho medido guarda os bytes.** A ABI chama o tamanho e a gravação em sequência, e o tamanho
+  varia com o que o jogo tem em memória — recalcular na gravação daria um estado **diferente** do que
+  foi medido, e o frontend teria alocado o buffer pelo número errado;
+- **o motor drena a fila de desenho antes de conferir.** Um lote de triângulos esperando a vez não é
+  desenho pela metade — é trabalho que ia ser feito no quadro seguinte. Recusar o save por causa dele
+  bloquearia o jogador por algo que o motor resolve sozinho. Depois de drenar, o que sobra é o
+  desenho interrompido de verdade, e aí a recusa é honesta.
+
+**A prova de ponta a ponta** é o teste `o_save_state_atravessa_a_abi`, e ele faz o caminho que o
+RetroArch faz: mede o tamanho, grava, roda mais quadros para o estado **mudar**, carrega, grava de
+novo e exige **byte a byte o mesmo arquivo**. Depois estraga um byte e exige que a recusa não mexa na
+máquina. Comparar campos seria mais fraco: o que o jogador vê é o jogo continuar do mesmo ponto.
+
+**O que continua fora, por decisão declarada:** os campos de instrumento e diagnóstico, o `Mixer` do
+host, o `clock_us` (derivado do contador de instruções), e os caches do que está em disco (`vfs`,
+`resources`, `interned`, `cargas_de_midia` — este último **com caminho de recarga**, e é por isso que
+não é lacuna).
 
 ### O livro dos objetos, e a codificação das interfaces
 

@@ -546,6 +546,49 @@ impl GpuState {
     }
 
     /// Põe na placa o estado anotado. Chamado uma vez por draw.
+    /// Copia o estado de desenho do `GlState` para o espelho que vai para o GL.
+    ///
+    /// Existe por causa do save state. O espelho (`fill`) é atualizado **campo a campo** por cada
+    /// método do `Rasterizador`, e não é derivado do `GlState` a cada lote. Carregar um estado troca
+    /// o `GlState` inteiro e deixa o espelho descrevendo o mundo anterior — e como é o espelho que
+    /// o `aplica` escreve na placa, a cena sairia com a matriz, as bandeiras de teste e as cores de
+    /// limpeza de antes. Esta função é o ponto único onde os dois voltam a concordar.
+    fn ressincroniza_o_espelho(&mut self) {
+        let e = &self.estado;
+        self.fill.teste_profundidade = e.depth_test;
+        self.fill.mascara_profundidade = e.depth_mask;
+        self.fill.faixa_profundidade = e.depth_range;
+        self.fill.neblina = e.fog;
+        self.fill.func_profundidade = e.depth_func;
+        self.fill.mistura = e.blend;
+        self.fill.mistura_src = e.blend_src;
+        self.fill.mistura_dst = e.blend_dst;
+        self.fill.teste_alfa = e.alpha_test;
+        self.fill.func_alfa = e.alpha_func;
+        self.fill.ref_alfa = e.alpha_ref;
+        self.fill.mascara_cor = e.color_mask;
+        self.fill.descarte = e.cull_face;
+        self.fill.modo_descarte = e.cull_mode;
+        self.fill.face_frontal = e.front_face;
+        self.fill.teste_stencil = e.stencil_test;
+        self.fill.func_stencil = e.stencil_func;
+        self.fill.ref_stencil = e.stencil_ref;
+        self.fill.mascara_valor_stencil = e.stencil_value_mask;
+        self.fill.mascara_escrita_stencil = e.stencil_write_mask;
+        self.fill.op_stencil = e.stencil_op;
+        self.fill.env_textura = e.texture_env;
+        self.fill.textura_ligada = e.bound_texture;
+        self.fill.texturando = e.texture_2d;
+        self.fill.viewport = e.viewport;
+        // O espelho guarda a tesoura **crua** e uma bandeira: ele não tem o estado "sem tesoura",
+        // e é a bandeira que o `aplica` consulta para ligá-la ou não.
+        self.fill.tesoura = e.tesoura_crua;
+        self.fill.tesoura_ligada = e.tesoura_ligada;
+        self.fill.limpa_cor = e.clear_color;
+        self.fill.limpa_profundidade = e.clear_depth;
+        self.fill.limpa_stencil = i32::from(e.clear_stencil);
+    }
+
     fn aplica(&mut self) {
         let (x, y, w, h) = self.viewport_do_topo();
         let extra = self.quadro.as_ref().map_or(0, |d| d.extra) as i32;
@@ -1381,6 +1424,36 @@ fn expande565(bytes: &[u8], offset: usize) -> [u8; 3] {
 }
 
 impl Rasterizador for GpuState {
+    fn grava_estado(&self, destino: &mut crate::save_state::Secoes) {
+        // O estado é o mesmo `GlState` que o rasterizador de software usa — este apenas o desenha
+        // na placa em vez de no processador. Gravar é delegar.
+        crate::save_state::Guardavel::grava(&self.estado, destino);
+    }
+
+    fn restaura_estado(
+        &mut self,
+        origem: &crate::save_state::Leitor<'_>,
+    ) -> Result<(), crate::save_state::Erro> {
+        crate::save_state::Guardavel::restaura(&mut self.estado, origem)?;
+        // **Os objetos de placa são cache do estado**, e não estado: as texturas já subidas, os
+        // programas e os buffers saem daqui do `GlState`. Derrubá-las faz subir de novo na próxima
+        // vez que o jogo desenhar, e é o caminho mais seguro — não há o que ficar pela metade.
+        self.texturas.clear();
+        // O espelho de estado de desenho é mantido **incrementalmente** pelos métodos do trait, e
+        // não reconstruído do `GlState`. Depois de carregar, ele descreveria o mundo anterior, e é
+        // ele que vai para o GL a cada lote — a cena sairia com a matriz e as bandeiras de antes.
+        self.ressincroniza_o_espelho();
+        Ok(())
+    }
+
+    fn descarrega_o_desenho(&mut self) {
+        self.descarrega();
+    }
+
+    fn desenho_em_curso(&self) -> bool {
+        self.estado.desenho_em_curso()
+    }
+
     fn desenha_no_fbo(&mut self, fbo: Option<u32>) {
         self.fbo_externo = fbo;
     }

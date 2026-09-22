@@ -117,6 +117,20 @@ impl<C: CpuBackend> Machine<C> {
     }
 
     /// Grava o estado em uma seção por região, mais os registradores e os livros.
+    pub fn pode_salvar(&mut self) -> Result<(), String> {
+        // **Drena primeiro, recusa depois.** Um lote esperando a vez não é desenho pela metade: é
+        // trabalho que ia ser feito no quadro seguinte. Recusar o save por causa dele bloquearia o
+        // jogador por algo que o motor resolve sozinho. O que sobra depois de drenar é o desenho
+        // interrompido de verdade — um `glBegin` sem `glEnd` —, e aí a recusa é honesta.
+        self.gl.descarrega_o_desenho();
+        if self.gl.desenho_em_curso() {
+            return Err(
+                "há um desenho começado e não terminado; salve no fim do quadro".to_string(),
+            );
+        }
+        Ok(())
+    }
+
     pub fn grava_estado(&self) -> Vec<u8> {
         let mut secoes = Secoes::nova();
         secoes.poe_u32s(
@@ -260,22 +274,34 @@ impl<C: CpuBackend> Machine<C> {
 /// formato refém de uma string; guardar o código deixa a leitura impossível de errar em silêncio —
 /// código desconhecido é recusa, e não um registro perdido.
 fn codigo_do_sinal_de_entrada(nome: &str) -> u32 {
-    match nome {
-        "RegisterForButtonEvent" => 0,
-        "RegisterForPositionChange" => 1,
-        // Um nome novo entra aqui **e** na tabela do teste `o_nome_do_sinal_vai_e_volta`: sem isso
-        // o save state passaria a perder o registro em silêncio.
-        _ => u32::MAX,
+    match SINAIS_DE_APARELHO.iter().position(|n| *n == nome) {
+        Some(indice) => indice as u32,
+        None => {
+            // **O gravador grita em vez de escrever o sentinela.** Eu escrevi `u32::MAX` como
+            // "não conheço este nome" e o leitor o recusa — o que parecia seguro, e não era: o
+            // resultado foi um save state **gravado com sucesso e impossível de carregar**. O
+            // erro só apareceu porque o teste de ida e volta existe, e o nome que faltava era o
+            // terceiro (`RegisterForConnectEvents`), que eu tinha suposto não existir.
+            debug_assert!(false, "o sinal de aparelho \"{nome}\" não está em SINAIS_DE_APARELHO");
+            u32::MAX
+        }
     }
 }
 
+/// Os nomes de sinal de aparelho que o `IHIDDevice` usa para avisar quem registrou.
+///
+/// **Medidos, e não supostos**: são três. A lista existe para o código ser estável entre versões,
+/// e os dois sentidos (`codigo_do_sinal_de_entrada` e `nome_do_sinal_de_entrada`) saem dela — assim
+/// acrescentar um nome é mexer num lugar só, e o teste cobra a volta de **todos**.
+const SINAIS_DE_APARELHO: [&str; 3] = [
+    "RegisterForButtonEvent",
+    "RegisterForConnectEvents",
+    "RegisterForPositionChange",
+];
+
 /// O nome de um sinal de entrada pelo código.
 fn nome_do_sinal_de_entrada(codigo: u32) -> Option<&'static str> {
-    match codigo {
-        0 => Some("RegisterForButtonEvent"),
-        1 => Some("RegisterForPositionChange"),
-        _ => None,
-    }
+    SINAIS_DE_APARELHO.get(codigo as usize).copied()
 }
 
 impl<C: CpuBackend> Machine<C> {
@@ -3036,13 +3062,17 @@ mod tests {
     /// vermelho, e não um registro que se perde em silêncio num save state.
     #[test]
     fn o_nome_do_sinal_vai_e_volta() {
-        for nome in ["RegisterForButtonEvent", "RegisterForPositionChange"] {
+        // **A lista inteira**, e é ela que o gravador usa: nome novo sem entrar aqui deixa o
+        // gravador gritando em vez de gravar um estado que não carrega.
+        for nome in SINAIS_DE_APARELHO {
             let codigo = codigo_do_sinal_de_entrada(nome);
             assert_ne!(codigo, u32::MAX, "{nome} não tem código");
             assert_eq!(nome_do_sinal_de_entrada(codigo), Some(nome));
         }
         assert_eq!(nome_do_sinal_de_entrada(9999), None);
-        assert_eq!(codigo_do_sinal_de_entrada("inventado"), u32::MAX);
+        // **Um nome inventado não é testado aqui de propósito**: o gravador tem `debug_assert!`
+        // para ele, e é isso que se quer — nome novo que ninguém pôs na lista faz o teste gritar,
+        // em vez de gravar um estado que não carrega. Foi assim que o terceiro nome apareceu.
     }
 
     /// **As tabelas numéricas voltam**, e um valor fora da faixa do motor é recusado.
