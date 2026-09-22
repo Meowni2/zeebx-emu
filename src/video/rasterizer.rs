@@ -4695,7 +4695,7 @@ mod testes_do_estado_de_gl {
     /// só o campo do stencil: refazer as seções à mão faria ele medir outra coisa.
     #[test]
     fn buffer_maior_que_a_superficie_e_recusado() {
-        let mut antes = GlState::new(4, 2);
+        let antes = GlState::new(4, 2);
         let mut secoes = Secoes::nova();
         antes.grava(&mut secoes);
         // Os cinco números do cabeçalho dos buffers, com o último mentindo. O primeiro número é a
