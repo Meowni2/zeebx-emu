@@ -17,6 +17,168 @@ const IFACE_SHIFT: u32 = 12;
 /// Espaço reservado a cada interface — 1024 slots, muito além do necessário.
 const IFACE_STRIDE: u32 = 1 << IFACE_SHIFT;
 
+/// A interface **como número**, para o save state, e a volta.
+///
+/// O número é o discriminante da enumeração, que já era explícito no código — não é uma tabela
+/// nova que alguém precisa manter em paralelo. A volta é escrita à mão porque Rust não desfaz um
+/// `as u32` sozinho, e o teste abaixo cobra a lista inteira: variante nova sem entrada aqui deixa
+/// o teste vermelho, que é o que se quer de um formato gravado em disco.
+pub fn codigo(iface: Interface) -> u32 {
+    iface as u32
+}
+
+/// A interface de volta pelo número. `None` para número que não é de interface nenhuma.
+pub fn de_codigo(valor: u32) -> Option<Interface> {
+    Some(match valor {
+        0 => Interface::Shell,
+        1 => Interface::Module,
+        2 => Interface::Applet,
+        3 => Interface::FileMgr,
+        4 => Interface::File,
+        5 => Interface::Display,
+        6 => Interface::Helpers,
+        7 => Interface::Bitmap,
+        8 => Interface::Hid,
+        9 => Interface::HidDevice,
+        10 => Interface::Signal,
+        11 => Interface::SignalCtl,
+        12 => Interface::SignalCbFactory,
+        13 => Interface::Graphics,
+        14 => Interface::Sound,
+        15 => Interface::License,
+        16 => Interface::MemAStream,
+        17 => Interface::Image,
+        18 => Interface::Thread,
+        19 => Interface::Egl,
+        20 => Interface::Gles,
+        21 => Interface::MediaUtil,
+        22 => Interface::Media,
+        23 => Interface::EglLegacy,
+        24 => Interface::GlLegacy,
+        25 => Interface::Web,
+        26 => Interface::Hash,
+        27 => Interface::CipherFactory,
+        28 => Interface::Cipher,
+        29 => Interface::Heap,
+        30 => Interface::UnzipStream,
+        31 => Interface::ImageDecoder,
+        32 => Interface::ForceFeed,
+        33 => Interface::EglSurfaceManip,
+        34 => Interface::GlesImageonExt,
+        35 => Interface::Probe,
+        36 => Interface::SqlMgr,
+        37 => Interface::SqlDatabase,
+        38 => Interface::Collection,
+        39 => Interface::SourceUtil,
+        40 => Interface::Widget,
+        41 => Interface::ZeeboMcp,
+        42 => Interface::Config,
+        43 => Interface::Source,
+        44 => Interface::Peek,
+        45 => Interface::Vetor,
+        46 => Interface::Classe28e3c,
+        47 => Interface::Cm,
+        48 => Interface::SystemCtl,
+        49 => Interface::Typeface,
+        50 => Interface::SimCardCtl,
+        51 => Interface::Control,
+        52 => Interface::Transform,
+        53 => Interface::Canvas,
+        54 => Interface::Font,
+        55 => Interface::Gles11Ext,
+        56 => Interface::Gles10Ext,
+        57 => Interface::EglGetPowerLevel,
+        58 => Interface::EglOesSwapInterval,
+        59 => Interface::EglGetColorBuffer,
+        60 => Interface::Gles11ExtPak,
+        61 => Interface::Joystick,
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod testes_da_codificacao {
+    use super::*;
+
+    /// **Toda** variante vai e volta, e cada uma tem número próprio.
+    ///
+    /// A lista é escrita à mão de propósito: se alguém acrescentar uma interface e esquecer a volta,
+    /// a contagem abaixo não bate e o teste falha **antes** de um save state ficar ilegível.
+    #[test]
+    fn toda_interface_tem_numero_e_volta() {
+        let todas: [(u32, &str); 62] = [
+        (0, "Shell"),
+        (1, "Module"),
+        (2, "Applet"),
+        (3, "FileMgr"),
+        (4, "File"),
+        (5, "Display"),
+        (6, "Helpers"),
+        (7, "Bitmap"),
+        (8, "Hid"),
+        (9, "HidDevice"),
+        (10, "Signal"),
+        (11, "SignalCtl"),
+        (12, "SignalCbFactory"),
+        (13, "Graphics"),
+        (14, "Sound"),
+        (15, "License"),
+        (16, "MemAStream"),
+        (17, "Image"),
+        (18, "Thread"),
+        (19, "Egl"),
+        (20, "Gles"),
+        (21, "MediaUtil"),
+        (22, "Media"),
+        (23, "EglLegacy"),
+        (24, "GlLegacy"),
+        (25, "Web"),
+        (26, "Hash"),
+        (27, "CipherFactory"),
+        (28, "Cipher"),
+        (29, "Heap"),
+        (30, "UnzipStream"),
+        (31, "ImageDecoder"),
+        (32, "ForceFeed"),
+        (33, "EglSurfaceManip"),
+        (34, "GlesImageonExt"),
+        (35, "Probe"),
+        (36, "SqlMgr"),
+        (37, "SqlDatabase"),
+        (38, "Collection"),
+        (39, "SourceUtil"),
+        (40, "Widget"),
+        (41, "ZeeboMcp"),
+        (42, "Config"),
+        (43, "Source"),
+        (44, "Peek"),
+        (45, "Vetor"),
+        (46, "Classe28e3c"),
+        (47, "Cm"),
+        (48, "SystemCtl"),
+        (49, "Typeface"),
+        (50, "SimCardCtl"),
+        (51, "Control"),
+        (52, "Transform"),
+        (53, "Canvas"),
+        (54, "Font"),
+        (55, "Gles11Ext"),
+        (56, "Gles10Ext"),
+        (57, "EglGetPowerLevel"),
+        (58, "EglOesSwapInterval"),
+        (59, "EglGetColorBuffer"),
+        (60, "Gles11ExtPak"),
+        (61, "Joystick"),
+        ];
+        for (valor, nome) in todas {
+            let iface = de_codigo(valor).unwrap_or_else(|| panic!("{nome} ({valor}) não voltou"));
+            assert_eq!(codigo(iface), valor, "{nome} não voltou ao mesmo número");
+            assert_eq!(format!("{iface:?}"), nome, "a variante de {valor} não é {nome}");
+        }
+        assert_eq!(de_codigo(9999), None, "número inventado devia devolver nada");
+    }
+}
+
 /// Interfaces que o emulador conhece. O valor numérico entra no endereço do trampolim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u32)]

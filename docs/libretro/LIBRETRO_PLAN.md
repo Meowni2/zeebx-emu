@@ -1795,8 +1795,28 @@ Duas decisões que valem registro, porque uma delas eu escrevi errado primeiro:
    alocadores delas seria mais barato, mas os livros delas ainda não entram no formato, e um
    tamanho que a volta não pode conferir é pior que um tamanho maior.
 
-Medido: o estado de uma máquina mínima sai com **14,07 MB**, contra os 84 MB de memória mapeada.
-A maior parte do que sobra são as duas regiões acima, que caem quando os livros delas entrarem.
+### O livro dos objetos, e a codificação das interfaces
+
+O `enum Interface` tem **62 variantes, todas sem payload, com discriminante explícito de 0 a 61** —
+então o número no arquivo é o próprio discriminante, e não uma tabela paralela que alguém precisa
+manter. A volta (`de_codigo`) é escrita à mão porque Rust não desfaz um `as u32`, e há teste que
+cobra **as 62**: interface nova sem entrada deixa o teste vermelho antes de um save state ficar
+ilegível. É o tipo de coisa que precisa doer no dia em que se mexe, e não no dia em que alguém
+carrega um estado.
+
+Com o livro dos objetos no formato, a região deles e a das superfícies passaram a ser **cortadas no
+primeiro endereço nunca usado**, como o heap — e o corte só é honesto porque o livro de cada uma
+entra no arquivo, de onde sai o tamanho esperado na volta.
+
+| | antes | agora |
+|---|---|---|
+| estado de uma máquina mínima | 14,07 MB | **2,07 MB** |
+| memória mapeada | 84 MB | 84 MB |
+
+Uma armadilha que apareceu no caminho e vale registro: a máquina tem **dois** `Heap` (a memória do
+jogo e a região das superfícies). Com nome de seção fixo, o segundo sobrescreveria o primeiro no
+arquivo, e o defeito apareceria como "as superfícies voltaram no lugar do heap". As seções passaram a
+ter prefixo.
 
 Falta, para fechar: o `ObjectStore` (depende de codificação estável do `enum Interface`), as ~50
 tabelas de estado por objeto, o contador de instruções (é o relógio virtual, e o trait do núcleo

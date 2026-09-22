@@ -118,15 +118,58 @@ impl Heap {
 }
 
 
+impl Heap {
+    /// Grava com um prefixo de seção.
+    ///
+    /// O prefixo existe porque a máquina tem **dois** heaps: a memória do jogo e a região das
+    /// superfícies. Com nome fixo, o segundo sobrescreveria o primeiro no arquivo — e o defeito
+    /// apareceria como "as superfícies voltaram no lugar do heap".
+    pub fn grava_com_prefixo(&self, prefixo: &str, destino: &mut crate::save_state::Secoes) {
+        destino.poe_u32(&format!("{prefixo}.base"), self.base);
+        destino.poe_u32(&format!("{prefixo}.end"), self.end);
+        destino.poe_u32(&format!("{prefixo}.next"), self.next);
+        destino.poe_mapa(
+            &format!("{prefixo}.free_list"),
+            self.free_list.iter().map(|(a, t)| (*a, *t)),
+        );
+        destino.poe_mapa(&format!("{prefixo}.live"), self.live.iter().map(|(a, t)| (*a, *t)));
+    }
+
+    /// Restaura de um prefixo, conferindo que o heap é desta máquina e que o conteúdo é coerente.
+    pub fn restaura_com_prefixo(
+        &mut self,
+        prefixo: &str,
+        origem: &crate::save_state::Leitor<'_>,
+    ) -> Result<(), crate::save_state::Erro> {
+        use crate::save_state::Erro;
+        let base = origem.u32(&format!("{prefixo}.base"))?;
+        let end = origem.u32(&format!("{prefixo}.end"))?;
+        if base != self.base || end != self.end {
+            return Err(Erro::Secao { nome: prefixo.to_string(), motivo: format!(
+                "o estado é de uma região {base:#010x}..{end:#010x} e esta máquina tem {:#010x}..{:#010x}",
+                self.base, self.end) });
+        }
+        let next = origem.u32(&format!("{prefixo}.next"))?;
+        let livres = origem.pares(&format!("{prefixo}.free_list"))?;
+        let vivos = origem.pares(&format!("{prefixo}.live"))?;
+        if let Some((endereco, _)) = vivos.iter().find(|(a, _)| livres.iter().any(|(f, _)| f == a)) {
+            return Err(Erro::Secao {
+                nome: prefixo.to_string(),
+                motivo: format!("o endereço {endereco:#010x} aparece livre e em uso"),
+            });
+        }
+        self.next = next;
+        self.free_list = livres.into_iter().collect();
+        self.live = vivos.into_iter().collect();
+        Ok(())
+    }
+}
+
 impl crate::save_state::Guardavel for Heap {
     /// Grava os cinco campos. `base` e `end` não mudam depois da construção, e vão junto de
     /// propósito: na volta eles servem de **conferência** de que o estado é desta máquina.
     fn grava(&self, destino: &mut crate::save_state::Secoes) {
-        destino.poe_u32("heap.base", self.base);
-        destino.poe_u32("heap.end", self.end);
-        destino.poe_u32("heap.next", self.next);
-        destino.poe_mapa("heap.free_list", self.free_list.iter().map(|(a, t)| (*a, *t)));
-        destino.poe_mapa("heap.live", self.live.iter().map(|(a, t)| (*a, *t)));
+        self.grava_com_prefixo("heap", destino);
     }
 
     /// Restaura, e **recusa** o estado que não for desta máquina ou estiver inconsistente.
@@ -135,33 +178,7 @@ impl crate::save_state::Guardavel for Heap {
     /// ponteiro do guest apontar para o lugar errado, e o sintoma apareceria muito depois, como
     /// acesso inválido em endereço sem relação com o save state.
     fn restaura(&mut self, origem: &crate::save_state::Leitor<'_>) -> Result<(), crate::save_state::Erro> {
-        use crate::save_state::Erro;
-        let base = origem.u32("heap.base")?;
-        let end = origem.u32("heap.end")?;
-        if base != self.base || end != self.end {
-            return Err(Erro::Secao {
-                nome: "heap".to_string(),
-                motivo: format!(
-                    "o estado é de um heap {base:#010x}..{end:#010x} e esta máquina tem {:#010x}..{:#010x}",
-                    self.base, self.end
-                ),
-            });
-        }
-        let next = origem.u32("heap.next")?;
-        let free_list = origem.pares("heap.free_list")?;
-        let live = origem.pares("heap.live")?;
-        // Um endereço não pode estar livre e em uso ao mesmo tempo; se estiver, o arquivo está
-        // errado e é melhor dizer isso agora.
-        if let Some((endereco, _)) = live.iter().find(|(a, _)| free_list.iter().any(|(f, _)| f == a)) {
-            return Err(Erro::Secao {
-                nome: "heap".to_string(),
-                motivo: format!("o endereço {endereco:#010x} aparece livre e em uso"),
-            });
-        }
-        self.next = next;
-        self.free_list = free_list.into_iter().collect();
-        self.live = live.into_iter().collect();
-        Ok(())
+        self.restaura_com_prefixo("heap", origem)
     }
 }
 

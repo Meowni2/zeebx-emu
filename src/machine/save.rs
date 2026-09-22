@@ -72,15 +72,40 @@ impl<C: CpuBackend> Machine<C> {
         if !gravavel {
             return None;
         }
-        Some(match nome {
-            // O heap corta no `next` porque **o livro dele entra no estado**: na volta é de lá que
-            // sai o tamanho esperado, e é isso que permite conferir antes de escrever.
-            // As regiões de objetos e superfícies ainda vão inteiras: os alocadores delas não estão
-            // no formato, e truncar por um contador que o arquivo não guarda deixaria a volta sem
-            // com o que comparar. Entram inteiras até os livros delas entrarem.
+        // **As três regiões que só crescem vão cortadas no primeiro endereço nunca usado**, e o
+        // corte é possível porque os livros das três entram no estado: é de lá que sai o tamanho
+        // esperado na volta. Gravar as três inteiras seriam 76 MB de zero por save state.
+        let usado = match nome {
             "heap" => usado(self.heap.proximo(), base, tamanho),
+            "objects" => usado(self.objects.proximo(), base, tamanho),
+            "surfaces" => usado(self.superficies.proximo(), base, tamanho),
             _ => tamanho,
-        })
+        };
+        Some(usado)
+    }
+
+    /// O quanto de uma região o **estado** diz que era usado.
+    ///
+    /// Vem do arquivo, e não da máquina de agora: quem carrega um save state carrega o heap que
+    /// estava lá. É o que permite conferir o tamanho da seção antes de escrever qualquer byte.
+    fn quanto_do_estado(
+        leitor: &Leitor<'_>,
+        nome: &str,
+        base: u32,
+        tamanho: usize,
+    ) -> Result<usize, Erro> {
+        let (prefixo, campo) = match nome {
+            "heap" => ("heap", "heap.next"),
+            "objects" => ("objects", "objects.next"),
+            "surfaces" => ("surfaces", "surfaces.next"),
+            _ => return Ok(tamanho),
+        };
+        let proximo = leitor.u32(campo)?;
+        let inicio = match prefixo {
+            "objects" => base,
+            _ => leitor.u32(&format!("{prefixo}.base"))?,
+        };
+        Ok(usado(proximo, inicio, tamanho))
     }
 
     /// Grava o estado em uma seção por região, mais os registradores e os livros.
@@ -99,7 +124,9 @@ impl<C: CpuBackend> Machine<C> {
             self.cpu.instructions().to_le_bytes().to_vec(),
         );
         for regiao in self.module.mem.regions() {
-            let Some(quanto) = self.quanto_gravar(regiao.name, regiao.base, regiao.bytes.len(), regiao.writable) else {
+            let Some(quanto) =
+                self.quanto_gravar(regiao.name, regiao.base, regiao.bytes.len(), regiao.writable)
+            else {
                 continue;
             };
             let mut bytes = vec![0u8; quanto];
@@ -109,14 +136,14 @@ impl<C: CpuBackend> Machine<C> {
                 secoes.poe(&secao_da_regiao(regiao.name), bytes);
             }
         }
-        self.heap.grava(&mut secoes);
+        // Os três livros. O das superfícies vai com o nome da região, para a seção e o livro
+        // terem o mesmo nome — quem lê o arquivo não precisa de tabela de tradução.
+        self.heap.grava_com_prefixo("heap", &mut secoes);
+        self.objects.grava(&mut secoes);
+        self.superficies.grava_com_prefixo("surfaces", &mut secoes);
         secoes.fecha()
     }
 
-    /// Restaura o estado, e **recusa antes de aplicar** se alguma seção não bater.
-    ///
-    /// Nada é escrito no núcleo enquanto todas as seções não tiverem sido lidas e conferidas: um
-    /// estado pela metade dentro de uma máquina em execução é pior que um estado recusado.
     pub fn restaura_estado(&mut self, arquivo: &[u8]) -> Result<(), Erro> {
         let leitor = Leitor::abre(arquivo)?;
 
@@ -148,7 +175,7 @@ impl<C: CpuBackend> Machine<C> {
         // A memória é lida e conferida antes de qualquer escrita.
         let mut regioes: Vec<(u32, Vec<u8>)> = Vec::new();
         for regiao in self.module.mem.regions() {
-            let Some(quanto) = self.quanto_gravar(regiao.name, regiao.base, regiao.bytes.len(), regiao.writable) else {
+            let Some(_) = self.quanto_gravar(regiao.name, regiao.base, regiao.bytes.len(), regiao.writable) else {
                 continue;
             };
             let secao = secao_da_regiao(regiao.name);
@@ -156,16 +183,8 @@ impl<C: CpuBackend> Machine<C> {
                 nome: secao.clone(),
                 motivo: "a seção não está no arquivo".to_string(),
             })?;
-            // **O tamanho esperado do heap sai do próprio estado**, e não da máquina de agora:
-            // quem carrega um save state carrega o heap que estava lá, e não o que está aqui.
-            let quanto = match regiao.name {
-                "heap" => usado(
-                    leitor.u32("heap.next")?,
-                    leitor.u32("heap.base")?,
-                    regiao.bytes.len(),
-                ),
-                _ => quanto,
-            };
+            // **O tamanho esperado sai do próprio estado**, e não da máquina de agora.
+            let quanto = Self::quanto_do_estado(&leitor, regiao.name, regiao.base, regiao.bytes.len())?;
             if bytes.len() != quanto {
                 return Err(Erro::Secao {
                     nome: secao,
@@ -180,7 +199,10 @@ impl<C: CpuBackend> Machine<C> {
         }
 
         // Daqui para baixo é aplicação: ou tudo, ou nada.
-        self.heap.restaura(&leitor)?;
+        self.heap.restaura_com_prefixo("heap", &leitor)?;
+        self.objects.restaura(&leitor)?;
+        self.superficies
+            .restaura_com_prefixo("surfaces", &leitor)?;
         for (base, bytes) in regioes {
             self.cpu.write_mem(base, &bytes).map_err(|erro| Erro::Secao {
                 nome: format!("mem.{base:#010x}"),
