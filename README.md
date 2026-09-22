@@ -57,9 +57,21 @@ Os arquivos ficam em `target/pacotes/`. No Arch, o AppImage precisa de `NO_STRIP
 linuxdeploy não reconhece as bibliotecas do sistema.
 
 Uma tag de versão (`v0.1.0` ou `0.1.0`) enviada ao GitHub dispara o
-[`release.yml`](.github/workflows/release.yml), que gera os quatro pacotes — Linux, Windows, macOS
-Apple Silicon e macOS Intel — e monta a release como rascunho, com o título igual à tag. O
-emulador procura versões novas nessas releases ao abrir.
+[`release.yml`](.github/workflows/release.yml), que monta a release como rascunho, com o título
+igual à tag. O emulador procura versões novas nessas releases ao abrir.
+
+São dois formatos em cada um dos quatro sistemas, e o nome do arquivo diz qual é qual:
+
+| | |
+|---|---|
+| `zeebx-standalone-linux-x86_64.deb`, `.AppImage` | o emulador com a interface, para instalar |
+| `zeebx-standalone-windows-x86_64-setup.exe` | idem, no Windows |
+| `zeebx-standalone-macos-arm64.dmg`, `-x86_64.dmg` | idem, nos dois Macs |
+| `zeebx-headless-<sistema>.zip` | o binário sem interface, com o `config.ini` e o leia-me |
+
+O APK do Android **não sai daqui**: ele é montado pelo
+[`frontends/android/compilar.sh`](frontends/android/compilar.sh), que precisa do NDK e do Gradle,
+e sai como `zeebx-android-arm64-v8a.apk`.
 
 ## Usando
 

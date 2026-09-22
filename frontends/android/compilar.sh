@@ -62,6 +62,16 @@ ls -lh "$JNI/$ZEEBX_ANDROID_ABI/"
 if [ "${1:-}" = "--apk" ]; then
   cd "$AQUI/apk"
   "${GRADLE:-$HOME/Android/gradle/bin/gradle}" --no-daemon assembleDebug
+
+  # O Gradle nomeia pelo módulo e pela variante: `app-debug.apk`, igual em todo projeto que
+  # começou pelo assistente. Ao lado dos pacotes de desktop — `zeebx-standalone-…`,
+  # `zeebx-headless-…` — um `app-debug.apk` não diz de qual programa nem de qual aparelho é,
+  # então sai uma cópia com o nome que a release usa. A do Gradle fica onde estava: é dela que
+  # o `gradle installDebug` e o Android Studio se servem.
+  SAIDA="$AQUI/apk/app/build/outputs/apk/debug"
+  NOMEADA="$SAIDA/zeebx-android-$ZEEBX_ANDROID_ABI.apk"
+  cp "$SAIDA/app-debug.apk" "$NOMEADA"
+
   echo "== APK =="
-  ls -lh "$AQUI/apk/app/build/outputs/apk/debug/"
+  ls -lh "$NOMEADA"
 fi

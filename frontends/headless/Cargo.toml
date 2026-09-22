@@ -27,7 +27,13 @@ glow = "0.16"
 raw-window-handle = "0.6"
 # A janela e a entrada, sem interface no meio. O glutin dá o contexto de GL, e é a mesma caixa
 # que o núcleo já usa para o contexto fora de tela e que o frontend de Android usa para o EGL.
-winit = { version = "0.30", default-features = false, features = ["rwh_06", "wayland", "x11"] }
+#
+# **Com as features de fábrica, e isto importa.** Elas são `rwh_06`, `x11`, `wayland`,
+# `wayland-dlopen` e `wayland-csd-adwaita`; num sistema que não é Unix as três últimas não
+# existem e não custam nada. Uma versão daqui listou `x11` e `wayland` à mão, sem defaults, e
+# perdeu justamente o `wayland-dlopen`: sem ele o binário amarra a `libwayland-client.so` no
+# ligador e não abre onde ela não está instalada — que é a máquina de quem só tem X11.
+winit = "0.30"
 glutin = "0.32.3"
 glutin-winit = "0.5"
 # Só o despejo de quadros em `.png`. Já vinha na árvore pelo núcleo.

@@ -88,6 +88,20 @@ bytes do outro lado perder o passo para sempre. Por isso `resolucao_interna` e a
 não chegam ao despejo cru — elas valem na janela. O `.png` é a exceção, porque cada arquivo diz
 o próprio tamanho.
 
+## Nos três sistemas
+
+Linux, Windows e macOS. O `release.yml` monta um `zeebx-headless-<sistema>.zip` para cada um,
+com o binário, o `config.ini` comentado e este arquivo — o `config.ini` vai junto porque o
+primeiro lugar em que o emulador o procura é **ao lado do executável**, que é o que faz uma
+cópia portátil funcionar sem tocar na máquina.
+
+Uma diferença que vale saber: no modo `sem_janela` com `rasterizador_na_placa` ligado, o 3D
+precisa de um contexto de OpenGL sem janela, e isso é EGL. No Linux ele está sempre lá; no
+Windows vem com o driver que o instala — a NVIDIA instala — ou com uma ANGLE (`libEGL.dll` e
+`libGLESv2.dll`) ao lado do executável; no macOS não existe. Onde ele falta, o emulador diz o
+motivo e segue no rasterizador de software. **Com janela isso não se aplica**: ali o contexto é
+o da própria janela, e os três sistemas o têm.
+
 ## Os arquivos
 
 | Arquivo | O que é |
