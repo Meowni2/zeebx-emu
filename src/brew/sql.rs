@@ -86,6 +86,13 @@ pub fn sync_z_wheel_library(
 /// Um banco aberto.
 pub struct Database {
     conn: rusqlite::Connection,
+    /// Onde ele mora no host.
+    ///
+    /// Guardado porque o **conteúdo do banco não está no motor**: ele está no arquivo. É o mesmo
+    /// caso dos arquivos abertos — um save state grava o caminho, e a volta reabre. Sem o caminho
+    /// a volta seria impossível, e a alternativa seria gravar o banco inteiro dentro do save state,
+    /// duplicando o que já está em disco.
+    caminho: std::path::PathBuf,
 }
 
 /// Uma linha de resultado, com os valores e os nomes das colunas já em texto.
@@ -102,8 +109,16 @@ impl Database {
     /// Abre (ou cria) o banco no caminho do host já resolvido pelo VFS.
     pub fn open(path: &Path) -> Result<Self, String> {
         rusqlite::Connection::open(path)
-            .map(|conn| Self { conn })
+            .map(|conn| Self {
+                conn,
+                caminho: path.to_path_buf(),
+            })
             .map_err(|err| err.to_string())
+    }
+
+    /// O caminho do banco no host, para o save state reabrir.
+    pub fn caminho(&self) -> &Path {
+        &self.caminho
     }
 
     /// Executa a instrução e devolve as linhas que ela produziu.

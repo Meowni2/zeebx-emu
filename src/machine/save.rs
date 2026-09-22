@@ -26,7 +26,7 @@
 use super::{
     Callback, CipherState, DecodedImage, FluxoPcm, Machine, MediaState, MemStream, ModeloDeValor,
     OpenFile, Outcome, Peek, PendingBlit, RecorteDeImagem, SoundState, ThreadState, Timer,
-    UnzipState, Widget,
+    DecoderState, GuestCall, HashState, UnzipState, Widget,
 };
 use crate::input::Pad;
 use crate::machine::{default_colors, ArrayPointer, AES_BLOCK, CLR_COUNT, GraphicsState};
@@ -156,6 +156,8 @@ impl<C: CpuBackend> Machine<C> {
         self.grava_resto_das_tabelas(&mut secoes);
         self.grava_o_resto(&mut secoes);
         self.grava_widgets(&mut secoes);
+        self.grava_bibliotecas(&mut secoes);
+        self.grava_ultimos(&mut secoes);
         self.heap.grava_com_prefixo("heap", &mut secoes);
         self.objects.grava(&mut secoes);
         self.superficies.grava_com_prefixo("surfaces", &mut secoes);
@@ -227,6 +229,8 @@ impl<C: CpuBackend> Machine<C> {
         self.restaura_resto_das_tabelas(&leitor)?;
         self.restaura_o_resto(&leitor)?;
         self.restaura_widgets(&leitor)?;
+        self.restaura_bibliotecas(&leitor)?;
+        self.restaura_ultimos(&leitor)?;
         self.heap.restaura_com_prefixo("heap", &leitor)?;
         self.objects.restaura(&leitor)?;
         self.superficies
@@ -2552,6 +2556,248 @@ impl<C: CpuBackend> Machine<C> {
     }
 }
 
+
+/// As duas últimas tabelas de biblioteca: o decodificador de imagem e o banco aberto.
+///
+/// ## O decodificador: estado de verdade, e cabe
+///
+/// `DecoderState` é o **arquivo montado pedaço a pedaço** pelo `IForceFeed::Write`, o bitmap já
+/// criado e se a imagem tem transparência. Os três campos são codificáveis, e entram: um jogo que
+/// salve no meio de uma transferência de imagem continua de onde estava.
+///
+/// ## O banco: o conteúdo **não está no motor**
+///
+/// `Database` guarda uma conexão viva do SQLite, e conexão não se serializa. Mas o conteúdo
+/// **também não precisa**: ele está no arquivo, no disco, e o que o save state grava é o caminho —
+/// exatamente como faz com os arquivos abertos. A volta reabre.
+///
+/// O que se perde, e vai dito: uma **transação aberta** no instante do save. O SQLite só grava o
+/// que foi confirmado, então o que estava em curso volta como não feito. É a mesma natureza do
+/// arquivo que mudou no disco entre salvar e carregar — e é por isso que o caminho fica guardado
+/// dentro do `Database`: sem ele, a volta seria impossível.
+impl<C: CpuBackend> Machine<C> {
+    fn grava_bibliotecas(&self, secoes: &mut Secoes) {
+        secoes.poe_u32s("dec.ids", self.decoders.keys().copied());
+        for (id, decodificador) in &self.decoders {
+            secoes.poe_u32s(
+                &format!("dec.{id}.meta"),
+                [
+                    decodificador.bitmap.unwrap_or(0),
+                    u32::from(decodificador.bitmap.is_some()),
+                    u32::from(decodificador.transparent),
+                ],
+            );
+            secoes.poe(&format!("dec.{id}.fed"), decodificador.fed.clone());
+        }
+
+        secoes.poe_u32s("db.ids", self.databases.keys().copied());
+        for (id, banco) in &self.databases {
+            secoes.poe_texto(&format!("db.{id}.caminho"), &banco.caminho().to_string_lossy());
+        }
+    }
+
+    fn restaura_bibliotecas(&mut self, leitor: &Leitor<'_>) -> Result<(), Erro> {
+        let ids = leitor.u32s("dec.ids")?;
+        let mut decoders = std::collections::HashMap::new();
+        for id in ids {
+            let meta = leitor.u32s(&format!("dec.{id}.meta"))?;
+            if meta.len() != 3 {
+                return Err(Erro::Secao {
+                    nome: format!("dec.{id}.meta"),
+                    motivo: format!("esperava 3 números e veio {}", meta.len()),
+                });
+            }
+            let tem_bitmap = match meta[1] {
+                0 => false,
+                1 => true,
+                outro => {
+                    return Err(Erro::Secao {
+                        nome: format!("dec.{id}.meta"),
+                        motivo: format!("o campo `bitmap` vale {outro}, e é booleano"),
+                    })
+                }
+            };
+            decoders.insert(
+                id,
+                DecoderState {
+                    fed: secao_exigida(leitor, &format!("dec.{id}.fed"))?,
+                    bitmap: tem_bitmap.then_some(meta[0]),
+                    transparent: meta[2] != 0,
+                },
+            );
+        }
+
+        // Os bancos são **reabertos antes de aplicar**: um caminho que não existe mais é recusa, e
+        // não uma tabela de bancos com uma entrada pela metade.
+        let ids = leitor.u32s("db.ids")?;
+        let mut databases = std::collections::HashMap::new();
+        for id in ids {
+            let caminho =
+                std::path::PathBuf::from(leitor.texto(&format!("db.{id}.caminho"))?);
+            let banco =
+                crate::brew::sql::Database::open(&caminho).map_err(|erro| Erro::Secao {
+                    nome: format!("db.{id}"),
+                    motivo: format!(
+                        "o estado guarda \"{}\" aberto e ele não pôde ser reaberto: {erro}",
+                        caminho.display()
+                    ),
+                })?;
+            databases.insert(id, banco);
+        }
+
+        self.decoders = decoders;
+        self.databases = databases;
+        Ok(())
+    }
+}
+
+
+/// Os últimos campos de estado que faltavam: o trecho interrompido, as chamadas pendentes, as
+/// superfícies do EGL e os resumos em curso.
+///
+/// ## O que **não** entra, e agora com a razão medida
+///
+/// `cargas_de_midia` guarda os sons já decodificados — uma `Arc<Sound>` com todas as amostras, que
+/// num som longo passa de cem megabytes. Ele **parece** uma lacuna, e não é: é cache **com caminho
+/// de recarga**. O `resolve_midia` procura a chave e, quando não acha, lê o `AEEMediaData` e
+/// carrega de novo. Derrubá-lo custa uma releitura do arquivo, e gravá-lo somaria o arquivo inteiro
+/// ao save state.
+///
+/// O mesmo argumento vale para `vfs` e `resources`, que já estavam de fora. E os outros 25 campos
+/// que sobram são instrumento e diagnóstico: contadores de chamada, rastreios, hipóteses, listas de
+/// arquivos que faltaram. **Salvá-los não é só desnecessário, é errado**: duas sessões igualmente
+/// válidas do mesmo jogo produziriam save states diferentes, e comparar dois estados passaria a
+/// medir quanto cada um foi observado.
+impl<C: CpuBackend> Machine<C> {
+    fn grava_ultimos(&self, secoes: &mut Secoes) {
+        // O trecho interrompido: o endereço e os quinze registradores de quem foi interrompido.
+        let (tem, endereco, registradores) = match self.trecho_interrompido {
+            Some((endereco, registradores)) => (1u32, endereco, registradores),
+            None => (0, 0, [0u32; 15]),
+        };
+        let mut numeros = vec![tem, endereco];
+        numeros.extend(registradores);
+        secoes.poe_u32s("ult.trecho", numeros);
+
+        secoes.poe_registros(
+            "ult.chamadas",
+            self.pending_calls
+                .iter()
+                .map(|chamada| {
+                    vec![
+                        chamada.function,
+                        chamada.args[0],
+                        chamada.args[1],
+                        chamada.args[2],
+                        chamada.args[3],
+                    ]
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        secoes.poe_registros(
+            "ult.egl_surfaces",
+            self.egl_surfaces
+                .iter()
+                .map(|(id, (a, b))| vec![*id, *a, *b])
+                .collect::<Vec<_>>(),
+        );
+
+        // Os resumos em curso. O estado do MD5 cabe em quatro palavras, o resto do bloco e o
+        // comprimento.
+        secoes.poe_u32s("hash.ids", self.hashes.keys().copied());
+        for (id, hash) in &self.hashes {
+            let (state, buffer, length) = hash.md5.estado();
+            let mut numeros = Vec::with_capacity(4 + 2 + buffer.len());
+            numeros.extend(state);
+            numeros.push(length as u32);
+            numeros.push((length >> 32) as u32);
+            numeros.push(buffer.len() as u32);
+            numeros.extend(buffer.iter().map(|b| u32::from(*b)));
+            secoes.poe_u32s(&format!("hash.{id}.md5"), numeros);
+        }
+    }
+
+    fn restaura_ultimos(&mut self, leitor: &Leitor<'_>) -> Result<(), Erro> {
+        let numeros = leitor.u32s("ult.trecho")?;
+        if numeros.len() != 17 {
+            return Err(Erro::Secao {
+                nome: "ult.trecho".to_string(),
+                motivo: format!("esperava 17 números e veio {}", numeros.len()),
+            });
+        }
+        let trecho_interrompido = match numeros[0] {
+            0 => None,
+            1 => {
+                let mut registradores = [0u32; 15];
+                registradores.copy_from_slice(&numeros[2..17]);
+                Some((numeros[1], registradores))
+            }
+            outro => {
+                return Err(Erro::Secao {
+                    nome: "ult.trecho".to_string(),
+                    motivo: format!("o campo de presença vale {outro}, e é booleano"),
+                })
+            }
+        };
+
+        let pending_calls: Vec<GuestCall> = leitor
+            .registros("ult.chamadas", 5)?
+            .into_iter()
+            .map(|r| GuestCall {
+                function: r[0],
+                args: [r[1], r[2], r[3], r[4]],
+            })
+            .collect();
+
+        let egl_surfaces: std::collections::HashMap<u32, (u32, u32)> = leitor
+            .registros("ult.egl_surfaces", 3)?
+            .into_iter()
+            .map(|r| (r[0], (r[1], r[2])))
+            .collect();
+
+        let ids = leitor.u32s("hash.ids")?;
+        let mut hashes = std::collections::HashMap::new();
+        for id in ids {
+            let numeros = leitor.u32s(&format!("hash.{id}.md5"))?;
+            if numeros.len() < 7 {
+                return Err(Erro::Secao {
+                    nome: format!("hash.{id}.md5"),
+                    motivo: format!("esperava ao menos 7 números e veio {}", numeros.len()),
+                });
+            }
+            let quantos = numeros[6] as usize;
+            if numeros.len() != 7 + quantos {
+                return Err(Erro::Secao {
+                    nome: format!("hash.{id}.md5"),
+                    motivo: format!(
+                        "diz ter {quantos} byte(s) no resto do bloco e vieram {}",
+                        numeros.len() - 7
+                    ),
+                });
+            }
+            let mut md5 = crate::brew::crypto::Md5::new();
+            let buffer: Vec<u8> = numeros[7..].iter().map(|b| *b as u8).collect();
+            md5.restaura_estado(
+                [numeros[0], numeros[1], numeros[2], numeros[3]],
+                &buffer,
+                u64::from(numeros[4]) | (u64::from(numeros[5]) << 32),
+            )
+            .map_err(|motivo| Erro::Secao {
+                nome: format!("hash.{id}.md5"),
+                motivo,
+            })?;
+            hashes.insert(id, HashState { md5 });
+        }
+
+        self.trecho_interrompido = trecho_interrompido;
+        self.pending_calls = pending_calls;
+        self.egl_surfaces = egl_surfaces;
+        self.hashes = hashes;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3676,5 +3922,135 @@ mod tests {
         );
         assert_eq!(widget.propriedades.get(&6), Some(&0x55));
         assert_eq!(widget.modelos.get(&0x8000), Some(&0x8001));
+    }
+
+    /// **O decodificador volta inteiro, e o banco volta reaberto.**
+    ///
+    /// O teste do banco é o mais interessante da frente inteira: ele **escreve uma linha, salva,
+    /// carrega e lê a linha de volta**. Não é um teste de campos — é o conteúdo sobrevivendo à
+    /// ida e volta pelo caminho, que é como o save state trata tudo o que mora em disco.
+    #[test]
+    fn decodificador_e_banco_vem_de_volta() {
+        let mut antes = maquina();
+        antes.decoders.insert(
+            0x100,
+            DecoderState {
+                fed: vec![1, 2, 3, 4],
+                bitmap: Some(0x200),
+                transparent: true,
+            },
+        );
+        antes.decoders.insert(
+            0x101,
+            DecoderState {
+                fed: Vec::new(),
+                bitmap: None,
+                transparent: false,
+            },
+        );
+
+        // Um banco de verdade, em disco, com uma linha escrita.
+        let caminho = std::env::temp_dir().join("zeebx-teste-do-banco.db");
+        let _ = std::fs::remove_file(&caminho);
+        let banco = crate::brew::sql::Database::open(&caminho).expect("abrir o banco");
+        banco
+            .exec("CREATE TABLE t(a INTEGER, b TEXT)")
+            .expect("criar a tabela");
+        banco
+            .exec("INSERT INTO t VALUES (7, 'sete')")
+            .expect("escrever a linha");
+        antes.databases.insert(0x300, banco);
+
+        let arquivo = antes.grava_estado();
+        let mut depois = maquina();
+        depois.restaura_estado(&arquivo).expect("restaurou");
+
+        let decodificador = depois.decoders.get(&0x100).expect("o decodificador voltou");
+        assert_eq!(decodificador.fed, vec![1, 2, 3, 4]);
+        assert_eq!(decodificador.bitmap, Some(0x200));
+        assert!(decodificador.transparent);
+        let vazio = depois.decoders.get(&0x101).expect("o segundo voltou");
+        assert_eq!(vazio.bitmap, None, "a ausência de bitmap não virou zero");
+        assert!(!vazio.transparent);
+
+        let reaberto = depois.databases.get(&0x300).expect("o banco voltou");
+        let linhas = reaberto
+            .exec("SELECT a, b FROM t")
+            .expect("ler a linha de volta");
+        assert_eq!(linhas.len(), 1, "a linha não sobreviveu à ida e volta");
+        assert_eq!(linhas[0].values[0].as_deref(), Some("7"));
+        assert_eq!(linhas[0].values[1].as_deref(), Some("sete"));
+
+        let _ = std::fs::remove_file(&caminho);
+    }
+
+    /// **O MD5 no meio de um cálculo volta, e o resumo fecha certo.**
+    ///
+    /// É o teste que dá sentido à decisão: em vez de conferir campos, ele **calcula o resumo pela
+    /// metade**. Começa um MD5, salva no meio, carrega num motor novo, termina o cálculo e compara
+    /// com o resumo da mesma entrada calculado de uma vez. Se o estado não voltasse inteiro, o
+    /// resumo sairia diferente — e nada apontaria para o save state.
+    #[test]
+    fn o_md5_no_meio_do_calculo_volta_e_fecha_certo() {
+        let mensagem: Vec<u8> = (0..200u8).collect();
+        // O resumo da mensagem inteira, calculado de uma vez.
+        let mut inteiro = crate::brew::crypto::Md5::new();
+        inteiro.update(&mensagem);
+
+        let mut antes = maquina();
+        let mut md5 = crate::brew::crypto::Md5::new();
+        md5.update(&mensagem[..137]);
+        antes.hashes.insert(0x500, HashState { md5 });
+
+        let arquivo = antes.grava_estado();
+        let mut depois = maquina();
+        depois.restaura_estado(&arquivo).expect("restaurou");
+
+        // O `finish` consome o estado, então o MD5 sai do mapa: é assim que o motor o usa.
+        let mut retomado = depois.hashes.remove(&0x500).expect("o hash voltou").md5;
+        retomado.update(&mensagem[137..]);
+        assert_eq!(
+            retomado.finish(),
+            inteiro.finish(),
+            "o resumo retomado não bate com o calculado de uma vez"
+        );
+    }
+
+    /// O trecho interrompido, as chamadas pendentes e as superfícies do EGL.
+    #[test]
+    fn trecho_chamadas_e_superficies_vem_de_volta() {
+        let mut antes = maquina();
+        let mut registradores = [0u32; 15];
+        registradores[3] = 0xabcd;
+        antes.trecho_interrompido = Some((0x1000, registradores));
+        antes.pending_calls.push(GuestCall {
+            function: 0x2000,
+            args: [1, 2, 3, 4],
+        });
+        antes.egl_surfaces.insert(0x3000, (640, 480));
+
+        let arquivo = antes.grava_estado();
+        let mut depois = maquina();
+        depois.restaura_estado(&arquivo).expect("restaurou");
+
+        let (endereco, voltados) = depois.trecho_interrompido.expect("o trecho voltou");
+        assert_eq!(endereco, 0x1000);
+        assert_eq!(voltados[3], 0xabcd, "o registrador do trecho não voltou");
+        assert_eq!(depois.pending_calls.len(), 1);
+        assert_eq!(depois.pending_calls[0].function, 0x2000);
+        assert_eq!(depois.pending_calls[0].args, [1, 2, 3, 4]);
+        assert_eq!(depois.egl_surfaces.get(&0x3000), Some(&(640, 480)));
+    }
+
+    /// Um trecho ausente volta ausente, e não como endereço zero.
+    #[test]
+    fn a_ausencia_de_trecho_nao_vira_endereco_zero() {
+        let mut antes = maquina();
+        antes.trecho_interrompido = None;
+        let arquivo = antes.grava_estado();
+        let mut depois = maquina();
+        depois.trecho_interrompido = Some((0x7777, [0; 15]));
+        depois.restaura_estado(&arquivo).expect("restaurou");
+        assert_eq!(depois.trecho_interrompido, None);
     }
 }
