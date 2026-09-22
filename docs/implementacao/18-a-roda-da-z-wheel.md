@@ -943,6 +943,15 @@ O que isso delimita: **não é o título nem o número de arquivos** — é o qu
 títulos ela não oferece o foco que o roteiro alcança, e com muitos ela oferece, mas aí o foco cai num
 jogo que não sai sozinho. As duas condições precisam valer ao mesmo tempo, e é isso que falta montar.
 
+**A hipótese do último jogado caiu.** Zerando o cache (onde a roda grava o estado dela, dentro do
+pacote extraído) o lançamento continua a ser `0x0108E356` — o mesmo Alien Breaker. A escolha é
+**determinística** e não depende do estado que as execuções anteriores deixaram.
+
+O que continua de pé, medido: a consulta da grade devolve 120 linhas fundindo oficiais e locais, e o
+jogo que o roteiro alcança é o mesmo com ou sem a cópia renomeada que eu inseri. Ou seja, o roteiro
+chega a um **jogo**, e não a uma **posição** da lista — o que só fecha com uma leitura da própria
+grade, que fica como próximo experimento.
+
 **A lista é fundida, e a ordem não é a alfabética.** Medido no catálogo que a roda abre: **59
 títulos oficiais** (curtos — `Alice`, `Alien Breaker`) mais **61 locais** (o nome do pacote —
 `Alice no Pais das Maravilhas (Brazil) (Es,Pt)`), **120 linhas** na consulta da grade. Ordenados por
