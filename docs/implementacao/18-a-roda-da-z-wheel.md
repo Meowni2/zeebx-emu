@@ -692,6 +692,28 @@ genérico** — e é o que o emulador faz.
 2. **Qualquer comportamento dela fora dos caminhos que este roteiro exercita.** O censo mede o
    *uso*; ausência de uso não é ausência de comportamento.
 
+### 7.7 O core não traduzia o controle em teclas do console
+
+`input::teclas_do_controle` existe desde sempre e é o que transforma o **controle** nas **teclas do
+BREW** que os aplicativos leem (`0xe031` a `0xe034` para o direcional, `0xe064` para o botão 1). A
+janela e o desktop a usam. O core Libretro **nunca a chamava** — entregava o controle pelo
+`set_port_pad` e parava ali. Medido em 22/09/2026, pelo caminho que o RetroArch usa:
+
+```text
+sem a tradução   a roda anima para sempre: 13 a 14 imagens distintas em cada 24 quadros,
+                 em todos os passos do roteiro, e nenhuma tecla é tratada
+com a tradução   55 imagens distintas nos 100 quadros antes da tecla (animando) e
+                 1 imagem distinta nos 100 quadros depois do confirmar (tratada)
+```
+
+É a diferença entre "o controle chega ao guest" — que estava medido — e "o controle chega ao
+applet do jeito que ele lê". No aparelho isso é o RetroArch entregando o controle a um aplicativo
+que só entende teclas do console.
+
+**O que este caminho ainda não fecha, medido:** o pedido de abertura. Com as **mesmas teclas** e a
+mesma máquina, a varredura pede (`abertura pedida: 0x0108e356`) e o core não. A diferença está em
+como o core conduz a sessão, e não na tecla — é o próximo experimento.
+
 ## 8. O que ainda não funciona
 
 ### 8.1 Medido em 22/09/2026: a roda não reage a tecla, e a causa era uma classe

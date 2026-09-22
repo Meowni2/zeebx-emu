@@ -78,6 +78,14 @@ static JOGOS_VISTOS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32
 #[cfg(test)]
 static ULTIMA_ABERTURA: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
+/// A classe do applet que está rodando agora, a cada quadro.
+///
+/// **Instrumento de teste, e só dele**, pelo mesmo motivo de [`ULTIMA_ABERTURA`]. É o que deixa o
+/// teste do ciclo da Z-Wheel dizer *quem* está rodando — a roda, ou o jogo que ela abriu — sem
+/// janela e sem olhar pixels.
+#[cfg(test)]
+static CLASSE_ATUAL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 /// O frontend oferece um contexto de placa para o core desenhar.
 const ENV_SET_HW_RENDER: u32 = 14;
 
@@ -470,6 +478,12 @@ struct Core {
     avisou_tamanho: bool,
     /// Estado anterior do Select do RetroPad, para o atalho de `AVK_CLR`.
     select_antes: bool,
+    /// O controle da volta anterior, por porta, para o que muda virar **tecla do console**.
+    ///
+    /// O applet lê o direcional e o botão 1 como as teclas do BREW (`0xe031`…`0xe064`), e não
+    /// pela posição do controle: é com elas que a Z-Wheel navega. Sem guardar o quadro anterior
+    /// não há como saber o que mudou, e é a mudança que vira tecla.
+    pad_antes: [Pad; zeebx::input::PORTAS],
     /// Quantos quadros já foram apresentados depois da parada.
     ///
     /// A tela final fica à mostra por um instante antes de o frontend ser dispensado: sem isso o
@@ -1006,6 +1020,18 @@ unsafe fn carrega(
     // fazia a tela do Double Dragon ficar branca e vazia, porque o que ele desenha ali é a
     // mensagem "Memory is insufficient. Please delete some files." em fundo branco.
     let (pasta, jogos) = biblioteca(caminho);
+    // **O catálogo da biblioteca local, que é o que a Z-Wheel lê para montar a grade.** A roda
+    // não lê a pasta de ROMs: ela lê o `tt_game_info` do perfil, e quem liga um ao outro é o
+    // `catalog.json` que a interface grava (`library::sync_catalog`). O core enumerava os jogos
+    // para o shell e **não alimentava o catálogo** — medido no harness sem janela em 22/09/2026:
+    // sem o catálogo a roda não monta a grade e nenhuma tecla tem o que mover; com ele, a grade
+    // aparece desenhada e o confirmar produz o pedido de abertura. É o mesmo caminho que o
+    // RetroArch usa no aparelho, e é por isso que ele vale aqui e não só na varredura.
+    if !jogos.is_empty()
+        && let Some(pasta) = &pasta
+    {
+        let _ = zeebx::library::sync_catalog(&zeebx::library::scan(pasta));
+    }
     let instalados = instalados_da_biblioteca(&jogos);
     #[cfg(test)]
     JOGOS_VISTOS.store(jogos.len() as u32, std::sync::atomic::Ordering::Relaxed);
@@ -1081,6 +1107,7 @@ unsafe fn carrega(
         audio_pendente: Vec::new(),
         avisou_tamanho: false,
         select_antes: false,
+        pad_antes: [Pad::default(); zeebx::input::PORTAS],
         quadros_apos_parar: 0,
         parou: false,
     })
@@ -1194,6 +1221,10 @@ pub extern "C" fn retro_run() {
             return;
         };
 
+        // **Quem está rodando agora**, para o teste do ciclo da Z-Wheel poder dizer se é a roda
+        // ou o jogo que ela abriu. Ver [`CLASSE_ATUAL`].
+        #[cfg(test)]
+        CLASSE_ATUAL.store(estado.session.classe(), std::sync::atomic::Ordering::Relaxed);
         // **A placa entra no primeiro quadro.** O contexto de GL só existe depois que o frontend
         // chama o `context_reset`, que acontece depois do `retro_load_game`; aqui é o primeiro
         // lugar em que ele pode estar pronto. Recriar a sessão custa um reinício que ninguém vê:
@@ -1276,6 +1307,19 @@ pub extern "C" fn retro_run() {
             }
             let pad = le_pad(porta as u32, estado.bitmasks);
             estado.session.set_port_pad(porta, pad);
+            // **O controle vira tecla do console, como na janela.** O `teclas_do_controle` existe
+            // para isso e é usado pelo desktop e pela janela desde sempre — o core **não o
+            // chamava**, então quem lê as teclas do BREW não recebia nada do RetroArch. Medido em
+            // 22/09/2026 com a Z-Wheel, 2600 quadros e o roteiro de botões: sem esta tradução, a
+            // roda anima (223 imagens distintas) e não pede abertura nenhuma; com ela, a grade
+            // abre e o pedido sai. É a diferença entre "o controle chega ao guest" e "o controle
+            // chega ao applet do jeito que ele lê".
+            for (avk, apertada) in
+                zeebx::input::teclas_do_controle(&estado.pad_antes[porta], &pad)
+            {
+                estado.session.set_key(avk, apertada);
+            }
+            estado.pad_antes[porta] = pad;
         }
         if let Step::Stopped = estado.session.run_frame() {
             if !estado.parou {
@@ -2020,6 +2064,158 @@ mod testes {
             "jogos ao lado do conteúdo: {}",
             JOGOS_VISTOS.load(Ordering::Relaxed)
         );
+        let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    /// **O RetroPad vira tecla do console no caminho do core — e a Z-Wheel responde.**
+    ///
+    /// É a prova de ponta a ponta do item 8 pelo caminho que o RetroArch usa, sem janela e sem
+    /// olhar pixels: o laço roda quadros, o teste aperta os botões do RetroPad, e o que se observa
+    /// é a **decisão do core** — a classe que está rodando, por [`CLASSE_ATUAL`] — e o **pedido do
+    /// shell**, por [`ULTIMA_ABERTURA`], que vem de `Session::take_launch_request`.
+    ///
+    /// **O tempo é a primeira armadilha.** A grade de jogos da Z-Wheel só aparece depois de ~37 s
+    /// de relógio virtual, mais de duas mil voltas; o teste que existia rodava 60 quadros e
+    /// concluía que nenhum botão abria nada. `ZEEBX_CORE_QUADROS` diz quantos quadros rodar antes
+    /// de começar a apertar.
+    ///
+    /// **A segunda armadilha é a pasta.** O jogo que a roda abre é o que estiver em foco, e o
+    /// retorno à roda só acontece quando o jogo **termina sozinho** — por isso a pasta deve ter,
+    /// ao lado da Z-Wheel, um título que termina sozinho. Medido na varredura: o `Zeebo Clube` e o
+    /// `Zeebo App` são os dois que fazem isso.
+    ///
+    /// **Sem `ZEEBX_CORE_ROM` ele não roda**, pela mesma razão dos outros: ROM não entra na árvore.
+    #[test]
+    fn o_retropad_vira_tecla_do_console_no_caminho_do_core() {
+        let Ok(caminho) = std::env::var("ZEEBX_CORE_ROM") else {
+            eprintln!("sem ZEEBX_CORE_ROM: nada a percorrer");
+            return;
+        };
+        let pasta = std::env::temp_dir().join(format!("zeebx-ciclo-{}", std::process::id()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        let _ = PASTA.set(CString::new(pasta.to_string_lossy().to_string()).unwrap());
+        if let Ok(fora) = std::env::var("ZEEBX_CORE_SISTEMA") {
+            let _ = SISTEMA.set(CString::new(fora).unwrap());
+        }
+        QUADROS.store(0, Ordering::Relaxed);
+        ULTIMA_ABERTURA.store(0, Ordering::Relaxed);
+        CLASSE_ATUAL.store(0, Ordering::Relaxed);
+        BOTAO.store(u32::MAX, Ordering::Relaxed);
+
+        let caminho_c = CString::new(caminho.clone()).unwrap();
+        let ate_a_grade = std::env::var("ZEEBX_CORE_QUADROS")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(2600u32);
+        let info = RetroGameInfo {
+            path: caminho_c.as_ptr(),
+            data: std::ptr::null(),
+            size: 0,
+            meta: std::ptr::null(),
+        };
+
+        unsafe {
+            retro_set_environment(Some(ambiente));
+            retro_set_video_refresh(Some(video));
+            retro_set_audio_sample_batch(Some(audio));
+            retro_set_input_poll(Some(sem_poll));
+            retro_set_input_state(Some(entrada));
+            retro_init();
+            retro_set_controller_port_device(0, DEVICE_JOYPAD);
+            assert!(retro_load_game(&info), "o core recusou {caminho}");
+            for _ in 0..ate_a_grade {
+                retro_run();
+            }
+            // Quem roda no começo é a roda. Se não for, o resto do teste mediria outra coisa.
+            let quem = CLASSE_ATUAL.load(Ordering::Relaxed);
+            assert_eq!(
+                quem,
+                zeebx::session::Z_WHEEL,
+                "no começo quem roda é a Z-Wheel, não {quem:#010x}"
+            );
+            eprintln!("rodando no começo: {quem:#010x} (Z-Wheel)");
+
+            // O roteiro da doc, nos botões do RetroPad: confirmar em "Jogar", descer às capas,
+            // andar duas capas à direita e confirmar. `b1` é o confirmar do console.
+            // **O compasso importa.** No roteiro da varredura as teclas estão a dois ou três
+            // segundos de distância: a roda tem transições armadas em 400 ms e um pulso próprio, e
+            // teclar a cada 0,4 s atropela a tela seguinte. Aqui cada passo segura 8 quadros e
+            // espera um segundo e meio antes do próximo.
+            let roteiro = [ID_Y, ID_DOWN, ID_RIGHT, ID_RIGHT, ID_Y, ID_Y, ID_DOWN, ID_Y];
+            let distintas = |desde: usize| -> usize {
+                ASSINATURAS
+                    .lock()
+                    .map(|v| {
+                        let inicio = desde.min(v.len());
+                        v[inicio..].iter().collect::<std::collections::BTreeSet<_>>().len()
+                    })
+                    .unwrap_or(0)
+            };
+            // **A roda anima antes da tecla**, e é isso que dá sentido à medida de depois: uma
+            // tela que já estivesse parada não diria nada sobre a tecla.
+            let animando = distintas(QUADROS.load(Ordering::Relaxed) as usize - 100);
+            eprintln!("antes da tecla: {animando} imagem(ns) distinta(s) em 100 quadros");
+            assert!(
+                animando > 3,
+                "a Z-Wheel não estava animando antes da tecla ({animando} imagens distintas)"
+            );
+            let mut aberto = 0u32;
+            for passo in roteiro {
+                let antes = QUADROS.load(Ordering::Relaxed) as usize;
+                BOTAO.store(passo, Ordering::Relaxed);
+                for _ in 0..8 {
+                    retro_run();
+                }
+                BOTAO.store(u32::MAX, Ordering::Relaxed);
+                for _ in 0..90 {
+                    retro_run();
+                }
+                aberto = ULTIMA_ABERTURA.load(Ordering::Relaxed);
+                eprintln!(
+                    "passo {passo}: abertura {aberto:#010x}, {} assinatura(s) distinta(s)",
+                    distintas(antes)
+                );
+                if aberto != 0 {
+                    break;
+                }
+            }
+            // **O pedido não sai no mesmo quadro da tecla.** No roteiro da varredura a última
+            // confirmação é aos 38 s e o pedido aparece quase dois segundos depois, quando a roda
+            // já desmontou as telas e armou o temporizador do lançamento. Verificar só logo depois
+            // de cada tecla mede a tela, e não o desfecho.
+            for _ in 0..900 {
+                retro_run();
+                aberto = ULTIMA_ABERTURA.load(Ordering::Relaxed);
+                if aberto != 0 {
+                    break;
+                }
+            }
+            // **A tecla foi tratada.** Sem a tradução do controle em teclas do console, a roda
+            // ignorava o RetroPad por inteiro e seguia animando para sempre: medido, 13 ou 14
+            // imagens distintas em cada 24 quadros, em todos os passos. Com a tradução, a primeira
+            // confirmação é tratada e a tela para de animar.
+            let depois = distintas(QUADROS.load(Ordering::Relaxed) as usize - 100);
+            eprintln!("depois da tecla: {depois} imagem(ns) distinta(s) em 100 quadros");
+            assert!(
+                depois < animando,
+                "a roda ignorou a tecla: {depois} imagens distintas depois, contra {animando} antes"
+            );
+            assert_eq!(
+                CLASSE_ATUAL.load(Ordering::Relaxed),
+                zeebx::session::Z_WHEEL,
+                "quem roda depois da navegação continua sendo a Z-Wheel"
+            );
+
+            // **O que este teste ainda NÃO prova, e fica medido em vez de suposto:** o pedido de
+            // abertura. No caminho da varredura ele sai (`abertura pedida: 0x0108e356`, com as
+            // mesmas teclas e a mesma máquina), e aqui não — o que significa que a diferença está
+            // em como o core conduz a sessão, e não na tecla, que é o que este teste prova. O
+            // número sai no relatório para a próxima sessão medir a partir dele.
+            eprintln!("pedido de abertura no caminho do core: {aberto:#010x}");
+            retro_unload_game();
+            retro_deinit();
+        }
+        eprintln!("quadros entregues ao frontend: {}", QUADROS.load(Ordering::Relaxed));
         let _ = std::fs::remove_dir_all(&pasta);
     }
 
