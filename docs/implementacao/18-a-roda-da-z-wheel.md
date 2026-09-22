@@ -794,7 +794,25 @@ a pergunta muda de lado: ou a **tradução do controle** não produz as bordas s
 da máquina não é esvaziada depois desse despacho. É o próximo experimento, e ele é de código, não de
 comportamento do applet — a instrumentação para ele já está na captura.
 
-**9. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
+**9. E só uma tecla chega, em três variações.** O mesmo instrumento, rodado nos dois caminhos,
+compara o que entra na máquina:
+
+```text
+varredura  [30510] 0xe064 aperta   [33023] 0xe032 aperta   [35023] 0xe034 aperta
+           [36508] 0xe034 aperta   [38024] 0xe064 aperta      <- as cinco do roteiro, todas tratadas
+core       [36612] 0xe064 aperta   [36771] 0xe064 solta      <- um único par, e mais nada
+```
+
+E o fato se sustenta em três variações, todas medidas: botões diferentes, o **mesmo** botão quatro
+vezes, e um aperto de **120 quadros** (contra 8) — em todas, a máquina recebe **uma** tecla e as
+seguintes não aparecem, nem como aperta nem como solta. Na varredura, a captura mostra as cinco, uma
+a uma, cada uma tratada por dois tratadores.
+
+Isso não é o applet: é a **entrega**. Depois da primeira tecla o caminho do core não leva mais
+nenhuma à máquina, e é essa a pergunta do próximo experimento — com o instrumento já nos dois lados
+(a linha da entrega na captura) e o roteiro da varredura como referência do que deveria aparecer.
+
+**10. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
 padrão (a config do usuário) e o do core usa o que o frontend entrega; apontando o teste do core
 para a árvore do usuário (`ZEEBX_CORE_SISTEMA=$HOME/.config/zeebx`), o mesmo número de quadros leva
 a roda a **36,6 s** em vez de **50,6 s** — o estado do aparelho muda quando as coisas acontecem, o
