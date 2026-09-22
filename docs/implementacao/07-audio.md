@@ -274,6 +274,97 @@ Dois cuidados que não são detalhe:
 Medido no Double Dragon: a linha `som recusado (audio/mid)` saiu do relatório, e dez segundos de
 jogo saíram de silêncio para **74,7% de amostras não nulas**, com pico de 0,807.
 
+### O MIDI do Double Dragon, medido contra o Zeebulator
+
+O Double Dragon foi a primeira exceção séria a "a aproximação basta". Comparado com o outro
+emulador, o som dele é pobre — e a investigação mostrou que a causa é estrutural, não um ajuste.
+
+**O pacote traz MIDI, e ele estava escondido.** Um `grep` por `MThd` no zip não acha nada: o
+`sound.ggz` (1.928.097 B) é um cabeçalho de 592 B com **74 pares** `(offset, tamanho)` e 74
+membros gzip contíguos. Conferidos os 74, o tamanho declarado bate em todos, e o conteúdo é
+**62 `RIFF`/WAVE** (efeitos, mono 16 bits 22.050 Hz) e **12 `MThd`** (músicas). A BGM principal
+tem 1.788 notas, 47,47 s, 9 canais e 404 eventos de percussão; os 12 somam 22.729 notas.
+
+**O que a partitura pede** (e é aqui que a aproximação mais dói):
+
+| família | fatia das notas |
+|---|---:|
+| pianos (0–7) | 28,7% |
+| **guitarras (24–31)** | **23,2%** |
+| percussão (canal 10) | 20,6% (4.681 notas) |
+| metais | 9,2% |
+
+**O Zeebulator vira isso com amostras, não com onda.** Ele carrega um soundfont General MIDI real
+(GeneralUser GS, **32.319.396 B**) e toca com o **TinySoundFont** (MIT, `tsf.h`), em mono a
+22.050 Hz e com **−16 dB** de folga antes do corte interno do `tsf`. Note On/Off, `Program
+Change` e percussão vão para o banco: o canal 10 usa o kit do próprio soundfont (banco 128), não
+uma classificação nossa.
+
+**A comparação controlada**, mesma nota e mesma duração, passando o mesmo arquivo pelas duas
+implementações (e por uma referência independente, `timidity` + `FluidR3_GM`):
+
+| render | H2..H8 / H1 | centroide | rolloff 85% |
+|---|---|---:|---:|
+| Zeebulator com soundfont | 1 · .27 · .015 · .072 · .018 | 1383 Hz | 2647 Hz |
+| `timidity` + FluidR3 | — | 1638 Hz | 3140 Hz |
+| **Zeebx (`midi.rs`)** | 1 · **0** · .012 · **0** · .002 | **1065 Hz** | **1174 Hz** |
+
+Ou seja: o nosso sai **mais escuro e mais pobre em harmônicos** que os dois renders de soundfont,
+com afinação certa (441,0 Hz medidos contra 440,0 — erro de +0,23%, sem erro de oitava). O
+problema é o **material**, não a altura.
+
+E o defeito mais visível é este, medido programa a programa: **29 (guitarra overdrive), 30
+(distorcida), 42 (violoncelo) e 48 (cordas) saem com a mesma onda** — a tabela mapeia família, e
+a família `24–31` é "dente com decaimento". O 81 (lead saw) sai **quadrada** onde a partitura pede
+dente de serra. O baixo (33) fica **plano em 0,65** até o fim, onde o soundfont decai para 0,27.
+Nas guitarras isso é 23,2% das notas do jogo.
+
+Medido na música inteira:
+
+| render | pico | RMS |
+|---|---:|---:|
+| Zeebulator com soundfont | 25.727 (78,5% FS) | 4.877 |
+| Zeebulator sem soundfont (fallback) | 32.767 (**100% FS**, corta) | 8.401 (+4,72 dB) |
+| Zeebx (`midi.rs`) | 0,799988 (= 0,8 por construção) | ≈4.782 |
+
+**Uma ressalva que evita uma conclusão errada:** no Zeebulator **upstream o soundfont só está
+ligado em `tools/game_probe.cpp`**. O `frontends/standalone/main.cpp` constrói o `MediaHle` sem
+ele, então cai no sintetizador tosco — que é *mais escuro* ainda (rolloff 880 Hz). Quem comparar
+pelo standalone não está ouvindo soundfont nenhum; o binário com o banco é o `game_probe`.
+
+**Licença: o código do Zeebulator não serve.** Ele é **GPLv3** e o Zeebx é **GPL-2.0-only**; as
+duas não se combinam. O que serve é o que está sob licença própria: o **TinySoundFont** (MIT), o
+`rustysynth` (MIT, Rust puro) e o próprio banco GeneralUser GS (licença permissiva, embora o texto
+admita origem desconhecida de parte das amostras). O `oxisynth` é LGPL-2.1 e fica de fora.
+
+**O custo, medido:** o banco tem **10,3×** o tamanho da árvore inteira do Zeebulator, pede
+**+64 MiB de RSS** na carga (o `tsf` converte tudo para `float`) e levaria o `.so` do core de
+**15,6 MB para ~48 MB** em seis alvos de CI. O caminho absoluto compilado do Zeebulator não serve
+para o core: não é relocalizável, vaza o `$HOME` do build e, faltando o arquivo, a música degrada
+em silêncio.
+
+**Dois fatos que mudam o risco da troca:**
+
+1. Trocar o sintetizador **não acusa regressão na linha de base** das 62 ROMs: pico e RMS ficam no
+   relatório completo e **não** no resumo, por decisão registrada em `varredura.rs` — conferido,
+   `0` dos 62 arquivos em `docs/varredura/` tem a linha `áudio:`.
+2. Em compensação, **17 testes** dentro de `src/audio/midi.rs` travam propriedades da síntese
+   atual (pico em `0,79..=0,81`, altura por correlação, brilho da percussão). Uma troca de motor
+   os reescreve.
+
+O plano, em duas etapas, com a medição no meio:
+
+- **Etapa 1, barata:** corrigir na tabela exatamente o que foi medido — guitarras 24–31
+  sustentadas (29 e 30 são 23,2% da partitura), 81 como dente de serra, baixo sem sustentação
+  plana, e separar 42 de 48.
+- **Etapa 2, fiel:** wavetable GM com licença compatível (`rustysynth`, MIT), com o banco como
+  arquivo **opcional ao lado do core** e recuo para o sintetizador atual quando ele faltar — o
+  core Libretro não pode ganhar dependência de host, e 32 MB embutidos em cada `.so` não se pagam.
+
+O harness de comparação vive fora do repositório, em `~/zeebx-midi-harness`: `zbfont/` (C++ com o
+`tsf.h` e o banco), `zxmidi/` (o nosso `midi.rs` num crate mínimo) e `abtest/` (os WAVs de cada
+caso). É ele que mede cada passo em vez de opinar.
+
 ## O som que o jogo gera enquanto toca
 
 Os ports de arcade da Data East não entregam um arquivo: eles emulam o chip de som da placa e
@@ -313,3 +404,7 @@ fluxo chama o código do jogo como já fazia com os ports de arcade. O formato v
 **O banco de instrumentos do console.** Com ele, o MIDI deixa de ser aproximação e passa a soar
 como soava — e o caminho para ele é o mesmo das classes que faltam: o leitor de EFS2 (ver
 [14](14-z-wheel-e-o-efs2.md) e [15](15-o-que-falta-da-nand.md)).
+
+Enquanto o banco do console não aparece, a referência de fidelidade é a comparação medida da
+seção anterior: o wavetable GM com `rustysynth` (MIT) e o banco como arquivo opcional ao lado do
+core. A correção da tabela de timbres vem antes, porque é barata e ataca o que mais se ouve.
