@@ -4,11 +4,12 @@
 # como **rascunho**, com o título igual à tag: dá para conferir os arquivos antes de publicar, e o
 # verificador de atualizações do emulador ignora rascunhos até lá.
 #
-# São dois formatos por sistema, e os nomes dizem qual é qual:
+# Os nomes dizem qual formato é qual:
 #
 #   zeebx-standalone-linux-x86_64.deb        o emulador com a interface, para instalar
 #   zeebx-headless-linux-x86_64.zip          o binário sem interface, para quem tem frontend próprio
 #   zeebx-android-arm64-v8a.apk              o aplicativo de Android
+#   zeebx_libretro-linux-aarch64.zip         o core Libretro, com o `.info`, para RetroArch
 #
 # O APK sai assinado com a chave de depuração, que é a que o Gradle gera sozinho. Serve para
 # instalar de lado (`adb install`), **não** para a Play Store: aquela pede a chave de publicação,
@@ -257,7 +258,6 @@ jobs:
   core:
     name: core-${{ matrix.nome }}
     runs-on: ${{ matrix.sistema }}
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -317,6 +317,18 @@ jobs:
       - name: A biblioteca carrega e a ABI responde
         run: python3 ferramentas/verifica_core.py "${{ matrix.biblioteca }}"
 
+      # Vídeo, áudio e entrada são do frontend: o artefato que vai para a mão do usuário é o
+      # daqui, então a proibição do `libretro.yml` vale sobretudo no dia da tag.
+      - name: O core não depende de biblioteca de host (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          ldd "${{ matrix.biblioteca }}"
+          if ldd "${{ matrix.biblioteca }}" | grep -qiE 'libX11|wayland|EGL|libGL|asound|libudev|gtk'; then
+            echo "o core puxou biblioteca de interface: vídeo, áudio e entrada são do frontend"
+            exit 1
+          fi
+          echo "só libc, libm, libstdc++ e libgcc"
+
       # O pacote que vai para R36S/RG40XX-H deve ser o ELF Linux AArch64, não o artefato do
       # runner por acidente. Os sistemas handhelds não têm RPATH do ambiente de build.
       - name: Confere o core Linux AArch64 dos handhelds
@@ -337,6 +349,7 @@ jobs:
           mkdir -p pacote
           cp "${{ matrix.biblioteca }}" "pacote/${{ matrix.arquivo }}"
           cp frontends/libretro/zeebx_libretro.info pacote/
+          grep -q '^database = "Mobile - Zeebo"' pacote/zeebx_libretro.info
           cd pacote && zip -r "../zeebx_libretro-${{ matrix.nome }}.zip" .
 
       - name: Empacota o core (Windows)
@@ -346,6 +359,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path pacote | Out-Null
           Copy-Item "${{ matrix.biblioteca }}" "pacote/${{ matrix.arquivo }}"
           Copy-Item "frontends/libretro/zeebx_libretro.info" "pacote/"
+          if (-not (Select-String -Path "pacote/zeebx_libretro.info" -Pattern '^database = "Mobile - Zeebo"')) {
+            throw "o .info nao aponta para a base 'Mobile - Zeebo'"
+          }
           Compress-Archive -Path pacote/* -DestinationPath "zeebx_libretro-${{ matrix.nome }}.zip" -Force
 
       - uses: actions/upload-artifact@v4
