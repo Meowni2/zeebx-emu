@@ -198,8 +198,22 @@ Duas coisas ficaram no lugar: `passos_vencidos` deixa o contrato escrito, e com 
 cada passo do roteiro sai no relatório (`roteiro 20003 ms: passo 1 -> x=255 y=128 botoes=0x0`). Um
 roteiro que não chega ao jogo agora se distingue de um jogo que o ignora.
 
-Com o instrumento funcionando, a roda **reage ao manche** — a tela muda de 2001 para 1904 cores —,
-mas o botão ainda não abre um jogo. O que falta é o gesto, e agora ele pode ser procurado.
+Com o instrumento funcionando, a roda **reage ao manche** — a tela muda de 2001 para 1904 cores, e
+com o manche mantido por doze segundos vai a 4098. Mas o pedido de abertura **não vem**:
+
+```text
+roteiro "20000:x=128" (manche no maximo ate o fim, 32 s de execucao)
+  estado: roda
+  tela: 4098 cor(es), dominante 0xd69a
+  abertura pedida: (nenhuma)
+```
+
+O relatório agora diz explicitamente quando o shell pede outro applet (`Session::take_launch_request`,
+o mesmo gancho que o core usa para trocar de sessão), então "não pediu" é uma resposta medida e não
+uma ausência de pista. Ela navega por **posição** — registra `RegisterForPositionChange`, lê
+`GetPositionState` e nunca pede evento de botão —, então o gesto que confirma está na lógica dela, e
+não no caminho de entrada. Achá-lo é trabalho de engenharia reversa no módulo, ou uma sessão com o
+controle na mão.
 
 É aqui que a investigação headless para, e por um motivo prático: **o instrumento já respondeu o que
 tinha de responder** (a entrada chega, a roda reage, o pedido não sai), e o que falta é o significado
