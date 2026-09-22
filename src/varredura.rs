@@ -124,6 +124,40 @@ fn eixo_do_nome(nome: &str) -> Option<usize> {
     }
 }
 
+/// Aplica um passo do roteiro sobre o pad, devolvendo o pad do passo seguinte.
+///
+/// O pad **persiste**: cada passo muda só o que ele nomeia. É esta função que faz o passo vazio
+/// (`"11000:"`) soltar tudo, e é ela que garante que segurar o manche e apertar um botão sejam dois
+/// passos que se somam — antes disto o pad era recriado a cada passo e o aperto zerava o eixo.
+fn aplica_o_passo(mut pad: crate::input::Pad, passo: Passo) -> crate::input::Pad {
+    match passo {
+        Passo::Botao(indice) => pad.press(indice, true),
+        Passo::Eixo(eixo, valor) => pad.set_axis(eixo, valor),
+        Passo::Solto => pad = crate::input::Pad::default(),
+    }
+    pad
+}
+
+/// Aplica os passos do roteiro que já venceram até `decorrido` ms, devolvendo o pad do passo
+/// seguinte.
+///
+/// O pad entra e sai por valor: quem chama **tem** que guardá-lo entre um quadro e o seguinte. O
+/// defeito que existiu aqui morava justamente nisso — o pad era recriado dentro do laço de quadros,
+/// então o manche durava um passo só e o aperto do botão o soltava. O teste desta função mostra a
+/// travessia de dois quadros para deixar o contrato escrito.
+fn passos_vencidos(
+    mut pad: crate::input::Pad,
+    roteiro: &[(u64, Passo)],
+    passo: &mut usize,
+    decorrido: u64,
+) -> crate::input::Pad {
+    while *passo < roteiro.len() && roteiro[*passo].0 <= decorrido {
+        pad = aplica_o_passo(pad, roteiro[*passo].1);
+        *passo += 1;
+    }
+    pad
+}
+
 /// Um passo do roteiro de controle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Passo {
@@ -775,6 +809,14 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
         }
     }
     let mut passo_do_roteiro = 0usize;
+    // O pad do roteiro **persiste entre os passos, e por isso vive fora do laço de quadros**.
+    // Cada passo muda só o que ele nomeia, e o passo vazio (`"11000:"`) solta tudo. O defeito
+    // anterior era silencioso e sobreviveu a uma primeira correção: o pad era recriado a cada
+    // passo, então `"18000:x=128,20000:b1"` soltava o manche no instante do aperto. Como o
+    // instrumento mostrou (`eixo0=255` num passo e `128` no seguinte), recriá-lo fora do passo não
+    // bastava — ele precisa atravessar o laço inteiro. É isto que faz o gesto de "segurar o manche
+    // e apertar" chegar ao jogo, que é como um menu pede para abrir.
+    let mut pad_do_roteiro = crate::input::Pad::default();
     // Uma amostra anterior **por canal**: o fluxo é estéreo intercalado, e comparar `R` de um
     // quadro com `L` do mesmo quadro mediria a diferença entre os canais — que é música, e não
     // descontinuidade. Foi assim que a primeira versão desta conta deu salto zero em jogo com som.
@@ -822,18 +864,21 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
             // máquina a 30% ou a 300% da velocidade do console.
             if !roteiro.is_empty() {
                 let decorrido_total = agora_ms(session.clock_ms(), base_ms);
-                while passo_do_roteiro < roteiro.len()
-                    && roteiro[passo_do_roteiro].0 <= decorrido_total
-                {
-                    let mut pad = crate::input::Pad::default();
-                    match roteiro[passo_do_roteiro].1 {
-                        Passo::Botao(indice) => pad.press(indice, true),
-                        Passo::Eixo(eixo, valor) => pad.set_axis(eixo, valor),
-                        Passo::Solto => {}
-                    }
-                    session.set_port_pad(0, pad);
-                    passo_do_roteiro += 1;
+                let antes_do_roteiro = passo_do_roteiro;
+                pad_do_roteiro =
+                    passos_vencidos(pad_do_roteiro, &roteiro, &mut passo_do_roteiro, decorrido_total);
+                // Com o rastreio ligado, o pad depois de cada passo sai no relatório. Sem isto, um
+                // roteiro que não chega ao jogo é indistinguível de um jogo que o ignora — foi
+                // exatamente o que custou a investigação da Z-Wheel.
+                if rastreio.is_some() && passo_do_roteiro != antes_do_roteiro {
+                    eprintln!(
+                        "roteiro {decorrido_total} ms: passo {passo_do_roteiro} -> x={} y={} botoes={:#x}",
+                        pad_do_roteiro.eixo_do_console(0),
+                        pad_do_roteiro.eixo_do_console(1),
+                        pad_do_roteiro.buttons
+                    );
                 }
+                session.set_port_pad(0, pad_do_roteiro);
             }
             let agora = session.clock_ms();
             let decorrido = u64::from(agora.wrapping_sub(ultimo_relogio)).min(1000);
@@ -1567,5 +1612,62 @@ fn exige_espaco(dirs: &[PathBuf]) {
             arquivo_do_titulo("Alice no País das Maravilhas"),
             "alice-no-pa-s-das-maravilhas.txt"
         );
+    }
+
+    /// O pad do roteiro persiste entre os passos. Este teste existe porque o defeito era silencioso:
+    /// o pad era recriado a cada passo, então `"20000:x=128,22000:b1"` soltava o manche no instante
+    /// do aperto. O gesto de segurar o manche e apertar um botão — o que um jogo pede para abrir —
+    /// nunca chegava inteiro, e a conclusão errada foi que o gesto não existia.
+    #[test]
+    fn o_pad_do_roteiro_persiste_entre_os_passos() {
+        let pad = aplica_o_passo(crate::input::Pad::default(), Passo::Eixo(0, 128));
+        assert_eq!(pad.eixo_do_console(0), 255, "o manche no máximo é 255");
+
+        let pad = aplica_o_passo(pad, Passo::Botao(1));
+        assert_eq!(
+            pad.eixo_do_console(0),
+            255,
+            "o aperto do botão não pode soltar o manche"
+        );
+        assert_ne!(pad.buttons, 0, "o botão apertado continua apertado");
+
+        let pad = aplica_o_passo(pad, Passo::Solto);
+        assert_eq!(pad.eixo_do_console(0), 128, "o passo vazio solta o eixo");
+        assert_eq!(pad.buttons, 0, "o passo vazio solta os botões");
+    }
+
+    /// O mesmo defeito, medido **através dos quadros**, que é onde ele vivia.
+    ///
+    /// O roteiro `"18000:x=128,20000:b1"` põe o manche no máximo e, dois segundos depois, aperta um
+    /// botão. O pad precisa atravessar os quadros entre os dois passos: a primeira versão do
+    /// conserto o recriava a cada quadro, e o instrumento mostrou `eixo0=255` num passo e `128` no
+    /// seguinte. Este teste percorre a mesma travessia.
+    #[test]
+    fn o_manche_atravessa_os_quadros_ate_o_passo_seguinte() {
+        let roteiro = vec![(18_000u64, Passo::Eixo(0, 128)), (20_000, Passo::Botao(0))];
+        let mut passo = 0usize;
+
+        // Primeiro quadro depois dos 18 s: só o manche venceu.
+        let pad = passos_vencidos(crate::input::Pad::default(), &roteiro, &mut passo, 18_500);
+        assert_eq!(pad.eixo_do_console(0), 255);
+        assert_eq!(passo, 1);
+
+        // Quadros intermediários: nada novo vence, e o manche continua onde estava.
+        let pad = passos_vencidos(pad, &roteiro, &mut passo, 19_000);
+        assert_eq!(
+            pad.eixo_do_console(0),
+            255,
+            "o manche se perdeu entre dois quadros"
+        );
+
+        // Segundo passo: o botão aperta **sem** soltar o manche. É este o gesto de abrir.
+        let pad = passos_vencidos(pad, &roteiro, &mut passo, 20_500);
+        assert_eq!(
+            pad.eixo_do_console(0),
+            255,
+            "o aperto do botão soltou o manche"
+        );
+        assert_ne!(pad.buttons, 0);
+        assert_eq!(passo, 2);
     }
 }
