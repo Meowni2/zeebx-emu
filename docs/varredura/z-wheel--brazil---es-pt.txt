@@ -1,12 +1,10 @@
 Z-Wheel (Brazil) (Es,Pt)
 estado: roda
 tela: 256 cor(es), dominante 0xffff
-classes que o jogo pediu e não temos:
-  0x01000000
 classes pedidas:
   0x01000000  (1x)
   0x01001001  (1x)
-  0x01001003  (14x)
+  0x01001003  (15x)
   0x01001011  (5x)
   0x01001027  (1x)
   0x0100104f  (2x)
@@ -63,6 +61,9 @@ chamadas ao sistema de arquivos:
   Release  (0xf0003004 0x1 0xf0003008) -> 0
   GetInfo  (0x200ffea4 0xf0004018 0x0) -> 0
   Release  (0xf0004004 0x3 0xf002c020) -> 0
+  Remove "preloaded.cfg"  (0x3821c 0xf0003010 0xf0000008) -> 1
+  GetLastError  (0xf0003024 0xf0003010 0xf0000008) -> 0
+  Release  (0xf0003004 0xf0003010 0xf0000008) -> 0
   Test "ttgmrun.tmp"  (0x81b18 0xf000301c 0xf0000008) -> 1
   Release  (0xf0003004 0xf000301c 0xf0000008) -> 0
   OpenFile ".\sounds_loading.wav"  (0x1172c 0x1 0xf0003008) -> 805308304
@@ -74,6 +75,11 @@ arquivos não encontrados:
   fontsize.map
 APIs atendidas por hipótese:
   a abertura conhecida da Z-Wheel recebe automaticamente o atalho de pular instruções
+  a classe do download é atendida por um objeto que responde sucesso a tudo
   o controle de sistema respondeu zero: não há aparelho para consultar
   um widget aceitou toda interface que lhe pediram
   uma lista foi esvaziada sem chamar o liberador que o jogo registrou
+o que o jogo chamou nas classes de sonda:
+  classe 0x01000000, objeto 0x300005d0: slot[ 2] (0x6b56c, 0x1000b8c8, 0xf0023008)
+  classe 0x01000000, objeto 0x300005d0: slot[ 5] (0xf0023014, 0xf0003010, 0x0)
+  classe 0x01000000, objeto 0x300005d0: slot[ 1] (0xf0023004, 0xf0003010, 0x0)

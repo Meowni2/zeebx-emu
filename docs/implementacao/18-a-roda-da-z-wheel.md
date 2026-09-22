@@ -698,6 +698,38 @@ slot 3 com um argumento a mais. Implementado assim, o abort **desaparece** e a r
 as sete teclas do roteiro sem parar — mas **não redesenha**: os sete quadros continuam idênticos
 (`sha1` igual), e o pedido de abertura não aparece.
 
+### 8.1.2 A causa: a classe do cartão SIM estava sendo oferecida
+
+O `268d6fb` (21/09) pôs `AEECLSID_SIMCARDCTL` (`0x01006c01`) na fábrica, para calar o
+`tectoymain.c:1668 ERROR: Unable to create instance of AEECLSID_LCT_SIMCARDCTL, cannot do SIM
+check`. O comentário longo de `Interface::SimCardCtl` já dizia que **aquele log é o jogo tomando o
+caminho certo**: recusada a classe, a Z-Wheel põe o estado em `0x27` e o `0x82464` chama a
+`0x1f7b4`, que avança a interface; oferecida, o slot 3 responde zero, o estado vira `0x28`, e o
+`0x82464` **não faz nada com ele**. Era o `0x28` — "a tela fica onde está, calada".
+
+O A/B, medido no `bench` sem janela, 43 s de relógio virtual, mesmo roteiro nos dois:
+
+```text
+com a classe oferecida    474 692 instruções · 2582 voltas · 1 timer · 6 chamadas de IMedia
+                          5 quadros IDÊNTICOS (sha1 igual) · 0 quadro apresentado
+com a classe recusada     750 milhões de instruções · 6572 voltas · 4 timers · 32 chamadas de IMedia
+                          5 quadros DIFERENTES · 1 quadro apresentado
+```
+
+E a varredura passa a mostrar o que a roda desenha — a **grade da biblioteca local**, com os
+nossos jogos em três colunas, a partir de 37,6 s, que é depois do confirmar em "Jogar":
+
+```text
+texto desenhado na tela:
+    37605 ms  (427, 272)  Alien Breaker
+    37622 ms  (42, 272)  Action Hero 3D
+    37622 ms  (271, 272)  Alice
+```
+
+Falta o **pedido de abertura**: ele ainda não aparece, e o novo candidato está no próprio
+relatório — `IWidget::Acessador seletor 0x7001` entrou na lista de APIs que faltaram, e a `0x7001`
+é o evento que a transição manda no fim (§7.3).
+
 **A ponte do catálogo, e o que ela não resolve.** A roda não lê a pasta de ROMs: lê o
 `tt_game_info` do perfil, e quem liga um ao outro é o `catalog.json` que a interface grava
 (`library::sync_catalog`). A varredura não o alimentava — medido: com `ZEEBX_ROM_INSTALADOS`, o

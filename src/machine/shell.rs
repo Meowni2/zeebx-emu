@@ -509,6 +509,18 @@ impl<C: CpuBackend> Machine<C> {
         if size == 0 {
             return Ok(EBADPARM);
         }
+        // **O item pedido vai para a captura de serial**, e é o que faltava para responder "a
+        // Z-Wheel não monta a loja" com uma medida em vez de um palpite: um `EUNSUPPORTED` sem
+        // registro é indistinguível de nunca ter sido perguntado. O item que interessa aqui é o
+        // `AEE_DEVICEITEM_ADS` (29, do `AEEDeviceItems.h`): o nome do servidor de onde a loja
+        // baixa o catálogo.
+        if self.serial.is_some() {
+            let como = match item {
+                DEVICEITEM_IMEI => "atendido",
+                _ => "não atendido",
+            };
+            self.registra_serial(format!("<aparelho item {item} -> {como}>"));
+        }
         let value = match item {
             DEVICEITEM_IMEI => IMEI,
             _ => return Ok(EUNSUPPORTED),
@@ -663,7 +675,19 @@ impl<C: CpuBackend> Machine<C> {
             // conhecia a vizinha `0x01006c02`. Um `CreateInstance` que devolve nulo vira ponteiro
             // nulo dentro do applet, e e assim que "falta uma classe" reaparece adiante como
             // "acesso invalido a 0x0", tres camadas depois.
-            AEECLSID_SIMCARDCTL => Interface::SimCardCtl,
+            // **`AEECLSID_SIMCARDCTL` fica de FORA, e é medido duas vezes.** O `268d6fb` a pôs
+            // aqui para calar o `tectoymain.c:1668 ERROR: Unable to create instance of
+            // AEECLSID_LCT_SIMCARDCTL, cannot do SIM check`, e o comentário longo da
+            // [`Interface::SimCardCtl`](crate::brew::aee::Interface::SimCardCtl) já dizia que
+            // aquele log **é o jogo tomando o caminho certo**: recusada, a Z-Wheel põe o estado
+            // em `0x27` e o `0x82464` chama a `0x1f7b4`, que avança a interface; oferecida, o
+            // slot 3 (a verificação) responde zero, o estado vira `0x28`, e o `0x82464` **não faz
+            // nada com ele** — a tela fica onde está, calada. Medido no harness sem janela em
+            // 22/09/2026: com a classe oferecida, a roda para depois de 7 s de relógio virtual,
+            // com três widgets na árvore (a raiz e dois objetos vazios), nunca cria o palco
+            // (`0x01028e05`) nem o roller (`0x01028e14`), e sete teclas do roteiro não mudam um
+            // pixel. É o `0x28` que o comentário descreve.
+            // AEECLSID_SIMCARDCTL => Interface::SimCardCtl,
             // **`IFont`, não `ITypeface`.** O `AEECLSID_ROLLER_FONT` (0x0102f67c) é o
             // `FONT_STANDARD18B`, uma fonte do sistema — estava mapeado para o `ITypeface`, que é
             // outra interface, com outros métodos.
