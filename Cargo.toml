@@ -8,9 +8,11 @@ license = "GPL-2.0-only"
 repository = "https://github.com/ZeebxTeam/zeebx-emu"
 description = "Emulador do Zeebo, o console da TecToy"
 
-# O Android entra como um pacote proprio, ao lado deste.
+# Cada frontend e um pacote proprio, ao lado deste, sobre a mesma biblioteca: o Android porque
+# a janela e o ciclo de vida sao dele, e o headless porque quem tem frontend proprio nao quer a
+# interface junto.
 [workspace]
-members = ["frontends/android"]
+members = ["frontends/android", "frontends/headless"]
 
 # O nucleo e uma biblioteca; o binario de desktop e um consumidor dela, como o `.so` do Android.
 [lib]

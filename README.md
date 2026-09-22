@@ -86,6 +86,24 @@ O `run` informa onde o jogo parou, o que ele pediu e não temos, e o log que os 
 desenvolvedores deixaram no binário — por `DBGPRINTF` e por semihosting do ARM. Esse relatório é
 o backlog do projeto. As opções de depuração estão em [ARCHITECTURE.md](ARCHITECTURE.md).
 
+### Com um frontend seu
+
+Quem já tem um frontend — um que simula a carcaça do console, uma estante de jogos, um gabinete
+de fliperama — não quer a interface do Zeebx por cima da tela que ele mesmo montou. Para isso há
+um binário sem interface nenhuma, configurado por um `config.ini`:
+
+```bash
+cargo build --release -p zeebx-headless
+./target/release/zeebx-headless "roms/Quake.zip"
+```
+
+O jogo é obrigatório e não há padrão: este binário é chamado por outro programa, que sabe o que
+quer abrir. Na primeira execução ele escreve um `config.ini` comentado e diz onde.
+
+Ele abre uma janela só com o jogo — ou nenhuma, mandando os quadros por um cano para o seu
+programa pintar. Gráficos, áudio e controles saem dos mesmos campos que a interface grava, só
+que em INI. Ver [`frontends/headless/LEIAME.md`](frontends/headless/LEIAME.md).
+
 ## Plataformas
 
 Linux, Windows e macOS. Mobile está fora do escopo por enquanto.

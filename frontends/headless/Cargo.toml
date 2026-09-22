@@ -1,0 +1,34 @@
+[package]
+name = "zeebx-headless"
+version = "0.2.1"
+edition = "2024"
+license = "GPL-2.0-only"
+description = "O Zeebx sem interface, para quem tem frontend próprio"
+publish = false
+
+# Um binário só, e nenhuma biblioteca: este pacote não tem nada que alguém queira importar. O
+# que é reaproveitável mora no núcleo, que é de onde ele vem.
+[[bin]]
+name = "zeebx-headless"
+path = "src/main.rs"
+
+[dependencies]
+zeebx = { path = "../.." }
+
+# **Não há eframe aqui, e é essa a razão de este pacote existir.** O eframe existe para pôr uma
+# interface na tela; aqui não há interface, há um quadro. Arrastá-lo junto significaria compilar
+# o egui inteiro, o `rfd`, o Discord e a procura por atualizações para desenhar um retângulo.
+#
+# O `egui` em si fica, mas só pelos tipos: `egui::Key` é o nome canônico de uma tecla no
+# `settings.json`, e o `ViewportInPixels` é o que o pincel do núcleo recebe. Nada é desenhado
+# com ele — e, por já estar na árvore por causa do núcleo, não acrescenta compilação nenhuma.
+egui = { version = "0.33.3", default-features = false }
+glow = "0.16"
+raw-window-handle = "0.6"
+# A janela e a entrada, sem interface no meio. O glutin dá o contexto de GL, e é a mesma caixa
+# que o núcleo já usa para o contexto fora de tela e que o frontend de Android usa para o EGL.
+winit = { version = "0.30", default-features = false, features = ["rwh_06", "wayland", "x11"] }
+glutin = "0.32.3"
+glutin-winit = "0.5"
+# Só o despejo de quadros em `.png`. Já vinha na árvore pelo núcleo.
+png = "0.18.1"
