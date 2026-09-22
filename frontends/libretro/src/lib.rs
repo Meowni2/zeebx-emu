@@ -2207,7 +2207,32 @@ mod testes {
             // segundos de distância: a roda tem transições armadas em 400 ms e um pulso próprio, e
             // teclar a cada 0,4 s atropela a tela seguinte. Aqui cada passo segura 8 quadros e
             // espera um segundo e meio antes do próximo.
-            let roteiro = [ID_Y, ID_DOWN, ID_RIGHT, ID_RIGHT, ID_Y, ID_Y, ID_DOWN, ID_Y];
+            // **O roteiro, por `ZEEBX_CORE_TECLAS` quando se quer outro.** Formato `ms:id`, com o
+            // `id` do RetroPad (`1` é o `Y`, o confirmar do console), separado por vírgula — o
+            // mesmo espírito do `ZEEBX_ROM_TECLAS` da varredura, que é onde o ciclo foi provado
+            // primeiro. Sem a variável, vale o roteiro da doc: confirmar em "Jogar", descer às
+            // capas, andar duas capas à direita e confirmar. Ele depende de **onde a grade põe o
+            // foco**, e por isso não serve para toda pasta: com dois jogos, o foco já está no
+            // primeiro e as setas o tiram de lá.
+            let roteiro: Vec<(u32, u32)> = match std::env::var("ZEEBX_CORE_TECLAS") {
+                Ok(texto) => texto
+                    .split(',')
+                    .filter_map(|parte| {
+                        let (quando, id) = parte.split_once(':')?;
+                        Some((quando.trim().parse().ok()?, id.trim().parse().ok()?))
+                    })
+                    .collect(),
+                Err(_) => vec![
+                    (0, ID_Y),
+                    (0, ID_DOWN),
+                    (0, ID_RIGHT),
+                    (0, ID_RIGHT),
+                    (0, ID_Y),
+                    (0, ID_Y),
+                    (0, ID_DOWN),
+                    (0, ID_Y),
+                ],
+            };
             let distintas = |desde: usize| -> usize {
                 ASSINATURAS
                     .lock()
@@ -2231,7 +2256,17 @@ mod testes {
                 "a Z-Wheel não estava animando antes da tecla ({animando} imagens distintas)"
             );
             let mut aberto = 0u32;
-            for passo in roteiro {
+            for (quando, passo) in roteiro {
+                // Com instante no roteiro, espera o **relógio** chegar nele: cada `retro_run`
+                // avança ~26 ms, e não os 16 de um quadro a 60 Hz. Ver [`RELOGIO`].
+                if quando > 0 {
+                    for _ in 0..ate_a_grade {
+                        if RELOGIO.load(Ordering::Relaxed) >= quando {
+                            break;
+                        }
+                        retro_run();
+                    }
+                }
                 let antes = QUADROS.load(Ordering::Relaxed) as usize;
                 BOTAO.store(passo, Ordering::Relaxed);
                 for _ in 0..8 {

@@ -895,6 +895,18 @@ sessão do jogo, que começou do zero: o core **abriu e executou**. A volta à r
 cobrada: depende de o jogo terminar sozinho, e o que a grade põe em foco é o primeiro título da
 pasta.
 
+**A volta à roda, medida e ainda não provada.** O roteiro do teste do core virou configurável
+(`ZEEBX_CORE_TECLAS=ms:id`, com o `id` do RetroPad — `1` é o `Y`, o confirmar), para a prova poder
+ser roteirizada como na varredura. Com ele, a tentativa óbvia — uma pasta com a Z-Wheel e **um jogo
+que termina sozinho** (o `Zeebo Clube`, medido na varredura) — **não lança**: a roda reage ao
+confirmar (50 imagens distintas) e o pedido fica em zero. A grade depende do **conteúdo** para pôr o
+foco, e com dois títulos o roteiro de navegação tira o foco do único que existe.
+
+Com a pasta cheia (62 jogos), o roteiro da doc lança e executa (o `0x0108E356`), e a volta fica em
+`false` porque **o jogo em foco — o Alien Breaker, o primeiro em ordem depois da navegação — não sai
+sozinho**. Fica medido e registrado: falta um roteiro que abra, na pasta cheia, um dos dois títulos
+que terminam sozinhos.
+
 **13. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
 padrão (a config do usuário) e o do core usa o que o frontend entrega; apontando o teste do core
 para a árvore do usuário (`ZEEBX_CORE_SISTEMA=$HOME/.config/zeebx`), o mesmo número de quadros leva
