@@ -169,6 +169,10 @@ fn gira(app: AndroidApp, emulador: &mut Emulador) {
                 }
             }
             PollEvent::Main(MainEvent::Pause) | PollEvent::Main(MainEvent::LostFocus) => {
+                // O Android pode tirar o foco antes de entregar o KeyUp/MotionEvent final do
+                // controle. Se mantivermos o estado, a direção fica presa quando a atividade
+                // volta. No console, perder o aparelho equivale a soltar tudo.
+                emulador.pad = Pad::default();
                 visivel = false
             }
             PollEvent::Main(MainEvent::Destroy) => sair = true,

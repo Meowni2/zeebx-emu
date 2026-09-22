@@ -155,7 +155,13 @@ impl Entrada {
         let [cima, baixo, esquerda, direita] = input::DPAD;
         let x = ponteiro.axis_value(Axis::HatX);
         let y = ponteiro.axis_value(Axis::HatY);
-        if x != 0.0 || y != 0.0 || pad.is_down(esquerda) || pad.is_down(direita) {
+        if x != 0.0
+            || y != 0.0
+            || pad.is_down(cima)
+            || pad.is_down(baixo)
+            || pad.is_down(esquerda)
+            || pad.is_down(direita)
+        {
             pad.press(esquerda, x < -0.5);
             pad.press(direita, x > 0.5);
             pad.press(cima, y < -0.5);
