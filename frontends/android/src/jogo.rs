@@ -62,10 +62,25 @@ impl Emulador {
         let tela = sessao.screen();
         let (largura, altura) = (tela.width() as usize, tela.height() as usize);
         // Sem 3D na tela — um menu, uma abertura — a placa desenha o quadro do aparelho, em
-        // RGB565, que é o formato em que ele já está.
-        let bytes = match pela_placa && quadro_gl.is_none() {
-            true => tela.to_rgb565_bytes(),
-            false => Vec::new(),
+        // RGB565, que é o formato em que ele já está. A janela repinta mais vezes que o jogo
+        // escreve a tela; converter só quando série/escritas mudarem evita uma cópia grande por
+        // repaint.
+        let quadro_2d = match pela_placa && quadro_gl.is_none() {
+            true => {
+                let chave = (tela.serie(), tela.escritas());
+                let mudou = self
+                    .quadro_565
+                    .as_ref()
+                    .is_none_or(|(serie, escritas, _)| (*serie, *escritas) != chave);
+                if mudou {
+                    self.quadro_565 =
+                        Some((chave.0, chave.1, std::sync::Arc::from(tela.to_rgb565_bytes())));
+                }
+                self.quadro_565
+                    .as_ref()
+                    .map(|(_, _, bytes)| (chave, bytes.clone()))
+            }
+            false => None,
         };
 
         if !pela_placa {
@@ -182,7 +197,19 @@ impl Emulador {
                             let vp = info.viewport_in_pixels();
                             match quadro_gl {
                                 Some(quadro) => pintor.desenha_textura(gl, quadro, &vp, suave),
-                                None => pintor.desenha(gl, &bytes, lg, at, &vp, suave),
+                                None => {
+                                    if let Some((chave, bytes)) = &quadro_2d {
+                                        pintor.desenha_quadro(
+                                            gl,
+                                            bytes,
+                                            lg,
+                                            at,
+                                            *chave,
+                                            &vp,
+                                            suave,
+                                        );
+                                    }
+                                }
                             }
                         },
                     )),
