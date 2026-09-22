@@ -285,6 +285,20 @@ impl Secoes {
         self.poe(nome, bytes);
     }
 
+    /// Grava **registros de tamanho fixo**: cada um é o índice do objeto seguido dos campos dele.
+    ///
+    /// É a forma da maioria das tabelas do motor — `HashMap<u32, Estado>` onde o estado é um punhado
+    /// de números. Com um ajudante só, cada tabela nova vira cinco linhas de gravação e cinco de
+    /// leitura, e não um formato próprio que alguém precisa entender de novo.
+    pub fn poe_registros(
+        &mut self,
+        nome: &str,
+        registros: impl IntoIterator<Item = Vec<u32>>,
+    ) {
+        let registros: Vec<u32> = registros.into_iter().flatten().collect();
+        self.poe_u32s(nome, registros);
+    }
+
     /// Grava trios de números, com a contagem na frente.
     pub fn poe_trios(&mut self, nome: &str, valores: impl IntoIterator<Item = (u32, u32, u32)>) {
         let valores: Vec<u32> = valores
@@ -322,6 +336,26 @@ impl Leitor<'_> {
             });
         }
         Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    /// Registros gravados por [`Secoes::poe_registros`], com o número de campos de cada um.
+    ///
+    /// O número de campos é **declarado por quem lê**, e um resto diferente de zero é recusa: um
+    /// registro de quatro campos lido como se tivesse três deslocaria tudo o que vem depois, e o
+    /// defeito apareceria como estado de outro jogo dentro do objeto errado.
+    pub fn registros(&self, nome: &str, campos: usize) -> Result<Vec<Vec<u32>>, Erro> {
+        assert!(campos > 0, "um registro sem campo nenhum não é registro");
+        let valores = self.u32s(nome)?;
+        if valores.len() % campos != 0 {
+            return Err(Erro::Secao {
+                nome: nome.to_string(),
+                motivo: format!(
+                    "esperava múltiplo de {campos} valores e veio {}",
+                    valores.len()
+                ),
+            });
+        }
+        Ok(valores.chunks_exact(campos).map(|r| r.to_vec()).collect())
     }
 
     /// Trios gravados por [`Secoes::poe_trios`].

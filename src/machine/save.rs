@@ -23,7 +23,7 @@
 //! respondendo zero — ver o plano. Restaurar um estado parcial é exatamente o que o critério
 //! proíbe, e a porta é essa.
 
-use super::{Callback, Machine, Timer};
+use super::{Callback, Machine, MemStream, SoundState, Timer};
 use crate::cpu::{CpuBackend, Reg};
 use crate::save_state::{Erro, Guardavel, Leitor, Secoes};
 
@@ -139,6 +139,7 @@ impl<C: CpuBackend> Machine<C> {
         // Os três livros. O das superfícies vai com o nome da região, para a seção e o livro
         // terem o mesmo nome — quem lê o arquivo não precisa de tabela de tradução.
         self.grava_entrada_e_tempo(&mut secoes);
+        self.grava_tabelas_numericas(&mut secoes);
         self.heap.grava_com_prefixo("heap", &mut secoes);
         self.objects.grava(&mut secoes);
         self.superficies.grava_com_prefixo("surfaces", &mut secoes);
@@ -201,6 +202,7 @@ impl<C: CpuBackend> Machine<C> {
 
         // Daqui para baixo é aplicação: ou tudo, ou nada.
         self.restaura_entrada_e_tempo(&leitor)?;
+        self.restaura_tabelas_numericas(&leitor)?;
         self.heap.restaura_com_prefixo("heap", &leitor)?;
         self.objects.restaura(&leitor)?;
         self.superficies
@@ -368,6 +370,188 @@ impl<C: CpuBackend> Machine<C> {
             .map(|(function, context)| Callback { function, context })
             .collect();
         Ok(())
+    }
+}
+
+
+/// As tabelas de estado por objeto cujo conteúdo são **números**.
+///
+/// A lista é declarada uma vez, aqui, e é ela que grava e que lê — com o mesmo nome de seção dos
+/// dois lados. Foi assim que a maior parte do estado entrou: cada tabela é a mesma forma
+/// (`HashMap<u32, número>` ou `HashMap<u32, punhado de números>`), e o que muda é só o nome.
+///
+/// **O que não entra:** as tabelas que guardam pixels ou bytes em quantidade — `bitmaps`,
+/// `images`, `gl_last_frame`. Elas são a maior parte do que sobra e precisam de um formato próprio
+/// (comprimir, ou apontar para a memória do guest quando o conteúdo já está lá). Enquanto não
+/// entrarem, o core continua dizendo que não salva.
+impl<C: CpuBackend> Machine<C> {
+    /// As tabelas numéricas: `(nome da seção, valores)`.
+    /// Grava as tabelas numéricas, uma seção por tabela.
+    fn grava_tabelas_numericas(&self, secoes: &mut Secoes) {
+        for (nome, valores) in self.tabelas_numericas() {
+            secoes.poe_u32s(nome, valores);
+        }
+    }
+
+    /// Lê e aplica as tabelas numéricas.
+    ///
+    /// Como no resto: **lê tudo antes de escrever qualquer coisa**. E confere a faixa de cada campo
+    /// que é menor que `u32` no motor — um volume que não cabe em `u16` ou um `dono` que não é
+    /// booleano é arquivo corrompido, e não valor a acomodar.
+    fn restaura_tabelas_numericas(&mut self, leitor: &Leitor<'_>) -> Result<(), Erro> {
+        let mapa = |nome: &str| -> Result<std::collections::HashMap<u32, u32>, Erro> {
+            Ok(leitor.pares(nome)?.into_iter().collect())
+        };
+        let dib_buffers = mapa("tab.dib_buffers")?;
+        let dib_capacity = mapa("tab.dib_capacity")?;
+        let transformacoes = mapa("tab.transformacoes")?;
+        let canvases = mapa("tab.canvases")?;
+        let feeds = mapa("tab.feeds")?;
+        let image_bitmaps = mapa("tab.image_bitmaps")?;
+        let image_info = mapa("tab.image_info")?;
+
+        let mut transparency_crua = mapa("tab.transparency")?;
+        for (indice, valor) in transparency_crua.iter() {
+            if *valor > u32::from(u16::MAX) {
+                return Err(Erro::Secao {
+                    nome: "tab.transparency".to_string(),
+                    motivo: format!("o objeto {indice:#010x} tem transparência {valor}, que não cabe num u16"),
+                });
+            }
+        }
+        let transparency: std::collections::HashMap<u32, u16> = transparency_crua
+            .drain()
+            .map(|(a, v)| (a, v as u16))
+            .collect();
+
+        let mut streams = std::collections::HashMap::new();
+        for registro in leitor.registros("tab.streams", 5)? {
+            let dono = match registro[4] {
+                0 => false,
+                1 => true,
+                outro => {
+                    return Err(Erro::Secao {
+                        nome: "tab.streams".to_string(),
+                        motivo: format!("o campo `dono` vale {outro}, e é booleano"),
+                    })
+                }
+            };
+            streams.insert(
+                registro[0],
+                MemStream {
+                    buffer: registro[1],
+                    size: registro[2],
+                    position: registro[3],
+                    dono,
+                },
+            );
+        }
+
+        let mut sounds = std::collections::HashMap::new();
+        for registro in leitor.registros("tab.sounds", 9)? {
+            if registro[3] > u32::from(u16::MAX) {
+                return Err(Erro::Secao {
+                    nome: "tab.sounds".to_string(),
+                    motivo: format!("o som {:#010x} tem volume {}", registro[0], registro[3]),
+                });
+            }
+            let mut info = [0u8; 5];
+            for (destino, valor) in info.iter_mut().zip(&registro[4..9]) {
+                if *valor > 255 {
+                    return Err(Erro::Secao {
+                        nome: "tab.sounds".to_string(),
+                        motivo: format!("o `AEESoundInfo` do som {:#010x} tem byte {valor}", registro[0]),
+                    });
+                }
+                *destino = *valor as u8;
+            }
+            sounds.insert(
+                registro[0],
+                SoundState {
+                    notify: Callback {
+                        function: registro[1],
+                        context: registro[2],
+                    },
+                    info,
+                    volume: registro[3] as u16,
+                },
+            );
+        }
+
+        // Aplicação.
+        self.dib_buffers = dib_buffers;
+        self.dib_capacity = dib_capacity;
+        self.transformacoes = transformacoes;
+        self.canvases = canvases;
+        self.feeds = feeds;
+        self.image_bitmaps = image_bitmaps;
+        self.image_info = image_info;
+        self.transparency = transparency;
+        self.streams = streams;
+        self.sounds = sounds;
+        Ok(())
+    }
+
+    fn tabelas_numericas(&self) -> Vec<(&'static str, Vec<u32>)> {
+        let mapa = |m: &std::collections::HashMap<u32, u32>| -> Vec<u32> {
+            let mut pares: Vec<(u32, u32)> = m.iter().map(|(a, b)| (*a, *b)).collect();
+            pares.sort_unstable();
+            pares.into_iter().flat_map(|(a, b)| [a, b]).collect()
+        };
+        vec![
+            ("tab.dib_buffers", mapa(&self.dib_buffers)),
+            ("tab.dib_capacity", mapa(&self.dib_capacity)),
+            ("tab.transformacoes", mapa(&self.transformacoes)),
+            ("tab.canvases", mapa(&self.canvases)),
+            ("tab.feeds", mapa(&self.feeds)),
+            ("tab.image_bitmaps", mapa(&self.image_bitmaps)),
+            ("tab.image_info", mapa(&self.image_info)),
+            (
+                "tab.transparency",
+                mapa(
+                    &self
+                        .transparency
+                        .iter()
+                        .map(|(a, v)| (*a, u32::from(*v)))
+                        .collect(),
+                ),
+            ),
+            // Onde ficava a leitura de cada stream de memória: são quatro números por objeto.
+            (
+                "tab.streams",
+                self.streams
+                    .iter()
+                    .map(|(id, s)| {
+                        vec![
+                            *id,
+                            s.buffer,
+                            s.size,
+                            s.position,
+                            u32::from(s.dono),
+                        ]
+                    })
+                    .flatten()
+                    .collect(),
+            ),
+            // O estado de cada `ISound`: quem avisa, os cinco bytes do `AEESoundInfo` e o volume.
+            (
+                "tab.sounds",
+                self.sounds
+                    .iter()
+                    .map(|(id, s)| {
+                        let mut registro = vec![
+                            *id,
+                            s.notify.function,
+                            s.notify.context,
+                            u32::from(s.volume),
+                        ];
+                        registro.extend(s.info.iter().map(|b| u32::from(*b)));
+                        registro
+                    })
+                    .flatten()
+                    .collect(),
+            ),
+        ]
     }
 }
 
@@ -616,5 +800,95 @@ mod tests {
         }
         assert_eq!(nome_do_sinal_de_entrada(9999), None);
         assert_eq!(codigo_do_sinal_de_entrada("inventado"), u32::MAX);
+    }
+
+    /// **As tabelas numéricas voltam**, e um valor fora da faixa do motor é recusado.
+    ///
+    /// A segunda metade é a que importa mais: um volume que não cabe em `u16` ou um `dono` que não
+    /// é booleano é arquivo corrompido, e acomodar em silêncio seria carregar um estado que o jogo
+    /// não escreveu.
+    #[test]
+    fn as_tabelas_numericas_vem_de_volta() {
+        let mut antes = maquina();
+        antes.dib_buffers.insert(0x11, 0x1000);
+        antes.dib_capacity.insert(0x11, 640 * 480 * 2);
+        antes.transformacoes.insert(0x22, 7);
+        antes.canvases.insert(0x33, 0x2000);
+        antes.feeds.insert(0x44, 12);
+        antes.transparency.insert(0x55, 0x8000);
+        antes.streams.insert(
+            0x66,
+            MemStream {
+                buffer: 0x3000,
+                size: 512,
+                position: 128,
+                dono: true,
+            },
+        );
+        let mut info = [0u8; 5];
+        info[1] = 9;
+        antes.sounds.insert(
+            0x77,
+            SoundState {
+                notify: Callback {
+                    function: 0x1000_5000,
+                    context: 0x7777,
+                },
+                info,
+                volume: 42,
+            },
+        );
+
+        let arquivo = antes.grava_estado();
+        let mut depois = maquina();
+        depois.restaura_estado(&arquivo).expect("restaurou");
+
+        assert_eq!(depois.dib_capacity.get(&0x11), Some(&(640 * 480 * 2)));
+        assert_eq!(depois.transformacoes.get(&0x22), Some(&7));
+        assert_eq!(depois.canvases.get(&0x33), Some(&0x2000));
+        assert_eq!(depois.feeds.get(&0x44), Some(&12));
+        assert_eq!(depois.transparency.get(&0x55), Some(&0x8000));
+        let stream = depois.streams.get(&0x66).expect("o stream voltou");
+        assert_eq!((stream.buffer, stream.size, stream.position), (0x3000, 512, 128));
+        assert!(stream.dono, "o `dono` do buffer não voltou");
+        let som = depois.sounds.get(&0x77).expect("o som voltou");
+        assert_eq!(som.volume, 42);
+        assert_eq!(som.info[1], 9);
+        assert_eq!(som.notify.function, 0x1000_5000);
+    }
+
+    /// Um volume que não cabe num `u16` é **recusado**, e não acomodado.
+    #[test]
+    fn som_com_volume_impossivel_e_recusado() {
+        use crate::save_state::Secoes;
+
+        let mut secoes = Secoes::nova();
+        // As seções que o restaurador lê primeiro, vazias, e a dos sons com o valor impossível.
+        for nome in [
+            "tab.dib_buffers",
+            "tab.dib_capacity",
+            "tab.transformacoes",
+            "tab.canvases",
+            "tab.feeds",
+            "tab.image_bitmaps",
+            "tab.image_info",
+            "tab.transparency",
+            "tab.streams",
+        ] {
+            secoes.poe_u32s(nome, []);
+        }
+        // id, notify.function, notify.context, volume, cinco bytes de info
+        secoes.poe_u32s("tab.sounds", [0x77u32, 0, 0, 999_999, 0, 0, 0, 0, 0]);
+        let arquivo = secoes.fecha();
+        let leitor = crate::save_state::Leitor::abre(&arquivo).expect("abriu");
+
+        let mut maquina = maquina();
+        match maquina.restaura_tabelas_numericas(&leitor) {
+            Err(Erro::Secao { nome, motivo }) => {
+                assert_eq!(nome, "tab.sounds");
+                assert!(motivo.contains("999999"), "{motivo}");
+            }
+            outro => panic!("devia recusar o volume impossível, e devolveu {outro:?}"),
+        }
     }
 }
