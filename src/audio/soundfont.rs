@@ -252,6 +252,180 @@ mod tests {
         assert!(pico > 0.01, "o piano tinha de soar, pico {pico}");
     }
 
+
+    /// Um SoundFont2 mínimo, montado byte a byte, para o teste não depender de arquivo no disco.
+    ///
+    /// **Por que isto existe.** Os testes que usam o banco de verdade se dispensam quando não há
+    /// banco na máquina — e no CI não há. Um teste que passa sem provar nada é pior que um teste
+    /// ausente, então o caminho do banco precisa de um caso que **sempre** rode.
+    ///
+    /// A estrutura não foi adivinhada: ela foi lida do parser do `rustysynth`, porque o formato
+    /// tem duas armadilhas que custaram duas tentativas — o registro de zona tem **4 bytes**
+    /// (`wGenNdx`, `wModNdx`) e não quatro números, e o `SAMPLE_ID` (53) tem de ser o **último**
+    /// gerador da zona, senão o parser trata a primeira zona como zona global e não sobra região
+    /// nenhuma para tocar.
+    fn banco_minimo() -> Vec<u8> {
+        let taxa = 22_050u32;
+        let quadros = 64usize;
+
+        // --- amostras: 64 quadros de seno a 440 Hz, mais os 46 zeros que o `smpl` exige no fim ---
+        let mut amostras: Vec<i16> = (0..quadros)
+            .map(|i| {
+                let angulo = std::f64::consts::TAU * 440.0 * i as f64 / f64::from(taxa);
+                (angulo.sin() * 20_000.0) as i16
+            })
+            .collect();
+        amostras.extend(std::iter::repeat_n(0i16, 46));
+
+        fn bloco(nome: &[u8; 4], corpo: &[u8]) -> Vec<u8> {
+            let mut out = nome.to_vec();
+            out.extend((corpo.len() as u32).to_le_bytes());
+            out.extend(corpo);
+            if corpo.len() % 2 == 1 {
+                out.push(0);
+            }
+            out
+        }
+
+        fn lista(tipo: &[u8; 4], partes: &[Vec<u8>]) -> Vec<u8> {
+            let mut corpo = tipo.to_vec();
+            for parte in partes {
+                corpo.extend(parte);
+            }
+            bloco(b"LIST", &corpo)
+        }
+
+        fn nome_fixo(nome: &str) -> Vec<u8> {
+            let mut out = nome.as_bytes().to_vec();
+            out.resize(20, 0);
+            out
+        }
+
+        /// Um registro de zona: 4 bytes, `wGenNdx` e `wModNdx`.
+        fn zona(geradores: u16, moduladores: u16) -> Vec<u8> {
+            [geradores.to_le_bytes(), moduladores.to_le_bytes()].concat()
+        }
+
+        /// Os geradores de uma zona, com o terminador que o formato pede.
+        fn geradores(itens: &[(u16, u16)]) -> Vec<u8> {
+            let mut corpo = Vec::new();
+            for (tipo, valor) in itens {
+                corpo.extend(tipo.to_le_bytes());
+                corpo.extend(valor.to_le_bytes());
+            }
+            corpo.extend([0u8; 4]);
+            corpo
+        }
+
+        // --- INFO: só a versão e o nome ---
+        let info = lista(
+            b"INFO",
+            &[
+                bloco(b"ifil", &[2u16.to_le_bytes(), 1u16.to_le_bytes()].concat()),
+                // **`INAM` em maiúsculas, e não `inam`**: o parser aceita só as quatro letras
+                // exatas do formato, e a minúscula derruba a carga inteira com
+                // `ListContainsUnknownId`. Custou uma tentativa.
+                bloco(b"INAM", &{
+                    let mut n = b"Banco minimo do teste".to_vec();
+                    n.push(0);
+                    n
+                }),
+            ],
+        );
+
+        // --- sdta: as amostras ---
+        let mut cru = Vec::new();
+        for valor in &amostras {
+            cru.extend(valor.to_le_bytes());
+        }
+        let sdta = lista(b"sdta", &[bloco(b"smpl", &cru)]);
+
+        // --- pdta ---
+        // phdr: preset 0 e o terminador. `wPresetBagNdx` do terminador é o número de zonas.
+        let mut phdr = nome_fixo("Piano do teste");
+        phdr.extend(0u16.to_le_bytes()); // wPreset
+        phdr.extend(0u16.to_le_bytes()); // wBank
+        phdr.extend(0u16.to_le_bytes()); // wPresetBagNdx
+        phdr.extend(0u32.to_le_bytes()); // wLibrary
+        phdr.extend(0u32.to_le_bytes()); // wGenre
+        phdr.extend(0u32.to_le_bytes()); // wMorphology
+        let mut phdr_fim = nome_fixo("EOP");
+        phdr_fim.extend(0u16.to_le_bytes()); // wPreset
+        phdr_fim.extend(0u16.to_le_bytes()); // wBank
+        phdr_fim.extend(1u16.to_le_bytes()); // wPresetBagNdx: uma zona de preset
+        phdr_fim.extend([0u8; 12]); // wLibrary, wGenre, wMorphology
+        let phdr = bloco(b"phdr", &[phdr, phdr_fim].concat());
+
+        // Uma zona de preset, com a faixa de teclas e o instrumento 0. **O `INSTRUMENT` (41) por
+        // último**, pela mesma razão do `SAMPLE_ID` do lado do instrumento: com ele no meio, o
+        // parser trata esta zona como global e o preset fica sem região — e o sintoma é silêncio,
+        // não erro.
+        let pbag = bloco(b"pbag", &[zona(0, 0), zona(2, 0)].concat());
+        let pmod = bloco(b"pmod", &[0u8; 10]);
+        let pgen = bloco(b"pgen", &geradores(&[(43, 0x7f00), (41, 0)]));
+
+        // inst: instrumento 0 e o terminador.
+        let mut inst0 = nome_fixo("Inst do teste");
+        inst0.extend(0u16.to_le_bytes());
+        let mut inst_fim = nome_fixo("EOI");
+        inst_fim.extend(1u16.to_le_bytes());
+        let inst = bloco(b"inst", &[inst0, inst_fim].concat());
+
+        // Uma zona de instrumento. **`SAMPLE_ID` por último**: com ele no meio, o parser trata esta
+        // zona como global e o instrumento fica sem região.
+        let ibag = bloco(b"ibag", &[zona(0, 0), zona(4, 0)].concat());
+        let imod = bloco(b"imod", &[0u8; 10]);
+        let igen = bloco(b"igen", &geradores(&[(43, 0x7f00), (54, 1), (58, 69), (53, 0)]));
+
+        // shdr: a amostra 0 e o terminador.
+        let mut shdr = nome_fixo("Amostra do teste");
+        shdr.extend(0u32.to_le_bytes()); // inicio
+        shdr.extend((quadros as u32 - 1).to_le_bytes()); // fim
+        shdr.extend(0u32.to_le_bytes()); // inicio do laço
+        shdr.extend((quadros as u32 - 1).to_le_bytes()); // fim do laço
+        shdr.extend(taxa.to_le_bytes());
+        shdr.push(60); // nota original
+        shdr.push(0); // correção de tom
+        shdr.extend(0u16.to_le_bytes()); // link
+        shdr.extend(1u16.to_le_bytes()); // tipo: mono
+        let mut eos = nome_fixo("EOS");
+        eos.extend([0u8; 26]);
+        let shdr = bloco(b"shdr", &[shdr, eos].concat());
+
+        let pdta = lista(b"pdta", &[phdr, pbag, pmod, pgen, inst, ibag, imod, igen, shdr]);
+
+        let mut sfbk = b"sfbk".to_vec();
+        sfbk.extend(info);
+        sfbk.extend(sdta);
+        sfbk.extend(pdta);
+        bloco(b"RIFF", &sfbk)
+    }
+
+    /// **O caminho do banco é exercitado sempre**, com um banco montado aqui.
+    ///
+    /// Os outros testes do módulo usam um `.sf2` de verdade e se dispensam quando não há um — e no
+    /// CI não há. Este não se dispensa: monta o banco mínimo, carrega e toca.
+    #[test]
+    fn o_caminho_do_banco_toca_um_banco_minimo() {
+        let pasta = std::env::temp_dir().join("zeebx-banco-minimo.sf2");
+        std::fs::write(&pasta, banco_minimo()).expect("escreve o banco");
+        let banco = abre(&pasta).expect("o banco mínimo abre");
+        assert!(banco.presets() >= 1, "o banco tem de declarar o preset");
+        let som = toca(&banco, &uma_nota(0, 69, 240), 22_050).expect("toca");
+        assert_eq!(som.channels, 1);
+        let pico = som.samples.iter().fold(0.0f32, |a, s| a.max(s.abs()));
+        assert!(pico > 0.01, "o banco mínimo tinha de soar, pico {pico}");
+        // A duração segue a partitura, como no caminho da tabela: som curto demais faria o jogo
+        // achar que a música acabou cedo.
+        let esperado = 22_050 * 2; // nota de 240 pulsos a 96 por batida e 120 por minuto
+        assert!(
+            som.samples.len() >= esperado / 2,
+            "som curto demais: {} amostras",
+            som.samples.len()
+        );
+        let _ = std::fs::remove_file(&pasta);
+    }
+
     /// **O banco distingue o arco da palheta.** Era o defeito mais audível da tabela de timbres:
     /// 29 (*overdrive*), 30 (distorcida), 42 (violoncelo) e 48 (cordas) saíam com a **mesma onda**.
     ///
