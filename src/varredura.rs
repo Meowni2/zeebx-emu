@@ -99,6 +99,13 @@ fn roteiro_de_teclas() -> Vec<(u64, Passo)> {
                 }
             }
             None if nome.is_empty() => Passo::Solto,
+            // `k0`, `kclr`, `kselect`, `k0xe063`: tecla do console, pelo nome que o `avk` conhece.
+            None if nome.len() > 1 && nome[..1].eq_ignore_ascii_case("k") => {
+                match crate::input::avk::por_nome(&nome[1..].to_ascii_lowercase()) {
+                    Some(avk) => Passo::Tecla(avk),
+                    None => continue,
+                }
+            }
             None => match crate::input::BUTTON_NAMES
                 .iter()
                 .position(|candidato| candidato.eq_ignore_ascii_case(nome))
@@ -133,6 +140,8 @@ fn aplica_o_passo(mut pad: crate::input::Pad, passo: Passo) -> crate::input::Pad
     match passo {
         Passo::Botao(indice) => pad.press(indice, true),
         Passo::Eixo(eixo, valor) => pad.set_axis(eixo, valor),
+        // A tecla não vive no pad: quem a entrega é `passos_vencidos`, pela sessão.
+        Passo::Tecla(_) => {}
         Passo::Solto => pad = crate::input::Pad::default(),
     }
     pad
@@ -150,9 +159,26 @@ fn passos_vencidos(
     roteiro: &[(u64, Passo)],
     passo: &mut usize,
     decorrido: u64,
+    teclas: &mut Vec<(u32, bool)>,
 ) -> crate::input::Pad {
     while *passo < roteiro.len() && roteiro[*passo].0 <= decorrido {
-        pad = aplica_o_passo(pad, roteiro[*passo].1);
+        match roteiro[*passo].1 {
+            // Tecla e "soltar tudo" precisam do motor, e não só do pad: viram ordens para quem
+            // chama, que é quem tem a sessão em mãos.
+            Passo::Tecla(avk) => teclas.push((avk, true)),
+            Passo::Solto => {
+                let presas: Vec<u32> = teclas
+                    .iter()
+                    .filter(|(_, baixo)| *baixo)
+                    .map(|(avk, _)| *avk)
+                    .collect();
+                for avk in presas {
+                    teclas.push((avk, false));
+                }
+                pad = crate::input::Pad::default();
+            }
+            outro => pad = aplica_o_passo(pad, outro),
+        }
         *passo += 1;
     }
     pad
@@ -165,7 +191,14 @@ enum Passo {
     Botao(usize),
     /// Põe um eixo no valor dado, no curso do manche.
     Eixo(usize, i32),
-    /// Solta tudo.
+    /// Aperta uma **tecla do console** (`AVK_*`), que não sai de botão nenhum.
+    ///
+    /// É o que a Z-Wheel espera para o formulário de abertura andar: ela pede `AVK_0` e `AVK_CLR`,
+    /// e nenhum dos dois cabe num botão de controle. Sem este passo, o roteiro só sabia fazer o que
+    /// o controle faz — e a conclusão de que "o gesto não existe" vinha de um instrumento que não
+    /// sabia fazer o gesto.
+    Tecla(u32),
+    /// Solta tudo: botões, eixos e teclas.
     Solto,
 }
 
@@ -879,8 +912,17 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
             if !roteiro.is_empty() {
                 let decorrido_total = agora_ms(session.clock_ms(), base_ms);
                 let antes_do_roteiro = passo_do_roteiro;
-                pad_do_roteiro =
-                    passos_vencidos(pad_do_roteiro, &roteiro, &mut passo_do_roteiro, decorrido_total);
+                let mut ordens_de_tecla = Vec::new();
+                pad_do_roteiro = passos_vencidos(
+                    pad_do_roteiro,
+                    &roteiro,
+                    &mut passo_do_roteiro,
+                    decorrido_total,
+                    &mut ordens_de_tecla,
+                );
+                for (avk, baixo) in ordens_de_tecla {
+                    session.set_key(avk, baixo);
+                }
                 // Com o rastreio ligado, o pad depois de cada passo sai no relatório. Sem isto, um
                 // roteiro que não chega ao jogo é indistinguível de um jogo que o ignora — foi
                 // exatamente o que custou a investigação da Z-Wheel.
@@ -1658,6 +1700,45 @@ fn exige_espaco(dirs: &[PathBuf]) {
         assert_eq!(pad.buttons, 0, "o passo vazio solta os botões");
     }
 
+    /// O roteiro sabe apertar **tecla**, e o passo vazio solta o que estiver preso.
+    ///
+    /// A Z-Wheel pede `AVK_0` e `AVK_CLR` para o formulário de abertura andar, e nenhum dos dois
+    /// sai de botão de controle. Enquanto o roteiro só sabia de botão e eixo, a resposta honesta
+    /// era "o gesto não está no controle" — e a pergunta nem podia ser feita.
+    #[test]
+    fn o_roteiro_de_teclas_aperta_e_solta() {
+        let roteiro = vec![
+            (1_000u64, Passo::Tecla(crate::input::avk::ZERO)),
+            (2_000, Passo::Solto),
+        ];
+        let mut passo = 0usize;
+        let mut teclas = Vec::new();
+        let _ = passos_vencidos(
+            crate::input::Pad::default(),
+            &roteiro,
+            &mut passo,
+            1_500,
+            &mut teclas,
+        );
+        assert_eq!(teclas, vec![(crate::input::avk::ZERO, true)]);
+
+        let _ = passos_vencidos(
+            crate::input::Pad::default(),
+            &roteiro,
+            &mut passo,
+            2_500,
+            &mut teclas,
+        );
+        assert_eq!(
+            teclas,
+            vec![
+                (crate::input::avk::ZERO, true),
+                (crate::input::avk::ZERO, false)
+            ],
+            "o passo vazio tinha de soltar a tecla presa"
+        );
+    }
+
     /// O mesmo defeito, medido **através dos quadros**, que é onde ele vivia.
     ///
     /// O roteiro `"18000:x=128,20000:b1"` põe o manche no máximo e, dois segundos depois, aperta um
@@ -1670,12 +1751,19 @@ fn exige_espaco(dirs: &[PathBuf]) {
         let mut passo = 0usize;
 
         // Primeiro quadro depois dos 18 s: só o manche venceu.
-        let pad = passos_vencidos(crate::input::Pad::default(), &roteiro, &mut passo, 18_500);
+        let mut teclas = Vec::new();
+        let pad = passos_vencidos(
+            crate::input::Pad::default(),
+            &roteiro,
+            &mut passo,
+            18_500,
+            &mut teclas,
+        );
         assert_eq!(pad.eixo_do_console(0), 255);
         assert_eq!(passo, 1);
 
         // Quadros intermediários: nada novo vence, e o manche continua onde estava.
-        let pad = passos_vencidos(pad, &roteiro, &mut passo, 19_000);
+        let pad = passos_vencidos(pad, &roteiro, &mut passo, 19_000, &mut teclas);
         assert_eq!(
             pad.eixo_do_console(0),
             255,
@@ -1683,7 +1771,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
         );
 
         // Segundo passo: o botão aperta **sem** soltar o manche. É este o gesto de abrir.
-        let pad = passos_vencidos(pad, &roteiro, &mut passo, 20_500);
+        let pad = passos_vencidos(pad, &roteiro, &mut passo, 20_500, &mut teclas);
         assert_eq!(
             pad.eixo_do_console(0),
             255,
