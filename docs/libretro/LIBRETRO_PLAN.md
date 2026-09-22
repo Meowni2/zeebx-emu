@@ -1824,11 +1824,43 @@ Faltam **três peças**, e nenhuma é mecânica:
 
 | Peça | Tamanho | Por que não entrou ainda |
 |---|---|---|
-| `gl` — a máquina de estados de GL do guest | 60+ campos | matrizes, névoa, stencil, funções de mistura, cadeias de mipmap por textura, e os três buffers (cor, profundidade, stencil). É a peça mais arriscada: textura ou nível errado não dá erro, dá imagem corrompida |
+| `gl` — a máquina de estados de GL do guest | 57 campos | ver a classificação abaixo; é a peça mais arriscada do item |
 | `decoders` | por objeto | decodificador de imagem no meio de um fluxo: expor o de dentro, ou aceitar perder o que estava em curso |
 | `databases` | por objeto | banco SQL aberto — a mesma decisão |
 
-**Enquanto essas três não entrarem, o core responde `retro_serialize_size = 0`**, com teste que
+### A máquina de estados de GL, classificada
+
+Os 57 campos do `GlState` **não são um bloco**: são quatro grupos, e cada um pede uma decisão
+diferente. Isto foi levantado campo por campo, com o tipo ao lado, para a próxima passada ser
+mecânica em vez de arqueologia.
+
+**A — gravar (48 campos).** O estado que as chamadas de GL do jogo mudam e que o desenho seguinte
+lê: as três pilhas de matriz (`modelview`, `projection`, `texture_matrix`, 16 floats cada), o modo de
+matriz, o viewport e a tesoura (com a crua e a ligada), `surface` e `esticada`, as cores de limpeza e
+a corrente, o alvo de textura ligado e as duas unidades, as bandeiras de teste e as funções
+(`depth_*`, `blend_*`, `alpha_*`, `cull_*`, `stencil_*`, com os três `stencil_op`), a névoa, a faixa
+de profundidade, a máscara de cor, e a iluminação (`lighting`, `color_material`, `lights`,
+`material`, `light_model_ambient`, `shade_model`). São números e vetores de tamanho fixo — a mesma
+forma das tabelas que já entraram.
+
+**B — gravar com formato próprio (1 campo).** `textures`, com a cadeia de mipmaps de cada uma. É o
+que dá volume ao grupo e o que exige cuidado: um nível de mipmap que falte não dá erro, dá listra
+na imagem — foi assim que o defeito apareceu quando a cadeia passou a ser usada.
+
+**C — decidir se gravar (3 campos).** `color`, `depth` e `stencil`, os três buffers de 640×480. O
+de cor é o candidato mais interessante: ele é **escrito a partir do quadro e lido para apresentar**,
+e a tela (`screen`) já entra no estado — se a relação entre os dois for de derivação, gravar os dois
+é duplicar 1,2 MB. Os de profundidade e stencil não têm duplicata: sem eles, o teste de profundidade
+e a marcação de stencil recomeçam, e o palco da Z-Wheel perde o reflexo. **Esta é a decisão que falta
+tomar, e ela se toma medindo quem escreve em quem.**
+
+**D — não gravar, e conferir que estão vazios (4 campos).** `batch`, `pending`, `transformed` e
+`sujo` são acumuladores de um desenho **em curso**. O frontend chama o serialize **entre quadros**,
+nunca dentro de um `retro_run`, então no instante do save eles estão vazios — e é isso que os torna
+dispensáveis. O certo não é confiar nisso: é **recusar** o save se algum deles não estiver vazio, e o
+teste cobrir os dois lados.
+
+**Enquanto essas três peças não entrarem, o core responde `retro_serialize_size = 0`**, com teste que
 cobra. O critério proíbe estado parcial, e é por isso que a porta não abre antes.
 
 ### O livro dos objetos, e a codificação das interfaces
