@@ -56,7 +56,7 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if args.iter().any(|a| a == "--exemplo") {
-        print!("{}", include_str!("../config.ini"));
+        print!("{}", config::modelo());
         return ExitCode::SUCCESS;
     }
     if args.iter().any(|a| a == "--controles") {

@@ -180,7 +180,7 @@ pub fn cria(caminho: &std::path::Path) -> Result<(), String> {
     if caminho.exists() {
         return Err(format!("{} já existe", caminho.display()));
     }
-    let texto = MODELO;
+    let texto = modelo();
     if let Some(pasta) = caminho.parent() {
         std::fs::create_dir_all(pasta)
             .map_err(|erro| format!("não deu para criar {}: {erro}", pasta.display()))?;
@@ -189,9 +189,120 @@ pub fn cria(caminho: &std::path::Path) -> Result<(), String> {
         .map_err(|erro| format!("não deu para escrever {}: {erro}", caminho.display()))
 }
 
-/// O exemplo distribuído, que é também o que `--exemplo` imprime e o que a primeira execução
-/// escreve. Um só, para os três não poderem discordar.
-pub const MODELO: &str = include_str!("../config.ini");
+/// O exemplo distribuído, **antes** de as portas serem preenchidas. Ver [`modelo`].
+const EXEMPLO: &str = include_str!("../config.ini");
+
+/// A linha do exemplo que dá lugar às seções de porta.
+///
+/// É um comentário de propósito: se a substituição algum dia não acontecer, o que sobra ainda é
+/// um `config.ini` válido, com uma linha estranha, em vez de um arquivo quebrado.
+const MARCA: &str = "#<<portas>>";
+
+/// O `config.ini` completo: o que `--exemplo` imprime e o que a primeira execução escreve.
+///
+/// **As portas são geradas, não escritas à mão.** Elas são a parte que mais se quer editar — os
+/// botões — e também a que mais tem linha: treze por porta, e duas portas. Escrevê-las no
+/// exemplo significaria mantê-las de acordo com [`Controls::default`] para sempre, e um exemplo
+/// que diz `botao:East` onde o padrão é `tecla:X` é pior que um exemplo sem a linha: quem o lê
+/// passa a acreditar no que está ali.
+pub fn modelo() -> String {
+    EXEMPLO.replace(MARCA, &secoes_das_portas())
+}
+
+/// As seções `[porta1]` e `[porta2]` como o arquivo as escreve, a partir dos padrões.
+fn secoes_das_portas() -> String {
+    let controls = Controls::default();
+    (0..zeebx::input::PORTAS)
+        .map(|indice| {
+            let padrao = Player::default();
+            let player = controls.player(indice).unwrap_or(&padrao);
+            secao_da_porta(indice, player)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn secao_da_porta(indice: usize, player: &Player) -> String {
+    let mut linhas = vec![
+        format!("[porta{}]", indice + 1),
+        format!("ligada = {}", sim_ou_nao(player.ligada)),
+        format!("# O que o console enxerga ligado: controle (o Dragon), zpad, teclado ou boomerang."),
+        format!("aparelho = {}", nome_do_aparelho(player.aparelho)),
+        "# Qual controle do host alimenta esta porta. `--controles` lista os nomes que o sistema".to_string(),
+        "# dá a eles. Sem esta linha, a porta fica só no teclado.".to_string(),
+    ];
+    match &player.device {
+        Some(nome) => linhas.push(format!("controle = \"{nome}\"")),
+        None => linhas.push("# controle = \"Xbox Wireless Controller\"".to_string()),
+    }
+    linhas.push(String::new());
+
+    // Na ordem em que a interface os mostra, e não na alfabética do mapa: `up, down, left,
+    // right` lidos em sequência são um direcional, e `b1, b2, b3, b4` são os quatro botões.
+    for botao in zeebx::input::bindings::CONFIGURABLE {
+        let origens: Vec<String> = player.sources(botao).iter().map(escreve_origem).collect();
+        linhas.push(format!("{botao} = {}", origens.join(", ")));
+    }
+    linhas.push(String::new());
+
+    // Os eixos ficam comentados porque **é isso que o padrão é**: sem um controle escolhido, o
+    // console não tem eixo analógico nenhum, e escrevê-los aqui mudaria o comportamento em vez
+    // de descrevê-lo. Assim que a linha `controle` existir, eles entram sozinhos.
+    linhas.push(
+        "# Os quatro eixos analógicos do console, cada um vindo de um eixo do controle do host."
+            .to_string(),
+    );
+    linhas.push(
+        "# Eles só existem com um `controle` escolhido, e aí entram sozinhos nestes valores —".to_string(),
+    );
+    linhas.push("# as linhas abaixo servem para mudá-los. `:invertido` vira o sentido, e uma".to_string());
+    linhas.push("# linha vazia desliga o eixo.".to_string());
+    // Na ordem do console — x, y, z, rz —, e não na alfabética do mapa: `x` e `y` são um
+    // manche, `z` e `rz` são o outro, e lê-los fora de par não quer dizer nada.
+    let padroes = Player::default_axes();
+    for eixo in zeebx::input::AXIS_NAMES {
+        let Some(origem) = padroes.get(eixo) else {
+            continue;
+        };
+        let sufixo = match origem.invert {
+            true => ":invertido",
+            false => "",
+        };
+        linhas.push(format!("# eixo_{eixo} = {}{sufixo}", origem.name));
+    }
+    linhas.push(String::new());
+    linhas.join("\n")
+}
+
+fn escreve_origem(source: &Source) -> String {
+    match source {
+        Source::Key { name } => format!("tecla:{name}"),
+        Source::Button { name } => format!("botao:{name}"),
+        Source::Axis { name, positive } => {
+            let sinal = match positive {
+                true => '+',
+                false => '-',
+            };
+            format!("eixo:{name}{sinal}")
+        }
+    }
+}
+
+fn nome_do_aparelho(aparelho: Aparelho) -> &'static str {
+    match aparelho {
+        Aparelho::Controle => "controle",
+        Aparelho::ZPad => "zpad",
+        Aparelho::Teclado => "teclado",
+        Aparelho::Boomerang => "boomerang",
+    }
+}
+
+fn sim_ou_nao(valor: bool) -> &'static str {
+    match valor {
+        true => "sim",
+        false => "nao",
+    }
+}
 
 /// O miolo, separado do disco para poder ser testado.
 pub fn de_texto(texto: &str) -> Lido {
@@ -658,8 +769,37 @@ mod testes {
     /// reclamar. Um exemplo que dá aviso ensina errado.
     #[test]
     fn o_exemplo_distribuido_e_valido() {
-        let lido = de_texto(include_str!("../config.ini"));
+        let lido = de_texto(&modelo());
         assert!(lido.avisos.is_empty(), "{:?}", lido.avisos);
+    }
+
+    /// **Cada linha do arquivo gerado diz o que já valeria sem ela.** É o que permite entregá-lo
+    /// com tudo escrito: quem edita vê o padrão e o troca, em vez de adivinhar o que escrever.
+    /// Um padrão que mude no código sem mudar aqui cai neste teste.
+    #[test]
+    fn o_arquivo_completo_descreve_os_proprios_padroes() {
+        assert_eq!(de_texto(&modelo()).settings, de_texto("").settings);
+    }
+
+    /// E as portas saem completas: as duas seções, com os treze botões cada uma.
+    #[test]
+    fn as_portas_saem_com_todos_os_botoes() {
+        let texto = modelo();
+        for porta in 1..=zeebx::input::PORTAS {
+            assert!(texto.contains(&format!("[porta{porta}]")), "falta a porta {porta}");
+        }
+        let lido = de_texto(&texto);
+        for indice in 0..zeebx::input::PORTAS {
+            let player = lido.settings.controls.player(indice).unwrap();
+            for botao in zeebx::input::bindings::CONFIGURABLE {
+                assert!(
+                    !player.sources(botao).is_empty(),
+                    "porta {indice}: o botão {botao} saiu sem origem"
+                );
+            }
+        }
+        // A segunda continua desligada: ela aparece para ser editada, não para ser ligada.
+        assert!(!lido.settings.controls.player(1).unwrap().ligada);
     }
 }
 
