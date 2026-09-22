@@ -91,6 +91,13 @@ impl<C: CpuBackend> Machine<C> {
             REGISTRADORES.iter().map(|reg| self.cpu.read_reg(*reg)),
         );
         secoes.poe_u32("cpu.thumb", u32::from(self.cpu.em_thumb()));
+        // As flags e o relógio virtual. Sem eles o jogo volta com a memória certa e as decisões
+        // erradas: a comparação que ele fez antes de salvar vale, e o desvio vem depois.
+        secoes.poe_u32("cpu.cpsr", self.cpu.cpsr());
+        secoes.poe(
+            "cpu.instructions",
+            self.cpu.instructions().to_le_bytes().to_vec(),
+        );
         for regiao in self.module.mem.regions() {
             let Some(quanto) = self.quanto_gravar(regiao.name, regiao.base, regiao.bytes.len(), regiao.writable) else {
                 continue;
@@ -125,6 +132,18 @@ impl<C: CpuBackend> Machine<C> {
             });
         }
         let _thumb = leitor.u32("cpu.thumb")?;
+        let cpsr = leitor.u32("cpu.cpsr")?;
+        let bytes_do_relogio = leitor.secao("cpu.instructions").ok_or_else(|| Erro::Secao {
+            nome: "cpu.instructions".to_string(),
+            motivo: "a seção não está no arquivo".to_string(),
+        })?;
+        if bytes_do_relogio.len() != 8 {
+            return Err(Erro::Secao {
+                nome: "cpu.instructions".to_string(),
+                motivo: format!("esperava 8 bytes e tem {}", bytes_do_relogio.len()),
+            });
+        }
+        let relogio = u64::from_le_bytes(bytes_do_relogio.try_into().unwrap());
 
         // A memória é lida e conferida antes de qualquer escrita.
         let mut regioes: Vec<(u32, Vec<u8>)> = Vec::new();
@@ -171,6 +190,10 @@ impl<C: CpuBackend> Machine<C> {
         for (reg, valor) in REGISTRADORES.iter().zip(registradores) {
             self.cpu.write_reg(*reg, valor);
         }
+        // O `CPSR` fica por último: escrever no `PC` pode mexer nos bits de modo em alguns
+        // núcleos, e o valor que veio do estado é o que manda.
+        self.cpu.set_cpsr(cpsr);
+        self.cpu.set_instructions(relogio);
         Ok(())
     }
 }
@@ -197,6 +220,30 @@ mod tests {
         let mut machine = Machine::new(UnicornCpu::new().unwrap(), module, ".");
         machine.cpu.reset(&machine.module.mem).unwrap();
         machine
+    }
+
+    /// **As flags e o relógio voltam com o estado.**
+    ///
+    /// É o par que faz um save state "quase" funcionar quando falta: a memória volta, o programa
+    /// volta, as flags ficam as de outra execução — a comparação que o jogo fez antes de salvar
+    /// continua valendo e a decisão seguinte pode tomar o outro caminho. E o relógio é o tempo que
+    /// o jogo enxerga: sem ele, os `SetTimer` e o áudio por quadro saem de outro instante.
+    #[test]
+    fn as_flags_e_o_relogio_vem_de_volta() {
+        let mut antes = maquina();
+        // O bit de negativo, para o valor ser diferente do que a máquina nova tem.
+        let cpsr = antes.cpu.cpsr() | (1 << 31);
+        antes.cpu.set_cpsr(cpsr);
+        antes.cpu.set_instructions(12_345_678);
+
+        let mut depois = maquina();
+        assert_eq!(depois.cpu.instructions(), 0, "a máquina nova começa com o relógio zerado");
+
+        let arquivo = antes.grava_estado();
+        depois.restaura_estado(&arquivo).expect("restaurou");
+
+        assert_eq!(depois.cpu.cpsr(), cpsr, "as flags não voltaram");
+        assert_eq!(depois.cpu.instructions(), 12_345_678, "o relógio não voltou");
     }
 
     /// **O estado volta igual**: registradores, heap, pilha e o livro do heap.

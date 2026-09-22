@@ -473,6 +473,22 @@ impl CpuBackend for DynarmicCpu {
         self.jit().map_or(0, |jit| jit.instrucoes.get())
     }
 
+    fn set_instructions(&mut self, valor: u64) {
+        if let Ok(jit) = self.jit_mut() {
+            jit.instrucoes.set(valor);
+        }
+    }
+
+    fn cpsr(&self) -> u32 {
+        self.jit().map_or(0, |jit| jit.get_cpsr())
+    }
+
+    fn set_cpsr(&mut self, valor: u32) {
+        if let Ok(jit) = self.jit_mut() {
+            jit.set_cpsr(valor);
+        }
+    }
+
     fn em_thumb(&self) -> bool {
         self.jit().is_ok_and(|jit| jit.get_cpsr() & CPSR_THUMB != 0)
     }

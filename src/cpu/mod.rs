@@ -74,6 +74,25 @@ pub trait CpuBackend {
     /// Serve para retomar um trecho interrompido: quem retoma passa o endereço com o bit 0
     /// ligado, que é como o ARM diz "continue em Thumb". Sem isso, um jogo inteiro em Thumb —
     /// o Zenonia, a série Extreme — voltaria decodificado como ARM.
+    /// O `CPSR`: os sinalizadores da última operação e o modo do processador.
+    ///
+    /// **Sem isto um save state fica errado de um jeito difícil de ver.** A memória volta, o
+    /// programa volta, e as flags ficam as de outra execução: a comparação que o jogo fez antes de
+    /// salvar continua valendo, mas a decisão seguinte pode tomar o outro caminho. Os dois núcleos
+    /// sabem disto — o Unicorn pelo registrador, o Dynarmic pelo `get_cpsr` —, e é por isso que o
+    /// método não tem valor padrão: um backend que não saiba dizer o `CPSR` tem de dizer isso, e
+    /// não devolver zero em silêncio.
+    fn cpsr(&self) -> u32;
+
+    /// Põe o `CPSR`. Ver [`CpuBackend::cpsr`].
+    fn set_cpsr(&mut self, valor: u32);
+
+    /// Põe o contador de instruções, que é o **relógio virtual** do emulador.
+    ///
+    /// Salvar o relógio e não o devolver deixaria o jogo depois do save state com outro tempo: os
+    /// `SetTimer`, o áudio por quadro e o limite de passos do andamento dependem dele.
+    fn set_instructions(&mut self, valor: u64);
+
     fn em_thumb(&self) -> bool {
         false
     }

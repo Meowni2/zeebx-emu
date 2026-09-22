@@ -410,6 +410,18 @@ impl CpuBackend for UnicornCpu {
         self.instructions.get()
     }
 
+    fn set_instructions(&mut self, valor: u64) {
+        self.instructions.set(valor);
+    }
+
+    fn cpsr(&self) -> u32 {
+        self.uc.reg_read(RegisterARM::CPSR).unwrap_or(0) as u32
+    }
+
+    fn set_cpsr(&mut self, valor: u32) {
+        let _ = self.uc.reg_write(RegisterARM::CPSR, valor as u64);
+    }
+
     fn em_thumb(&self) -> bool {
         // Bit 5 do `CPSR`, o `T`.
         self.uc
