@@ -1047,6 +1047,25 @@ ainda não existe no core: `Session::machine` é privado do motor, e expor um ac
 mudança no `src/`, que custa os doze trabalhos de CI — vale a pena fazer isso junto de outra
 mudança, não sozinho.
 
+### 7.9 Retorno à roda, observado na captura serial
+
+A captura do caminho do core registra o retorno que o teste antigo não conseguia afirmar pelo
+`CLASSE_ATUAL`: depois da sessão do jogo, a Z-Wheel volta a construir seus objetos. Em
+`/tmp/quem.txt`, medido no roteiro completo, aos `78611 ms` aparecem de novo
+`0x01028e14`/`0x01028e05` e os `IValueModel`; aos `85451 ms` ela reconstrói a barra, lê a lista e
+consulta `GAMEINFO.class_id = 17359702`. O mesmo trecho grava `StringLastAppRan = 279369`, atualiza
+`playcount/dt_lastplayed` e destrói o contexto EGL do jogo:
+
+```text
+78611 ms  classe 0x01028e14 · classe 0x01028e05 · IValueModel · GAMEINFO
+85452 ms  StringLastAppRan = 279369 · UPDATE GAMEINFO · eglDestroyContext · eglDestroySurface
+```
+
+Isso é a volta ao shell observada no guest: o jogo escolhido sai, o core reabre a Z-Wheel e ela
+monta a biblioteca outra vez. O teste do core ainda relata `voltou=false` quando a janela de espera
+termina antes desse desfecho ou quando o foco cai num título que não sai; a captura é a evidência
+mais direta do caminho que realmente aconteceu.
+
 ## 8. O que ainda não funciona
 
 ### 8.1 Medido em 22/09/2026: a roda não reage a tecla, e a causa era uma classe
