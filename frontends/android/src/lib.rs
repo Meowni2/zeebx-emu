@@ -247,7 +247,7 @@ pub struct Emulador {
     /// Onde os ajustes são lidos e gravados. É um arquivo do mesmo formato do desktop.
     arquivo: PathBuf,
     settings: Settings,
-    /// Os textos da interface, do mesmo catálogo que o desktop usa. Os dois idiomas de fábrica
+    /// Os textos da interface, do mesmo catálogo que o desktop usa. Os idiomas de fábrica
     /// vêm embutidos no binário, então funcionam sem nenhum arquivo no aparelho.
     catalogo: Catalog,
     onde: Onde,

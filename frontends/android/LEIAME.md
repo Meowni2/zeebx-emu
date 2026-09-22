@@ -44,7 +44,7 @@ e chama o `android_main` dela.
 
 **O conteúdo é o mesmo do desktop; a forma não.** A grade usa o `library::scan`, que é o mesmo
 que acha os jogos no desktop; os ajustes escrevem o mesmo `Settings`, no mesmo formato; os
-rótulos saem do mesmo `ui::i18n`, cujos dois idiomas de fábrica vêm embutidos no binário; e o
+rótulos saem do mesmo `ui::i18n`, cujos idiomas de fábrica vêm embutidos no binário; e o
 painel de velocidade é literalmente o `ui::depuracao::painel`. O que ficou de fora ficou por não
 existir aqui: as opções de janela não valem numa tela só, e os controles, o Discord e as
 atualizações ainda não estão ligados neste frontend.

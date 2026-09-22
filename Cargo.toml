@@ -193,7 +193,7 @@ section = "games"
 [package.metadata.packager.nsis]
 installer-icon = "assets/icones/zeebx.ico"
 installer-mode = "currentUser"
-languages = ["PortugueseBR", "English"]
+languages = ["PortugueseBR", "English", "Spanish"]
 
 [package.metadata.packager.macos]
 minimum-system-version = "11.0"
