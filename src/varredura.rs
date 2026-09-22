@@ -451,6 +451,12 @@ impl Pendencias {
 pub struct Relatorio {
     pub arquivo: PathBuf,
     pub titulo: String,
+    /// A classe que o shell pediu para abrir, quando **chegou a pedir** uma.
+    ///
+    /// E o desfecho que a Z-Wheel tem de produzir para trocar de aplicativo, e o unico sinal que
+    /// nao engana: a contagem de cores sobe quando ela anima, e animacao nao e pedido. Vem de
+    /// `Session::take_launch_request`, o mesmo gancho que o core usa para trocar de sessao.
+    pub abertura_pedida: Option<u32>,
     pub categoria: Categoria,
     /// Onde parou, em texto legível. `None` quando o jogo seguia de pé no fim.
     pub motivo: Option<String>,
@@ -529,6 +535,9 @@ impl Relatorio {
     /// nem de quadros aqui — só o que é comportamento do emulador diante daquele jogo.
     pub fn resumo(&self) -> String {
         let mut texto = format!("{}\nestado: {}\n", self.titulo, self.categoria.rotulo());
+        if let Some(classe) = self.abertura_pedida {
+            texto.push_str(&format!("abertura pedida: {classe:#010x}\n"));
+        }
         if let Some(motivo) = &self.motivo {
             texto.push_str(&format!("motivo: {motivo}\n"));
         }
@@ -698,6 +707,7 @@ impl Relatorio {
             arquivo: arquivo.to_path_buf(),
             titulo: crate::library::title_for(arquivo),
             categoria,
+            abertura_pedida: None,
             motivo: Some(erro.to_string()),
             desempenho: None,
             pendencias: Pendencias::default(),
@@ -809,6 +819,10 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
         }
     }
     let mut passo_do_roteiro = 0usize;
+    // A classe que o shell pediu para abrir, se pediu. É o desfecho que a Z-Wheel tem de produzir
+    // para trocar de aplicativo: sem este campo, a única pista de que ela reagiu era a contagem de
+    // cores, e animação também muda a contagem.
+    let mut abertura_pedida = None;
     // O pad do roteiro **persiste entre os passos, e por isso vive fora do laço de quadros**.
     // Cada passo muda só o que ele nomeia, e o passo vazio (`"11000:"`) solta tudo. O defeito
     // anterior era silencioso e sobreviveu a uma primeira correção: o pad era recriado a cada
@@ -879,6 +893,9 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
                     );
                 }
                 session.set_port_pad(0, pad_do_roteiro);
+            }
+            if abertura_pedida.is_none() {
+                abertura_pedida = session.take_launch_request();
             }
             let agora = session.clock_ms();
             let decorrido = u64::from(agora.wrapping_sub(ultimo_relogio)).min(1000);
@@ -992,6 +1009,7 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
         // esse nome e traz o título dentro — não pode depender de metadado do host.
         titulo: crate::library::title_for(arquivo),
         categoria,
+        abertura_pedida,
         motivo: session.stopped_reason(),
         desempenho: Some(medida),
         pendencias: Pendencias::de(&session),
@@ -1461,6 +1479,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
         let modelo = Relatorio {
             arquivo: PathBuf::from("/tmp/x.mod"),
             titulo: "Exemplo".to_string(),
+            abertura_pedida: None,
             categoria: Categoria::Roda,
             motivo: None,
             desempenho: Some(Desempenho {
@@ -1512,6 +1531,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
         let limpo = Relatorio {
             arquivo: PathBuf::from("/tmp/x.mod"),
             titulo: "Exemplo".to_string(),
+            abertura_pedida: None,
             categoria: Categoria::Roda,
             motivo: None,
             desempenho: None,
@@ -1546,6 +1566,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
         let modelo = Relatorio {
             arquivo: PathBuf::from("/tmp/x.mod"),
             titulo: "Exemplo".to_string(),
+            abertura_pedida: None,
             categoria: Categoria::Roda,
             motivo: None,
             desempenho: None,
@@ -1585,6 +1606,7 @@ fn exige_espaco(dirs: &[PathBuf]) {
         let relatorio = Relatorio {
             arquivo: PathBuf::from("/tmp/x.mod"),
             titulo: "Exemplo".to_string(),
+            abertura_pedida: None,
             categoria: Categoria::QuebrouNoLaco,
             motivo: Some("acesso inválido a 0x00000024, em 0x00032b78".to_string()),
             desempenho: None,
