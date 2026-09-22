@@ -47,6 +47,67 @@ dois caminhos usam o mesmo FBO do frontend.
 O cartão pode ter bibliotecas ARM de 32 bits para PortMaster. Isso não muda este pacote: o core
 precisa de RetroArch AArch64 e não carrega em um RetroArch `armhf`/32-bit.
 
+
+## muOS (RG40XX-H): o que o muOS lê, e de onde
+
+Medido na imagem muOS do cartão do aparelho (kernel de 64 bits, RetroArch AArch64). O muOS **não**
+carrega core de uma pasta de cores do RetroArch: o lançador chama
+
+```sh
+nice --20 retroarch -v -f $RA_ARGS -L "$MUOS_SHARE_DIR/core/$CORE" "$FILE"
+```
+
+ou seja, `/opt/muos/share/core/<core>`. Quem escolhe o core é o arquivo de associação
+(`info/assign/<Sistema>/<core>.ini`), e o `.info` do core fica em
+`/opt/muos/share/emulator/retroarch/info/`.
+
+O sistema de arquivos de conteúdo é um **unionfs** (`/opt/muos/script/mount/union.sh`):
+`/mnt/union/ROMS` junta, nesta ordem, `USB/ROMS`, `SDCARD/ROMS` e `ROMS` do cartão do sistema. Com
+dois cartões, o de ROMs é o `SDCARD`, e as ROMs vão em **`/ROMS/Zeebo`** nele — não em
+`ROMS/ROMS` no cartão do sistema.
+
+O que o muOS precisa, e onde:
+
+| Peça | Caminho | O que é |
+|---|---|---|
+| Core | `/opt/muos/share/core/zeebx_libretro.so` | o `.so` AArch64 |
+| Info | `/opt/muos/share/emulator/retroarch/info/zeebx_libretro.info` | metadados que o RetroArch lê |
+| Sistema | `/opt/muos/share/info/assign/Zeebo/{global.ini,zeebx.ini}` | nome do sistema, core padrão e o comando de lançamento |
+| Associação | `/opt/muos/share/info/assign/assign.json` | `friendly` → pasta do sistema |
+| Nome da pasta | `MUOS/info/name/folder.json` | nome da pasta → nome exibido |
+| Capas | `MUOS/info/catalogue/Zeebo/{box,grid}/<jogo>.png` | arte, com o nome do `.zip` sem extensão |
+| Jogos | `ROMS/Zeebo/*.zip` no cartão de ROMs | aparecem em `/mnt/union/ROMS/Zeebo` |
+
+Duas armadilhas medidas, as duas por permissão:
+
+1. `assign.json` é `root:root 0644`, mas o **diretório** é do usuário. Como remover um arquivo
+   depende da permissão do diretório, dá para apagá-lo e reescrevê-lo com a chave nova sem `sudo`.
+   Sem a chave `zeebo`, o sistema não aparece — o `assign.sh` só roda no cartão (tarefa *Refresh
+   Automatic Core Assign*) e no reset, não a cada boot.
+2. `emulator/retroarch/{database,playlists,thumbnails}` são `root:root 0750`: não dá para escrever
+   neles pelo cartão montado. Não são necessários para jogar pelo muOS; só servem ao menu do
+   próprio RetroArch.
+
+**Compatibilidade de biblioteca, medida antes de copiar:** o core exige no máximo `GLIBC_2.34` e
+`GLIBCXX_3.4.31`; o aparelho traz glibc até `GLIBC_2.38` e `libstdc++.so.6.0.32` com `GLIBCXX`
+até `3.4.32`. Nada faltando — e é essa conferência que evita o sintoma clássico de "o core não
+aparece" por `dlopen` recusado.
+
+### Instalar
+
+1. Copie o `.so` para `/opt/muos/share/core/` e o `.info` para
+   `/opt/muos/share/emulator/retroarch/info/`.
+2. Crie `/opt/muos/share/info/assign/Zeebo/` com `global.ini` (`name`, `default=zeebx`,
+   `catalogue`, `lookup=0`, `governor=performance` e um `[friendly] zeebo`) e `zeebx.ini`
+   (`name=Zeebx`, `core=zeebx_libretro.so`, `exec=/opt/muos/script/launch/lr-general.sh`).
+3. Acrescente `"zeebo": "Zeebo"` em `info/assign/assign.json` e em `MUOS/info/name/folder.json`.
+4. Coloque os jogos em `ROMS/Zeebo/` **no cartão de ROMs**.
+5. Opcional: capas em `MUOS/info/catalogue/Zeebo/box/` e `grid/`, com o nome do arquivo igual ao
+   do `.zip` sem extensão.
+
+A **Z-Wheel precisa dos jogos na mesma pasta**: ela enumera os applets instalados ao lado do
+conteúdo, então abrir a roda de dentro de `ROMS/Zeebo` mostra os 63 títulos.
+
 ## Verificação sem adivinhar
 
 O workflow `libretro` confere no próprio artefato:
