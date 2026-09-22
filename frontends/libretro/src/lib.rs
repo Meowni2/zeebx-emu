@@ -81,14 +81,33 @@ static ULTIMA_ABERTURA: std::sync::atomic::AtomicU32 = std::sync::atomic::Atomic
 /// O frontend oferece um contexto de placa para o core desenhar.
 const ENV_SET_HW_RENDER: u32 = 14;
 
-/// `RETRO_HW_CONTEXT_OPENGL` — é o que o motor desenha.
-const HW_CONTEXT_OPENGL: u32 = 1;
+/// `RETRO_HW_CONTEXT_OPENGL_CORE` (valor 3 no `libretro.h`) — é o perfil que o motor realmente usa.
+///
+/// O valor 1 seria `RETRO_HW_CONTEXT_OPENGL`, o de **compatibilidade**, e foi ele que ficou aqui
+/// primeiro. Não fica: ver abaixo por que ele quebra o RetroArch.
+///
+/// O emulador standalone pede `GL 3.3` e o `glutin` entrega um contexto **core**, e é nele que o
+/// motor foi medido (o teste dos dois rasterizadores roda assim). O core pedia o de compatibilidade,
+/// e o defeito só apareceu ao rodar o RetroArch de verdade: com um pedido de versão 3.3 sem máscara
+/// de perfil, o EGL devolve um contexto **core**, e o driver `gl` do RetroArch — que é de
+/// compatibilidade — quebra logo depois, com `GL: Invalid enum`, antes de rodar um quadro:
+///
+/// ```text
+/// [INFO] [GL]: Version: 4.6 (Core Profile) Mesa 25.0.7
+/// [ERROR] [GL]: GL: Invalid enum.
+/// [ERROR] [Video]: Cannot open video driver.. Exiting..
+/// ```
+///
+/// Pedindo o perfil core, o RetroArch usa o caminho de core profile dele e o contexto combina com o
+/// que o motor espera.
+const HW_CONTEXT_OPENGL_CORE: u32 = 3;
 
 /// O valor que o `retro_video_refresh` recebe quando o quadro saiu no framebuffer do frontend.
 ///
 /// É o sentinela do `libretro`: passar pixels junto com ele seria mentira, e o RetroArch apresenta
 /// o framebuffer que ele mesmo forneceu.
 const HW_FRAME_BUFFER_VALID: usize = usize::MAX;
+
 
 /// O começo de `retro_hw_render_callback`, na ordem do `libretro.h` vendorizado.
 ///
@@ -149,7 +168,7 @@ fn pede_o_contexto_de_placa() {
         return;
     }
     let mut oferta = RetroHwRenderCallback {
-        context_type: HW_CONTEXT_OPENGL,
+        context_type: HW_CONTEXT_OPENGL_CORE,
         context_reset: Some(contexto_pronto),
         get_current_framebuffer: None,
         get_proc_address: None,
@@ -1159,6 +1178,7 @@ pub extern "C" fn retro_run() {
         let Some(EstadoDoCore(estado)) = guard.as_mut() else {
             return;
         };
+
         // **A placa entra no primeiro quadro.** O contexto de GL só existe depois que o frontend
         // chama o `context_reset`, que acontece depois do `retro_load_game`; aqui é o primeiro
         // lugar em que ele pode estar pronto. Recriar a sessão custa um reinício que ninguém vê:

@@ -114,9 +114,58 @@ Não falta código. O que existe, medido:
   se qualquer passo falhar — inclusive num pânico, que derrubaria o RetroArch;
 - os deslocamentos do `retro_hw_render_callback` batem com o `libretro.h`, e há teste que os cobra.
 
-**O que falta é só a sua sessão**: qual das duas linhas aparece no log
-(`desenhando na placa` ou `seguindo no processador`) e o que a tela mostra. Qualquer uma das duas é
-resultado, porque o jogo continua rodando nos dois casos.
+### Verificado no RetroArch de verdade, e dois defeitos que só apareciam ali
+
+Rodar o core no RetroArch 1.20 desta máquina (Wayland/EGL, AMD renoir, Mesa 25.0.7) encontrou dois
+defeitos que nenhum teste headless pegava, e os dois só se revelavam com o frontend apresentando o
+quadro:
+
+1. **O perfil do contexto estava errado.** O core pedia `RETRO_HW_CONTEXT_OPENGL` (compatibilidade)
+   com versão 3.3. Um pedido de versão 3.2+ **sem máscara de perfil** faz o EGL devolver um contexto
+   *core*, e o driver `gl` do RetroArch é de compatibilidade — ele quebrava antes de rodar um quadro:
+
+   ```text
+   [INFO] [GL]: Version: 4.6 (Core Profile) Mesa 25.0.7
+   [ERROR] [GL]: GL: Invalid enum.
+   [ERROR] [Video]: Cannot open video driver.. Exiting..
+   ```
+
+   O emulador standalone pede GL 3.3 e o `glutin` entrega **core**, e é nele que o motor foi medido.
+   Agora o core pede `RETRO_HW_CONTEXT_OPENGL_CORE` e o RetroArch usa o caminho `glcore`.
+
+2. **O alvo do desenho era religado no nosso framebuffer a cada quadro.** A escolha do alvo estava
+   escrita em dois lugares de `destino()`, e os dois discordavam: o caminho que **cria** o destino
+   respeitava o framebuffer do frontend, e o caminho curto — destino já pronto, mesmos parâmetros,
+   que é o que roda em todo quadro depois do primeiro — religava o nosso. Resultado: desenhávamos no
+   nosso framebuffer, o RetroArch apresentava o dele e a tela ficava preta enquanto a placa
+   trabalhava o mesmo tanto. Medido lendo 4×4 pixels do framebuffer do frontend:
+
+   ```text
+   antes:  [0, 0, 0, 254] × 4     ← preto, e a captura com 1 cor
+   depois: [254, 254, 254, 0] × 4 ← desenhado, e a captura com 1282 cores
+   ```
+
+   A escolha passou a viver em `alvo_do_desenho()`, para as duas ramificações não poderem discordar
+   de novo, e o teste do framebuffer de fora ganhou uma **cerca**: pinta o framebuffer de verde no
+   meio do percurso e exige que os quadros seguintes o sobrescrevam. Sem ela o teste passava com o
+   defeito, porque só provava que *algum* quadro tinha ido para lá. Com a cerca, o defeito
+   reintroduzido de propósito deixa 100% dos pixels verdes e o teste falha.
+
+### Medindo cor no RetroArch: cuidado com o shader
+
+A contagem de cores de uma **captura do RetroArch** mede o quadro **depois** do shader — nesta
+máquina há um filtro de CRT ativo. Ela não serve para julgar o que o core desenhou. O que vale é
+ler os pixels do framebuffer que o core recebeu (`glReadPixels` no FBO do frontend), como na medição
+acima: ali ainda não houve shader.
+
+### O arredondamento entre os dois rasterizadores
+
+O teste que compara os dois rasterizadores comparava em passos de canal RGB565 com tolerância de
+60% dos pixels. Rodando com o Crash, 98,33% dos pixels diferem — mas por **1 ou 2 passos**, média
+1,93, pior 2, e **0,00% acima de dois passos**: o rasterizador de software trunca (`>> 3`) e o
+`glReadPixels` em `UNSIGNED_SHORT_5_6_5` arredonda. A conta passou a separar as duas coisas: uma
+imagem diferente erra por muito mais que dois passos. Alinhar os dois conversores é decisão que
+precisa do console na mão, e fica declarada aqui.
 
 ## O que falta
 

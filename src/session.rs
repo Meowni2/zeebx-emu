@@ -1042,7 +1042,28 @@ fn o_motor_desenha_no_framebuffer_do_frontend() {
     session.machine_mut().desenha_no_fbo(Some(fbo.0.get()));
 
     let base = session.clock_ms();
-    while session.clock_ms().saturating_sub(base) < ms as u32 {
+    // **A cerca.** Metade do tempo depois, o framebuffer de fora volta a ser pintado de verde.
+    // Sem isto o teste não pega o defeito que existiu: o alvo do frontend era respeitado só na
+    // **criação** do destino, e todo quadro seguinte religava o framebuffer interno — o de fora
+    // ficava com o que o primeiro quadro deixou, e uma verificação de "mudou alguma coisa" passava
+    // com a tela preta no frontend. Com a cerca, o verde só desaparece se os quadros **novos**
+    // estiverem indo para lá.
+    let cerca = ms / 2;
+    let mut ja_cercou = false;
+    loop {
+        let decorrido = session.clock_ms().saturating_sub(base);
+        if decorrido >= ms as u32 {
+            break;
+        }
+        if !ja_cercou && decorrido >= cerca as u32 {
+            ja_cercou = true;
+            unsafe {
+                gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+                gl.clear_color(0.0, 1.0, 0.0, 1.0);
+                gl.clear(glow::COLOR_BUFFER_BIT);
+                gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            }
+        }
         match session.step(Duration::ZERO, false) {
             Step::Stopped => break,
             Step::Presented => {
@@ -1080,6 +1101,11 @@ fn o_motor_desenha_no_framebuffer_do_frontend() {
     assert!(
         verdes < total,
         "nada foi desenhado no framebuffer do frontend: ele ficou como nasceu"
+    );
+    // E o que mais importa: os quadros **posteriores à cerca** também foram para lá.
+    assert!(
+        verdes < total / 10,
+        "o framebuffer do frontend ficou com a cor da cerca: os quadros novos não foram para lá"
     );
 
     unsafe {
@@ -1162,6 +1188,7 @@ fn os_dois_rasterizadores_desenham_o_mesmo_quadro() {
     // no processador não dão o **mesmo** quadro — a diferença é arredondamento e ordem de
     // operações. O que se cobra aqui é que desenhem a mesma imagem, e não que sejam idênticos.
     let mut diferentes = 0usize;
+    let mut grosseiras = 0usize;
     let mut soma = 0u64;
     let mut pior = 0u16;
     for (a, b) in software.2.chunks_exact(2).zip(placa.2.chunks_exact(2)) {
@@ -1177,20 +1204,35 @@ fn os_dois_rasterizadores_desenham_o_mesmo_quadro() {
         if d > 0 {
             diferentes += 1;
         }
+        // Um passo de canal em 565 é o **arredondamento** dos dois conversores, e não imagem
+        // diferente: o rasterizador de software trunca (`>> 3`), e o `glReadPixels` em
+        // `UNSIGNED_SHORT_5_6_5` arredonda. Medido no Crash: 98,33% dos pixels diferem por 1 ou 2
+        // passos, com pior 2 e média 1,93 — mesma imagem. O que a conta abaixo guarda é a
+        // diferença que **não** é arredondamento.
+        if d > 2 {
+            grosseiras += 1;
+        }
         soma += d;
         pior = pior.max(d as u16);
     }
     let total = software.2.len() / 2;
     let percentual = diferentes as f64 * 100.0 / total as f64;
+    let grosseiro = grosseiras as f64 * 100.0 / total as f64;
+    let media = soma as f64 / total as f64;
     eprintln!(
         "software x placa: {diferentes} de {total} pixel(s) diferentes ({percentual:.2}%), \
-         diferença média {:.3} por pixel, pior {pior}",
-        soma as f64 / total as f64
+         diferença média {media:.3} por pixel, pior {pior}, acima de 2 passos: {grosseiro:.2}%"
     );
+    // **O que este teste guarda é a imagem, não o arredondamento.** Uma imagem diferente erra por
+    // muito mais que dois passos de canal; o arredondamento dos dois conversores erra por um ou
+    // dois. Sem esta separação o teste ficava vermelho por 1,9 passo de média — e um teste que
+    // ninguém pode deixar verde deixa de guardar coisa alguma.
     assert!(
-        percentual < 60.0,
-        "os dois rasterizadores desenham imagens diferentes: {percentual:.2}% dos pixels"
+        grosseiro < 1.0,
+        "os dois rasterizadores desenham imagens diferentes: {grosseiro:.2}% dos pixels diferem \
+         por mais de 2 passos de canal (média {media:.3}, pior {pior})"
     );
+    assert!(media <= 2.0, "diferença média de {media:.3} passos por pixel");
 }
 
 

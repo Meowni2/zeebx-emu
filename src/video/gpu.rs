@@ -349,14 +349,31 @@ impl GpuState {
         largura.saturating_sub(fw) / 2 * sw / fw
     }
 
+    /// O framebuffer em que se desenha **agora**.
+    ///
+    /// Quando o frontend entrega um framebuffer, é ele o alvo — e não o nosso. Este método existe
+    /// porque a escolha estava escrita em dois lugares, e os dois discordaram: o caminho que cria o
+    /// destino respeitava o framebuffer do frontend, e o caminho curto (destino já pronto, igual)
+    /// religava o nosso. Como o curto é o que roda em todo quadro depois do primeiro, o desenho
+    /// ficava no nosso framebuffer, o frontend apresentava o dele — tela preta — e a placa
+    /// trabalhava o mesmo tanto. O sintoma foi exatamente esse: **placa ocupada e nada na tela**.
+    fn alvo_do_desenho(&self) -> Option<glow::Framebuffer> {
+        match self.fbo_externo {
+            // `0` é o framebuffer que já está ligado; o frontend é quem manda nele.
+            Some(0) => None,
+            Some(id) => std::num::NonZeroU32::new(id).map(glow::NativeFramebuffer),
+            None => self.quadro.as_ref().map(Destino::desenho),
+        }
+    }
+
     fn destino(&mut self) {
         let medida = self.estado.frame_size();
         let (escala, amostras, extra) = (self.escala, self.amostras, self.extra());
         if self.quadro.as_ref().is_some_and(|d| {
             d.medida == medida && d.escala == escala && d.amostras == amostras && d.extra == extra
         }) {
-            let fbo = self.quadro.as_ref().map(Destino::desenho);
-            unsafe { self.gl.bind_framebuffer(glow::FRAMEBUFFER, fbo) };
+            let alvo = self.alvo_do_desenho();
+            unsafe { self.gl.bind_framebuffer(glow::FRAMEBUFFER, alvo) };
             return;
         }
         let gl = &self.gl;
@@ -484,15 +501,12 @@ impl GpuState {
                 amostras,
                 multi,
             };
-            // Quem manda no alvo é o frontend, quando ele entregou um framebuffer; sem isso, o
-            // destino é o nosso, com o antialias resolvido depois.
-            let alvo = match self.fbo_externo {
-                Some(0) => None,
-                Some(id) => std::num::NonZeroU32::new(id).map(glow::NativeFramebuffer),
-                None => Some(destino.desenho()),
-            };
-            gl.bind_framebuffer(glow::FRAMEBUFFER, alvo);
             self.quadro = Some(destino);
+            // Quem manda no alvo é o frontend, quando ele entregou um framebuffer; sem isso, o
+            // destino é o nosso, com o antialias resolvido depois. A escolha é a mesma do caminho
+            // curto, e é por isso que ela vive em `alvo_do_desenho`.
+            let alvo = self.alvo_do_desenho();
+            gl.bind_framebuffer(glow::FRAMEBUFFER, alvo);
         }
     }
 
