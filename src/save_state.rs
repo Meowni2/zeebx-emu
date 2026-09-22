@@ -285,6 +285,19 @@ impl Secoes {
         self.poe(nome, bytes);
     }
 
+    /// Grava uma lista de textos: a contagem e, depois, cada texto com o tamanho na frente.
+    pub fn poe_textos(&mut self, nome: &str, textos: impl IntoIterator<Item = String>) {
+        let textos: Vec<String> = textos.into_iter().collect();
+        let mut saida = Vec::new();
+        saida.extend_from_slice(&(textos.len() as u32).to_le_bytes());
+        for texto in textos {
+            let bytes = texto.as_bytes();
+            saida.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            saida.extend_from_slice(bytes);
+        }
+        self.poe(nome, saida);
+    }
+
     /// Grava blocos de bytes indexados por uma chave de `chaves` números cada.
     ///
     /// É a forma de toda tabela que guarda **conteúdo** em vez de número: as preferências, os
@@ -375,6 +388,52 @@ impl Leitor<'_> {
             });
         }
         Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    /// Uma lista de textos gravada por [`Secoes::poe_textos`].
+    pub fn textos(&self, nome: &str) -> Result<Vec<String>, Erro> {
+        let bytes = self.secao(nome).ok_or_else(|| Erro::Secao {
+            nome: nome.to_string(),
+            motivo: "a seção não está no arquivo".to_string(),
+        })?;
+        let malformada = |motivo: String| Erro::Secao {
+            nome: nome.to_string(),
+            motivo,
+        };
+        if bytes.len() < 4 {
+            return Err(malformada(format!(
+                "esperava a contagem e tem {} bytes",
+                bytes.len()
+            )));
+        }
+        let quantos = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+        let mut posicao = 4usize;
+        let mut textos = Vec::with_capacity(quantos);
+        for _ in 0..quantos {
+            if bytes.len() < posicao + 4 {
+                return Err(malformada(format!("falta o tamanho do texto em {posicao}")));
+            }
+            let tamanho = u32::from_le_bytes([
+                bytes[posicao],
+                bytes[posicao + 1],
+                bytes[posicao + 2],
+                bytes[posicao + 3],
+            ]) as usize;
+            posicao += 4;
+            if bytes.len() < posicao + tamanho {
+                return Err(malformada(format!(
+                    "o texto em {posicao} diz ter {tamanho} bytes e restam {}",
+                    bytes.len() - posicao
+                )));
+            }
+            textos.push(
+                String::from_utf8(bytes[posicao..posicao + tamanho].to_vec()).map_err(|erro| {
+                    malformada(format!("um dos textos não é UTF-8: {erro}"))
+                })?,
+            );
+            posicao += tamanho;
+        }
+        Ok(textos)
     }
 
     /// Blocos gravados por [`Secoes::poe_blocos`], com a contagem de chaves que o arquivo diz.

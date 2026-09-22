@@ -24,7 +24,7 @@
 //! proíbe, e a porta é essa.
 
 use super::{
-    Callback, DecodedImage, Machine, MemStream, OpenFile, SoundState, Timer,
+    Callback, DecodedImage, Machine, MemStream, OpenFile, Outcome, SoundState, Timer,
 };
 use crate::video::display::Framebuffer;
 use crate::cpu::{CpuBackend, Reg};
@@ -147,6 +147,7 @@ impl<C: CpuBackend> Machine<C> {
         self.grava_conteudo(&mut secoes);
         self.grava_superficies_e_imagens(&mut secoes);
         self.grava_escalares_e_mapas(&mut secoes);
+        self.grava_listas_e_parada(&mut secoes);
         self.heap.grava_com_prefixo("heap", &mut secoes);
         self.objects.grava(&mut secoes);
         self.superficies.grava_com_prefixo("surfaces", &mut secoes);
@@ -214,6 +215,7 @@ impl<C: CpuBackend> Machine<C> {
         self.restaura_conteudo(&leitor)?;
         self.restaura_superficies_e_imagens(&leitor)?;
         self.restaura_escalares_e_mapas(&leitor)?;
+        self.restaura_listas_e_parada(&leitor)?;
         self.heap.restaura_com_prefixo("heap", &leitor)?;
         self.objects.restaura(&leitor)?;
         self.superficies
@@ -1385,6 +1387,189 @@ fn le_lista_com_extra(bytes: &[u8], onde: &str) -> Result<(Vec<u32>, u32), Erro>
     Ok((valores, extra))
 }
 
+
+/// Os módulos instalados, as enumerações em curso e o **ponto de parada**.
+///
+/// ## `stalled`: o buraco declarado, agora coberto
+///
+/// O motor pode parar no meio de uma sondagem — uma chamada de API sem resposta, um laço que passou
+/// do teto. Antes eu tinha escrito que gravar daqui "prometeria um estado que nunca existiu". Estava
+/// errado: o estado existe e é bem definido (o guest parado num limite de chamada), e o que faltava
+/// era a codificação. Ela entra aqui, com os mesmos campos do `Outcome` — o que muda é que agora a
+/// volta sabe recusar um desfecho que esta versão não conhece.
+///
+/// ## `interned`: o cache que **não** entra
+///
+/// `interned` mapeia um texto estático (o que `glGetString` devolve) para o endereço onde ele foi
+/// copiado no guest. As chaves são `&'static str`, e um save state não traz texto estático de volta:
+/// os ponteiros que o jogo guardou continuam válidos porque a **memória** volta, e o cache se refaz
+/// sozinho na próxima consulta. O efeito de não gravá-lo é uma cópia a mais por carregamento
+/// (algumas dezenas de bytes), e isso vai dito em vez de escondido.
+impl<C: CpuBackend> Machine<C> {
+    fn grava_listas_e_parada(&self, secoes: &mut Secoes) {
+        secoes.poe_u32s(
+            "tex.modulos_ids",
+            self.modulos_instalados.iter().map(|(id, _)| *id),
+        );
+        secoes.poe_textos(
+            "tex.modulos_nomes",
+            self.modulos_instalados
+                .iter()
+                .map(|(_, nome)| nome.clone())
+                .collect::<Vec<_>>(),
+        );
+        secoes.poe_u32s("tex.enumeracoes_ids", self.enumerations.keys().copied());
+        for (id, itens) in &self.enumerations {
+            secoes.poe_textos(
+                &format!("tex.enumeracao.{id}"),
+                itens.iter().cloned().collect::<Vec<_>>(),
+            );
+        }
+
+        // O ponto de parada, com o rótulo da variante e os campos dela.
+        let (rotulo, campos) = descreve(&self.stalled);
+        let mut numeros = vec![rotulo];
+        numeros.extend(campos);
+        secoes.poe_u32s("parada", numeros);
+    }
+
+    fn restaura_listas_e_parada(&mut self, leitor: &Leitor<'_>) -> Result<(), Erro> {
+        let ids = leitor.u32s("tex.modulos_ids")?;
+        let nomes = leitor.textos("tex.modulos_nomes")?;
+        if ids.len() != nomes.len() {
+            return Err(Erro::Secao {
+                nome: "tex.modulos_nomes".to_string(),
+                motivo: format!(
+                    "o estado tem {} módulos instalados e {nomes_len} nome(s)",
+                    ids.len(),
+                    nomes_len = nomes.len()
+                ),
+            });
+        }
+        let modulos_instalados: Vec<(u32, String)> =
+            ids.into_iter().zip(nomes).collect();
+
+        let ids = leitor.u32s("tex.enumeracoes_ids")?;
+        let mut enumerations = std::collections::HashMap::new();
+        for id in ids {
+            enumerations.insert(
+                id,
+                leitor
+                    .textos(&format!("tex.enumeracao.{id}"))?
+                    .into_iter()
+                    .collect(),
+            );
+        }
+
+        let parada = leitor.u32s("parada")?;
+        let stalled = monta(&parada)?;
+
+        self.modulos_instalados = modulos_instalados;
+        self.enumerations = enumerations;
+        self.stalled = stalled;
+        // O cache de textos estáticos se refaz sozinho; ver a nota no topo deste bloco.
+        self.interned.clear();
+        Ok(())
+    }
+}
+
+/// O rótulo de cada variante de [`Outcome`] no arquivo.
+///
+/// Número explícito, e não a posição na enumeração: reordenar as variantes no código não pode
+/// mudar o significado de um save state já gravado.
+fn rotulo_do_desfecho(outcome: &Outcome) -> u32 {
+    match outcome {
+        Outcome::Returned { .. } => 1,
+        Outcome::Unimplemented { .. } => 2,
+        Outcome::Fault { .. } => 3,
+        Outcome::Exception { .. } => 4,
+        Outcome::Budget => 5,
+        Outcome::CallLimit { .. } => 6,
+    }
+}
+
+/// O desfecho como rótulo e campos.
+fn descreve(outcome: &Option<Outcome>) -> (u32, Vec<u32>) {
+    match outcome {
+        None => (0, Vec::new()),
+        Some(desfecho) => {
+            let rotulo = rotulo_do_desfecho(desfecho);
+            let campos = match desfecho {
+                Outcome::Returned { code } => vec![*code],
+                Outcome::Unimplemented { addr, args, caller } => {
+                    vec![*addr, args[0], args[1], args[2], args[3], *caller]
+                }
+                Outcome::Fault { addr, pc, lr } => vec![*addr, *pc, *lr],
+                Outcome::Exception { pc } => vec![*pc],
+                Outcome::Budget => Vec::new(),
+                Outcome::CallLimit { calls } => {
+                    vec![*calls as u32, (*calls >> 32) as u32]
+                }
+            };
+            (rotulo, campos)
+        }
+    }
+}
+
+/// O caminho de volta de [`descreve`]. Rótulo desconhecido é recusa, e campo faltando também.
+fn monta(numeros: &[u32]) -> Result<Option<Outcome>, Erro> {
+    let erro = |motivo: String| Erro::Secao {
+        nome: "parada".to_string(),
+        motivo,
+    };
+    let Some((&rotulo, campos)) = numeros.split_first() else {
+        return Err(erro("a seção está vazia".to_string()));
+    };
+    let precisa = |quantos: usize| -> Result<(), Erro> {
+        if campos.len() < quantos {
+            return Err(erro(format!(
+                "o desfecho {rotulo} precisa de {quantos} campo(s) e veio {}",
+                campos.len()
+            )));
+        }
+        Ok(())
+    };
+    Ok(match rotulo {
+        0 => None,
+        1 => {
+            precisa(1)?;
+            Some(Outcome::Returned { code: campos[0] })
+        }
+        2 => {
+            precisa(6)?;
+            Some(Outcome::Unimplemented {
+                addr: campos[0],
+                args: [campos[1], campos[2], campos[3], campos[4]],
+                caller: campos[5],
+            })
+        }
+        3 => {
+            precisa(3)?;
+            Some(Outcome::Fault {
+                addr: campos[0],
+                pc: campos[1],
+                lr: campos[2],
+            })
+        }
+        4 => {
+            precisa(1)?;
+            Some(Outcome::Exception { pc: campos[0] })
+        }
+        5 => Some(Outcome::Budget),
+        6 => {
+            precisa(2)?;
+            Some(Outcome::CallLimit {
+                calls: u64::from(campos[0]) | (u64::from(campos[1]) << 32),
+            })
+        }
+        outro => {
+            return Err(erro(format!(
+                "o estado guarda o desfecho {outro}, que este motor não conhece"
+            )))
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2068,5 +2253,90 @@ mod tests {
             depois.pending_launch, None,
             "o estado disse que não havia pedido de abertura, e voltou um"
         );
+    }
+
+    /// **As listas de texto e o ponto de parada voltam.**
+    ///
+    /// O ponto de parada é o buraco que eu tinha declarado como "não dá para salvar". Dá: o estado
+    /// é bem definido, e o que faltava era a codificação. O teste cobre cada variante do `Outcome`,
+    /// porque é justamente no caminho menos usado que um campo se perde.
+    #[test]
+    fn listas_de_texto_e_ponto_de_parada_vem_de_volta() {
+        let mut antes = maquina();
+        antes.modulos_instalados = vec![
+            (0x0102_8e35, "Z-Wheel".to_string()),
+            (0x0102_8e36, "Face".to_string()),
+        ];
+        antes
+            .enumerations
+            .insert(0x1000, ["primeiro".to_string(), "segundo".to_string()].into());
+        antes.stalled = Some(Outcome::Fault {
+            addr: 0x10,
+            pc: 0x20,
+            lr: 0x30,
+        });
+
+        let arquivo = antes.grava_estado();
+        let mut depois = maquina();
+        depois.interned.insert("OpenGL ES-CM 1.1", 0x999);
+        depois.restaura_estado(&arquivo).expect("restaurou");
+
+        assert_eq!(depois.modulos_instalados, antes.modulos_instalados);
+        let lista: Vec<String> = depois
+            .enumerations
+            .get(&0x1000)
+            .expect("a enumeração voltou")
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(lista, vec!["primeiro".to_string(), "segundo".to_string()]);
+        assert_eq!(
+            depois.stalled,
+            Some(Outcome::Fault {
+                addr: 0x10,
+                pc: 0x20,
+                lr: 0x30
+            })
+        );
+        assert!(
+            depois.interned.is_empty(),
+            "o cache de textos estáticos devia ter sido limpo, e não carregado"
+        );
+    }
+
+    /// Todas as variantes do `Outcome` vão e voltam. É onde um campo se perde sem ninguém notar.
+    #[test]
+    fn todos_os_desfechos_vao_e_voltam() {
+        let desfechos = vec![
+            Outcome::Returned { code: 7 },
+            Outcome::Unimplemented {
+                addr: 0x1,
+                args: [2, 3, 4, 5],
+                caller: 6,
+            },
+            Outcome::Fault {
+                addr: 8,
+                pc: 9,
+                lr: 10,
+            },
+            Outcome::Exception { pc: 11 },
+            Outcome::Budget,
+            Outcome::CallLimit { calls: 0x1_0000_0002 },
+        ];
+        for desfecho in desfechos {
+            let (rotulo, campos) = descreve(&Some(desfecho.clone()));
+            let mut numeros = vec![rotulo];
+            numeros.extend(campos);
+            assert_eq!(
+                monta(&numeros).expect("voltou"),
+                Some(desfecho.clone()),
+                "o desfecho {desfecho:?} não voltou igual"
+            );
+        }
+        // Ausente vai e volta como ausente.
+        assert_eq!(monta(&[0]).expect("ausente"), None);
+        // E desfecho desconhecido é recusa, não invenção.
+        assert!(monta(&[99]).is_err());
+        assert!(monta(&[2]).is_err(), "campos faltando devia ser recusa");
     }
 }
