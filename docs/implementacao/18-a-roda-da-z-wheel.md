@@ -924,9 +924,29 @@ A volta à roda fica, portanto, dependente de duas coisas ao mesmo tempo: um cat
 ache o foco, e um jogo que **saia sozinho** nesse foco. O `Zeebo Clube` e o `Zeebo App` são os dois
 que saem (medidos na varredura), e nenhum dos dois é alcançado pelo roteiro na pasta cheia.
 
-É o próximo experimento, e agora com o alvo estreito: **descobrir como a grade escolhe o item em
-foco** (o relatório da varredura diz `class_id = 17359702` depois do roteiro, e a grade é ordenada
-por título), para montar uma pasta onde o foco caia num título que termina sozinho.
+Quatro tentativas, e todas com o mesmo desfecho — o lançamento **só acontece com a pasta cheia**:
+
+```text
+2 jogos, roteiro da doc                     nao lanca
+3 jogos (Action Hero 3D, Alice, Zeebo Clube) nao lanca
+3 jogos com um titulo que PARA NA HORA       nao lanca
+4 jogos, instantes da varredura (30,5 a 38 s) nao lanca
+```
+
+A terceira foi a mais promissora: o `Zeebo Channels - Opera Mini` **não cria o applet** e a sessão
+para logo, então a volta à roda seria exercitada de verdade. E o título da grade vem do **nome do
+pacote** (é o que a varredura grava no catálogo), então renomeei a cópia para `Alien Z` para ela cair
+na terceira posição alfabética — que é onde o roteiro põe o foco na pasta cheia. Mesmo assim, sem
+lançamento.
+
+O que isso delimita: **não é o título nem o número de arquivos** — é o que a grade monta. Com poucos
+títulos ela não oferece o foco que o roteiro alcança, e com muitos ela oferece, mas aí o foco cai num
+jogo que não sai sozinho. As duas condições precisam valer ao mesmo tempo, e é isso que falta montar.
+
+É o próximo experimento, com o alvo já estreito: **descobrir como a grade escolhe o item em foco na
+pasta cheia** (o relatório diz `class_id = 17359702`, o terceiro em ordem de título) e reproduzir essa
+condição numa pasta onde o terceiro seja um título que sai — ou aceitar, com a medição na mão, que a
+volta à roda fica demonstrada só no aparelho.
 
 **13. O armazenamento muda o instante, e não a prisão.** O caminho da varredura usa o armazenamento
 padrão (a config do usuário) e o do core usa o que o frontend entrega; apontando o teste do core
