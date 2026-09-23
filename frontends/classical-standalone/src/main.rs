@@ -535,7 +535,7 @@ fn main() -> ExitCode {
 /// É o caminho normal de uso; a linha de comando continua existindo para depuração, que é
 /// onde ela é insubstituível — despejar quadros, rastrear chamadas, olhar a memória.
 /// A logo do emulador, para o ícone da janela.
-const LOGO: &[u8] = include_bytes!("../assets/zeebx.png");
+const LOGO: &[u8] = include_bytes!("../../../assets/zeebx.png");
 
 /// O maior lado do ícone. A logo tem mais de mil pixels de lado, e um ícone desse tamanho é
 /// megabytes de textura para desenhar algo que nunca passa de alguns pixels na barra.

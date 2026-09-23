@@ -5290,7 +5290,6 @@ dependencies = [
  "symphonia",
  "unicorn-engine",
  "ureq",
- "winresource",
  "zip",
  "zune-jpeg",
 ]
@@ -5308,6 +5307,14 @@ dependencies = [
  "jni 0.21.1",
  "log",
  "raw-window-handle",
+ "zeebx",
+]
+
+[[package]]
+name = "zeebx-classical-standalone"
+version = "0.3.0"
+dependencies = [
+ "winresource",
  "zeebx",
 ]
 

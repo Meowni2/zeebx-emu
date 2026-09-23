@@ -76,9 +76,13 @@ jobs:
       # compilado neste job, e testá-lo num job próprio seria pagar a compilação duas vezes.
       - name: Testes
         continue-on-error: true
-        run: cargo test --release --locked -p zeebx -p zeebx-headless
+        run: cargo test --release --locked -p zeebx -p zeebx-classical-standalone -p zeebx-headless
 
+      # **Roda no diretório do frontend, e não na raiz.** O `cargo packager` lê a configuração do
+      # manifesto onde é chamado, e desde a 0.3.0 ela mora no pacote que produz o binário. Os
+      # pacotes continuam saindo em `target/pacotes` da raiz, pelo `out-dir` de lá.
       - name: Pacotes
+        working-directory: frontends/classical-standalone
         env:
           # O AppImage é montado sem FUSE no runner.
           APPIMAGE_EXTRACT_AND_RUN: "1"
