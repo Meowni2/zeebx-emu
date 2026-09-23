@@ -129,14 +129,6 @@ zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }
 symphonia = { version = "0.5.5", default-features = false, features = ["mp1", "mp2", "mp3", "ogg", "vorbis"] }
 discord-rich-presence = { version = "1.1", optional = true }
 ureq = "3"
-# O GL que o núcleo usa. É a mesma versão que o `eframe` reexporta — o tipo é um só — e tê-la
-# direto é o que deixa a interface Qt entregar ao rasterizador um contexto que não é do eframe.
-glow = "0.16"
-# A interface Qt, em prova de viabilidade (fase 0 de docs/implementacao/21-migracao-para-qt.md).
-# Fica atrás da feature `ui-qt` para quem não tem o Qt 6 instalado continuar compilando.
-cxx = { version = "1", optional = true }
-cxx-qt = { version = "0.10", optional = true }
-cxx-qt-lib = { version = "0.10", optional = true, features = ["qt_gui", "qt_qml"] }
 sevenz-rust2 = "0.23.0"
 # Síntese por banco de amostras, ver a feature `soundfont`. MIT e Rust puro: nada de C, nada de
 # biblioteca de host, e por isso pode entrar no core Libretro.
@@ -156,45 +148,6 @@ unicorn-engine = { version = "2.1.5", optional = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
 
-# O ícone dentro do `.exe` do Windows: é o que o Explorer e a barra de tarefas mostram.
-[build-dependencies]
-winresource = "0.1"
-cxx-qt-build = { version = "0.10", optional = true }
-
-[features]
-default = []
-ui-qt = ["dep:cxx", "dep:cxx-qt", "dep:cxx-qt-lib", "dep:cxx-qt-build"]
-
-# Os instaladores, gerados pelo `cargo packager --release`: `.deb` e AppImage no Linux, NSIS no
-# Windows, `.dmg` no macOS. O workflow `.github/workflows/release.yml` roda isto nos três sistemas
-# quando uma tag de versão é enviada.
-[package.metadata.packager]
-product-name = "Zeebx"
-identifier = "io.github.zeebxteam.zeebx"
-publisher = "ZeebxTeam"
-homepage = "https://github.com/ZeebxTeam/zeebx-emu"
-category = "Game"
-description = "Emulador do Zeebo, o console da TecToy"
-out-dir = "target/pacotes"
-before-packaging-command = "cargo build --release --locked"
-icons = ["assets/icones/zeebx-512.png", "assets/icones/zeebx.ico", "assets/icones/zeebx.icns"]
-
-[[package.metadata.packager.binaries]]
-path = "zeebx"
-main = true
-
-[package.metadata.packager.deb]
-# O `libasound2t64` é o nome do ALSA a partir do Ubuntu 24.04 e do Debian 13.
-depends = ["libasound2 | libasound2t64", "libudev1", "libgl1", "libxkbcommon0", "libatomic1"]
-section = "games"
-
-[package.metadata.packager.nsis]
-installer-icon = "assets/icones/zeebx.ico"
-installer-mode = "currentUser"
-languages = ["PortugueseBR", "English"]
-
-[package.metadata.packager.macos]
-minimum-system-version = "11.0"
 
 # O `cargo run` sem `--release` rodava o Quake 6,9x mais devagar — 21,7 s contra 3,2 s para o
 # mesmo trabalho (668 M instruções, 378 voltas). Não é surpresa: o rasterizador e o despacho de
