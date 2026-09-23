@@ -394,15 +394,42 @@ jobs:
     if: ${{ !cancelled() && (inputs.versao != '' || startsWith(github.ref, 'refs/tags/')) }}
     runs-on: ubuntu-latest
     steps:
+      # O repositório entra por causa das notas: o corpo da release sai de um arquivo versionado,
+      # e sem `checkout` este job só tem os artefatos baixados.
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: pacotes
           merge-multiple: true
+
+      # **O texto da release é o que vocês escreveram, não a lista de commits.** Cada versão deixa
+      # o seu em `docs/patch-notes/`, em linguagem de quem joga; era isso que ia para a página da
+      # release na mão, e o `generate_release_notes` do GitHub entregava outra coisa -- um resumo
+      # de commits que ninguém quer ler.
+      #
+      # Sem o arquivo, a lista de commits volta a valer: é melhor que uma release muda, e serve de
+      # aviso de que a nota faltou.
+      - name: As notas da versão
+        id: notas
+        shell: bash
+        run: |
+          tag="${{ inputs.versao || github.ref_name }}"
+          for caminho in "docs/patch-notes/$tag.MD" "docs/patch-notes/$tag.md"; do
+            if [ -f "$caminho" ]; then
+              echo "notas em $caminho"
+              echo "caminho=$caminho" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "não há nota para $tag em docs/patch-notes/; a release sai com a lista de commits"
 
       - uses: softprops/action-gh-release@v2
         with:
           name: ${{ inputs.versao || github.ref_name }}
           tag_name: ${{ inputs.versao || github.ref_name }}
           draft: true
-          generate_release_notes: true
+          # Um dos dois, nunca os dois: com o arquivo, ele é o corpo; sem ele, o GitHub gera.
+          body_path: ${{ steps.notas.outputs.caminho }}
+          generate_release_notes: ${{ steps.notas.outputs.caminho == '' }}
           files: pacotes/*
