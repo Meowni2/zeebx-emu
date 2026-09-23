@@ -9,8 +9,8 @@ marcada aqui como feita.
 
 | Fase | Situação |
 |---|---|
-| 0 — prova de viabilidade | pontos 1 a 3 feitos no Linux (`frontends/classical-standalone/src/qt/`, feature `ui-qt`); o ponto 4 tem workflow (`qt.yml`), falta rodá-lo |
-| 1 — desacoplar | o `glow` direto no núcleo já veio com a 0.3.0; o resto não começou |
+| 0 — prova de viabilidade | feita no Linux (`frontends/classical-standalone/src/qt/`, feature `ui-qt`); no `qt.yml`, Linux, Windows x64 e macOS Intel passaram, e o macOS ARM64 espera a nova execução com o Qt 6.11 |
+| 1 — desacoplar | `Viewport` do pintor e tradução de teclas no núcleo feitos; falta o corte do `App` (proposta na fase 1) |
 | 2 a 9 | não começadas |
 
 ## Onde o egui está de verdade
@@ -81,19 +81,20 @@ uma CPU a 100% à toa.
 
 ### Licença
 
-**Isto contradiz o [`AGENTS.md`](../../AGENTS.md), e a decisão é de quem mantém o projeto.** O
-`AGENTS.md` diz que o `GPL-2.0-only` exclui "Qt 6, por exemplo". Os cabeçalhos dos módulos que a
-interface usa dizem outra coisa — conferido no Qt 6.11 instalado, em `QtCore`, `QtGui`, `QtQuick`,
-`QtQml` e `QtNetwork`:
+O projeto sai do `GPL-2.0-only`. A dependência que prendia a licença na versão 2 foi retirada, e o
+mantenedor decidiu passar a GPLv3 — é o que libera a migração. Até essa troca chegar ao `LICENSE`,
+ao `Cargo.toml` e ao [`AGENTS.md`](../../AGENTS.md), que ainda diz que o `GPL-2.0-only` "exclui Qt
+6", a interface Qt não vai para uma release.
+
+Com GPLv3 a questão acaba para os módulos em uso: `QtCore`, `QtGui`, `QtQuick`, `QtQml` e
+`QtNetwork` declaram, no Qt 6.11 instalado,
 
 ```text
 SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 ```
 
-Com a opção `GPL-2.0-only`, o binário continua inteiro em GPLv2. O que a regra acerta é que **nem
-todo módulo Qt oferece essa opção** — há módulos só GPLv3 —, então cada um que entrar precisa ter o
-cabeçalho conferido. O cxx-qt é MIT/Apache. Até o `AGENTS.md` ser revisto, a interface Qt não deve
-ir para uma release.
+e tanto a LGPLv3 quanto a GPLv3 combinam com GPLv3. Cada módulo novo ainda precisa ter o cabeçalho
+conferido, porque nem todo módulo Qt tem a mesma lista. O cxx-qt é MIT/Apache.
 
 ## As fases
 
@@ -139,24 +140,54 @@ O que a prova mostrou, no Linux com Wayland e NVIDIA (driver 615, Qt 6.11, cxx-q
   vivo), o contexto (`gl_destroi`), o `QGuiApplication`. Medido fechando a janela pelo QML: saída
   0 nos dois rasterizadores.
 
-Falta: rodar o `qt.yml` — Linux, Windows x64 e macOS nas duas arquiteturas, todos com o Qt 6.8
-LTS do `install-qt-action` (ponto 4) —, e a entrada, que existe — teclado pelo nome do
+**O `qt.yml`** (ponto 4) passou no Linux, no Windows x64 e no macOS Intel com o Qt 6.8.3. O macOS
+ARM64 quebrou dentro de um cabeçalho do próprio Qt: o `qyieldcpu.h` do 6.8.3 chama `__yield()`, que
+o clang do Xcode novo só aceita com o `<arm_acle.h>`. O 6.11 tenta `__builtin_arm_yield` antes, e o
+workflow passou a usá-lo nos quatro alvos.
+
+Falta a entrada, que existe — teclado pelo nome do
 egui e controles pelo `gilrs`, com o mapeamento do `settings.json` — mas não foi exercitada à
 mão. O quadro grande do `quadro_na_placa()` ainda passa pela leitura em RGB565: embrulhar a
 textura sem cópia é da fase 3.
 
 ### 1 — Desacoplar o núcleo do eframe
 
-- ~~`glow` como dependência direta~~ — feito na 0.3.0.
-- `ui/gpu.rs` recebe um `Viewport` próprio em vez do `ViewportInPixels`.
-- `ui/settings.rs` perde os dois métodos que falam de `ViewportBuilder`.
-- `input/teclas.rs` com a lista canônica de nomes, e o teste que confere a tradução nos dois
-  backends.
-- O `ui::App` se parte em `ui/nucleo.rs` (estado e lógica: `play`, `rescan`, `pads_now` recebendo
-  o conjunto de teclas apertadas, `avks_ativos`, `placement`, saves, Discord, atualização,
-  calibração) e `ui/egui/` (só desenho). Os testes de `ui/app.rs` vão com o núcleo.
+**O escopo mudou com a 0.3.0.** O `egui` não sai do núcleo: o frontend Android desenha com ele, e o
+headless usa o `egui::Key` como nome canônico de tecla. O que a migração troca é a janela do
+desktop — o `eframe` do `classical-standalone` —, e o egui que o núcleo carrega para os outros
+frontends não atrapalha o Qt. Dois itens do plano original deixaram de valer por isso:
+`no_construtor`/`comandos` no `settings.rs` não custam nada ao Qt, que só não os chama; e a lista
+canônica de teclas já é o `egui::Key`, conferida pelo teste da ponte.
 
-Sem mudança de comportamento: o egui continua sendo a interface.
+Feito:
+
+- ~~`glow` como dependência direta~~ — veio com a 0.3.0.
+- ~~`Viewport` próprio no `Pintor`~~. `ui::gpu::Viewport`, com `From<ViewportInPixels>` para quem
+  tem egui na tela. O headless montava um `ViewportInPixels` à mão sem ter egui nenhum; agora só
+  converte na chamada, e a lógica dele (e os testes) ficaram como estavam.
+- ~~A tradução de teclas no núcleo~~. `input::avks_ativos`, `input::transicoes` e
+  `input::avk_do_nome` saíram do `App`, que tinha também uma cópia idêntica do `input::avk_de`. A
+  interface Qt passou a entregar `EVT_KEY` com elas, como a do egui.
+
+Falta o corte do `App`, que é o item grande — 3.400 linhas, e é a interface que está em produção.
+A proposta é começar pelo que a janela do jogo precisa, e não pelo `App` inteiro:
+
+- **`ui::partida::Partida`**, no núcleo e sem toolkit: a sessão, as teclas entregues, o controle
+  do quadro anterior, o relógio da fatia, a pausa e o "aberto pela Z-Wheel". Um `avanca(entrada)`
+  recebe os controles, os movimentos e as teclas já em AVK, faz o passo (ou mostra a tela
+  intermediária) e devolve o desfecho: **segue**, **lança o ClassID tal**, **reabre a Z-Wheel** ou
+  **fecha**. É a parte do `playing_screen` que não desenha, e é hoje a que a ponte Qt duplica pela
+  metade — ela não trata lançamento nem a volta à Z-Wheel.
+- **A abertura** (`play`): montar a sessão a partir do `Settings` — resolução interna, proporção,
+  melhorias, neblina, áudio, os instalados para a Z-Wheel, a tela herdada — vira
+  `Partida::abre`, para as duas janelas abrirem um jogo igual.
+- Ficam em cada janela: ler a entrada do toolkit, achar o caminho do ClassID na biblioteca, e
+  desenhar. Os controles do host (`gilrs`, Wii Remote, sensores) ficam do lado do desktop, mas sem
+  egui: o `pad_of` passa a receber o conjunto de nomes de tecla apertados em vez de perguntar ao
+  `egui::Context`.
+
+O risco é o egui mudar de comportamento no caminho, e a medida é o que já existe: os testes, a
+varredura, e jogar a Z-Wheel lançando um jogo e voltando, nas duas janelas.
 
 ### 2 — Estrutura Qt ao lado do egui
 
@@ -200,9 +231,10 @@ Saves, log, aviso de abertura e atualização. A thread da atualização devolve
 vindo do `Catalog` — **não** do `qsTr` —, para os JSON soltos e o teste de chaves seguirem
 valendo.
 
-### 8 — Corte do egui
+### 8 — Corte do eframe
 
-`ui-qt` como padrão por uma versão, depois saem o `eframe`, o `ui/egui/` e, se trocado pelo
+**Sai o `eframe` do standalone, não o egui do projeto** — ver a fase 1. `ui-qt` como padrão por uma
+versão, depois saem o `eframe`, a `ui::App` e, se trocado pelo
 `QtQuick.Dialogs`, o `rfd`. O `--window` (`minifb`) é decisão pendente do `TODO.md`,
 independente desta. O [10](10-interface.md), o diagrama de camadas do
 [`ARCHITECTURE.md`](../../ARCHITECTURE.md) e os comentários de `video/contexto.rs` e
