@@ -1,7 +1,5 @@
 //! Backend ARM sobre Dynarmic.
 //!
-//! O Unicorn usa o TCG do QEMU; ele é robusto, mas o renderer ARM que o Kingdom Hearts traz
-//! em `swv21brew.mod` executa centenas de milhões de instruções por poucos segundos de jogo.
 //! Dynarmic recompila os blocos A32 para o código nativo do host. Este arquivo mantém a mesma
 //! fronteira do [`CpuBackend`]: os endereços não mapeados das vtables BREW continuam sendo a
 //! parada que devolve o controle ao despachante Rust.
@@ -25,8 +23,8 @@ const MODO_USUARIO: u32 = 0x10;
 /// O bit `T` do `CPSR`: ligado, o núcleo busca instruções Thumb.
 const CPSR_THUMB: u32 = 1 << 5;
 
-/// Limite defensivo da string recebida por `SYS_WRITE0`. É o mesmo contrato do backend
-/// Unicorn: uma string sem terminador não pode prender o host em uma leitura sem fim.
+/// Limite defensivo da string recebida por `SYS_WRITE0`: uma string sem terminador não pode
+/// prender o host em uma leitura sem fim.
 const MAX_SEMIHOSTING_STRING: u32 = 4096;
 
 /// Granularidade que o Dynarmic usa para indexar código recompilado.
@@ -244,7 +242,7 @@ impl Callbacks for Estado {
     extern "C" fn call_svc(cb: &mut CallbackImpl<Self>, swi: u32) {
         // `SVC #0xAB` é o semihosting ARM que Peggle e Zuma usam para log. Não é uma
         // interrupção BREW: depois de atendê-la a execução continua na instrução seguinte.
-        // Reconhecemos as duas operações de saída que o Unicorn já suporta e devolvemos zero
+        // Reconhecemos as duas operações de saída que os jogos observados usam e devolvemos zero
         // nas outras, como o monitor ARM faz para a maioria das consultas inofensivas.
         if swi == 0xab {
             let jit = unsafe { &mut *cb.jit.get() };
@@ -408,8 +406,8 @@ impl DynarmicCpu {
 impl CpuBackend for DynarmicCpu {
     fn reset(&mut self, mem: &GuestMemory) -> Result<(), CpuError> {
         // `GuestMemory` é deliberadamente construído uma vez antes da execução. Copiar o mapa
-        // para a memória que as callbacks possuem mantém a mesma semântica do Unicorn: a API
-        // Rust e o ARM enxergam os mesmos bytes a partir daqui.
+        // para a memória que as callbacks possuem mantém o contrato do backend: a API Rust e o
+        // ARM enxergam os mesmos bytes a partir daqui.
         let mut copia = GuestMemory::new();
         for regiao in mem.regions() {
             copia
@@ -493,7 +491,7 @@ impl CpuBackend for DynarmicCpu {
         self.jit().is_ok_and(|jit| jit.get_cpsr() & CPSR_THUMB != 0)
     }
 
-    /// A vigia de escrita, como a do Unicorn: só escrita **do guest** liga o sinalizador.
+    /// A vigia de escrita: só escrita **do guest** liga o sinalizador.
     ///
     /// Sem ela o contrato padrão responde "sempre sujo", e cada chamada que desenha importava
     /// todas as superfícies inteiras. No Pac-Mania, 100 mil `IIMAGE_Draw` somavam 22 segundos
@@ -577,10 +575,9 @@ impl CpuBackend for DynarmicCpu {
         let jit = self.jit_mut()?;
         // **O bit 0 do endereço é o modo, não parte do endereço.** O despachante retoma no `lr`
         // do jeito que ele veio, e o `lr` de uma chamada feita de código Thumb traz o bit 0
-        // ligado — é a convenção de interworking do ARM, e o Unicorn a aplica sozinho no
-        // `emu_start`. Aqui ela precisa ser explícita: escrevendo o endereço cru, o Zenonia,
-        // que é todo Thumb, voltava de cada API um byte adiante e o núcleo parava numa
-        // "instrução" montada com metade de duas.
+        // ligado — é a convenção de interworking do ARM. Aqui ela precisa ser explícita:
+        // escrevendo o endereço cru, o Zenonia, que é todo Thumb, voltava de cada API um byte
+        // adiante e o núcleo parava numa "instrução" montada com metade de duas.
         let cpsr = jit.get_cpsr();
         match pc & 1 {
             1 => jit.set_cpsr(cpsr | CPSR_THUMB),
@@ -756,50 +753,5 @@ mod tests {
         cpu.write_reg(Reg::Lr, RETURN_MAGIC);
         assert_eq!(cpu.run(0, 10).unwrap(), StopReason::Returned);
         assert_eq!(cpu.read_reg(Reg::R0), 2);
-    }
-}
-
-impl DynarmicCpu {
-    /// **Os ganchos de depuração do unicorn, recusados explicitamente.**
-    ///
-    /// `trace_code`, `watch`, `set_wall_limit`, `enable_profile`, `steps`, `writes`, `profile` e
-    /// `wall_expired` são do unicorn: ele para a execução onde se pede. O dynarmic recompila
-    /// blocos, e não oferece esses ganchos. Este bloco existe para o binário **compilar** onde o
-    /// unicorn não existe — o Windows ARM64, onde o QEMU nem monta —, e para a recusa ser dita em
-    /// voz alta em vez de virar silêncio: um `--trace` que não mostra nada e não explica por quê
-    /// custa mais caro do que um erro claro.
-    ///
-    /// As leituras devolvem vazio porque não têm o que devolver; quem pergunta por elas com uma
-    /// faixa ou um endereço recebe o erro acima antes.
-    fn sem_unicorn(&self) -> CpuError {
-        CpuError("este gancho de depuração precisa do backend unicorn, que não existe neste alvo".to_string())
-    }
-
-    pub fn trace_code(&mut self, _begin: u32, _end: u32, _limite: usize) -> Result<(), CpuError> {
-        Err(self.sem_unicorn())
-    }
-
-    pub fn watch(&mut self, _base: u32, _tamanho: u32) -> Result<(), CpuError> {
-        Err(self.sem_unicorn())
-    }
-
-    pub fn set_wall_limit(&mut self, _limite: std::time::Duration) {}
-
-    pub fn enable_profile(&mut self) {}
-
-    pub fn wall_expired(&self) -> bool {
-        false
-    }
-
-    pub fn steps(&self) -> Vec<(u32, u32, u32)> {
-        Vec::new()
-    }
-
-    pub fn writes(&self) -> Vec<super::Write> {
-        Vec::new()
-    }
-
-    pub fn profile(&self) -> Vec<(u32, u64)> {
-        Vec::new()
     }
 }
