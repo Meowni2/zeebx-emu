@@ -2620,6 +2620,15 @@ pub struct Machine<C: CpuBackend> {
     calls: BTreeMap<(u32, u32), u64>,
     /// Total de chamadas atendidas, para aplicar o teto.
     calls_total: u64,
+    /// Se o quadro **de agora** deve pular o desenho — 3D e a limpeza de tela, não a lógica.
+    ///
+    /// **Quem decide é o frontend, quadro a quadro, e não o motor.** A política (fixo/automático,
+    /// e o que "automático" mede) depende de coisas que só o frontend sabe: se o áudio está
+    /// prestes a faltar, ou a contagem de quadros que o Libretro pediu. O motor só recebe a
+    /// decisão já tomada, e a aplica no único lugar que interessa: os dois pontos que tocam o
+    /// rasterizador — `gles_draw` e o `Clear` de `IGL` — sem mexer em nada que o jogo enxerga.
+    /// Um jogo real não sabe se o pixel dele chegou à tela; hardware nenhum avisa isso.
+    pula_desenho: bool,
 }
 
 /// Se o rasterizador na placa foi pedido.
@@ -3050,6 +3059,7 @@ impl<C: CpuBackend> Machine<C> {
             banco_de_som: banco_do_aparelho(&aparelho, midi_policy),
             calls: BTreeMap::new(),
             calls_total: 0,
+            pula_desenho: false,
         }
     }
 

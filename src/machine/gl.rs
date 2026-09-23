@@ -255,7 +255,11 @@ impl<C: CpuBackend> Machine<C> {
                 if a[0] & gles::GL_COLOR_BUFFER_BIT != 0 {
                     self.gl_clears = self.gl_clears.saturating_add(1);
                 }
-                self.gl.clear(a[0])
+                // A contagem de limpezas conta mesmo pulando — é diagnóstico do jogo, não do
+                // quadro que a tela mostrou. O que pula é só o preenchimento de verdade.
+                if !self.pula_desenho {
+                    self.gl.clear(a[0]);
+                }
             }
             "ClearColorx" | "ClearColor" => {
                 let c = std::array::from_fn(|i| number(a[i]));
@@ -784,6 +788,13 @@ impl<C: CpuBackend> Machine<C> {
         if !self.gl_vertices.em_uso() || indices.is_empty() {
             return Ok(());
         }
+        // **O quadro pulado sai daqui, antes de qualquer leitura de memória do guest.** É o que
+        // faz o pulo economizar de verdade: sem isto, o custo caro — atravessar a FFI do unicorn
+        // para trazer cada vértice — aconteceria do mesmo jeito, e só a rasterização sumiria. O
+        // jogo não vê diferença nenhuma: hardware real também não avisa se o pixel chegou à tela.
+        if self.pula_desenho {
+            return Ok(());
+        }
         let base = self.gl.current_color();
         // Um bloco por array, não um por componente: é a mesma memória do guest, pedida de
         // uma vez. Ver [`Self::read_array`].
@@ -1094,6 +1105,14 @@ impl<C: CpuBackend> Machine<C> {
     /// [`rasterizer::Rasterizador::define_neblina`].
     pub fn define_neblina(&mut self, permitida: bool) {
         self.gl.define_neblina(permitida);
+    }
+
+    /// Se o quadro de agora deve pular o desenho — ver o campo `pula_desenho`.
+    ///
+    /// Chamado uma vez por quadro, antes do jogo rodar: a decisão vale para todo `gles_draw` e
+    /// `Clear` que acontecerem enquanto o CPU emula este quadro, e é reavaliada no próximo.
+    pub fn define_pula_desenho(&mut self, pula: bool) {
+        self.pula_desenho = pula;
     }
 
     /// Devolve ao dono o estado de GL que o rasterizador mexeu. Ver

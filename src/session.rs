@@ -1100,6 +1100,12 @@ impl Session {
         self.machine.define_neblina(permitida);
     }
 
+    /// Se o quadro de agora deve pular o desenho 3D e a limpeza de tela. Ver
+    /// [`crate::machine::Machine::define_pula_desenho`].
+    pub fn define_pula_desenho(&mut self, pula: bool) {
+        self.machine.define_pula_desenho(pula);
+    }
+
     /// Muda a resolução interna do 3D; vale a partir do próximo quadro.
     pub fn define_resolucao_interna(&mut self, escala: usize) {
         self.machine.define_resolucao_interna(escala);
