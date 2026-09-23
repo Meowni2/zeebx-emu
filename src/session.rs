@@ -860,7 +860,32 @@ impl Session {
 
     /// Põe de volta um estado gravado por [`Session::grava_estado`].
     pub fn restaura_estado(&mut self, arquivo: &[u8]) -> Result<(), crate::save_state::Erro> {
-        self.machine.restaura_estado(arquivo)
+        self.machine.restaura_estado(arquivo)?;
+
+        // O save state guarda o relógio do console, não os relógios do host. Se mantivermos
+        // started/clock_base do instante anterior ao Load, o limitador compara o relógio
+        // restaurado com uma linha do tempo que já não existe: voltar dez minutos pode parecer
+        // dez minutos atrasado; avançar para um estado mais novo pode parecer adiantado e travar
+        // em Step::Ahead. A nova âncora começa exatamente no instante virtual restaurado.
+        let agora = Instant::now();
+        let clock_ms = u64::from(self.machine.clock_ms());
+        self.started = agora;
+        self.clock_base = clock_ms;
+        self.window = Marca {
+            real: agora,
+            clock_ms,
+            instructions: self.machine.instructions(),
+            frames: self.machine.quadros(),
+        };
+        self.sample = Sample::default();
+        self.history.clear();
+
+        // Estas duas peças vivem na Session, não na Machine: ambas descrevem o que o host
+        // estava mostrando depois do ponto salvo. A máquina restaurada volta a ser a fonte da
+        // verdade no próximo quadro.
+        self.intermediario = None;
+        self.stopped = None;
+        Ok(())
     }
 
     /// Se dá para gravar agora. Ver [`crate::machine::Machine::pode_salvar`].
@@ -1091,6 +1116,88 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sessao_minima_para_save_state() -> Session {
+        let mut mem = crate::cpu::mem::GuestMemory::new();
+        let mut codigo = 0xe12f_ff1eu32.to_le_bytes().to_vec(); // bx lr
+        codigo.resize(0x1000, 0);
+        mem.map("code", 0, codigo, true).unwrap();
+        mem.map_zeroed("data", 0x1000, 0x1000).unwrap();
+        mem.map_zeroed("stack", loader::STACK_BASE, loader::STACK_SIZE)
+            .unwrap();
+        let modulo = loader::LoadedModule {
+            mem,
+            entry: 0,
+            shell: loader::OBJECT_BASE,
+            helpers: 0,
+            out_module: loader::OBJECT_BASE,
+            extensions: Vec::new(),
+        };
+        let mut cpu = DynarmicCpu::new().unwrap();
+        crate::cpu::CpuBackend::reset(&mut cpu, &modulo.mem).unwrap();
+        let machine = Machine::new(
+            cpu,
+            modulo,
+            std::env::temp_dir().join("zeebx-session-state-clock"),
+        );
+        let agora = Instant::now();
+        let clock_ms = u64::from(machine.clock_ms());
+        let window = Marca {
+            real: agora,
+            clock_ms,
+            instructions: machine.instructions(),
+            frames: machine.quadros(),
+        };
+        Session {
+            machine,
+            partida: None,
+            #[cfg(feature = "audio")]
+            audio: None,
+            title: "teste".to_string(),
+            classe: 0,
+            intermediario: None,
+            started: agora,
+            clock_base: clock_ms,
+            stopped: None,
+            window,
+            sample: Sample::default(),
+            history: std::collections::VecDeque::new(),
+        }
+    }
+
+    #[test]
+    fn restaurar_estado_reancora_o_relogio_real_da_sessao() {
+        let mut sessao = sessao_minima_para_save_state();
+        let estado = sessao.grava_estado();
+
+        // Simula uma sessão que continuou muito tempo depois do ponto salvo. Estas peças são do
+        // host e não entram no arquivo ZBXS; se sobreviverem ao Load, o limitador compara duas
+        // linhas do tempo diferentes e pode acelerar ou segurar o jogo indevidamente.
+        sessao.started = Instant::now() - Duration::from_secs(30);
+        sessao.clock_base = 123_456;
+        sessao.window.real = Instant::now() - Duration::from_secs(5);
+        sessao.window.clock_ms = 987_654;
+        sessao.sample = Sample {
+            speed: 321,
+            fps: 99,
+            ips: 123,
+        };
+        sessao.history.push_back(sessao.sample);
+        sessao.intermediario = Some(Framebuffer::new(2, 2));
+        sessao.stopped = Some(Outcome::Budget);
+
+        sessao.restaura_estado(&estado).unwrap();
+
+        assert_eq!(sessao.clock_base, u64::from(sessao.machine.clock_ms()));
+        assert_eq!(sessao.ahead_ms(), 0, "o estado restaurado não pode nascer adiantado");
+        assert!(sessao.atraso_ms() < 100, "o estado restaurado nasceu artificialmente atrasado");
+        assert!(sessao.history.is_empty());
+        assert_eq!(sessao.sample.speed, 0);
+        assert_eq!(sessao.sample.fps, 0);
+        assert_eq!(sessao.sample.ips, 0);
+        assert!(sessao.intermediario.is_none());
+        assert!(sessao.stopped.is_none());
+    }
 
 /// **O motor desenha no framebuffer que o frontend entrega, e o teste prova isso.**
 ///
