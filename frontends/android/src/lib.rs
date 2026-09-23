@@ -21,6 +21,7 @@
 mod ajustes;
 mod biblioteca;
 mod entrada;
+mod estado;
 mod jogo;
 mod seletor;
 mod sistema;
@@ -260,6 +261,9 @@ pub struct Emulador {
     /// A pasta privada do aplicativo. Sempre legível, sem permissão nenhuma — é o atalho que
     /// funciona mesmo quando o "acesso a todos os arquivos" não foi concedido.
     minha_pasta: PathBuf,
+    /// Raiz privada do aplicativo. Os save states ficam aqui, separados das ROMs escolhidas pelo
+    /// usuário: atualizar/trocar a coleção não apaga o ponto em que cada jogo estava.
+    estados_raiz: PathBuf,
     /// A ponte para a atividade: é por ela que se pergunta e se pede a permissão.
     app: AndroidApp,
     /// O contexto de GL da tela, quando ela já subiu. É o que a sessão usa para preencher o 3D
@@ -312,6 +316,16 @@ pub struct Emulador {
     confirmando: bool,
     /// O jogo está parado por escolha, e não por falha.
     pausado: bool,
+    /// Identidade BLAKE3 do arquivo que abriu a sessão, a mesma regra do armazenamento do núcleo.
+    estado_id: Option<String>,
+    /// Os cinco slots persistentes do jogo atual.
+    estados: [Option<estado::Slot>; estado::SLOTS],
+    /// Miniaturas já convertidas/subidas ao egui, por slot.
+    miniaturas_estado: HashMap<usize, egui::TextureHandle>,
+    /// Slot ocupado que pediu uma segunda confirmação antes de ser substituído.
+    estado_sobrescrever: Option<usize>,
+    /// Resultado da última operação, mostrado no menu sem fechar a janela.
+    estado_mensagem: Option<String>,
     /// Por que o último jogo não abriu, quando não abriu.
     erro: Option<String>,
     ultimo: Instant,
@@ -325,6 +339,10 @@ impl Emulador {
         minha_pasta: PathBuf,
         app: AndroidApp,
     ) -> Self {
+        let estados_raiz = minha_pasta
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| minha_pasta.clone());
         let mut settings = Settings::load_from(&arquivo);
         // Sem pasta escolhida ainda: o padrão, se ele existir, senão o diretório do aplicativo,
         // que sempre existe e nunca pede permissão.
@@ -352,6 +370,7 @@ impl Emulador {
             aba: ajustes::Aba::Geral,
             dica: None,
             minha_pasta,
+            estados_raiz,
             app,
             gl: None,
             pintor: Default::default(),
@@ -372,6 +391,11 @@ impl Emulador {
             pad: Pad::default(),
             confirmando: false,
             pausado: false,
+            estado_id: None,
+            estados: std::array::from_fn(|_| None),
+            miniaturas_estado: HashMap::new(),
+            estado_sobrescrever: None,
+            estado_mensagem: None,
             erro: None,
             ultimo: Instant::now(),
         };
@@ -412,6 +436,15 @@ impl Emulador {
     /// Abre um jogo, com os ajustes de gráficos e som que estão valendo.
     fn abre(&mut self, caminho: &std::path::Path) {
         self.erro = None;
+        let estado_id = match estado::identifica(caminho) {
+            Ok(id) => Some(id),
+            Err(erro) => {
+                // Não saber nomear os slots não é motivo para recusar um jogo que roda. O menu
+                // explica a indisponibilidade e o resto do frontend continua normal.
+                log::error!("não identificou o conteúdo para save state: {erro}");
+                None
+            }
+        };
         let graficos = self.settings.graphics.clone();
         // O 3D na placa vale só se houver placa: antes da primeira janela não há contexto, e a
         // sessão aberta sem ele cai no rasterizador de software sozinha.
@@ -444,6 +477,15 @@ impl Emulador {
                     log::error!("sem som: {erro}");
                 }
                 self.sessao = Some(sessao);
+                self.estado_id = estado_id;
+                self.estados = self
+                    .estado_id
+                    .as_deref()
+                    .map(|id| estado::lista(&self.estados_raiz, id))
+                    .unwrap_or_else(|| std::array::from_fn(|_| None));
+                self.miniaturas_estado.clear();
+                self.estado_sobrescrever = None;
+                self.estado_mensagem = None;
                 self.pausado = false;
                 self.confirmando = false;
                 self.onde = Onde::Jogo;
@@ -465,6 +507,11 @@ impl Emulador {
         self.textura = None;
         self.quadro = None;
         self.quadro_565 = None;
+        self.estado_id = None;
+        self.estados = std::array::from_fn(|_| None);
+        self.miniaturas_estado.clear();
+        self.estado_sobrescrever = None;
+        self.estado_mensagem = None;
         self.confirmando = false;
         self.pausado = false;
         self.pad = Pad::default();
