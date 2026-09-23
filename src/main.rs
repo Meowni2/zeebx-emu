@@ -489,6 +489,9 @@ fn main() -> ExitCode {
             };
             report(sessao_sem_janela(&args[1], seconds, dump, &keys, &fotos, placa, serial, z_wheel, escala, melhorias, perfil, boomerang, portas))
         }
+        // A interface Qt, em prova de viabilidade: docs/implementacao/21-migracao-para-qt.md.
+        #[cfg(feature = "ui-qt")]
+        Some("qt") if args.len() >= 2 => ui::qt::launch(&args[1], args.iter().any(|a| a == "--placa")),
         // Sem argumento nenhum, o que se quer é o emulador, não a ajuda.
         None => launch(),
         _ => {
