@@ -505,6 +505,21 @@ pub fn extract_in(zip: &Path, cache: &Path) -> std::io::Result<PathBuf> {
         let _ = std::fs::remove_dir_all(&partial);
     }
     result?;
+    // **A poda acontece aqui, e antes não acontecia em lugar nenhum.** O teto existia desde que o
+    // cache existe (ver [`CACHE_LIMIT_BYTES`]), mas `prune_cache` só era chamado pelos testes: no
+    // uso real a pasta crescia sem fim, um jogo aberto de cada vez, e quem abriu um acervo inteiro
+    // ficou com a extração de todos eles para sempre. Medido numa instalação de uso normal, 143 MB
+    // parados.
+    //
+    // O momento é este e não a abertura: podar só depois de **acrescentar** algo é o que torna o
+    // custo proporcional ao crescimento. Reaproveitar uma extração que já existe (o caminho comum,
+    // logo acima) não aumenta o cache e não precisa varrer a pasta.
+    //
+    // O erro de poda não derruba a abertura do jogo: o conteúdo já está extraído e utilizável, e
+    // "não consegui apagar cache antigo" não é motivo para recusar quem só queria jogar.
+    if let Err(erro) = prune_cache(cache, Some(&extracted), CACHE_LIMIT_BYTES) {
+        eprintln!("Zeebx: não deu para podar o cache de extração em {}: {erro}", cache.display());
+    }
     Ok(extracted)
 }
 

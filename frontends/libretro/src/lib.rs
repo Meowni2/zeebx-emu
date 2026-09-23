@@ -350,6 +350,13 @@ const ENV_GET_SAVE_DIRECTORY: u32 = 31;
 const ENV_SET_CONTROLLER_INFO: u32 = 35;
 const ENV_SET_VARIABLES: u32 = 16;
 const ENV_GET_VARIABLE: u32 = 15;
+/// `RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE`: o frontend avisa que alguma opção mudou.
+///
+/// **Sem isto toda opção do core é opção de recarregar o jogo.** O `GET_VARIABLE` devolve o valor
+/// de agora, mas perguntar por ele a cada quadro, para cada chave, custa uma chamada ao frontend
+/// por chave por quadro. Este é o aviso barato: devolve `true` uma única vez depois que o usuário
+/// mexeu no menu, e só então vale reler o que dá para aplicar a quente.
+const ENV_GET_VARIABLE_UPDATE: u32 = 17;
 const ENV_GET_CORE_OPTIONS_VERSION: u32 = 52;
 const ENV_SET_CORE_OPTIONS_V2: u32 = 67;
 
@@ -926,28 +933,63 @@ unsafe fn registra_opcoes_do_core() {
             label: std::ptr::null(),
         }; 128];
         opt_values[0] = RetroCoreOptionValue {
-            value: c"Auto".as_ptr(),
+            value: c"auto".as_ptr(),
             label: c"Automático (SoundFont se disponível, senão Tabela)".as_ptr(),
         };
         opt_values[1] = RetroCoreOptionValue {
-            value: c"Tabela de timbres".as_ptr(),
+            value: c"timbres".as_ptr(),
             label: c"Tabela de timbres (rápido / portáteis)".as_ptr(),
         };
         opt_values[2] = RetroCoreOptionValue {
-            value: c"SoundFont".as_ptr(),
+            value: c"soundfont".as_ptr(),
             label: c"SoundFont (.sf2)".as_ptr(),
         };
 
-        let definicoes: [RetroCoreOptionV2Definition; 2] = [
+        let mut vol_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        // Onze degraus de dez em dez. Uma lista de cento e um itens não se navega com o direcional.
+        const DEGRAUS: [(&CStr, &CStr); 11] = [
+            (c"100", c"100% (padrão)"),
+            (c"90", c"90%"),
+            (c"80", c"80%"),
+            (c"70", c"70%"),
+            (c"60", c"60%"),
+            (c"50", c"50%"),
+            (c"40", c"40%"),
+            (c"30", c"30%"),
+            (c"20", c"20%"),
+            (c"10", c"10%"),
+            (c"0", c"0% (mudo)"),
+        ];
+        for (i, (valor, rotulo)) in DEGRAUS.iter().enumerate() {
+            vol_values[i] = RetroCoreOptionValue {
+                value: valor.as_ptr(),
+                label: rotulo.as_ptr(),
+            };
+        }
+
+        let definicoes: [RetroCoreOptionV2Definition; 3] = [
             RetroCoreOptionV2Definition {
                 key: c"zeebx_midi_backend".as_ptr(),
-                desc: c"Sintetizador MIDI".as_ptr(),
-                desc_categorized: c"Sintetizador MIDI".as_ptr(),
+                desc: c"Sintetizador MIDI (reinício)".as_ptr(),
+                desc_categorized: c"Sintetizador MIDI (reinício)".as_ptr(),
                 info: c"Motor de reprodução MIDI: Auto usa SoundFont se instalado na pasta do sistema; Tabela de timbres inicia instantaneamente sem renderização pesada (recomendado para portáteis fracos como H700). Recarregue o jogo para aplicar.".as_ptr(),
                 info_categorized: c"Auto usa SoundFont se presente; Tabela inicia instantaneamente sem carga pesada de SF2. Recarregue o jogo para aplicar.".as_ptr(),
                 category_key: c"audio".as_ptr(),
                 values: opt_values,
-                default_value: c"Auto".as_ptr(),
+                default_value: c"auto".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_volume".as_ptr(),
+                desc: c"Volume".as_ptr(),
+                desc_categorized: c"Volume".as_ptr(),
+                info: c"Volume mestre do console, de 0 a 100%. Vale na hora, sem recarregar o jogo.".as_ptr(),
+                info_categorized: c"Volume mestre do console. Vale na hora.".as_ptr(),
+                category_key: c"audio".as_ptr(),
+                values: vol_values,
+                default_value: c"100".as_ptr(),
             },
             RetroCoreOptionV2Definition {
                 key: std::ptr::null(),
@@ -973,10 +1015,14 @@ unsafe fn registra_opcoes_do_core() {
             );
         }
     } else {
-        static VARIAVEIS: [RetroVariable; 2] = [
+        static VARIAVEIS: [RetroVariable; 3] = [
             RetroVariable {
                 key: c"zeebx_midi_backend".as_ptr(),
-                value: c"Sintetizador MIDI; Auto|Tabela de timbres|SoundFont".as_ptr(),
+                value: c"Sintetizador MIDI (reinício); auto|timbres|soundfont".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_volume".as_ptr(),
+                value: c"Volume; 100|90|80|70|60|50|40|30|20|10|0".as_ptr(),
             },
             RetroVariable {
                 key: std::ptr::null(),
@@ -1009,6 +1055,59 @@ unsafe fn le_opcao_midi_backend() -> zeebx::audio::MidiBackend {
         }
     }
     zeebx::audio::MidiBackend::Auto
+}
+
+/// Lê o volume mestre escolhido nas opções, de 0,0 a 1,0.
+///
+/// Devolve `None` quando a chave não existe ou não é número: o frontend pode ser antigo, e um
+/// valor estragado não pode virar silêncio sem aviso — quem chama mantém o que já tinha.
+unsafe fn le_opcao_volume() -> Option<f32> {
+    let mut consulta = RetroVariable {
+        key: c"zeebx_volume".as_ptr(),
+        value: std::ptr::null(),
+    };
+    // SAFETY: chamada ao callback environ e leitura de string C válida entregue pelo frontend.
+    let ok = unsafe {
+        environ(ENV_GET_VARIABLE, &mut consulta as *mut _ as *mut c_void)
+            && !consulta.value.is_null()
+    };
+    if !ok {
+        return None;
+    }
+    let texto = unsafe { CStr::from_ptr(consulta.value) }.to_string_lossy();
+    volume_de_texto(&texto)
+}
+
+/// Converte o texto da opção de volume (por cento) no fator de 0,0 a 1,0 do mixer.
+///
+/// Está separado da leitura do frontend de propósito: a conversão é a parte que pode errar — o
+/// valor vem de um arquivo que o usuário edita à mão — e ela só é testável se não exigir um
+/// callback de frontend para ser chamada.
+///
+/// `None` para o que não é número, e **não** zero: um `.opt` estragado não pode virar silêncio,
+/// porque silêncio parece defeito do emulador e não erro de configuração.
+fn volume_de_texto(texto: &str) -> Option<f32> {
+    let por_cento: f32 = texto.trim().parse().ok()?;
+    if !por_cento.is_finite() {
+        return None;
+    }
+    Some((por_cento / 100.0).clamp(0.0, 1.0))
+}
+
+/// O frontend mexeu em alguma opção desde a última pergunta?
+///
+/// Ver [`ENV_GET_VARIABLE_UPDATE`]. Perguntar isto uma vez por quadro é barato; reler cada chave
+/// por quadro não é.
+fn opcoes_mudaram() -> bool {
+    let mut mudou = false;
+    // SAFETY: o frontend escreve um `bool` no ponteiro entregue.
+    unsafe {
+        environ(
+            ENV_GET_VARIABLE_UPDATE,
+            &mut mudou as *mut bool as *mut c_void,
+        )
+    };
+    mudou
 }
 
 /// `retro_api_version`.
@@ -1268,6 +1367,9 @@ unsafe fn carrega(
         midi_backend,
     )?;
     let mixer = session.grava_audio(SAMPLE_RATE);
+    if let Some(volume) = unsafe { le_opcao_volume() } {
+        mixer.set_master(volume, false);
+    }
     // **1x e proporção nativa, sempre.** O core entrega o quadro do console em 640×480, sem
     // resolução interna ampliada e sem esticar: quem ajusta shader precisa de uma fonte previsível,
     // e o upscale é papel do frontend.
@@ -1419,6 +1521,11 @@ fn troca_para(estado: &mut Core, caminho: &Path, aberto_pela_z_wheel: bool) -> R
         )?,
     };
     let mixer = session.grava_audio(SAMPLE_RATE);
+    // O volume escolhido nas opções vale desde o primeiro quadro, e não só depois que o usuário
+    // mexer no menu de novo.
+    if let Some(volume) = unsafe { le_opcao_volume() } {
+        mixer.set_master(volume, false);
+    }
     session.define_resolucao_interna(1);
     session.define_proporcao(None);
     estado.session = session;
@@ -1463,6 +1570,15 @@ pub extern "C" fn retro_run() {
         // chama o `context_reset`, que acontece depois do `retro_load_game`; aqui é o primeiro
         // lugar em que ele pode estar pronto. Recriar a sessão custa um reinício que ninguém vê:
         // nenhum quadro foi entregue ainda.
+        // **As opções que dá para aplicar a quente.** Ver [`opcoes_mudaram`]: o frontend avisa uma
+        // vez, e só então vale reler. O sintetizador MIDI **não** entra aqui de propósito — ele é
+        // escolhido quando a sessão nasce, e por isso o rótulo dele diz "(reinício)".
+        if opcoes_mudaram()
+            && let Some(volume) = unsafe { le_opcao_volume() }
+        {
+            estado.mixer.set_master(volume, false);
+            log(&format!("Zeebx: volume ajustado para {:.0}%", volume * 100.0));
+        }
         liga_a_placa(estado);
         // **O contexto se perdeu e a sessão estava nele.** O aviso sozinho não basta: a sessão
         // guarda o rasterizador de placa, e continuar desenhando por ele chamaria funções de GL que
@@ -2040,6 +2156,23 @@ mod testes {
                 None => "nem os quatro botoes nem o manche mudaram a imagem".to_string(),
             }
         );
+    }
+
+    /// O texto da opção de volume vira fator do mixer, e o texto estragado **não** vira silêncio.
+    #[test]
+    fn o_volume_da_opcao_vira_fator_do_mixer() {
+        assert_eq!(volume_de_texto("100"), Some(1.0));
+        assert_eq!(volume_de_texto("0"), Some(0.0));
+        assert_eq!(volume_de_texto("50"), Some(0.5));
+        // O frontend pode entregar com espaço em volta; o arquivo é editável à mão.
+        assert_eq!(volume_de_texto(" 70 "), Some(0.7));
+        // Fora da faixa é preso na faixa, e não recusado: 150% é intenção clara de "no máximo".
+        assert_eq!(volume_de_texto("150"), Some(1.0));
+        assert_eq!(volume_de_texto("-10"), Some(0.0));
+        // O que não é número mantém o que já havia, em vez de emudecer o emulador.
+        assert_eq!(volume_de_texto("alto"), None);
+        assert_eq!(volume_de_texto(""), None);
+        assert_eq!(volume_de_texto("NaN"), None);
     }
 
     #[test]

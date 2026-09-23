@@ -701,20 +701,35 @@ precisam ter vida estática; não apontar para `String` local. O `key` deve ser 
 versões para que o RetroArch preserve as escolhas. `retro_get_system_info` continua descrevendo só o
 core e as extensões (`mod|zip|7z`); não há opção de usuário ali.
 
-No código atual, `retro_set_environment` registra controladores e descritores de entrada, mas ainda
-não registra opções. O próprio plano antigo deixava `GET_CORE_OPTIONS_VERSION`/`SET_CORE_OPTIONS_V2`
-como futuro; a ABI e os structs necessários já estão no `frontends/libretro/include/libretro.h`.
+**Estado: implementado.** `retro_set_environment` registra controladores, descritores de entrada e
+as opções do core, por `SET_CORE_OPTIONS_V2` quando o frontend anuncia versão 2, e por
+`SET_VARIABLES` quando não anuncia. O `retro_run` consulta `GET_VARIABLE_UPDATE` (17) uma vez por
+quadro e relê **só** o que dá para aplicar sem recriar a sessão.
 
-### Primeira opção a implementar
-
-A opção útil e verificável é uma política de síntese MIDI:
+### Opções registradas hoje
 
 ```text
-key:     zeebx_midi_backend
+key:      zeebx_midi_backend
 category: audio
-values:  Auto | Tabela de timbres | SoundFont
-default: Auto
+values:   auto | timbres | soundfont
+default:  auto
+aplica:   ao recarregar o conteúdo (o rótulo diz "(reinício)")
+
+key:      zeebx_volume
+category: audio
+values:   100 | 90 | 80 | 70 | 60 | 50 | 40 | 30 | 20 | 10 | 0
+default:  100
+aplica:   na hora
 ```
+
+**Os valores são tokens, e o texto humano vai no `label`.** O valor é o que fica gravado no
+`.opt` do usuário e o que o `FromStr` reparseia: `Tabela de timbres`, com acento e espaços, é
+frágil nas duas pontas. No corpus dos doze cores libretro instalados nesta máquina, valor é sempre
+token estável (`enabled`, `disabled`, `auto`, `scph5500.bin`). O `FromStr` de `MidiBackend` aceita
+também as grafias antigas, então um `.opt` já gravado não quebra.
+
+**O reinício é marcado no rótulo** porque a API não tem campo para isso — é a convenção do
+ecossistema, em que `(Restart)` é a marca mais usada.
 
 `Auto` preserva o comportamento atual: usa `.sf2` quando encontrado e recua para a tabela quando
 não há banco ou o banco é inválido. `Tabela de timbres` evita a espera longa no RG40XX-H. `SoundFont`
