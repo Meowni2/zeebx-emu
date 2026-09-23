@@ -33,11 +33,19 @@ impl Emulador {
             sessao.set_port_pad(0, self.pad);
             if sessao.step(passou, self.settings.graphics.speed_limit) == Step::Stopped {
                 let motivo = sessao.stopped_reason().unwrap_or_default();
+                let normal = sessao.saiu_normalmente();
                 log::info!("o jogo parou: {motivo}");
-                self.erro = Some(
-                    self.catalogo
-                        .format("play.failed", &[("reason", &motivo)]),
-                );
+                // **Sair do jogo não é falhar.** O applet que pede para fechar termina em
+                // `Outcome::Returned`, e até aqui todo desfecho virava `play.failed`: fechar o
+                // jogo pelo menu dele devolvia à biblioteca com um erro na tela, dizendo que
+                // tinha dado errado o que tinha dado certo. A mensagem fica para o que quebra --
+                // API que não existe, ponteiro vazio.
+                if !normal {
+                    self.erro = Some(
+                        self.catalogo
+                            .format("play.failed", &[("reason", &motivo)]),
+                    );
+                }
                 self.fecha();
                 return;
             }
