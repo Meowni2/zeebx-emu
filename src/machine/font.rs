@@ -175,10 +175,7 @@ mod testes {
     fn a_standard15b_nao_herda_os_numeros_da_18b() {
         let quinze_b = metricas_da_classe(0x0103_0853);
         let quinze = metricas_da_classe(0x0103_0852);
-        assert_eq!(
-            (quinze_b.ascent, quinze_b.descent),
-            (quinze.ascent, quinze.descent)
-        );
+        assert_eq!((quinze_b.ascent, quinze_b.descent), (quinze.ascent, quinze.descent));
         assert_ne!((quinze_b.ascent, quinze_b.descent), (17, 4));
     }
 }
@@ -241,8 +238,7 @@ impl<C: CpuBackend> Machine<C> {
                         if tamanho != 0 && deslocamento + 2 > tamanho {
                             break;
                         }
-                        self.cpu
-                            .write_mem(info + deslocamento, &valor.to_le_bytes())?;
+                        self.cpu.write_mem(info + deslocamento, &valor.to_le_bytes())?;
                     }
                 }
                 SUCCESS

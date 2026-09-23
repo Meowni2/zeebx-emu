@@ -71,7 +71,10 @@ impl StoragePaths {
     /// | `metadata/` | `save` | descreve o save, então anda junto dele |
     ///
     /// Sem `system_dir` tudo cai no diretório de saves, que é o mínimo que a ABI garante.
-    pub fn for_frontend(save_dir: impl AsRef<Path>, system_dir: Option<impl AsRef<Path>>) -> Self {
+    pub fn for_frontend(
+        save_dir: impl AsRef<Path>,
+        system_dir: Option<impl AsRef<Path>>,
+    ) -> Self {
         let save_dir = save_dir.as_ref();
         let system_dir = system_dir.as_ref().map_or(save_dir, AsRef::as_ref);
         let perfil_save = save_dir.join(PROFILE_DIR);
@@ -189,10 +192,7 @@ mod tests {
             .iter()
             .map(|parte| parte.to_string_lossy().to_string())
             .collect();
-        assert!(
-            partes.iter().any(|parte| parte == PROFILE_DIR),
-            "{partes:?}"
-        );
+        assert!(partes.iter().any(|parte| parte == PROFILE_DIR), "{partes:?}");
         assert!(!partes.iter().any(|parte| parte == "Zeebx"), "{partes:?}");
     }
 

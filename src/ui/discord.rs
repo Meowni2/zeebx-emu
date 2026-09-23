@@ -10,9 +10,9 @@
 //! jogo sai da ROM e mora só no disco, então ela entra de um desses dois jeitos: exportada e
 //! cadastrada com a chave [`chave_da_capa`], ou publicada num endereço dado nas configurações.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use discord_rich_presence::activity::{Activity, ActivityType, Assets, Timestamps};
@@ -197,9 +197,7 @@ fn monta(atividade: &Atividade) -> Activity<'_> {
         .large_image(atividade.imagem.as_str())
         .large_text(atividade.texto_da_imagem.as_str());
     if let Some((imagem, texto)) = &atividade.icone {
-        assets = assets
-            .small_image(imagem.as_str())
-            .small_text(texto.as_str());
+        assets = assets.small_image(imagem.as_str()).small_text(texto.as_str());
     }
     Activity::new()
         .activity_type(ActivityType::Playing)
@@ -216,11 +214,7 @@ pub fn capa_quadrada(imagem: &Image) -> Image {
     let lado = LADO_DA_CAPA;
     let mut rgba = vec![0u8; lado * lado * 4];
     if imagem.width == 0 || imagem.height == 0 {
-        return Image {
-            width: lado,
-            height: lado,
-            rgba,
-        };
+        return Image { width: lado, height: lado, rgba };
     }
     let escala = lado as f64 / imagem.width.max(imagem.height) as f64;
     let largura = ((imagem.width as f64 * escala).round() as usize).clamp(1, lado);
@@ -235,11 +229,7 @@ pub fn capa_quadrada(imagem: &Image) -> Image {
             rgba[para..para + 4].copy_from_slice(&imagem.rgba[de..de + 4]);
         }
     }
-    Image {
-        width: lado,
-        height: lado,
-        rgba,
-    }
+    Image { width: lado, height: lado, rgba }
 }
 
 /// A imagem em PNG, para gravar e cadastrar no aplicativo.
@@ -253,9 +243,7 @@ pub fn png(imagem: &Image) -> Result<Vec<u8>, String> {
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     let mut escritor = encoder.write_header().map_err(|e| e.to_string())?;
-    escritor
-        .write_image_data(&imagem.rgba)
-        .map_err(|e| e.to_string())?;
+    escritor.write_image_data(&imagem.rgba).map_err(|e| e.to_string())?;
     escritor.finish().map_err(|e| e.to_string())?;
     Ok(saida)
 }
@@ -278,9 +266,7 @@ mod tests {
             icone: None,
             inicio_ms: 0,
         };
-        cliente
-            .set_activity(monta(&atividade))
-            .expect("set_activity");
+        cliente.set_activity(monta(&atividade)).expect("set_activity");
         std::thread::sleep(Duration::from_secs(10));
         let _ = cliente.clear_activity();
         let _ = cliente.close();
@@ -290,11 +276,7 @@ mod tests {
     fn a_chave_da_capa_so_tem_o_que_o_discord_aceita() {
         let chave = chave_da_capa(0x0108FF13);
         assert_eq!(chave, "jogo_0108ff13");
-        assert!(
-            chave
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-        );
+        assert!(chave.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'));
     }
 
     #[test]

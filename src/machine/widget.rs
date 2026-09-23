@@ -718,9 +718,7 @@ impl<C: CpuBackend> Machine<C> {
             let passo = (fonte.ascent(FONT_SIZE) + fonte.descent(FONT_SIZE)) as i32 + 2;
             let linhas: Vec<String> = paragrafos
                 .iter()
-                .flat_map(|paragrafo| {
-                    quebra_linhas(paragrafo, largura, |t| fonte.width(t, FONT_SIZE))
-                })
+                .flat_map(|paragrafo| quebra_linhas(paragrafo, largura, |t| fonte.width(t, FONT_SIZE)))
                 .collect();
             let limite = match altura {
                 0 => i32::MAX,
@@ -931,10 +929,7 @@ impl<C: CpuBackend> Machine<C> {
         // `0x161`, que para nós é o próprio widget. O conteúdo ainda não foi lido por ninguém, e
         // é ele que o [`Machine::pinta_html`] mostra no lugar do placeholder.
         if name == "AdicionarFilho"
-            && self
-                .widgets
-                .get(&this)
-                .is_some_and(|w| w.classe == WIDGET_HTML)
+            && self.widgets.get(&this).is_some_and(|w| w.classe == WIDGET_HTML)
         {
             if let Some(pagina) = self.sources.get(&self.cpu.read_reg(Reg::R1)) {
                 self.paginas_html.insert(this, pagina.clone());
@@ -1096,10 +1091,7 @@ impl<C: CpuBackend> Machine<C> {
                 // viva com a animação de 40 ms armada sobre memória já solta. (Uma tentativa
                 // antiga de soltar aqui punha ícones atrás do roller; a causa era o
                 // `ObjectStore` ressuscitar endereços livres, já corrigida.) O `pai` fica.
-                let topo = self
-                    .widgets
-                    .get_mut(&this)
-                    .and_then(|widget| widget.anexados.pop());
+                let topo = self.widgets.get_mut(&this).and_then(|widget| widget.anexados.pop());
                 if let Some(formulario) = topo {
                     self.solta_widget(formulario)?;
                 }
@@ -1370,10 +1362,7 @@ impl<C: CpuBackend> Machine<C> {
                 if self.censo_de_widgets {
                     let classe = self.widgets.get(&this).map_or(0, |widget| widget.classe);
                     let vezes = {
-                        let contagem = self
-                            .seletores_por_classe
-                            .entry((classe, seletor))
-                            .or_insert(0);
+                        let contagem = self.seletores_por_classe.entry((classe, seletor)).or_insert(0);
                         *contagem += 1;
                         *contagem
                     };
@@ -1431,10 +1420,7 @@ impl<C: CpuBackend> Machine<C> {
                         // já estava criado ficava solto na tela, sem formulário.
                         let objeto = id >= PRIMEIRO_OBJETO
                             || (id == PROP_HTML_OBJETO
-                                && self
-                                    .widgets
-                                    .get(&this)
-                                    .is_some_and(|w| w.classe == WIDGET_HTML));
+                                && self.widgets.get(&this).is_some_and(|w| w.classe == WIDGET_HTML));
                         let valor = match objeto {
                             true => self.filho_do_widget(this, id)?,
                             false => self
@@ -1492,9 +1478,7 @@ impl<C: CpuBackend> Machine<C> {
                     // `0` é `NONE`. É com o `NEXT` e o `PREV` que a lista de jogos passa o foco da
                     // barra de abas para as capas (`0x4025c`, chamado com `3`); guardar o `3` como
                     // se fosse o filho em foco deixava o foco em lugar nenhum e nada se destacava.
-                    FOCO_DEFINE
-                        if !self.widgets.contains_key(&terceiro) && terceiro <= FOCO_ANTERIOR =>
-                    {
+                    FOCO_DEFINE if !self.widgets.contains_key(&terceiro) && terceiro <= FOCO_ANTERIOR => {
                         u32::from(self.move_foco(this, terceiro)?)
                     }
                     // Com um widget de verdade, quem sai e quem entra também são avisados. É assim
@@ -1751,8 +1735,7 @@ impl<C: CpuBackend> Machine<C> {
             return Ok(false);
         }
         self.cpu.write_u32(resposta, 0)?;
-        let _ =
-            self.call_guest_aninhado(funcao, [contexto, PODE_TER_FOCO, 0, resposta], QSORT_BUDGET)?;
+        let _ = self.call_guest_aninhado(funcao, [contexto, PODE_TER_FOCO, 0, resposta], QSORT_BUDGET)?;
         let pode = self.cpu.read_u32(resposta)? & 0xff != 0;
         self.heap.free(resposta);
         Ok(pode)
@@ -1769,8 +1752,7 @@ impl<C: CpuBackend> Machine<C> {
         if funcao == 0 || !self.widgets_avisando.insert(widget) {
             return Ok(());
         }
-        let saida =
-            self.call_guest_aninhado(funcao, [contexto, evento, parametro, 0], QSORT_BUDGET);
+        let saida = self.call_guest_aninhado(funcao, [contexto, evento, parametro, 0], QSORT_BUDGET);
         self.widgets_avisando.remove(&widget);
         saida?;
         Ok(())
@@ -1816,8 +1798,7 @@ impl<C: CpuBackend> Machine<C> {
                 (widget.liberadores.1, widget.desenho.1),
             ] {
                 if liberador != 0 {
-                    let _ =
-                        self.call_guest_aninhado(liberador, [contexto, 0, 0, 0], QSORT_BUDGET)?;
+                    let _ = self.call_guest_aninhado(liberador, [contexto, 0, 0, 0], QSORT_BUDGET)?;
                 }
             }
             for filho in widget
@@ -1862,27 +1843,11 @@ mod testes_do_container {
     #[test]
     fn percorre_a_pilha_nos_dois_sentidos_e_para_na_ponta() {
         let pilha = [10, 20, 30];
-        assert_eq!(
-            vizinho_na_pilha(&pilha, 0, false, false),
-            30,
-            "sem referência, o de cima"
-        );
-        assert_eq!(
-            vizinho_na_pilha(&pilha, 0, true, false),
-            10,
-            "sem referência, o de baixo"
-        );
+        assert_eq!(vizinho_na_pilha(&pilha, 0, false, false), 30, "sem referência, o de cima");
+        assert_eq!(vizinho_na_pilha(&pilha, 0, true, false), 10, "sem referência, o de baixo");
         assert_eq!(vizinho_na_pilha(&pilha, 30, false, false), 20);
-        assert_eq!(
-            vizinho_na_pilha(&pilha, 10, false, false),
-            0,
-            "a ponta termina o laço"
-        );
-        assert_eq!(
-            vizinho_na_pilha(&pilha, 10, false, true),
-            30,
-            "com volta, dá a volta"
-        );
+        assert_eq!(vizinho_na_pilha(&pilha, 10, false, false), 0, "a ponta termina o laço");
+        assert_eq!(vizinho_na_pilha(&pilha, 10, false, true), 30, "com volta, dá a volta");
         assert_eq!(vizinho_na_pilha(&pilha, 20, true, false), 30);
         assert_eq!(vizinho_na_pilha(&[], 0, true, true), 0);
     }
@@ -1952,11 +1917,7 @@ pub fn texto_do_html(html: &str) -> Vec<String> {
             break;
         };
         let tag = resto[abre + 1..abre + fim].trim().to_ascii_lowercase();
-        let nome = tag
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-            .trim_end_matches('/');
+        let nome = tag.split_whitespace().next().unwrap_or("").trim_end_matches('/');
         if BLOCOS.contains(&nome) || BLOCOS.contains(&tag.as_str()) {
             fecha(&mut atual, &mut paragrafos);
         }
@@ -1983,57 +1944,16 @@ fn decodifica_pagina(bytes: &[u8]) -> String {
 /// (`n&atilde;o`, `est&aacute;`); as nomeadas que faltam aqui ficam como vieram.
 fn decodifica_entidades(texto: &str) -> String {
     const NOMEADAS: &[(&str, char)] = &[
-        ("nbsp", ' '),
-        ("lt", '<'),
-        ("gt", '>'),
-        ("quot", '"'),
-        ("amp", '&'),
-        ("apos", '\''),
-        ("aacute", 'á'),
-        ("agrave", 'à'),
-        ("acirc", 'â'),
-        ("atilde", 'ã'),
-        ("auml", 'ä'),
-        ("eacute", 'é'),
-        ("egrave", 'è'),
-        ("ecirc", 'ê'),
-        ("iacute", 'í'),
-        ("icirc", 'î'),
-        ("oacute", 'ó'),
-        ("ocirc", 'ô'),
-        ("otilde", 'õ'),
-        ("ouml", 'ö'),
-        ("uacute", 'ú'),
-        ("uuml", 'ü'),
-        ("ccedil", 'ç'),
-        ("ntilde", 'ñ'),
-        ("Aacute", 'Á'),
-        ("Agrave", 'À'),
-        ("Acirc", 'Â'),
-        ("Atilde", 'Ã'),
-        ("Eacute", 'É'),
-        ("Ecirc", 'Ê'),
-        ("Iacute", 'Í'),
-        ("Oacute", 'Ó'),
-        ("Ocirc", 'Ô'),
-        ("Otilde", 'Õ'),
-        ("Uacute", 'Ú'),
-        ("Ccedil", 'Ç'),
-        ("Ntilde", 'Ñ'),
-        ("ordm", 'º'),
-        ("ordf", 'ª'),
-        ("copy", '©'),
-        ("reg", '®'),
-        ("deg", '°'),
-        ("iexcl", '¡'),
-        ("iquest", '¿'),
-        ("trade", '™'),
-        ("hellip", '…'),
-        ("ndash", '–'),
-        ("mdash", '—'),
-        ("laquo", '«'),
-        ("raquo", '»'),
-        ("bull", '•'),
+        ("nbsp", ' '), ("lt", '<'), ("gt", '>'), ("quot", '"'), ("amp", '&'), ("apos", '\''),
+        ("aacute", 'á'), ("agrave", 'à'), ("acirc", 'â'), ("atilde", 'ã'), ("auml", 'ä'),
+        ("eacute", 'é'), ("egrave", 'è'), ("ecirc", 'ê'), ("iacute", 'í'), ("icirc", 'î'),
+        ("oacute", 'ó'), ("ocirc", 'ô'), ("otilde", 'õ'), ("ouml", 'ö'), ("uacute", 'ú'),
+        ("uuml", 'ü'), ("ccedil", 'ç'), ("ntilde", 'ñ'), ("Aacute", 'Á'), ("Agrave", 'À'),
+        ("Acirc", 'Â'), ("Atilde", 'Ã'), ("Eacute", 'É'), ("Ecirc", 'Ê'), ("Iacute", 'Í'),
+        ("Oacute", 'Ó'), ("Ocirc", 'Ô'), ("Otilde", 'Õ'), ("Uacute", 'Ú'), ("Ccedil", 'Ç'),
+        ("Ntilde", 'Ñ'), ("ordm", 'º'), ("ordf", 'ª'), ("copy", '©'), ("reg", '®'),
+        ("deg", '°'), ("iexcl", '¡'), ("iquest", '¿'), ("trade", '™'), ("hellip", '…'),
+        ("ndash", '–'), ("mdash", '—'), ("laquo", '«'), ("raquo", '»'), ("bull", '•'),
     ];
     let mut saida = String::with_capacity(texto.len());
     let mut resto = texto;
@@ -2095,8 +2015,7 @@ mod testes_do_html {
 
     #[test]
     fn blocos_viram_paragrafos_e_tags_somem() {
-        let html =
-            "<h1>Ajuda</h1><p>Um <b>texto</b>\n  com   espaços &amp; tags.</p>linha<br>outra";
+        let html = "<h1>Ajuda</h1><p>Um <b>texto</b>\n  com   espaços &amp; tags.</p>linha<br>outra";
         assert_eq!(
             texto_do_html(html),
             ["Ajuda", "Um texto com espaços & tags.", "linha", "outra"]
@@ -2105,12 +2024,8 @@ mod testes_do_html {
 
     #[test]
     fn acentos_em_entidade_viram_letras() {
-        let html =
-            "<center>Iniciando</center>\n<p>n&atilde;o est&aacute; &#233; &amp;c &foo; a&b</p>";
-        assert_eq!(
-            texto_do_html(html),
-            ["Iniciando", "não está é &c &foo; a&b"]
-        );
+        let html = "<center>Iniciando</center>\n<p>n&atilde;o est&aacute; &#233; &amp;c &foo; a&b</p>";
+        assert_eq!(texto_do_html(html), ["Iniciando", "não está é &c &foo; a&b"]);
     }
 
     #[test]

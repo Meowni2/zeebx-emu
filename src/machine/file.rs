@@ -437,10 +437,7 @@ impl<C: CpuBackend> Machine<C> {
         }
         // A partir daqui vale a resolução do VFS, que decide entre conteúdo e overlay e diz se
         // o arquivo do pacote precisa ser copiado antes de receber escrita.
-        let intent = match (
-            mode & OFM_CREATE != 0,
-            mode & (OFM_READWRITE | OFM_APPEND) != 0,
-        ) {
+        let intent = match (mode & OFM_CREATE != 0, mode & (OFM_READWRITE | OFM_APPEND) != 0) {
             (true, _) => crate::brew::vfs::OpenIntent::Create,
             (false, true) if mode & OFM_APPEND != 0 => crate::brew::vfs::OpenIntent::Append,
             (false, true) => crate::brew::vfs::OpenIntent::ReadWrite,
@@ -625,10 +622,7 @@ mod testes_da_cfg {
 
     #[test]
     fn sem_fim_de_vida_so_as_duas_chaves_mudam() {
-        let opcoes = ZWheel {
-            fim_de_vida: false,
-            transicoes_sempre: false,
-        };
+        let opcoes = ZWheel { fim_de_vida: false, transicoes_sempre: false };
         assert_eq!(
             ajusta_cfg(ORIGINAL, opcoes),
             "; EOL\r\nEOL=0\r\n#zeebomenu_hide - x\r\nzeebomenu_hide=0\r\nEOLX=1\r\nSlideOnceToForm=31\n"
@@ -637,10 +631,7 @@ mod testes_da_cfg {
 
     #[test]
     fn transicoes_sempre_zeram_o_slide_uma_vez() {
-        let opcoes = ZWheel {
-            fim_de_vida: true,
-            transicoes_sempre: true,
-        };
+        let opcoes = ZWheel { fim_de_vida: true, transicoes_sempre: true };
         assert_eq!(
             ajusta_cfg(ORIGINAL, opcoes),
             "; EOL\r\nEOL=1\r\n#zeebomenu_hide - x\r\nzeebomenu_hide=1\r\nEOLX=1\r\nSlideOnceToForm=0\n"

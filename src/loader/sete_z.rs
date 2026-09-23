@@ -118,11 +118,7 @@ pub fn ler(caminho: &Path, alvo: &str, teto: u64) -> Option<Vec<u8>> {
 }
 
 /// Extrai o `.7z` inteiro para `destino`, com os limites do zip.
-pub(crate) fn extrair(
-    caminho: &Path,
-    destino: &Path,
-    limites: ArchiveLimits,
-) -> std::io::Result<()> {
+pub(crate) fn extrair(caminho: &Path, destino: &Path, limites: ArchiveLimits) -> std::io::Result<()> {
     let mut leitor = abre_leitor(caminho)?;
     let mut entradas = 0usize;
     let mut total = 0u64;
@@ -186,6 +182,7 @@ fn extrai_uma(
     Ok(())
 }
 
+
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -235,10 +232,7 @@ mod testes {
             ],
         );
 
-        assert_eq!(
-            archive::find_module(&pacote).as_deref(),
-            Some("Jogo/mod/279233/jogo.mod")
-        );
+        assert_eq!(archive::find_module(&pacote).as_deref(), Some("Jogo/mod/279233/jogo.mod"));
         assert_eq!(
             archive::find_manifest(&pacote, "Jogo/mod/279233/jogo.mod").as_deref(),
             Some(&b"manifesto"[..])
@@ -263,12 +257,8 @@ mod testes {
 
         let destino = pasta.join("extraido");
         std::fs::create_dir_all(&destino).unwrap();
-        let erro = extrair(
-            &pacote,
-            &destino,
-            crate::loader::archive::ArchiveLimits::padrao(),
-        )
-        .expect_err("devia recusar");
+        let erro = extrair(&pacote, &destino, crate::loader::archive::ArchiveLimits::padrao())
+            .expect_err("devia recusar");
         assert!(erro.to_string().contains("caminho inseguro"), "{erro}");
         assert!(!pasta.join("fora.txt").exists());
     }

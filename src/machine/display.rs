@@ -180,15 +180,9 @@ impl<C: CpuBackend> Machine<C> {
                 let fundo = self.read_rect(self.stack_arg(2)?)?;
                 let flags = self.stack_arg(3)?;
                 if let (Some(rect), true) = (fundo, flags & IDF_RECT_FILL != 0) {
-                    let cor = self
-                        .colors
-                        .get(CLR_USER_BACKGROUND)
-                        .copied()
-                        .unwrap_or(Rgb::WHITE);
+                    let cor = self.colors.get(CLR_USER_BACKGROUND).copied().unwrap_or(Rgb::WHITE);
                     let target = self.target()?;
-                    if let (Some(rect), Some(fb)) =
-                        (self.clip_rect(rect), self.bitmaps.get_mut(&target))
-                    {
+                    if let (Some(rect), Some(fb)) = (self.clip_rect(rect), self.bitmaps.get_mut(&target)) {
                         fb.fill_rect(rect, cor);
                     }
                 }
@@ -782,26 +776,13 @@ mod testes_do_texto {
 
     #[test]
     fn o_rotulo_da_barra_de_abas_fica_no_centro_do_retangulo() {
-        let rect = Rect {
-            x: 0,
-            y: 0,
-            width: 214,
-            height: 37,
-        };
+        let rect = Rect { x: 0, y: 0, width: 214, height: 37 };
         assert_eq!(posicao_do_texto((0, 0), rect, 0x8220, (50, 17)), (82, 10));
     }
 
     #[test]
     fn sem_alinhamento_vale_a_coordenada_passada() {
-        let rect = Rect {
-            x: 0,
-            y: 0,
-            width: 640,
-            height: 480,
-        };
-        assert_eq!(
-            posicao_do_texto((48, 272), rect, 0x8000, (90, 17)),
-            (48, 272)
-        );
+        let rect = Rect { x: 0, y: 0, width: 640, height: 480 };
+        assert_eq!(posicao_do_texto((48, 272), rect, 0x8000, (90, 17)), (48, 272));
     }
 }

@@ -119,9 +119,7 @@ impl<C: CpuBackend> Machine<C> {
                     Some(crate::input::bindings::Aparelho::Boomerang) => {
                         (BOOMERANG_VENDOR_ID, BOOMERANG_PRODUCT_ID)
                     }
-                    Some(crate::input::bindings::Aparelho::ZPad) => {
-                        (ZPAD_VENDOR_ID, ZPAD_PRODUCT_ID)
-                    }
+                    Some(crate::input::bindings::Aparelho::ZPad) => (ZPAD_VENDOR_ID, ZPAD_PRODUCT_ID),
                     _ => (GAMEPAD_VENDOR_ID, GAMEPAD_PRODUCT_ID),
                 };
                 if out != 0 {
@@ -321,7 +319,11 @@ impl<C: CpuBackend> Machine<C> {
     /// Aqui os campos que sobram ficam **zerados**, e é o contrário do que faz a posição: zero
     /// não é um valor de eixo, é "não há eixo neste campo", e é assim que o jogo para de
     /// procurar.
-    pub(super) fn write_axes_info(&mut self, addr: u32, uids: &[i32; 4]) -> Result<(), CpuError> {
+    pub(super) fn write_axes_info(
+        &mut self,
+        addr: u32,
+        uids: &[i32; 4],
+    ) -> Result<(), CpuError> {
         if addr == 0 {
             return Ok(());
         }
@@ -450,8 +452,7 @@ impl<C: CpuBackend> Machine<C> {
     }
 
     pub(super) fn e_boomerang(&self, porta: usize) -> bool {
-        self.portas.get(porta).copied().flatten()
-            == Some(crate::input::bindings::Aparelho::Boomerang)
+        self.portas.get(porta).copied().flatten() == Some(crate::input::bindings::Aparelho::Boomerang)
     }
 
     /// Escreve no `AEEHIDPositionInfo` um pacote do receptor do Boomerang.

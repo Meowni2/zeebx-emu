@@ -60,13 +60,10 @@ impl Pintor {
     /// Monta o programa. Tenta GLSL 3.30 e cai para ES 3.00 — o `eframe` pede um contexto de
     /// OpenGL e só cai para GLES quando o primeiro falha, então os dois casos existem.
     pub fn novo(gl: &glow::Context) -> Result<Self, String> {
-        let program = [
-            "#version 330 core\n",
-            "#version 300 es\nprecision mediump float;\n",
-        ]
-        .into_iter()
-        .find_map(|cabecalho| unsafe { compila(gl, cabecalho) }.ok())
-        .ok_or("nenhuma versão de GLSL aceita")?;
+        let program = ["#version 330 core\n", "#version 300 es\nprecision mediump float;\n"]
+            .into_iter()
+            .find_map(|cabecalho| unsafe { compila(gl, cabecalho) }.ok())
+            .ok_or("nenhuma versão de GLSL aceita")?;
         unsafe {
             let vao = gl.create_vertex_array()?;
             let textura = gl.create_texture()?;
@@ -214,12 +211,7 @@ impl Pintor {
     }
 
     /// O triângulo com a textura ligada na unidade zero, e o estado devolvido ao egui.
-    unsafe fn pinta(
-        &self,
-        gl: &glow::Context,
-        recorte: [f32; 2],
-        vp: &egui::epaint::ViewportInPixels,
-    ) {
+    unsafe fn pinta(&self, gl: &glow::Context, recorte: [f32; 2], vp: &egui::epaint::ViewportInPixels) {
         unsafe {
             if let Some(local) = gl.get_uniform_location(self.program, "quadro") {
                 gl.uniform_1_i32(Some(&local), 0);

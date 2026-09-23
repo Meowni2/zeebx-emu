@@ -266,10 +266,7 @@ pub mod interpretador;
 /// e x64: não há montador para ARM64, então o `unicorn-engine-sys` nem compila naquele alvo. A
 /// ausência é declarada aqui, e não num monte de `cfg` espalhados, porque o resto do código só
 /// precisa saber **qual** backend usar.
-#[cfg(all(
-    feature = "unicorn",
-    not(all(target_os = "windows", target_arch = "aarch64"))
-))]
+#[cfg(all(feature = "unicorn", not(all(target_os = "windows", target_arch = "aarch64"))))]
 pub mod unicorn;
 
 /// O alias que o resto do código usa para pedir "o backend padrão".
@@ -369,3 +366,4 @@ mod tests {
         assert_eq!(latin1_encode(&latin1_decode(&bytes)), bytes);
     }
 }
+

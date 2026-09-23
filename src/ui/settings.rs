@@ -186,12 +186,7 @@ pub enum Proporcao {
 }
 
 impl Proporcao {
-    pub const TODAS: [Self; 4] = [
-        Self::Nativa,
-        Self::Larga16x9,
-        Self::Larga16x10,
-        Self::Janela,
-    ];
+    pub const TODAS: [Self; 4] = [Self::Nativa, Self::Larga16x9, Self::Larga16x10, Self::Janela];
 
     pub fn chave(self) -> &'static str {
         match self {

@@ -473,36 +473,16 @@ pub const EGL: &[&str] = &[
 /// e os objetos de framebuffer e renderbuffer. **É a última porta entre o Prey Evil e o desenho** —
 /// as outras cinco já foram entregues, cada uma medida.
 pub const GLES11_EXT_PAK: &[&str] = &[
-    "AddRef",
-    "Release",
-    "QueryInterface",
-    "GetTexGenfv",
-    "GetTexGeniv",
-    "GetTexGenxv",
-    "TexGenf",
-    "TexGeni",
-    "TexGenx",
-    "TexGenfv",
-    "TexGeniv",
-    "TexGenxv",
-    "BlendEquation",
-    "BlendFuncSeparate",
-    "BlendEquationSeparate",
-    "BindFramebufferOES",
-    "BindRenderbufferOES",
-    "CheckFramebufferStatusOES",
-    "DeleteFramebuffersOES",
-    "DeleteRenderbuffersOES",
-    "FramebufferRenderbufferOES",
-    "FramebufferTexture2DOES",
-    "GenerateMipmapOES",
-    "GenFramebuffersOES",
-    "GenRenderbuffersOES",
-    "GetFramebufferAttachmentParameterivOES",
-    "GetRenderbufferParameterivOES",
-    "IsFramebufferOES",
-    "IsRenderbufferOES",
-    "RenderbufferStorageOES",
+    "AddRef", "Release", "QueryInterface",
+    "GetTexGenfv", "GetTexGeniv", "GetTexGenxv",
+    "TexGenf", "TexGeni", "TexGenx", "TexGenfv", "TexGeniv", "TexGenxv",
+    "BlendEquation", "BlendFuncSeparate", "BlendEquationSeparate",
+    "BindFramebufferOES", "BindRenderbufferOES", "CheckFramebufferStatusOES",
+    "DeleteFramebuffersOES", "DeleteRenderbuffersOES",
+    "FramebufferRenderbufferOES", "FramebufferTexture2DOES",
+    "GenerateMipmapOES", "GenFramebuffersOES", "GenRenderbuffersOES",
+    "GetFramebufferAttachmentParameterivOES", "GetRenderbufferParameterivOES",
+    "IsFramebufferOES", "IsRenderbufferOES", "RenderbufferStorageOES",
 ];
 
 /// `IGLES11Ext`: as extensões OES do OpenGL ES 1.1, na ordem do `AEEGLES11Ext.h`.
@@ -529,7 +509,8 @@ pub const JOYSTICK: &[&str] = &[
 ];
 
 /// `IEGLGetPowerLevel`: o nível de bateria. Ver `AEEEGLGetPowerLevel.h`.
-pub const EGL_GET_POWER_LEVEL: &[&str] = &["AddRef", "Release", "QueryInterface", "GetPowerLevel"];
+pub const EGL_GET_POWER_LEVEL: &[&str] =
+    &["AddRef", "Release", "QueryInterface", "GetPowerLevel"];
 
 /// `IEGLGetColorBuffer`: o buffer de cor do EGL. Ver `AEEEGLGetColorBuffer.h`.
 ///

@@ -72,14 +72,12 @@ pub fn sync_z_wheel_library(
             tx.execute(
                 "INSERT OR REPLACE INTO TITLETEXT(game_id,lang_id,titletext) VALUES (?1,?2,?3)",
                 params![id, lang, entry.title],
-            )
-            .map_err(|err| err.to_string())?;
+            ).map_err(|err| err.to_string())?;
         }
         tx.execute(
             "INSERT INTO ZEEBX_LIBRARY(class_id,game_id) VALUES (?1,?2)",
             params![id, id],
-        )
-        .map_err(|err| err.to_string())?;
+        ).map_err(|err| err.to_string())?;
     }
     tx.commit().map_err(|err| err.to_string())?;
     Ok(profile.to_path_buf())
@@ -245,10 +243,8 @@ mod tests {
         let package = dir.join("tt_game_info");
         let db = Database::open(&package).unwrap();
         db.exec("CREATE TABLE GAMEINFO(game_id INTEGER PRIMARY KEY, class_id INTEGER, playcount INTEGER, dt_download INTEGER, dt_lastplayed INTEGER, boxart_path TEXT, flags INTEGER, size INTEGER)").unwrap();
-        db.exec("CREATE TABLE TITLETEXT(game_id INTEGER, lang_id INTEGER, titletext TEXT)")
-            .unwrap();
-        db.exec("INSERT INTO GAMEINFO values (1, 2, 0, 0, 0, '', 2, 0)")
-            .unwrap();
+        db.exec("CREATE TABLE TITLETEXT(game_id INTEGER, lang_id INTEGER, titletext TEXT)").unwrap();
+        db.exec("INSERT INTO GAMEINFO values (1, 2, 0, 0, 0, '', 2, 0)").unwrap();
         let catalog = CatalogIndex {
             titles: vec![CatalogEntry {
                 applet_class: 0x0100_9999,

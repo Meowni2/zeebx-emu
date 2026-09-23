@@ -468,11 +468,7 @@ impl Framebuffer {
         if passo == largura * 2 {
             return self.load_rgb565_bytes(bytes);
         }
-        for (pixels, origem) in self
-            .pixels
-            .chunks_exact_mut(largura)
-            .zip(bytes.chunks(passo))
-        {
+        for (pixels, origem) in self.pixels.chunks_exact_mut(largura).zip(bytes.chunks(passo)) {
             for (pixel, chunk) in pixels.iter_mut().zip(origem.chunks_exact(2)) {
                 let value = u16::from_le_bytes([chunk[0], chunk[1]]);
                 if *pixel != value {

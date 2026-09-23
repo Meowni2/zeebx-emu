@@ -159,8 +159,7 @@ impl<'a> Leitor<'a> {
                 suportada: VERSAO,
             });
         }
-        let prometido =
-            u32::from_le_bytes([arquivo[6], arquivo[7], arquivo[8], arquivo[9]]) as usize;
+        let prometido = u32::from_le_bytes([arquivo[6], arquivo[7], arquivo[8], arquivo[9]]) as usize;
         let esperado = u32::from_le_bytes([arquivo[10], arquivo[11], arquivo[12], arquivo[13]]);
         let disponivel = arquivo.len() - CABECALHO;
         if disponivel < prometido {
@@ -189,8 +188,8 @@ impl<'a> Leitor<'a> {
                     motivo: "o cabeçalho da seção passa do fim do arquivo".to_string(),
                 });
             }
-            let nome =
-                String::from_utf8_lossy(&conteudo[posicao..posicao + tamanho_do_nome]).into_owned();
+            let nome = String::from_utf8_lossy(&conteudo[posicao..posicao + tamanho_do_nome])
+                .into_owned();
             posicao += tamanho_do_nome;
             if posicao + 4 > conteudo.len() {
                 return Err(Erro::Secao {
@@ -225,9 +224,7 @@ impl<'a> Leitor<'a> {
 
     /// Os dados de uma seção, ou `None` se o arquivo não a tem.
     pub fn secao(&self, nome: &str) -> Option<&'a [u8]> {
-        self.secoes
-            .get(nome)
-            .map(|faixa| &self.dados[faixa.clone()])
+        self.secoes.get(nome).map(|faixa| &self.dados[faixa.clone()])
     }
 
     /// Os nomes das seções, em ordem.
@@ -345,7 +342,11 @@ impl Secoes {
     /// É a forma da maioria das tabelas do motor — `HashMap<u32, Estado>` onde o estado é um punhado
     /// de números. Com um ajudante só, cada tabela nova vira cinco linhas de gravação e cinco de
     /// leitura, e não um formato próprio que alguém precisa entender de novo.
-    pub fn poe_registros(&mut self, nome: &str, registros: impl IntoIterator<Item = Vec<u32>>) {
+    pub fn poe_registros(
+        &mut self,
+        nome: &str,
+        registros: impl IntoIterator<Item = Vec<u32>>,
+    ) {
         let registros: Vec<u32> = registros.into_iter().flatten().collect();
         self.poe_u32s(nome, registros);
     }
@@ -438,8 +439,9 @@ impl Leitor<'_> {
                 )));
             }
             textos.push(
-                String::from_utf8(bytes[posicao..posicao + tamanho].to_vec())
-                    .map_err(|erro| malformada(format!("um dos textos não é UTF-8: {erro}")))?,
+                String::from_utf8(bytes[posicao..posicao + tamanho].to_vec()).map_err(|erro| {
+                    malformada(format!("um dos textos não é UTF-8: {erro}"))
+                })?,
             );
             posicao += tamanho;
         }

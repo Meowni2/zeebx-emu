@@ -24,16 +24,16 @@
 //! proíbe, e a porta é essa.
 
 use super::{
-    Callback, CipherState, DecodedImage, DecoderState, FluxoPcm, GuestCall, HashState, Machine,
-    MediaState, MemStream, ModeloDeValor, OpenFile, Outcome, Peek, PendingBlit, RecorteDeImagem,
-    SoundState, ThreadState, Timer, UnzipState, Widget,
+    Callback, CipherState, DecodedImage, FluxoPcm, Machine, MediaState, MemStream, ModeloDeValor,
+    OpenFile, Outcome, Peek, PendingBlit, RecorteDeImagem, SoundState, ThreadState, Timer,
+    DecoderState, GuestCall, HashState, UnzipState, Widget,
 };
-use crate::cpu::{CpuBackend, Reg};
 use crate::input::Pad;
-use crate::machine::{AES_BLOCK, ArrayPointer, CLR_COUNT, GraphicsState, default_colors};
-use crate::save_state::{Erro, Guardavel, Leitor, Secoes};
-use crate::video::display::Framebuffer;
+use crate::machine::{default_colors, ArrayPointer, AES_BLOCK, CLR_COUNT, GraphicsState};
 use crate::video::display::{Rect, Rgb};
+use crate::video::display::Framebuffer;
+use crate::cpu::{CpuBackend, Reg};
+use crate::save_state::{Erro, Guardavel, Leitor, Secoes};
 
 /// Os registradores, na ordem em que a seção os grava.
 ///
@@ -76,13 +76,7 @@ impl<C: CpuBackend> Machine<C> {
     ///
     /// O `next` do alocador da região, quando ela tem um; o tamanho inteiro, quando não tem.
     /// Devolve `None` para a região que não deve ser gravada de jeito nenhum.
-    fn quanto_gravar(
-        &self,
-        nome: &str,
-        base: u32,
-        tamanho: usize,
-        gravavel: bool,
-    ) -> Option<usize> {
+    fn quanto_gravar(&self, nome: &str, base: u32, tamanho: usize, gravavel: bool) -> Option<usize> {
         if !gravavel {
             return None;
         }
@@ -152,12 +146,9 @@ impl<C: CpuBackend> Machine<C> {
             self.cpu.instructions().to_le_bytes().to_vec(),
         );
         for regiao in self.module.mem.regions() {
-            let Some(quanto) = self.quanto_gravar(
-                regiao.name,
-                regiao.base,
-                regiao.bytes.len(),
-                regiao.writable,
-            ) else {
+            let Some(quanto) =
+                self.quanto_gravar(regiao.name, regiao.base, regiao.bytes.len(), regiao.writable)
+            else {
                 continue;
             };
             let mut bytes = vec![0u8; quanto];
@@ -203,12 +194,10 @@ impl<C: CpuBackend> Machine<C> {
         }
         let _thumb = leitor.u32("cpu.thumb")?;
         let cpsr = leitor.u32("cpu.cpsr")?;
-        let bytes_do_relogio = leitor
-            .secao("cpu.instructions")
-            .ok_or_else(|| Erro::Secao {
-                nome: "cpu.instructions".to_string(),
-                motivo: "a seção não está no arquivo".to_string(),
-            })?;
+        let bytes_do_relogio = leitor.secao("cpu.instructions").ok_or_else(|| Erro::Secao {
+            nome: "cpu.instructions".to_string(),
+            motivo: "a seção não está no arquivo".to_string(),
+        })?;
         if bytes_do_relogio.len() != 8 {
             return Err(Erro::Secao {
                 nome: "cpu.instructions".to_string(),
@@ -220,12 +209,7 @@ impl<C: CpuBackend> Machine<C> {
         // A memória é lida e conferida antes de qualquer escrita.
         let mut regioes: Vec<(u32, Vec<u8>)> = Vec::new();
         for regiao in self.module.mem.regions() {
-            let Some(_) = self.quanto_gravar(
-                regiao.name,
-                regiao.base,
-                regiao.bytes.len(),
-                regiao.writable,
-            ) else {
+            let Some(_) = self.quanto_gravar(regiao.name, regiao.base, regiao.bytes.len(), regiao.writable) else {
                 continue;
             };
             let secao = secao_da_regiao(regiao.name);
@@ -234,8 +218,7 @@ impl<C: CpuBackend> Machine<C> {
                 motivo: "a seção não está no arquivo".to_string(),
             })?;
             // **O tamanho esperado sai do próprio estado**, e não da máquina de agora.
-            let quanto =
-                Self::quanto_do_estado(&leitor, regiao.name, regiao.base, regiao.bytes.len())?;
+            let quanto = Self::quanto_do_estado(&leitor, regiao.name, regiao.base, regiao.bytes.len())?;
             if bytes.len() != quanto {
                 return Err(Erro::Secao {
                     nome: secao,
@@ -264,14 +247,13 @@ impl<C: CpuBackend> Machine<C> {
         self.restaura_ultimos(&leitor)?;
         self.heap.restaura_com_prefixo("heap", &leitor)?;
         self.objects.restaura(&leitor)?;
-        self.superficies.restaura_com_prefixo("surfaces", &leitor)?;
+        self.superficies
+            .restaura_com_prefixo("surfaces", &leitor)?;
         for (base, bytes) in regioes {
-            self.cpu
-                .write_mem(base, &bytes)
-                .map_err(|erro| Erro::Secao {
-                    nome: format!("mem.{base:#010x}"),
-                    motivo: format!("não deu para escrever: {erro}"),
-                })?;
+            self.cpu.write_mem(base, &bytes).map_err(|erro| Erro::Secao {
+                nome: format!("mem.{base:#010x}"),
+                motivo: format!("não deu para escrever: {erro}"),
+            })?;
         }
         for (reg, valor) in REGISTRADORES.iter().zip(registradores) {
             self.cpu.write_reg(*reg, valor);
@@ -283,6 +265,7 @@ impl<C: CpuBackend> Machine<C> {
         Ok(())
     }
 }
+
 
 /// O código do nome de um sinal de entrada.
 ///
@@ -299,10 +282,7 @@ fn codigo_do_sinal_de_entrada(nome: &str) -> u32 {
             // resultado foi um save state **gravado com sucesso e impossível de carregar**. O
             // erro só apareceu porque o teste de ida e volta existe, e o nome que faltava era o
             // terceiro (`RegisterForConnectEvents`), que eu tinha suposto não existir.
-            debug_assert!(
-                false,
-                "o sinal de aparelho \"{nome}\" não está em SINAIS_DE_APARELHO"
-            );
+            debug_assert!(false, "o sinal de aparelho \"{nome}\" não está em SINAIS_DE_APARELHO");
             u32::MAX
         }
     }
@@ -334,10 +314,7 @@ impl<C: CpuBackend> Machine<C> {
     fn grava_entrada_e_tempo(&self, secoes: &mut Secoes) {
         secoes.poe_u32s(
             "entrada.teclas",
-            self.teclas
-                .iter()
-                .map(|(avk, baixo)| [*avk, u32::from(*baixo)])
-                .flatten(),
+            self.teclas.iter().map(|(avk, baixo)| [*avk, u32::from(*baixo)]).flatten(),
         );
         for (porta, fila) in self.pad_events.iter().enumerate() {
             secoes.poe_u32s(
@@ -347,28 +324,23 @@ impl<C: CpuBackend> Machine<C> {
                     .flatten(),
             );
         }
-        secoes.poe_mapa(
-            "entrada.portas",
-            self.portas_de_aparelho.iter().map(|(a, p)| (*a, *p as u32)),
-        );
+        secoes.poe_mapa("entrada.portas", self.portas_de_aparelho.iter().map(|(a, p)| (*a, *p as u32)));
         secoes.poe_trios(
             "entrada.sinais",
             self.input_signals.iter().map(|((nome, porta), sinal)| {
-                (codigo_do_sinal_de_entrada(nome), *porta as u32, *sinal)
+                (
+                    codigo_do_sinal_de_entrada(nome),
+                    *porta as u32,
+                    *sinal,
+                )
             }),
         );
-        secoes.poe_trios(
-            "agenda.timers",
-            self.timers
-                .iter()
-                .map(|t| (t.deadline_ms, t.callback.function, t.callback.context)),
-        );
-        secoes.poe_trios(
-            "agenda.sinais",
-            self.signals
-                .iter()
-                .map(|(id, cb)| (*id, cb.function, cb.context)),
-        );
+        secoes.poe_trios("agenda.timers", self.timers.iter().map(|t| {
+            (t.deadline_ms, t.callback.function, t.callback.context)
+        }));
+        secoes.poe_trios("agenda.sinais", self.signals.iter().map(|(id, cb)| {
+            (*id, cb.function, cb.context)
+        }));
         secoes.poe_u32s(
             "agenda.pendentes",
             self.pending_signals
@@ -378,7 +350,10 @@ impl<C: CpuBackend> Machine<C> {
     }
 
     /// Lê e confere entrada e agendamento. Nada é aplicado se alguma seção não bater.
-    fn restaura_entrada_e_tempo(&mut self, leitor: &Leitor<'_>) -> Result<(), Erro> {
+    fn restaura_entrada_e_tempo(
+        &mut self,
+        leitor: &Leitor<'_>,
+    ) -> Result<(), Erro> {
         // **Em ordem**: a fila de teclas é uma sequência, e não um mapa.
         let teclas = leitor.pares_em_ordem("entrada.teclas")?;
         let portas = leitor.pares("entrada.portas")?;
@@ -452,6 +427,7 @@ impl<C: CpuBackend> Machine<C> {
     }
 }
 
+
 /// As tabelas de estado por objeto cujo conteúdo são **números**.
 ///
 /// A lista é declarada uma vez, aqui, e é ela que grava e que lê — com o mesmo nome de seção dos
@@ -493,9 +469,7 @@ impl<C: CpuBackend> Machine<C> {
             if *valor > u32::from(u16::MAX) {
                 return Err(Erro::Secao {
                     nome: "tab.transparency".to_string(),
-                    motivo: format!(
-                        "o objeto {indice:#010x} tem transparência {valor}, que não cabe num u16"
-                    ),
+                    motivo: format!("o objeto {indice:#010x} tem transparência {valor}, que não cabe num u16"),
                 });
             }
         }
@@ -513,7 +487,7 @@ impl<C: CpuBackend> Machine<C> {
                     return Err(Erro::Secao {
                         nome: "tab.streams".to_string(),
                         motivo: format!("o campo `dono` vale {outro}, e é booleano"),
-                    });
+                    })
                 }
             };
             streams.insert(
@@ -540,10 +514,7 @@ impl<C: CpuBackend> Machine<C> {
                 if *valor > 255 {
                     return Err(Erro::Secao {
                         nome: "tab.sounds".to_string(),
-                        motivo: format!(
-                            "o `AEESoundInfo` do som {:#010x} tem byte {valor}",
-                            registro[0]
-                        ),
+                        motivo: format!("o `AEESoundInfo` do som {:#010x} tem byte {valor}", registro[0]),
                     });
                 }
                 *destino = *valor as u8;
@@ -604,7 +575,15 @@ impl<C: CpuBackend> Machine<C> {
                 "tab.streams",
                 self.streams
                     .iter()
-                    .map(|(id, s)| vec![*id, s.buffer, s.size, s.position, u32::from(s.dono)])
+                    .map(|(id, s)| {
+                        vec![
+                            *id,
+                            s.buffer,
+                            s.size,
+                            s.position,
+                            u32::from(s.dono),
+                        ]
+                    })
                     .flatten()
                     .collect(),
             ),
@@ -629,6 +608,7 @@ impl<C: CpuBackend> Machine<C> {
         ]
     }
 }
+
 
 /// As métricas de fonte e os arquivos abertos.
 ///
@@ -665,10 +645,7 @@ impl<C: CpuBackend> Machine<C> {
         secoes.poe_u32s("arq.ids", self.open_files.keys().copied());
         for (id, arquivo) in &self.open_files {
             secoes.poe_texto(&format!("arq.{id}.guest"), &arquivo.guest_path);
-            secoes.poe_texto(
-                &format!("arq.{id}.caminho"),
-                &arquivo.caminho.to_string_lossy(),
-            );
+            secoes.poe_texto(&format!("arq.{id}.caminho"), &arquivo.caminho.to_string_lossy());
             // O deslocamento lido **agora**: é ele que diz em que ponto da leitura o jogo estava.
             let posicao = deslocamento(&arquivo.file).unwrap_or(0);
             secoes.poe(&format!("arq.{id}.pos"), posicao.to_le_bytes().to_vec());
@@ -708,13 +685,10 @@ impl<C: CpuBackend> Machine<C> {
         for id in ids {
             let guest_path = leitor.texto(&format!("arq.{id}.guest"))?;
             let caminho = std::path::PathBuf::from(leitor.texto(&format!("arq.{id}.caminho"))?);
-            let bytes_da_posicao =
-                leitor
-                    .secao(&format!("arq.{id}.pos"))
-                    .ok_or_else(|| Erro::Secao {
-                        nome: format!("arq.{id}.pos"),
-                        motivo: "a seção não está no arquivo".to_string(),
-                    })?;
+            let bytes_da_posicao = leitor.secao(&format!("arq.{id}.pos")).ok_or_else(|| Erro::Secao {
+                nome: format!("arq.{id}.pos"),
+                motivo: "a seção não está no arquivo".to_string(),
+            })?;
             if bytes_da_posicao.len() != 8 {
                 return Err(Erro::Secao {
                     nome: format!("arq.{id}.pos"),
@@ -730,19 +704,11 @@ impl<C: CpuBackend> Machine<C> {
                 ),
             })?;
             use std::io::Seek as _;
-            file.seek(std::io::SeekFrom::Start(posicao))
-                .map_err(|erro| Erro::Secao {
-                    nome: format!("arq.{id}"),
-                    motivo: format!("não deu para voltar o arquivo ao byte {posicao}: {erro}"),
-                })?;
-            abertos.insert(
-                id,
-                OpenFile {
-                    file,
-                    guest_path,
-                    caminho,
-                },
-            );
+            file.seek(std::io::SeekFrom::Start(posicao)).map_err(|erro| Erro::Secao {
+                nome: format!("arq.{id}"),
+                motivo: format!("não deu para voltar o arquivo ao byte {posicao}: {erro}"),
+            })?;
+            abertos.insert(id, OpenFile { file, guest_path, caminho });
         }
 
         self.fontes = fontes;
@@ -758,6 +724,7 @@ fn deslocamento(file: &std::fs::File) -> std::io::Result<u64> {
     copia.stream_position()
 }
 
+
 /// As tabelas que guardam **conteúdo**: preferências, parâmetros de coleção, dados de `IConfig`,
 /// o texto decifrado, a resposta da rede e o que o `IWeb` já baixou.
 ///
@@ -772,7 +739,9 @@ impl<C: CpuBackend> Machine<C> {
             2,
             self.prefs
                 .iter()
-                .map(|((classe, versao), dados)| (vec![*classe, u32::from(*versao)], dados.clone()))
+                .map(|((classe, versao), dados)| {
+                    (vec![*classe, u32::from(*versao)], dados.clone())
+                })
                 .collect::<Vec<_>>(),
         );
         secoes.poe_blocos(
@@ -822,11 +791,7 @@ impl<C: CpuBackend> Machine<C> {
                 .map(|(ordem, dados)| (vec![ordem as u32], dados.clone()))
                 .collect::<Vec<_>>(),
         );
-        secoes.poe_blocos(
-            "cont.resposta",
-            1,
-            vec![(vec![0u32], self.web_response.clone())],
-        );
+        secoes.poe_blocos("cont.resposta", 1, vec![(vec![0u32], self.web_response.clone())]);
     }
 
     fn restaura_conteudo(&mut self, leitor: &Leitor<'_>) -> Result<(), Erro> {
@@ -865,16 +830,11 @@ impl<C: CpuBackend> Machine<C> {
             conferir("cont.paginas", &chave, 1)?;
             paginas_html.insert(chave[0], dados);
         }
-        let mut config_items: std::collections::HashMap<
-            u32,
-            std::collections::HashMap<u32, Vec<u8>>,
-        > = std::collections::HashMap::new();
+        let mut config_items: std::collections::HashMap<u32, std::collections::HashMap<u32, Vec<u8>>> =
+            std::collections::HashMap::new();
         for (chave, dados) in leitor.blocos("cont.config")? {
             conferir("cont.config", &chave, 2)?;
-            config_items
-                .entry(chave[0])
-                .or_default()
-                .insert(chave[1], dados);
+            config_items.entry(chave[0]).or_default().insert(chave[1], dados);
         }
         let mut plaintexts = std::collections::VecDeque::new();
         for (chave, dados) in leitor.blocos("cont.plaintexts")? {
@@ -906,6 +866,8 @@ impl<C: CpuBackend> Machine<C> {
         Ok(())
     }
 }
+
+
 
 /// Empacota um `Vec<bool>` em bits, um por pixel.
 ///
@@ -961,7 +923,10 @@ impl<C: CpuBackend> Machine<C> {
                 ],
             );
             secoes.poe(&format!("img.{id}.pixels"), pixels_em_bytes(&imagem.pixels));
-            secoes.poe(&format!("img.{id}.opaque"), empacota_bits(&imagem.opaque));
+            secoes.poe(
+                &format!("img.{id}.opaque"),
+                empacota_bits(&imagem.opaque),
+            );
             secoes.poe(&format!("img.{id}.alfa"), imagem.alfa.clone());
         }
     }
@@ -989,7 +954,10 @@ impl<C: CpuBackend> Machine<C> {
             if meta[3] as usize != quantos {
                 return Err(Erro::Secao {
                     nome: format!("img.{id}.meta"),
-                    motivo: format!("a imagem é {largura}x{altura} e diz ter {} pixels", meta[3]),
+                    motivo: format!(
+                        "a imagem é {largura}x{altura} e diz ter {} pixels",
+                        meta[3]
+                    ),
                 });
             }
             let pixels = bytes_em_pixels(&secao_exigida(leitor, &format!("img.{id}.pixels"))?);
@@ -1057,10 +1025,7 @@ fn grava_superficie(secoes: &mut Secoes, prefixo: &str, superficie: &Framebuffer
             sujo[3],
         ],
     );
-    secoes.poe(
-        &format!("{prefixo}.pixels"),
-        pixels_em_bytes(superficie.pixels()),
-    );
+    secoes.poe(&format!("{prefixo}.pixels"), pixels_em_bytes(superficie.pixels()));
 }
 
 /// Lê uma superfície gravada por [`grava_superficie`].
@@ -1078,10 +1043,7 @@ fn le_superficie(leitor: &Leitor<'_>, prefixo: &str) -> Result<Framebuffer, Erro
     if pixels.len() != quantos {
         return Err(Erro::Secao {
             nome: format!("{prefixo}.pixels"),
-            motivo: format!(
-                "a superfície é {largura}x{altura} e vieram {} pixels",
-                pixels.len()
-            ),
+            motivo: format!("a superfície é {largura}x{altura} e vieram {} pixels", pixels.len()),
         });
     }
     let mut superficie = Framebuffer::new(largura, altura);
@@ -1094,7 +1056,7 @@ fn le_superficie(leitor: &Leitor<'_>, prefixo: &str) -> Result<Framebuffer, Erro
             return Err(Erro::Secao {
                 nome: format!("{prefixo}.meta"),
                 motivo: format!("o campo da caixa suja vale {outro}, e é booleano"),
-            });
+            })
         }
     };
     superficie.restaura_estado(escritas, serie, sujo, pixels);
@@ -1128,6 +1090,7 @@ fn bytes_em_pixels(bytes: &[u8]) -> Vec<u16> {
         .map(|par| u16::from_le_bytes([par[0], par[1]]))
         .collect()
 }
+
 
 /// Os escalares, os conjuntos e os mapas simples.
 ///
@@ -1214,9 +1177,7 @@ impl<C: CpuBackend> Machine<C> {
         );
         secoes.poe_mapa(
             "esc.rolagem_maxima",
-            self.rolagem_maxima_html
-                .iter()
-                .map(|(a, b)| (*a, *b as u32)),
+            self.rolagem_maxima_html.iter().map(|(a, b)| (*a, *b as u32)),
         );
         secoes.poe_trios(
             "esc.image_notify",
@@ -1273,6 +1234,8 @@ impl<C: CpuBackend> Machine<C> {
                 .collect::<Vec<_>>(),
         );
     }
+
+
 }
 
 /// Quantos números a seção `esc.numeros` tem.
@@ -1465,6 +1428,7 @@ fn le_lista_com_extra(bytes: &[u8], onde: &str) -> Result<(Vec<u32>, u32), Erro>
     Ok((valores, extra))
 }
 
+
 /// Os módulos instalados, as enumerações em curso e o **ponto de parada**.
 ///
 /// ## `stalled`: o buraco declarado, agora coberto
@@ -1523,7 +1487,8 @@ impl<C: CpuBackend> Machine<C> {
                 ),
             });
         }
-        let modulos_instalados: Vec<(u32, String)> = ids.into_iter().zip(nomes).collect();
+        let modulos_instalados: Vec<(u32, String)> =
+            ids.into_iter().zip(nomes).collect();
 
         let ids = leitor.u32s("tex.enumeracoes_ids")?;
         let mut enumerations = std::collections::HashMap::new();
@@ -1641,10 +1606,11 @@ fn monta(numeros: &[u32]) -> Result<Option<Outcome>, Erro> {
         outro => {
             return Err(erro(format!(
                 "o estado guarda o desfecho {outro}, que este motor não conhece"
-            )));
+            )))
         }
     })
 }
+
 
 /// As tabelas de objeto que restam: cifra, descompressão, espiada, recorte, modelo de valor,
 /// fluxo de PCM, entregas pendentes e o estado de mídia.
@@ -1727,7 +1693,10 @@ impl<C: CpuBackend> Machine<C> {
 
         secoes.poe_u32s("mod.ids", self.modelos_de_valor.keys().copied());
         for (id, modelo) in &self.modelos_de_valor {
-            secoes.poe_u32s(&format!("mod.{id}.meta"), [modelo.valor, modelo.tamanho]);
+            secoes.poe_u32s(
+                &format!("mod.{id}.meta"),
+                [modelo.valor, modelo.tamanho],
+            );
             secoes.poe_registros(
                 &format!("mod.{id}.ouvintes"),
                 modelo
@@ -1814,7 +1783,11 @@ impl<C: CpuBackend> Machine<C> {
             if chaves.len() != 2 * AES_BLOCK {
                 return Err(Erro::Secao {
                     nome: format!("cif.{id}.chaves"),
-                    motivo: format!("esperava {} bytes e veio {}", 2 * AES_BLOCK, chaves.len()),
+                    motivo: format!(
+                        "esperava {} bytes e veio {}",
+                        2 * AES_BLOCK,
+                        chaves.len()
+                    ),
                 });
             }
             let mut iv = [0u8; AES_BLOCK];
@@ -1830,7 +1803,7 @@ impl<C: CpuBackend> Machine<C> {
                     return Err(Erro::Secao {
                         nome: format!("cif.{id}.meta"),
                         motivo: format!("o campo `key` vale {outro}, e é booleano"),
-                    });
+                    })
                 }
             };
             ciphers.insert(
@@ -1902,7 +1875,7 @@ impl<C: CpuBackend> Machine<C> {
                     return Err(Erro::Secao {
                         nome: format!("rec.{id}.meta"),
                         motivo: format!("o campo `tamanho` vale {outro}, e é booleano"),
-                    });
+                    })
                 }
             };
             recortes_de_imagem.insert(
@@ -1954,10 +1927,7 @@ impl<C: CpuBackend> Machine<C> {
             let menor = |indice: usize, campo: &str| -> Result<u16, Erro> {
                 u16::try_from(meta[indice]).map_err(|_| Erro::Secao {
                     nome: format!("pcm.{id}.meta"),
-                    motivo: format!(
-                        "o campo `{campo}` vale {}, que não cabe num u16",
-                        meta[indice]
-                    ),
+                    motivo: format!("o campo `{campo}` vale {}, que não cabe num u16", meta[indice]),
                 })
             };
             fluxos_pcm.insert(
@@ -1984,7 +1954,7 @@ impl<C: CpuBackend> Machine<C> {
                     return Err(Erro::Secao {
                         nome: "blit.registros".to_string(),
                         motivo: format!("o campo `frame` vale {outro}, e é booleano"),
-                    });
+                    })
                 }
             };
             pending_blits.push(PendingBlit {
@@ -2037,6 +2007,7 @@ impl<C: CpuBackend> Machine<C> {
         Ok(())
     }
 }
+
 
 /// O que resta sem forma própria: escalares, buffers, o estado de `IGraphics` e `IGL`, os teclados
 /// e as threads.
@@ -2224,10 +2195,7 @@ impl<C: CpuBackend> Machine<C> {
                     .collect::<Vec<_>>(),
             );
         }
-        secoes.poe_mapa(
-            "th.resume",
-            self.resume_callbacks.iter().map(|(a, b)| (*a, *b)),
-        );
+        secoes.poe_mapa("th.resume", self.resume_callbacks.iter().map(|(a, b)| (*a, *b)));
         secoes.poe_u32s("th.pendentes", self.pending_threads.iter().copied());
 
         // Os quadros do `Update`: são superfícies, e vão pela mesma rotina delas.
@@ -2391,11 +2359,8 @@ impl<C: CpuBackend> Machine<C> {
                 )
             })
             .collect();
-        let gl_buffers: std::collections::HashMap<u32, Vec<u8>> = leitor
-            .blocos("resto.gl_buffers")?
-            .into_iter()
-            .map(|(c, b)| (c[0], b))
-            .collect();
+        let gl_buffers: std::collections::HashMap<u32, Vec<u8>> =
+            leitor.blocos("resto.gl_buffers")?.into_iter().map(|(c, b)| (c[0], b)).collect();
         let egl_color_bytes = secao_exigida(leitor, "resto.egl_bytes")?;
         let egl_color_readback = secao_exigida(leitor, "resto.egl_readback")?;
 
@@ -2519,8 +2484,8 @@ impl<C: CpuBackend> Machine<C> {
 ///
 /// Conferido na leitura, como o `ESCALARES`: um estado com outro número de campos é recusa, e não
 /// leitura deslocada. O teste cobra que a conta esteja certa.
-const REST0: usize =
-    63 + CLR_COUNT * 3 + crate::input::PORTAS * 5 + crate::input::PORTAS * 3 + 30 + 3;
+const REST0: usize = 63 + CLR_COUNT * 3 + crate::input::PORTAS * 5 + crate::input::PORTAS * 3 + 30 + 3;
+
 
 /// **Os widgets do `IWidget`** — a última tabela grande.
 ///
@@ -2569,10 +2534,7 @@ impl<C: CpuBackend> Machine<C> {
                 &format!("wid.{id}.modelos"),
                 widget.modelos.iter().map(|(a, b)| (*a, *b)),
             );
-            secoes.poe_u32s(
-                &format!("wid.{id}.anexados"),
-                widget.anexados.iter().copied(),
-            );
+            secoes.poe_u32s(&format!("wid.{id}.anexados"), widget.anexados.iter().copied());
             secoes.poe_texto(&format!("wid.{id}.texto"), &widget.texto);
         }
     }
@@ -2588,18 +2550,12 @@ impl<C: CpuBackend> Machine<C> {
                     motivo: format!("esperava 16 números e veio {}", meta.len()),
                 });
             }
-            let filhos = leitor
-                .pares(&format!("wid.{id}.filhos"))?
-                .into_iter()
-                .collect();
+            let filhos = leitor.pares(&format!("wid.{id}.filhos"))?.into_iter().collect();
             let propriedades = leitor
                 .pares(&format!("wid.{id}.propriedades"))?
                 .into_iter()
                 .collect();
-            let modelos = leitor
-                .pares(&format!("wid.{id}.modelos"))?
-                .into_iter()
-                .collect();
+            let modelos = leitor.pares(&format!("wid.{id}.modelos"))?.into_iter().collect();
             widgets.insert(
                 id,
                 Widget {
@@ -2625,6 +2581,7 @@ impl<C: CpuBackend> Machine<C> {
         Ok(())
     }
 }
+
 
 /// As duas últimas tabelas de biblioteca: o decodificador de imagem e o banco aberto.
 ///
@@ -2661,10 +2618,7 @@ impl<C: CpuBackend> Machine<C> {
 
         secoes.poe_u32s("db.ids", self.databases.keys().copied());
         for (id, banco) in &self.databases {
-            secoes.poe_texto(
-                &format!("db.{id}.caminho"),
-                &banco.caminho().to_string_lossy(),
-            );
+            secoes.poe_texto(&format!("db.{id}.caminho"), &banco.caminho().to_string_lossy());
         }
     }
 
@@ -2686,7 +2640,7 @@ impl<C: CpuBackend> Machine<C> {
                     return Err(Erro::Secao {
                         nome: format!("dec.{id}.meta"),
                         motivo: format!("o campo `bitmap` vale {outro}, e é booleano"),
-                    });
+                    })
                 }
             };
             decoders.insert(
@@ -2704,14 +2658,16 @@ impl<C: CpuBackend> Machine<C> {
         let ids = leitor.u32s("db.ids")?;
         let mut databases = std::collections::HashMap::new();
         for id in ids {
-            let caminho = std::path::PathBuf::from(leitor.texto(&format!("db.{id}.caminho"))?);
-            let banco = crate::brew::sql::Database::open(&caminho).map_err(|erro| Erro::Secao {
-                nome: format!("db.{id}"),
-                motivo: format!(
-                    "o estado guarda \"{}\" aberto e ele não pôde ser reaberto: {erro}",
-                    caminho.display()
-                ),
-            })?;
+            let caminho =
+                std::path::PathBuf::from(leitor.texto(&format!("db.{id}.caminho"))?);
+            let banco =
+                crate::brew::sql::Database::open(&caminho).map_err(|erro| Erro::Secao {
+                    nome: format!("db.{id}"),
+                    motivo: format!(
+                        "o estado guarda \"{}\" aberto e ele não pôde ser reaberto: {erro}",
+                        caminho.display()
+                    ),
+                })?;
             databases.insert(id, banco);
         }
 
@@ -2720,6 +2676,7 @@ impl<C: CpuBackend> Machine<C> {
         Ok(())
     }
 }
+
 
 /// Os últimos campos de estado que faltavam: o trecho interrompido, as chamadas pendentes, as
 /// superfícies do EGL e os resumos em curso.
@@ -2806,7 +2763,7 @@ impl<C: CpuBackend> Machine<C> {
                 return Err(Erro::Secao {
                     nome: "ult.trecho".to_string(),
                     motivo: format!("o campo de presença vale {outro}, e é booleano"),
-                });
+                })
             }
         };
 
@@ -2875,7 +2832,7 @@ mod tests {
     // `dynarmic`. Usar o nome do unicorn aqui deixava o alvo vermelho no CI — que é justamente
     // quem enxerga o que o teste local não pode ver.
     use crate::cpu::BackendPadrao as UnicornCpu;
-    use crate::loader;
+    use crate::loader::self as loader;
 
     /// O menor módulo que o carregador aceita. Não precisa fazer nada: o alvo aqui é o estado da
     /// máquina em volta dele — memória, registradores e os contadores de alocação.
@@ -2910,21 +2867,13 @@ mod tests {
         antes.cpu.set_instructions(12_345_678);
 
         let mut depois = maquina();
-        assert_eq!(
-            depois.cpu.instructions(),
-            0,
-            "a máquina nova começa com o relógio zerado"
-        );
+        assert_eq!(depois.cpu.instructions(), 0, "a máquina nova começa com o relógio zerado");
 
         let arquivo = antes.grava_estado();
         depois.restaura_estado(&arquivo).expect("restaurou");
 
         assert_eq!(depois.cpu.cpsr(), cpsr, "as flags não voltaram");
-        assert_eq!(
-            depois.cpu.instructions(),
-            12_345_678,
-            "o relógio não voltou"
-        );
+        assert_eq!(depois.cpu.instructions(), 12_345_678, "o relógio não voltou");
     }
 
     /// **O estado volta igual**: registradores, heap, pilha e o livro do heap.
@@ -2974,11 +2923,7 @@ mod tests {
         let arquivo = antes.grava_estado();
 
         let mut depois = maquina();
-        assert_eq!(
-            depois.heap.proximo(),
-            loader::HEAP_BASE,
-            "a máquina nova começa vazia"
-        );
+        assert_eq!(depois.heap.proximo(), loader::HEAP_BASE, "a máquina nova começa vazia");
         depois.restaura_estado(&arquivo).expect("restaurou");
         assert_eq!(depois.heap.proximo(), antes.heap.proximo());
     }
@@ -3001,8 +2946,10 @@ mod tests {
             0xe12f_ff1eu32.to_le_bytes(),
         ]
         .concat();
-        let module =
-            loader::load(&crate::loader::modfile::ModImage::parse(maior).unwrap()).unwrap();
+        let module = loader::load(
+            &crate::loader::modfile::ModImage::parse(maior).unwrap(),
+        )
+        .unwrap();
         let mut outra = Machine::new(UnicornCpu::new().unwrap(), module, ".");
         outra.cpu.reset(&outra.module.mem).unwrap();
 
@@ -3108,10 +3055,7 @@ mod tests {
         assert_eq!(depois.timers.len(), 1, "o temporizador não voltou");
         assert_eq!(depois.timers[0].deadline_ms, 424_242);
         assert_eq!(depois.timers[0].callback.function, 0x1000_2000);
-        assert_eq!(
-            depois.signals.get(&0x77).map(|c| c.context),
-            Some(0xbeef_0000)
-        );
+        assert_eq!(depois.signals.get(&0x77).map(|c| c.context), Some(0xbeef_0000));
         assert_eq!(depois.pending_signals.len(), 1);
         assert_eq!(depois.pending_signals[0].function, 0x1000_4000);
     }
@@ -3182,10 +3126,7 @@ mod tests {
         assert_eq!(depois.feeds.get(&0x44), Some(&12));
         assert_eq!(depois.transparency.get(&0x55), Some(&0x8000));
         let stream = depois.streams.get(&0x66).expect("o stream voltou");
-        assert_eq!(
-            (stream.buffer, stream.size, stream.position),
-            (0x3000, 512, 128)
-        );
+        assert_eq!((stream.buffer, stream.size, stream.position), (0x3000, 512, 128));
         assert!(stream.dono, "o `dono` do buffer não voltou");
         let som = depois.sounds.get(&0x77).expect("o som voltou");
         assert_eq!(som.volume, 42);
@@ -3293,16 +3234,10 @@ mod tests {
         assert!(metricas.bold);
         assert!(!metricas.italic);
 
-        let aberto = depois
-            .open_files
-            .get_mut(&0x2020)
-            .expect("o arquivo voltou");
+        let aberto = depois.open_files.get_mut(&0x2020).expect("o arquivo voltou");
         assert_eq!(aberto.guest_path, "./dados/cena.bin");
         let mut seguinte = [0u8; 2];
-        aberto
-            .file
-            .read_exact(&mut seguinte)
-            .expect("ler o seguinte");
+        aberto.file.read_exact(&mut seguinte).expect("ler o seguinte");
         assert_eq!(
             seguinte,
             [7, 8],
@@ -3393,11 +3328,9 @@ mod tests {
         let mut antes = maquina();
         // Uma superfície de 4x2 com pixels distintos, para o teste distinguir pixel de pixel.
         let mut superficie = Framebuffer::new(4, 2);
-        for (indice, valor) in [
-            0x1111u16, 0x2222, 0x3333, 0x4444, 0x5555, 0x6666, 0x7777, 0x8888,
-        ]
-        .iter()
-        .enumerate()
+        for (indice, valor) in [0x1111u16, 0x2222, 0x3333, 0x4444, 0x5555, 0x6666, 0x7777, 0x8888]
+            .iter()
+            .enumerate()
         {
             superficie.set_pixel_native((indice % 4) as i32, (indice / 4) as i32, *valor);
         }
@@ -3424,9 +3357,7 @@ mod tests {
         assert_eq!((voltou.width(), voltou.height()), (4, 2));
         assert_eq!(
             voltou.pixels(),
-            &[
-                0x1111u16, 0x2222, 0x3333, 0x4444, 0x5555, 0x6666, 0x7777, 0x8888
-            ],
+            &[0x1111u16, 0x2222, 0x3333, 0x4444, 0x5555, 0x6666, 0x7777, 0x8888],
             "os pixels não voltaram"
         );
         let antes_da_gravacao = antes.bitmaps.get(&0x9000).expect("a original");
@@ -3449,11 +3380,7 @@ mod tests {
         let imagem = depois.images.get(&0xa000).expect("a imagem voltou");
         assert_eq!((imagem.width, imagem.height), (2, 2));
         assert_eq!(imagem.pixels, vec![0xaaaa, 0xbbbb, 0xcccc, 0xdddd]);
-        assert_eq!(
-            imagem.opaque,
-            vec![true, false, true, true],
-            "o `opaque` não voltou"
-        );
+        assert_eq!(imagem.opaque, vec![true, false, true, true], "o `opaque` não voltou");
         assert_eq!(imagem.alfa, vec![0, 51, 255, 7], "o alfa não voltou");
         assert_eq!(imagem.frame_width, 1);
     }
@@ -3483,16 +3410,8 @@ mod tests {
         for quantos in [0usize, 1, 7, 8, 9, 16, 17, 100] {
             let bits: Vec<bool> = (0..quantos).map(|i| i % 3 == 0).collect();
             let bytes = empacota_bits(&bits);
-            assert_eq!(
-                bytes.len(),
-                quantos.div_ceil(8),
-                "tamanho com {quantos} bits"
-            );
-            assert_eq!(
-                desempacota_bits(&bytes, quantos),
-                bits,
-                "com {quantos} bits"
-            );
+            assert_eq!(bytes.len(), quantos.div_ceil(8), "tamanho com {quantos} bits");
+            assert_eq!(desempacota_bits(&bytes, quantos), bits, "com {quantos} bits");
         }
     }
 
@@ -3610,10 +3529,9 @@ mod tests {
             (0x0102_8e35, "Z-Wheel".to_string()),
             (0x0102_8e36, "Face".to_string()),
         ];
-        antes.enumerations.insert(
-            0x1000,
-            ["primeiro".to_string(), "segundo".to_string()].into(),
-        );
+        antes
+            .enumerations
+            .insert(0x1000, ["primeiro".to_string(), "segundo".to_string()].into());
         antes.stalled = Some(Outcome::Fault {
             addr: 0x10,
             pc: 0x20,
@@ -3665,9 +3583,7 @@ mod tests {
             },
             Outcome::Exception { pc: 11 },
             Outcome::Budget,
-            Outcome::CallLimit {
-                calls: 0x1_0000_0002,
-            },
+            Outcome::CallLimit { calls: 0x1_0000_0002 },
         ];
         for desfecho in desfechos {
             let (rotulo, campos) = descreve(&Some(desfecho.clone()));
@@ -3795,44 +3711,26 @@ mod tests {
         let mut depois = maquina();
         depois.restaura_estado(&arquivo).expect("restaurou");
 
-        assert_eq!(
-            depois.ciphers.get(&0x100).map(|c| c.key),
-            Some(Some([7u8; 16]))
-        );
+        assert_eq!(depois.ciphers.get(&0x100).map(|c| c.key), Some(Some([7u8; 16])));
         assert_eq!(depois.ciphers.get(&0x100).map(|c| c.padding), Some(2));
-        assert_eq!(
-            depois.ciphers.get(&0x100).map(|c| c.pending.clone()),
-            Some(vec![1, 2, 3])
-        );
+        assert_eq!(depois.ciphers.get(&0x100).map(|c| c.pending.clone()), Some(vec![1, 2, 3]));
         assert_eq!(depois.ciphers.get(&0x101).map(|c| c.key), Some(None));
         let descompressor = depois.unzips.get(&0x200).expect("a descompressão voltou");
         assert_eq!(descompressor.output, vec![4, 5, 6]);
         assert_eq!(descompressor.position, 2);
         assert!(descompressor.expanded);
+        assert_eq!(depois.peeks.get(&0x400).map(|p| p.bytes.clone()), Some(vec![7, 8]));
         assert_eq!(
-            depois.peeks.get(&0x400).map(|p| p.bytes.clone()),
-            Some(vec![7, 8])
-        );
-        assert_eq!(
-            depois
-                .recortes_de_imagem
-                .get(&0x600)
-                .map(|r| (r.x, r.y, r.tamanho)),
+            depois.recortes_de_imagem.get(&0x600).map(|r| (r.x, r.y, r.tamanho)),
             Some((-3, 4, Some((10, 20))))
         );
         assert_eq!(
-            depois
-                .recortes_de_imagem
-                .get(&0x601)
-                .and_then(|r| r.tamanho),
+            depois.recortes_de_imagem.get(&0x601).and_then(|r| r.tamanho),
             None,
             "o recorte sem tamanho voltou com um"
         );
         assert_eq!(
-            depois
-                .modelos_de_valor
-                .get(&0x700)
-                .map(|m| (m.valor, m.ouvintes.clone())),
+            depois.modelos_de_valor.get(&0x700).map(|m| (m.valor, m.ouvintes.clone())),
             Some((42, vec![(0x800, 0x900, 0xa00)]))
         );
         let fluxo = depois.fluxos_pcm.get(&0xb00).expect("o fluxo voltou");
@@ -3889,11 +3787,7 @@ mod tests {
         antes.graphics.point_size = 3;
         antes.graphics.origin = (-4, 5);
         antes.graphics.stroke = Rgb { r: 1, g: 2, b: 3 };
-        antes.colors[7] = Rgb {
-            r: 200,
-            g: 100,
-            b: 50,
-        };
+        antes.colors[7] = Rgb { r: 200, g: 100, b: 50 };
         let mut pad = Pad::default();
         pad.press(2, true);
         pad.set_axis(1, -100);
@@ -3975,10 +3869,7 @@ mod tests {
         assert_eq!(depois.graphics.origin, (-4, 5));
         assert_eq!((depois.graphics.stroke.r, depois.graphics.stroke.g), (1, 2));
         assert_eq!(depois.colors[7].r, 200);
-        assert_eq!(
-            depois.pads[0].buttons, antes.pads[0].buttons,
-            "os botões do pad"
-        );
+        assert_eq!(depois.pads[0].buttons, antes.pads[0].buttons, "os botões do pad");
         assert_eq!(depois.pads[0].axes[1], -100, "o eixo do pad");
         assert_eq!(depois.movimento[1], [0.5, -0.25, 1.0], "o movimento é f32");
         assert_eq!(depois.gl_vertices.size, 3);
@@ -4050,10 +3941,7 @@ mod tests {
         assert_eq!(widget.posicao, (-7, 9));
         assert_eq!(widget.classe, 0x0102_8e3f);
         assert_eq!(widget.texto, "Abrir");
-        assert_eq!(
-            widget.serial, 0x1_0000_0002,
-            "a `serial` não voltou inteira"
-        );
+        assert_eq!(widget.serial, 0x1_0000_0002, "a `serial` não voltou inteira");
         assert_eq!(widget.anexados, vec![0x66, 0x67]);
         assert!(widget.visivel);
         assert_eq!(widget.pai, 0x68);

@@ -133,19 +133,12 @@ impl Wiimotes {
 
     /// O índice de um nome dado por [`Wiimotes::nome`].
     pub fn indice_do_nome(nome: &str) -> Option<usize> {
-        nome.strip_prefix(PREFIXO)?
-            .parse::<usize>()
-            .ok()?
-            .checked_sub(1)
+        nome.strip_prefix(PREFIXO)?.parse::<usize>().ok()?.checked_sub(1)
     }
 
     /// O estado do `indice`-ésimo controle conectado.
     pub fn estado(&self, indice: usize) -> Option<EstadoWiimote> {
-        self.estados
-            .lock()
-            .ok()?
-            .get(indice)
-            .map(|(_, estado)| *estado)
+        self.estados.lock().ok()?.get(indice).map(|(_, estado)| *estado)
     }
 }
 

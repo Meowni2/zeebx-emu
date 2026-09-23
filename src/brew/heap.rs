@@ -134,6 +134,7 @@ impl Heap {
     }
 }
 
+
 impl Heap {
     /// Grava com um prefixo de seção.
     ///
@@ -148,10 +149,7 @@ impl Heap {
             &format!("{prefixo}.free_list"),
             self.free_list.iter().map(|(a, t)| (*a, *t)),
         );
-        destino.poe_mapa(
-            &format!("{prefixo}.live"),
-            self.live.iter().map(|(a, t)| (*a, *t)),
-        );
+        destino.poe_mapa(&format!("{prefixo}.live"), self.live.iter().map(|(a, t)| (*a, *t)));
     }
 
     /// Restaura de um prefixo, conferindo que o heap é desta máquina e que o conteúdo é coerente.
@@ -164,21 +162,14 @@ impl Heap {
         let base = origem.u32(&format!("{prefixo}.base"))?;
         let end = origem.u32(&format!("{prefixo}.end"))?;
         if base != self.base || end != self.end {
-            return Err(Erro::Secao {
-                nome: prefixo.to_string(),
-                motivo: format!(
-                    "o estado é de uma região {base:#010x}..{end:#010x} e esta máquina tem {:#010x}..{:#010x}",
-                    self.base, self.end
-                ),
-            });
+            return Err(Erro::Secao { nome: prefixo.to_string(), motivo: format!(
+                "o estado é de uma região {base:#010x}..{end:#010x} e esta máquina tem {:#010x}..{:#010x}",
+                self.base, self.end) });
         }
         let next = origem.u32(&format!("{prefixo}.next"))?;
         let livres = origem.pares(&format!("{prefixo}.free_list"))?;
         let vivos = origem.pares(&format!("{prefixo}.live"))?;
-        if let Some((endereco, _)) = vivos
-            .iter()
-            .find(|(a, _)| livres.iter().any(|(f, _)| f == a))
-        {
+        if let Some((endereco, _)) = vivos.iter().find(|(a, _)| livres.iter().any(|(f, _)| f == a)) {
             return Err(Erro::Secao {
                 nome: prefixo.to_string(),
                 motivo: format!("o endereço {endereco:#010x} aparece livre e em uso"),
@@ -203,10 +194,7 @@ impl crate::save_state::Guardavel for Heap {
     /// As duas checagens não são enfeite: um heap restaurado com `base` diferente faria todo
     /// ponteiro do guest apontar para o lugar errado, e o sintoma apareceria muito depois, como
     /// acesso inválido em endereço sem relação com o save state.
-    fn restaura(
-        &mut self,
-        origem: &crate::save_state::Leitor<'_>,
-    ) -> Result<(), crate::save_state::Erro> {
+    fn restaura(&mut self, origem: &crate::save_state::Leitor<'_>) -> Result<(), crate::save_state::Erro> {
         self.restaura_com_prefixo("heap", origem)
     }
 }
@@ -235,11 +223,7 @@ mod tests {
         assert_eq!(heap.alloc(0xD08), None);
         // 0xD00 ainda cabe à frente, e é de lá que sai: o buraco do meio é pequeno demais para
         // este pedido, e o alocador não move blocos vivos.
-        assert_eq!(
-            heap.alloc(0xD00),
-            Some(0x1300),
-            "servido pelo ponteiro de avanço"
-        );
+        assert_eq!(heap.alloc(0xD00), Some(0x1300), "servido pelo ponteiro de avanço");
         // O que passa a valer é só o buraco: um pedido maior que ele não cabe em lugar nenhum.
         assert_eq!(heap.maior_bloco(), 0x100, "resta o buraco do meio");
         assert_eq!(heap.alloc(0x108), None);

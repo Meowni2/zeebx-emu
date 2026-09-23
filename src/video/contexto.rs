@@ -21,12 +21,12 @@
 use glow;
 #[cfg(not(target_os = "macos"))]
 use glutin::config::{ConfigSurfaceTypes, ConfigTemplateBuilder};
-use glutin::context::PossiblyCurrentContext;
 #[cfg(not(target_os = "macos"))]
 use glutin::context::{ContextApi, ContextAttributesBuilder, NotCurrentGlContext, Version};
-use glutin::display::Display;
+use glutin::context::PossiblyCurrentContext;
 #[cfg(not(target_os = "macos"))]
 use glutin::display::{DisplayApiPreference, GlDisplay};
+use glutin::display::Display;
 #[cfg(not(target_os = "macos"))]
 use glutin::surface::SurfaceAttributesBuilder;
 use glutin::surface::{PbufferSurface, Surface};
@@ -89,9 +89,7 @@ impl Contexto {
         ]
         .into_iter()
         .find_map(|api| {
-            let attrs = ContextAttributesBuilder::new()
-                .with_context_api(api)
-                .build(None);
+            let attrs = ContextAttributesBuilder::new().with_context_api(api).build(None);
             unsafe { display.create_context(&config, &attrs) }.ok()
         })
         .ok_or("nem OpenGL 3.3 nem GLES 3.x foram aceitos")?;
@@ -139,6 +137,7 @@ mod tests {
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests_contexto {

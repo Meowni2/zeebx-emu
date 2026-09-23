@@ -546,10 +546,12 @@ impl CpuBackend for UnicornCpu {
             }
             Err(uc_error::READ_UNMAPPED)
             | Err(uc_error::WRITE_UNMAPPED)
-            | Err(uc_error::WRITE_PROT) => Ok(StopReason::MemoryFault {
-                addr: self.uc.get_data().last_fault.unwrap_or(stopped_at),
-                pc: self.uc.get_data().last_fault_pc.unwrap_or(stopped_at),
-            }),
+            | Err(uc_error::WRITE_PROT) => {
+                Ok(StopReason::MemoryFault {
+                    addr: self.uc.get_data().last_fault.unwrap_or(stopped_at),
+                    pc: self.uc.get_data().last_fault_pc.unwrap_or(stopped_at),
+                })
+            }
             // Instrução inválida é o mesmo tipo de desfecho de uma exceção: diz onde o guest
             // se perdeu, e derrubar o emulador por isso esconde justamente essa informação.
             Err(uc_error::EXCEPTION) | Err(uc_error::INSN_INVALID) => {

@@ -26,6 +26,7 @@ use crate::video::gles;
 use crate::video::paltex;
 use crate::video::rasterizer::{self, GlState, Rasterizador, Vertex};
 
+mod save;
 mod bitmap;
 mod cifra;
 mod diagnostico;
@@ -41,7 +42,6 @@ mod image;
 mod media;
 mod net;
 mod probe;
-mod save;
 mod shell;
 mod signal;
 mod sound;
@@ -1930,9 +1930,7 @@ fn font_do_modulo(raiz: &std::path::Path) -> Option<crate::video::font::Font> {
 /// Devolve `None` em silêncio quando não há banco: é o caso comum, e o motor continua com a tabela
 /// de timbres. O relatório é que diz, pela hipótese em uso, qual dos dois caminhos tocou.
 #[cfg(feature = "soundfont")]
-fn banco_do_aparelho(
-    aparelho: &std::path::Path,
-) -> Option<std::sync::Arc<crate::audio::soundfont::Banco>> {
+fn banco_do_aparelho(aparelho: &std::path::Path) -> Option<std::sync::Arc<crate::audio::soundfont::Banco>> {
     let caminho = crate::audio::soundfont::primeiro_banco(aparelho)?;
     crate::audio::soundfont::abre(&caminho)
 }
@@ -2667,7 +2665,11 @@ impl<C: CpuBackend> Machine<C> {
     /// Trocar depois de o jogo desenhar perderia o estado de GL acumulado — matrizes, texturas,
     /// luz —, então este é o único momento em que a troca é segura.
     /// `contexto` é o da janela, quando há uma. Ver [`crate::video::gpu::GpuState::novo`].
-    pub fn usa_placa(&mut self, sim: bool, contexto: Option<std::sync::Arc<glow::Context>>) {
+    pub fn usa_placa(
+        &mut self,
+        sim: bool,
+        contexto: Option<std::sync::Arc<glow::Context>>,
+    ) {
         let (largura, altura) = self.gl.frame_size();
         self.gl = match placa_pedida(sim) {
             true => na_placa(largura, altura, contexto),
@@ -3595,10 +3597,12 @@ impl<C: CpuBackend> Machine<C> {
             | (Interface::EglOesSwapInterval, _)
             | (Interface::EglGetColorBuffer, _)
             | (Interface::Gles11ExtPak, _)
-            | (Interface::Joystick, _) => match self.extension_call(iface, slot)? {
-                Some(result) => result,
-                None => return Ok(None),
-            },
+            | (Interface::Joystick, _) => {
+                match self.extension_call(iface, slot)? {
+                    Some(result) => result,
+                    None => return Ok(None),
+                }
+            }
             (Interface::ImageDecoder, _) | (Interface::ForceFeed, _) => {
                 match self.decoder_call(iface, slot)? {
                     Some(result) => result,

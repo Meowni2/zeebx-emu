@@ -99,9 +99,7 @@ fn sem_v(tag: &str) -> &str {
 /// uma parte que não é número vale zero.
 fn numeros(versao: &str) -> [u64; 3] {
     let nucleo = sem_v(versao).split(['-', '+']).next().unwrap_or("");
-    let mut partes = nucleo
-        .split('.')
-        .map(|p| p.trim().parse::<u64>().unwrap_or(0));
+    let mut partes = nucleo.split('.').map(|p| p.trim().parse::<u64>().unwrap_or(0));
     [
         partes.next().unwrap_or(0),
         partes.next().unwrap_or(0),

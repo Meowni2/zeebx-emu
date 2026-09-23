@@ -3,9 +3,9 @@
 //!
 //! A biblioteca, os ajustes, os saves e o catálogo de idiomas são lidos **pelo núcleo** — o
 //! `machine`, o `loader` e a [`crate::session`] falam com eles —, então existem em toda
-//! plataforma. A [`app::App`], a vitrine e a janela sem interface só existem onde há uma janela
-//! de desktop. No Android quem monta a tela é outro frontend, sobre o mesmo núcleo — e sobre o
-//! mesmo painel de depuração e o mesmo pintor de GL.
+//! plataforma. A [`app::App`], a vitrine, o pintor de GL e a janela sem interface só existem
+//! onde há uma janela de desktop: no Android quem monta a tela é outro frontend, sobre o mesmo
+//! núcleo.
 
 /// O repositório do projeto.
 ///

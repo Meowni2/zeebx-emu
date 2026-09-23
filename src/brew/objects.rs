@@ -142,6 +142,7 @@ impl ObjectStore {
     }
 }
 
+
 impl crate::save_state::Guardavel for ObjectStore {
     /// Grava o livro inteiro: o fim da região, o primeiro endereço nunca usado, os endereços
     /// soltos e, por ponteiro, a interface e a contagem de referências de cada objeto vivo.
@@ -156,9 +157,7 @@ impl crate::save_state::Guardavel for ObjectStore {
         destino.poe_u32s("objects.livres", self.livres.iter().copied());
         destino.poe_mapa(
             "objects.kinds",
-            self.kinds
-                .iter()
-                .map(|(a, i)| (*a, crate::brew::aee::codigo(*i))),
+            self.kinds.iter().map(|(a, i)| (*a, crate::brew::aee::codigo(*i))),
         );
         destino.poe_mapa("objects.refs", self.refs.iter().map(|(a, r)| (*a, *r)));
     }
@@ -193,7 +192,11 @@ impl crate::save_state::Guardavel for ObjectStore {
             })?;
             kinds.insert(endereco, iface);
         }
-        if let Some((endereco, _)) = kinds.keys().find(|a| livres.contains(a)).map(|a| (*a, 0)) {
+        if let Some((endereco, _)) = kinds
+            .keys()
+            .find(|a| livres.contains(a))
+            .map(|a| (*a, 0))
+        {
             return Err(Erro::Secao {
                 nome: "objects".to_string(),
                 motivo: format!("o objeto {endereco:#010x} aparece solto e vivo"),
@@ -245,18 +248,11 @@ mod tests {
             "a interface de {a:#x} não voltou"
         );
         assert_eq!(depois.kind_of(b), Some(Interface::Display));
-        assert_eq!(
-            depois.kind_of(morto),
-            None,
-            "o objeto liberado não devia voltar vivo"
-        );
+        assert_eq!(depois.kind_of(morto), None, "o objeto liberado não devia voltar vivo");
         assert_eq!(depois.contagem(a), antes.contagem(a), "a conta de {a:#x}");
         assert_eq!(depois.contagem(b), antes.contagem(b), "a conta de {b:#x}");
         // E o próximo objeto sai onde sairia antes: é o que faz o jogo continuar de onde parou.
-        assert_eq!(
-            depois.create(Interface::Bitmap),
-            antes.create(Interface::Bitmap)
-        );
+        assert_eq!(depois.create(Interface::Bitmap), antes.create(Interface::Bitmap));
     }
 
     #[test]
@@ -275,6 +271,7 @@ mod tests {
             Err(crate::save_state::Erro::Secao { .. })
         ));
     }
+
 
     #[test]
     fn addref_num_objeto_solto_nao_duplica_o_endereco() {

@@ -58,9 +58,7 @@ pub fn candidatos(aparelho: &Path) -> Vec<PathBuf> {
     }
     for base in [
         aparelho.join("soundfonts"),
-        crate::config::config_dir()
-            .join("aparelho")
-            .join("soundfonts"),
+        crate::config::config_dir().join("aparelho").join("soundfonts"),
     ] {
         for nome in bancos_em(&base) {
             saida.push(nome);
@@ -178,6 +176,7 @@ pub fn toca(banco: &Banco, bytes: &[u8], taxa: u32) -> Option<Sound> {
     })
 }
 
+
 /// Onde o banco deve ficar, e se já há um — em uma linha, para o frontend mostrar.
 ///
 /// Existe porque a busca é por diretório e a pasta não é óbvia: no core Libretro ela sai da raiz
@@ -252,6 +251,7 @@ mod tests {
         let pico = som.samples.iter().fold(0.0f32, |a, s| a.max(s.abs()));
         assert!(pico > 0.01, "o piano tinha de soar, pico {pico}");
     }
+
 
     /// Um SoundFont2 mínimo, montado byte a byte, para o teste não depender de arquivo no disco.
     ///
@@ -375,10 +375,7 @@ mod tests {
         // zona como global e o instrumento fica sem região.
         let ibag = bloco(b"ibag", &[zona(0, 0), zona(4, 0)].concat());
         let imod = bloco(b"imod", &[0u8; 10]);
-        let igen = bloco(
-            b"igen",
-            &geradores(&[(43, 0x7f00), (54, 1), (58, 69), (53, 0)]),
-        );
+        let igen = bloco(b"igen", &geradores(&[(43, 0x7f00), (54, 1), (58, 69), (53, 0)]));
 
         // shdr: a amostra 0 e o terminador.
         let mut shdr = nome_fixo("Amostra do teste");
@@ -395,10 +392,7 @@ mod tests {
         eos.extend([0u8; 26]);
         let shdr = bloco(b"shdr", &[shdr, eos].concat());
 
-        let pdta = lista(
-            b"pdta",
-            &[phdr, pbag, pmod, pgen, inst, ibag, imod, igen, shdr],
-        );
+        let pdta = lista(b"pdta", &[phdr, pbag, pmod, pgen, inst, ibag, imod, igen, shdr]);
 
         let mut sfbk = b"sfbk".to_vec();
         sfbk.extend(info);
@@ -406,6 +400,7 @@ mod tests {
         sfbk.extend(pdta);
         bloco(b"RIFF", &sfbk)
     }
+
 
     /// **Um banco corrompido não pode derrubar o jogo.** Ele é um arquivo que o usuário baixa e
     /// copia à mão: um download truncado ou um `.sf2` de outro formato é cenário real, não
@@ -428,10 +423,7 @@ mod tests {
         // Com o banco recusado, o MIDI segue pela tabela de timbres — o caminho de produção
         // (`machine::media`) pergunta por `banco_de_som`, que é `None`, e cai no sintetizador.
         let som = crate::audio::midi::decode(&uma_nota(0, 69, 240)).expect("a tabela atende");
-        assert!(
-            som.samples.iter().any(|s| *s != 0.0),
-            "a tabela tinha de soar"
-        );
+        assert!(som.samples.iter().any(|s| *s != 0.0), "a tabela tinha de soar");
         let _ = std::fs::remove_file(&pasta);
     }
 
@@ -441,8 +433,9 @@ mod tests {
         let caminho = std::env::temp_dir().join("zeebx-banco-que-nao-existe.sf2");
         let _ = std::fs::remove_file(&caminho);
         assert!(abre(&caminho).is_none());
-        assert!(primeiro_banco(&std::env::temp_dir().join("zeebx-sem-pasta")).is_none());
+        assert!(primeiro_banco(&std::env::temp_dir().join("zeebx-sem-pasta")) .is_none());
     }
+
 
     /// **O relato diz onde pôr o banco**, senão "o banco não funciona" fica indistinguível de
     /// "o arquivo está no lugar errado". Este é o lado da build **com** o sintetizador; o lado

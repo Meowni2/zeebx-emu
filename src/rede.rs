@@ -100,10 +100,10 @@ pub fn post(url: &str, corpo: &[u8], desvio: Option<&str>) -> Result<Resposta, S
         fluxo.set_write_timeout(Some(ESPERA)).ok();
 
         let cabecalho = format!(
-        "POST {caminho} HTTP/1.1\r\nHost: {maquina}\r\nContent-Type: application/octet-stream\r\n\
+            "POST {caminho} HTTP/1.1\r\nHost: {maquina}\r\nContent-Type: application/octet-stream\r\n\
          Content-Length: {}\r\nConnection: close\r\n\r\n",
-        corpo.len()
-    );
+            corpo.len()
+        );
         fluxo
             .write_all(cabecalho.as_bytes())
             .and_then(|()| fluxo.write_all(corpo))

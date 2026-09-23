@@ -150,8 +150,7 @@ impl<C: CpuBackend> Machine<C> {
             return Ok(());
         };
         self.cpu.write_mem(buffer, &bytes)?;
-        self.dib_do_decodificador
-            .insert(bitmap, (buffer, capacidade));
+        self.dib_do_decodificador.insert(bitmap, (buffer, capacidade));
         let passo = largura as usize * canais;
         let (profundidade, esquema) = match canais {
             4 => (32u8, 0u8),
@@ -161,12 +160,9 @@ impl<C: CpuBackend> Machine<C> {
         self.cpu.write_u32(bitmap + 8, buffer)?; // pBmp
         self.cpu.write_u32(bitmap + 12, 0)?; // pRGB
         self.cpu.write_u32(bitmap + 16, 0)?; // ncTransparent
-        self.cpu
-            .write_mem(bitmap + 20, &(largura as u16).to_le_bytes())?;
-        self.cpu
-            .write_mem(bitmap + 22, &(altura as u16).to_le_bytes())?;
-        self.cpu
-            .write_mem(bitmap + 24, &(passo as i16).to_le_bytes())?;
+        self.cpu.write_mem(bitmap + 20, &(largura as u16).to_le_bytes())?;
+        self.cpu.write_mem(bitmap + 22, &(altura as u16).to_le_bytes())?;
+        self.cpu.write_mem(bitmap + 24, &(passo as i16).to_le_bytes())?;
         self.cpu.write_mem(bitmap + 26, &0u16.to_le_bytes())?; // cntRGB
         self.cpu.write_mem(bitmap + 28, &[profundidade, esquema])?;
         self.cpu.write_mem(bitmap + 30, &[0u8; 6])?;
@@ -458,10 +454,8 @@ impl<C: CpuBackend> Machine<C> {
                 recorte.y = p2 as i32;
             }
             IPARM_ROP => {
-                self.recortes_de_imagem
-                    .entry(image)
-                    .or_default()
-                    .transparente = p1 == AEE_RO_TRANSPARENT;
+                self.recortes_de_imagem.entry(image).or_default().transparente =
+                    p1 == AEE_RO_TRANSPARENT;
             }
             IPARM_CXFRAME => {
                 if let Some(info) = self.images.get_mut(&image) {
@@ -549,11 +543,7 @@ impl<C: CpuBackend> Machine<C> {
             return Ok(());
         }
         let clip = self.clip;
-        let recorte = self
-            .recortes_de_imagem
-            .get(&image)
-            .copied()
-            .unwrap_or_default();
+        let recorte = self.recortes_de_imagem.get(&image).copied().unwrap_or_default();
         // **A imagem não é copiada para ser lida.** Ler o mapa de imagens e escrever no de
         // superfícies são campos diferentes do `self`, e separá-los aqui é o que deixa o
         // empréstimo passar sem cópia.
@@ -586,7 +576,8 @@ impl<C: CpuBackend> Machine<C> {
         // pelo canto do pedaço.
         let (recorte_x, recorte_y) = (recorte.x.max(0), recorte.y.max(0));
         let (largura, altura) = recorte.tamanho.unwrap_or((i32::MAX, i32::MAX));
-        let (mut first_column, mut last_column) = (0, largura.min(frame_width as i32 - recorte_x));
+        let (mut first_column, mut last_column) =
+            (0, largura.min(frame_width as i32 - recorte_x));
         let (mut first_row, mut last_row) = (0, altura.min(info.height as i32 - recorte_y));
         if let Some(clip) = clip {
             first_column = first_column.max(clip.x as i32 - x);

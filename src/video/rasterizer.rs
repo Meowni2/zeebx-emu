@@ -191,12 +191,7 @@ impl TexEnv {
     /// Aplica um `glTexEnv` que não é o modo nem a cor. Os enums chegam como inteiro mesmo nas
     /// formas `x` e `f`; as escalas chegam como número.
     pub fn define(&mut self, pname: u32, enumeracao: u32, numero: f32) {
-        let faixa = |base: u32| {
-            pname
-                .checked_sub(base)
-                .filter(|&i| i < 3)
-                .map(|i| i as usize)
-        };
+        let faixa = |base: u32| pname.checked_sub(base).filter(|&i| i < 3).map(|i| i as usize);
         match pname {
             gles::GL_COMBINE_RGB => self.combina[0] = enumeracao,
             gles::GL_COMBINE_ALPHA => self.combina[1] = enumeracao,
@@ -1410,6 +1405,7 @@ impl GlState {
         self.active_unit < 2
     }
 
+
     /// Um parâmetro do `glFog*`. O que não conhecemos fica de fora em vez de virar lixo.
     pub fn set_fog(&mut self, pname: u32, valores: [f32; 4]) {
         match pname {
@@ -2483,7 +2479,7 @@ impl GlState {
         self.sujo = false;
     }
 
-    #[cfg(test)]
+#[cfg(test)]
     pub fn present(&mut self, width: usize, height: usize) -> Vec<u16> {
         // Entregar o quadro é o ponto em que ele precisa estar pintado — quem pede o resultado
         // não tem por que saber que o desenho é acumulado.
@@ -3552,11 +3548,7 @@ mod tests {
         state.set_viewport(0, 0, 8, 4);
         quad(&mut state, 0.0, [1.0, 0.0, 0.0, 1.0]);
         let quadro = pixels(&mut state);
-        assert_eq!(
-            quadro[6 * 8 + 4],
-            [255, 0, 0, 255],
-            "metade de baixo pintada"
-        );
+        assert_eq!(quadro[6 * 8 + 4], [255, 0, 0, 255], "metade de baixo pintada");
         assert_eq!(quadro[8 + 4], [0, 0, 0, 255], "metade de cima intacta");
     }
 
@@ -3841,8 +3833,9 @@ mod tests {
 /// estado salvo no meio de um `glBegin` prometeria um desenho que nunca existiu.
 impl crate::save_state::Guardavel for GlState {
     fn grava(&self, destino: &mut crate::save_state::Secoes) {
-        let floats =
-            |valores: &[f32]| -> Vec<u32> { valores.iter().map(|v| v.to_bits()).collect() };
+        let floats = |valores: &[f32]| -> Vec<u32> {
+            valores.iter().map(|v| v.to_bits()).collect()
+        };
 
         // As três pilhas de matriz, cada uma com a contagem na frente.
         let mut matrizes = vec![self.matrix_mode];
@@ -3979,10 +3972,7 @@ impl crate::save_state::Guardavel for GlState {
         grava_texturas(&self.textures, destino);
     }
 
-    fn restaura(
-        &mut self,
-        origem: &crate::save_state::Leitor<'_>,
-    ) -> Result<(), crate::save_state::Erro> {
+    fn restaura(&mut self, origem: &crate::save_state::Leitor<'_>) -> Result<(), crate::save_state::Erro> {
         use crate::save_state::Erro;
         let faltando = |nome: &str| Erro::Secao {
             nome: nome.to_string(),
@@ -4199,10 +4189,7 @@ impl crate::save_state::Guardavel for GlState {
         // **Um teto no tamanho declarado.** Um arquivo corrompido — ou escrito por uma versão com
         // outra resolução — não pode fazer o carregamento pedir memória absurda. Acima do tamanho
         // da superfície é recusa, e não alocação.
-        let conferir_tamanho = |nome: &str,
-                                declarado: usize,
-                                por_pixel: usize|
-         -> Result<usize, Erro> {
+        let conferir_tamanho = |nome: &str, declarado: usize, por_pixel: usize| -> Result<usize, Erro> {
             if declarado > teto {
                 return Err(Erro::Secao {
                     nome: nome.to_string(),
@@ -4238,10 +4225,7 @@ impl crate::save_state::Guardavel for GlState {
                 motivo: format!("esperava {quantos} bytes e veio {}", stencil.len()),
             });
         }
-        let cor: Vec<[u8; 4]> = cor
-            .chunks_exact(4)
-            .map(|p| [p[0], p[1], p[2], p[3]])
-            .collect();
+        let cor: Vec<[u8; 4]> = cor.chunks_exact(4).map(|p| [p[0], p[1], p[2], p[3]]).collect();
         let profundidade: Vec<f32> = profundidade
             .chunks_exact(4)
             .map(|p| f32::from_bits(u32::from_le_bytes([p[0], p[1], p[2], p[3]])))
@@ -4291,10 +4275,7 @@ fn grava_texturas(
                 textura.mipmaps.len() as u32,
             ],
         );
-        destino.poe(
-            &format!("tex.{id}.pixels"),
-            bytes_dos_pixels(&textura.pixels),
-        );
+        destino.poe(&format!("tex.{id}.pixels"), bytes_dos_pixels(&textura.pixels));
         // As dimensões de cada nível, e depois todos os pixels deles em seguida.
         let mut medidas = Vec::with_capacity(textura.mipmaps.len() * 2);
         let mut pixels = Vec::new();
@@ -4362,10 +4343,7 @@ fn le_texturas(
         if medidas.len() != quantos * 2 {
             return Err(Erro::Secao {
                 nome: format!("tex.{id}.mips"),
-                motivo: format!(
-                    "diz ter {quantos} nível(is) e veio {} número(s)",
-                    medidas.len()
-                ),
+                motivo: format!("diz ter {quantos} nível(is) e veio {} número(s)", medidas.len()),
             });
         }
         let cru = secao_do_estado(origem, &format!("tex.{id}.mip_pixels"))?;
@@ -4594,11 +4572,7 @@ mod testes_do_estado_de_gl {
         assert_eq!(depois.surface, Some((320, 240)));
         assert!(depois.esticada);
         assert!(depois.sujo);
-        assert_eq!(
-            depois.clear_color,
-            [0.25, 0.5, 0.75, 1.0],
-            "as cores são f32"
-        );
+        assert_eq!(depois.clear_color, [0.25, 0.5, 0.75, 1.0], "as cores são f32");
         assert_eq!(depois.clear_depth, 0.5);
         assert_eq!(depois.current_color, [1.0, 0.0, 0.5, 0.25]);
         assert_eq!(depois.clear_stencil, 7);
@@ -4705,10 +4679,7 @@ mod testes_do_estado_de_gl {
         assert_eq!((textura.filter, textura.min_filter), (0x2601, 0x2703));
         assert_eq!(textura.crop, [1, -2, 3, -4], "o recorte é assinado");
         assert_eq!(textura.mipmaps.len(), 1, "a cadeia de mipmaps não voltou");
-        assert_eq!(
-            (textura.mipmaps[0].width, textura.mipmaps[0].height),
-            (2, 2)
-        );
+        assert_eq!((textura.mipmaps[0].width, textura.mipmaps[0].height), (2, 2));
         assert_eq!(
             textura.mipmaps[0].pixels, nivel_um,
             "os pixels do nível um não voltaram"
@@ -4759,11 +4730,7 @@ mod testes_do_estado_de_gl {
     #[test]
     fn os_buffers_de_cor_profundidade_e_stencil_vem_de_volta() {
         let mut antes = GlState::new(4, 2);
-        assert_eq!(
-            antes.color.len(),
-            8,
-            "o estado novo já tem os buffers da superfície"
-        );
+        assert_eq!(antes.color.len(), 8, "o estado novo já tem os buffers da superfície");
         antes.color[0] = [1, 2, 3, 4];
         antes.color[7] = [5, 6, 7, 8];
         antes.depth[3] = 0.25;

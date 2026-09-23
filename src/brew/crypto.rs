@@ -236,12 +236,7 @@ impl Md5 {
     ///
     /// Recusa um resto de bloco maior que sessenta e três bytes: não é estado de MD5, é arquivo
     /// errado — e um resto assim faria o próximo `compress` ler o que não devia.
-    pub fn restaura_estado(
-        &mut self,
-        state: [u32; 4],
-        buffer: &[u8],
-        length: u64,
-    ) -> Result<(), String> {
+    pub fn restaura_estado(&mut self, state: [u32; 4], buffer: &[u8], length: u64) -> Result<(), String> {
         if buffer.len() >= 64 {
             return Err(format!(
                 "o resto de bloco tem {} bytes, e o MD5 guarda no máximo 63",
