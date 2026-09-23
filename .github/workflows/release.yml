@@ -23,6 +23,18 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+*"
       - "[0-9]+.[0-9]+.[0-9]+*"
   workflow_dispatch:
+  # Chamado pelo `tag.yml` quando a `master` recebe uma versão nova.
+  #
+  # **Por que chamada e não uma tag empurrada:** uma tag criada com o `GITHUB_TOKEN` não dispara
+  # workflow nenhum -- o GitHub bloqueia isso para não haver recursão. O robô criaria a tag e
+  # ninguém montaria os pacotes. Sendo chamado, tudo acontece na mesma execução, e não é preciso
+  # guardar um token de pessoa como segredo.
+  workflow_call:
+    inputs:
+      versao:
+        description: "A tag da release, já criada pelo chamador (ex.: v0.3.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -376,7 +388,10 @@ jobs:
   release:
     needs: [standalone, headless, android, core]
     # Sai com o que deu certo: um sistema que falhou não segura os outros.
-    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') }}
+    #
+    # A tag vem de dois lugares: do `push` de uma tag, e aí é o `github.ref_name`; ou do
+    # `tag.yml`, e aí é o `inputs.versao` -- ali o `ref` é a `master`, e não a tag.
+    if: ${{ !cancelled() && (inputs.versao != '' || startsWith(github.ref, 'refs/tags/')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -386,8 +401,8 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          name: ${{ github.ref_name }}
-          tag_name: ${{ github.ref_name }}
+          name: ${{ inputs.versao || github.ref_name }}
+          tag_name: ${{ inputs.versao || github.ref_name }}
           draft: true
           generate_release_notes: true
           files: pacotes/*
