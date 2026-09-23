@@ -62,4 +62,4 @@ is_experimental = "false"
 # Nenhum: a BIOS do aparelho não é necessária, o motor implementa o BREW.
 firmware_count = 0
 
-description = "Emulador do Zeebo, o console da TecToy movido a Qualcomm BREW 4.0.2. Carrega o jogo em .mod, .zip ou .7z, desenha no processador ou na placa, e traz a Z-Wheel -- o menu do aparelho -- quando a pasta de jogos está montada."
+description = "O emulador definitivo de Zeebo! Movido a Qualcomm BREW 4.0.2, carrega o jogo em .mod, .zip ou .7z, desenha no processador ou na placa, e traz a Z-Wheel -- o menu do aparelho -- quando a pasta de jogos está montada."

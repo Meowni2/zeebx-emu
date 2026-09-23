@@ -1,7 +1,7 @@
 {
   "about.discord": "Discord server",
   "about.repository": "Repository on GitHub",
-  "about.tagline": "An emulator for the Zeebo, TecToy's console.",
+  "about.tagline": "The definitive Zeebo emulator!",
   "about.version": "Version {version}",
   "app.name": "Zeebx",
   "audio.enabled": "Sound on",

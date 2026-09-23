@@ -10,7 +10,7 @@ edition = "2024"
 authors = ["ZeebxTeam"]
 license = "GPL-2.0-only"
 repository = "https://github.com/ZeebxTeam/zeebx-emu"
-description = "Emulador do Zeebo, o console da TecToy"
+description = "O emulador definitivo de Zeebo!"
 
 # O núcleo também é consumido pelos frontends Android, headless e Libretro.
 [lib]
@@ -160,7 +160,7 @@ identifier = "io.github.zeebxteam.zeebx"
 publisher = "ZeebxTeam"
 homepage = "https://github.com/ZeebxTeam/zeebx-emu"
 category = "Game"
-description = "Emulador do Zeebo, o console da TecToy"
+description = "O emulador definitivo de Zeebo!"
 out-dir = "target/pacotes"
 before-packaging-command = "cargo build --release --locked"
 icons = ["assets/icones/zeebx-512.png", "assets/icones/zeebx.ico", "assets/icones/zeebx.icns"]
