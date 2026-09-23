@@ -1826,8 +1826,7 @@ pub extern "C" fn retro_set_audio_sample(_callback: Option<unsafe extern "C" fn(
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_init() {}
 
-/// `retro_deinit`.
-#[unsafe(no_mangle)]
+/// Limpa callbacks, contexto de vídeo e o conteúdo carregado.
 fn limpa_estado_do_frontend() {
     // Retira o estado Rust primeiro, mas chama o frontend só depois de soltar o mutex: callbacks
     // do frontend podem reentrar no core.
@@ -1860,6 +1859,8 @@ fn limpa_estado_do_frontend() {
     PERDEU_A_PLACA.store(false, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// `retro_deinit`.
+#[unsafe(no_mangle)]
 pub extern "C" fn retro_deinit() {
     limpa_estado_do_frontend();
 }
