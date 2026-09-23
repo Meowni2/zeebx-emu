@@ -189,7 +189,7 @@ struct RetroHwRenderCallback {
 }
 
 /// O que o frontend respondeu ao pedido de render em hardware.
-static OFERTA_DE_PLACA: std::sync::OnceLock<RetroHwRenderCallback> = std::sync::OnceLock::new();
+static OFERTA_DE_PLACA: Mutex<Option<RetroHwRenderCallback>> = Mutex::new(None);
 
 /// Se o frontend já avisou que o contexto está utilizável.
 ///
@@ -212,7 +212,7 @@ fn placa() -> Option<std::sync::Arc<glow::Context>> {
 /// No `libretro`, quem **oferece** é o core: ele preenche o struct e chama o ambiente. O frontend
 /// devolve `true` se aceitar, e depois disso ele cria o contexto e chama o nosso `context_reset`.
 fn pede_o_contexto_de_placa() {
-    if OFERTA_DE_PLACA.get().is_some() {
+    if OFERTA_DE_PLACA.lock().is_ok_and(|g| g.is_some()) {
         return;
     }
     let mut oferta = RetroHwRenderCallback {
@@ -238,7 +238,7 @@ fn pede_o_contexto_de_placa() {
             "Zeebx: o frontend aceitou render em hardware (OpenGL {}.{}); o desenho passa a ser na placa",
             oferta.version_major, oferta.version_minor
         ));
-        let _ = OFERTA_DE_PLACA.set(oferta);
+        if let Ok(mut g) = OFERTA_DE_PLACA.lock() { *g = Some(oferta); }
     } else {
         log("Zeebx: o frontend não oferece render em hardware; o desenho fica no processador");
     }
@@ -260,7 +260,7 @@ fn liga_a_placa(estado: &mut Core) {
     // Tenta **uma vez**: um contexto que não veio não vem no quadro seguinte, e insistir a cada
     // quadro gastaria o log inteiro.
     estado.placa_ligada = true;
-    let Some(oferta) = OFERTA_DE_PLACA.get() else {
+    let Some(oferta) = OFERTA_DE_PLACA.lock().ok().and_then(|g| *g) else {
         return;
     };
     let Some(pega_endereco) = oferta.get_proc_address else {
@@ -623,6 +623,11 @@ struct Core {
     limite_fps: LimiteFps,
     /// Fase da duplicação de apresentação do teto de 30 FPS.
     limite_fps_contador: u32,
+    /// Este quadro deve repetir a imagem anterior no callback de vídeo.
+    ///
+    /// Separado de `pula_desenho`: jogos 2D e jogos com `glReadPixels` podem não economizar
+    /// rasterização, mas 30 FPS ainda precisa limitar a apresentação de forma verdadeira.
+    limite_fps_duplica: bool,
     /// Se o desfecho já foi relatado ao frontend.
     ///
     /// Sem isto o core repetiria a mesma linha a cada quadro depois da parada, e um log que cresce
@@ -1474,7 +1479,7 @@ impl Frameskip {
         match texto.trim().to_ascii_lowercase().as_str() {
             "desligado" => Some(Self::Desligado),
             "automatico" => Some(Self::Automatico),
-            outro => outro.parse::<u32>().ok().filter(|&n| n >= 1).map(Self::Fixo),
+            outro => outro.parse::<u32>().ok().filter(|&n| (1..=6).contains(&n)).map(Self::Fixo),
         }
     }
 }
@@ -1823,13 +1828,40 @@ pub extern "C" fn retro_init() {}
 
 /// `retro_deinit`.
 #[unsafe(no_mangle)]
-pub extern "C" fn retro_deinit() {
-    // O frontend guarda este ponteiro: retirar antes de esquecer o estado impede callback para
-    // uma biblioteca que ele pode descarregar logo depois do deinit.
-    retira_callback_de_audio();
-    if let Ok(mut guard) = core().lock() {
+fn limpa_estado_do_frontend() {
+    // Retira o estado Rust primeiro, mas chama o frontend só depois de soltar o mutex: callbacks
+    // do frontend podem reentrar no core.
+    let tinha_audio = if let Ok(mut guard) = core().lock() {
+        let tinha = guard
+            .as_ref()
+            .is_some_and(|EstadoDoCore(c)| c.frameskip_callback_pedido);
         *guard = None;
+        tinha
+    } else {
+        false
+    };
+    if tinha_audio {
+        retira_callback_de_audio();
     }
+    let teclado = RetroKeyboardCallback { callback: None };
+    unsafe {
+        environ(
+            ENV_SET_KEYBOARD_CALLBACK,
+            &teclado as *const RetroKeyboardCallback as *mut c_void,
+        );
+    }
+    if let Ok(mut placa) = PLACA.lock() {
+        *placa = None;
+    }
+    if let Ok(mut oferta) = OFERTA_DE_PLACA.lock() {
+        *oferta = None;
+    }
+    CONTEXTO_PRONTO.store(false, std::sync::atomic::Ordering::Relaxed);
+    PERDEU_A_PLACA.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub extern "C" fn retro_deinit() {
+    limpa_estado_do_frontend();
 }
 
 /// `retro_get_system_info`.
@@ -2091,6 +2123,7 @@ unsafe fn carrega(
         frameskip_leitura_pixels_avisada: false,
         limite_fps: LimiteFps::Sessenta,
         limite_fps_contador: 0,
+        limite_fps_duplica: false,
         session,
         mixer,
         portas,
@@ -2297,6 +2330,7 @@ pub extern "C" fn retro_run() {
                 false
             }
         };
+        estado.limite_fps_duplica = pula_por_limite;
         estado.session.define_pula_desenho(
             (pula_por_frameskip || pula_por_limite) && !estado.session.leu_pixels(),
         );
@@ -2318,8 +2352,9 @@ pub extern "C" fn retro_run() {
         // Em modo de placa, o alvo do desenho é o framebuffer que o frontend indica **a cada
         // quadro** — ele pode trocar.
         if let Some(pega_framebuffer) = OFERTA_DE_PLACA
-            .get()
-            .and_then(|oferta| oferta.get_current_framebuffer)
+            .lock()
+            .ok()
+            .and_then(|oferta| oferta.as_ref().and_then(|o| o.get_current_framebuffer))
             && placa().is_some()
         {
             let fbo = unsafe { pega_framebuffer() };
@@ -2448,10 +2483,18 @@ pub extern "C" fn retro_run() {
             ));
         }
         let mut quadro = std::mem::take(&mut estado.frame);
-        tela.write_rgb565_into(&mut quadro);
-        let assinatura = tela.signature();
-        let duplicado = estado.aceita_dupe && estado.ultima_assinatura == Some(assinatura);
-        estado.ultima_assinatura = Some(assinatura);
+        // 30 FPS é cadência de apresentação, não só otimização 3D: no quadro oculto preservamos
+        // os bytes anteriores. Se o frontend aceita dupe, entregaremos ponteiro nulo; se não
+        // aceita, entregaremos os mesmos bytes de novo — nos dois casos a imagem é realmente 30.
+        let duplicado = if estado.limite_fps_duplica {
+            estado.aceita_dupe
+        } else {
+            tela.write_rgb565_into(&mut quadro);
+            let assinatura = tela.signature();
+            let igual = estado.aceita_dupe && estado.ultima_assinatura == Some(assinatura);
+            estado.ultima_assinatura = Some(assinatura);
+            igual
+        };
         // Áudio: **o tempo vem do relógio virtual**, não de um número fixo. Um jogo que passa dois
         // quadros virtuais entre duas chamadas precisa entregar o dobro de amostras, senão o som
         // atrasa em relação à imagem e o frontend engasga ao tentar acompanhar.
@@ -2543,9 +2586,7 @@ pub extern "C" fn retro_run() {
 /// `retro_unload_game`.
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_unload_game() {
-    if let Ok(mut guard) = core().lock() {
-        *guard = None;
-    }
+    limpa_estado_do_frontend();
 }
 
 /// `retro_reset`: recarrega o conteúdo do zero, preservando saves e NAND.
@@ -2899,6 +2940,7 @@ mod testes {
         assert_eq!(Frameskip::de_texto("automatico"), Some(Frameskip::Automatico));
         assert_eq!(Frameskip::de_texto("1"), Some(Frameskip::Fixo(1)));
         assert_eq!(Frameskip::de_texto("6"), Some(Frameskip::Fixo(6)));
+        assert_eq!(Frameskip::de_texto("4294967295"), None);
         // Zero não é um modo fixo válido: pular zero quadros é o mesmo que desligado, e um "0"
         // vindo de fora tem mais cara de opt estragado que de escolha deliberada.
         assert_eq!(Frameskip::de_texto("0"), None);
