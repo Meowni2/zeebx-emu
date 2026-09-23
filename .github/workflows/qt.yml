@@ -16,7 +16,9 @@
 name: qt
 
 on:
-  workflow_dispatch:
+ workflow_dispatch:
+ push:
+  branches: [feat/migrate-qt]
 
 concurrency:
   group: qt-${{ github.ref }}
