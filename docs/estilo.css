@@ -273,7 +273,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 76px; }
 
 /* ---- lista ---- */
 
-#baixar, #versoes { padding-block: 40px 16px; }
+#baixar, #versoes, #contribuidores { padding-block: 40px 16px; }
 
 .secao-cabeca {
   display: flex;
@@ -410,6 +410,43 @@ html { scroll-behavior: smooth; scroll-padding-top: 76px; }
   border-color: var(--borda-forte);
   background: var(--superficie);
 }
+
+/* ---- contribuidores ---- */
+
+.pessoas {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.pessoa {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  text-decoration: none;
+}
+
+.pessoa:hover { border-color: var(--borda-forte); }
+
+.pessoa img {
+  grid-row: 1 / span 2;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1px solid var(--borda-forte);
+}
+
+.pessoa-nome { font-weight: 600; align-self: end; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pessoa-commits { color: var(--texto-2); font-size: 0.85rem; align-self: start; }
 
 /* ---- rodapé ---- */
 

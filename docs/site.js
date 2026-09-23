@@ -15,6 +15,7 @@ const API = `https://api.github.com/repos/${REPO}/releases?per_page=100`;
 const PAGINA_RELEASES = `https://github.com/${REPO}/releases`;
 const CACHE = 'zeebx:releases:v1';
 const VALIDADE_CACHE = 10 * 60 * 1000;
+const CACHE_CONTRIBUIDORES = 'zeebx:contribuidores:v1';
 
 // ---------------------------------------------------------------------------------------------
 // Idiomas. O Zeebo saiu no Brasil e no México, e o emulador já fala os três.
@@ -80,6 +81,10 @@ const TEXTOS = {
     'versoes.arquivos': '{n} arquivos',
     'versoes.ver': 'Ver arquivos',
     'versoes.github': 'No GitHub',
+    'contrib.titulo': 'Quem faz o Zeebx',
+    'contrib.sub': 'Pela contagem de commits do GitHub, na branch principal.',
+    'contrib.github': 'Ver no GitHub',
+    'contrib.commits': '{n} commits',
     'selo.recente': 'mais recente',
     'selo.previa': 'prévia',
     'erro.titulo': 'Não deu para falar com o GitHub agora.',
@@ -147,6 +152,10 @@ const TEXTOS = {
     'versoes.arquivos': '{n} files',
     'versoes.ver': 'See files',
     'versoes.github': 'On GitHub',
+    'contrib.titulo': 'Who makes Zeebx',
+    'contrib.sub': 'As counted by GitHub, from commits on the main branch.',
+    'contrib.github': 'See on GitHub',
+    'contrib.commits': '{n} commits',
     'selo.recente': 'latest',
     'selo.previa': 'preview',
     'erro.titulo': "Couldn't reach GitHub right now.",
@@ -214,6 +223,10 @@ const TEXTOS = {
     'versoes.arquivos': '{n} archivos',
     'versoes.ver': 'Ver archivos',
     'versoes.github': 'En GitHub',
+    'contrib.titulo': 'Quién hace Zeebx',
+    'contrib.sub': 'Según el conteo de commits de GitHub, en la rama principal.',
+    'contrib.github': 'Ver en GitHub',
+    'contrib.commits': '{n} commits',
     'selo.recente': 'más reciente',
     'selo.previa': 'vista previa',
     'erro.titulo': 'No pudimos conectar con GitHub ahora.',
@@ -425,6 +438,27 @@ async function buscarReleases() {
   } catch (erro) {
     if (cache) return cache.releases;
     throw erro;
+  }
+}
+
+// Quem aparece na aba "Contributors" do repositório. A API conta os commits da branch padrão e
+// deixa de fora quem não tem conta ligada ao e-mail do commit; robôs (`type: Bot`) saem aqui.
+// Uma consulta a mais por visita, com o mesmo cache das releases: se falhar, a seção só não aparece.
+async function buscarContribuidores() {
+  let cache = null;
+  try { cache = JSON.parse(guardado(CACHE_CONTRIBUIDORES)); } catch { /* cache corrompido, ignora */ }
+  if (cache && Date.now() - cache.em < VALIDADE_CACHE) return cache.pessoas;
+
+  try {
+    const resposta = await fetch(`https://api.github.com/repos/${REPO}/contributors?per_page=100`);
+    if (!resposta.ok) throw new Error(`GitHub respondeu ${resposta.status}`);
+    const pessoas = (await resposta.json())
+      .filter((c) => c.type === 'User')
+      .map((c) => ({ login: c.login, url: c.html_url, avatar: c.avatar_url, commits: c.contributions }));
+    guardar(CACHE_CONTRIBUIDORES, JSON.stringify({ em: Date.now(), pessoas }));
+    return pessoas;
+  } catch {
+    return cache ? cache.pessoas : [];
   }
 }
 
@@ -736,6 +770,16 @@ function desenharErro() {
     el('div', { class: 'cartao vazio' }, el('a', { href: PAGINA_RELEASES }, t('erro.link'))));
 }
 
+function desenharContribuidores(pessoas) {
+  document.getElementById('contribuidores').hidden = !pessoas.length;
+  document.getElementById('pessoas').replaceChildren(...pessoas.map((p) => el('li', {},
+    el('a', { class: 'pessoa', href: p.url },
+      // O avatar vem do GitHub em qualquer tamanho; 96 px cobre a tela de alta densidade.
+      el('img', { src: `${p.avatar}${p.avatar.includes('?') ? '&' : '?'}s=96`, alt: '', width: 48, height: 48, loading: 'lazy' }),
+      el('span', { class: 'pessoa-nome' }, p.login),
+      el('span', { class: 'pessoa-commits' }, t('contrib.commits', { n: p.commits }))))));
+}
+
 // ---------------------------------------------------------------------------------------------
 // Estado na URL, para que um link como `?os=linux&tipo=libretro` abra já filtrado.
 
@@ -776,10 +820,15 @@ function atualizar(estado) {
 
 function desenharTudo(estado) {
   traduzirPagina();
+  desenharPessoas(estado);
   if (estado.erro) { desenharErro(); return; }
   if (!estado.releases) return;
   desenharRecomendado(estado);
   atualizar(estado);
+}
+
+function desenharPessoas(estado) {
+  if (estado.pessoas) desenharContribuidores(estado.pessoas);
 }
 
 async function iniciar() {
@@ -800,6 +849,9 @@ async function iniciar() {
     guardar('zeebx:idioma', idioma);
     desenharTudo(estado);
   });
+
+  // Os contribuidores não seguram o resto: chegam quando chegarem.
+  buscarContribuidores().then((pessoas) => { estado.pessoas = pessoas; desenharPessoas(estado); });
 
   const [aparelho, releases] = await Promise.all([
     detectarAparelho(),
