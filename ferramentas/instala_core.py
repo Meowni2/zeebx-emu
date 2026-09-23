@@ -222,11 +222,11 @@ def main():
 
     # Avisa quando o `.info` que está lá é diferente do que vai entrar: é o caso que quebrou o
     # scan uma vez, e um aviso no console custa menos que descobrir pelo sintoma.
-    if alvo_info.is_file() and alvo_info.read_bytes() != ORIGEM_INFO.read_bytes():
+    if alvo_info.is_file() and alvo_info.read_bytes() != pathlib.Path(origem_info).read_bytes():
         print(f"aviso: o .info em {alvo_info} era diferente e será substituído")
 
     shutil.copy(origem_so, alvo_so)
-    shutil.copy(ORIGEM_INFO, alvo_info)
+    shutil.copy(origem_info, alvo_info)
     print(f"core:  {alvo_so}  ({origem_so.stat().st_size} bytes, {origem_so.parent.name})")
     print(f"info:  {alvo_info}")
     print("\nabra o RetroArch e escolha o core Zeebx; o banco No-Intro sai do campo `database` daqui")
