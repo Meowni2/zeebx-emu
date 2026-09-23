@@ -264,11 +264,20 @@ impl Emulador {
                 ui.label(aviso);
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    continuar =
-                        ui.add_sized([150.0, 48.0], egui::Button::new(&continuar_rotulo)).clicked();
-                    alterna_pausa =
-                        ui.add_sized([110.0, 48.0], egui::Button::new(&pausa_rotulo)).clicked();
-                    fechar = ui.add_sized([110.0, 48.0], egui::Button::new(&parar_rotulo)).clicked();
+                    let seguir =
+                        ui.add_sized([150.0, 48.0], egui::Button::new(&continuar_rotulo));
+                    let pausa = ui.add_sized([110.0, 48.0], egui::Button::new(&pausa_rotulo));
+                    let parar = ui.add_sized([110.0, 48.0], egui::Button::new(&parar_rotulo));
+                    continuar = seguir.clicked();
+                    alterna_pausa = pausa.clicked();
+                    fechar = parar.clicked();
+                    // **O mesmo primeiro foco das outras telas.** Sem ele esta janela não
+                    // respondia a controle nenhum: o egui move o foco na direção da seta, mas só
+                    // a partir de um que exista. O "continuar" é o que recebe, porque é o que
+                    // quem abriu a janela sem querer vai querer apertar.
+                    if ui.ctx().memory(|m| m.focused()).is_none() {
+                        seguir.request_focus();
+                    }
                 });
                 ui.add_space(4.0);
             });

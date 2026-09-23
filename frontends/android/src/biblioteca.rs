@@ -109,9 +109,22 @@ impl Emulador {
             return false;
         }
         let colunas = self.colunas.max(1);
+
+        // **Quem tem o foco manda.** A barra de cima -- ajustes, recarregar e a busca -- é feita
+        // de widgets do egui, e lá o foco é dele. Enquanto ele estiver com alguém, a grade não
+        // toca nas setas: senão o cursor daqui andaria junto com o foco de lá, e a busca nunca
+        // conseguiria editar texto. Era o que este comentário prometia e ninguém tinha escrito.
+        //
+        // A seta para baixo é a porta de volta: solta o foco e o cursor da grade reassume.
+        if let Some(foco) = ctx.memory(|m| m.focused()) {
+            if ctx.input(|entrada| entrada.key_pressed(egui::Key::ArrowDown)) {
+                ctx.memory_mut(|m| m.surrender_focus(foco));
+            }
+            return false;
+        }
+
         let (mut passo, mut abrir) = (0i64, false);
         ctx.input(|entrada| {
-            // Com a busca em foco, as setas andam no texto e não na grade.
             if entrada.key_pressed(egui::Key::ArrowRight) {
                 passo += 1;
             }
@@ -126,6 +139,15 @@ impl Emulador {
             }
             abrir = entrada.key_pressed(egui::Key::Enter);
         });
+        // Subir da primeira fila sai da grade e entra na barra: é o caminho para o recarregar,
+        // os ajustes e a busca, que antes só o dedo alcançava. O `clamp` de baixo prendia o
+        // cursor na fila de cima, e a barra ficava inalcançável por controle.
+        if passo < 0 && self.selecionado < colunas {
+            if let Some(id) = self.foco_da_barra {
+                ctx.memory_mut(|m| m.request_focus(id));
+            }
+            return abrir;
+        }
         if passo != 0 {
             let destino = self.selecionado as i64 + passo;
             self.selecionado = destino.clamp(0, quantos as i64 - 1) as usize;
@@ -164,10 +186,15 @@ impl Emulador {
                 );
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add_sized([ALVO, ALVO], egui::Button::new(egui::RichText::new("⛭").size(22.0)))
-                        .clicked()
-                    {
+                    let ajustes = ui.add_sized(
+                        [ALVO, ALVO],
+                        egui::Button::new(egui::RichText::new("⛭").size(22.0)),
+                    );
+                    // A porta de entrada da barra para quem usa controle: é este que recebe o
+                    // foco quando a seta sobe da grade, e daí as setas andam entre os botões e a
+                    // busca pelo caminho normal do egui.
+                    self.foco_da_barra = Some(ajustes.id);
+                    if ajustes.clicked() {
                         self.onde = Onde::Ajustes;
                     }
                     if ui
