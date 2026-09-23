@@ -1438,6 +1438,102 @@ MASM para ARM64. O `unicorn-engine` 2.1.5 é a última versão publicada, e o QE
 ARM64 como host. Quando isso mudar — versão nova do unicorn, ou o `unicorn` virar opcional nesta
 plataforma, com o `dynarmic` sozinho —, basta tirar a marca de experimental do alvo.
 
+### Linux AArch64: a `glibc` do runner não é a de todo handheld
+
+**Medido em 2026-09-23, comparando o artefato do CI (`core-linux-aarch64`, `ubuntu-24.04-arm`)
+contra dois cartões físicos reais.**
+
+`ubuntu-24.04-arm` builda nativo, e "nativo" aqui quer dizer: o binário sai vinculado à `glibc` que
+o runner tem — não à `glibc` de quem vai rodar o core. Isso importa porque o alvo real deste
+projeto é aparelho de mão com firmware que não se atualiza sozinho, e a `glibc` dele pode ser bem
+mais velha que a de uma imagem de CI que segue o Ubuntu mais recente.
+
+| aparelho / origem | `glibc` | o core `core-linux-aarch64` de hoje carrega? |
+|---|---|---|
+| CI `ubuntu-24.04-arm` (o que builda) | exige até **2.34** no que produz | — |
+| RG40XX-H / muOS 2508 (Buildroot) | 2.38 | sim, por pouco (2.38 ≥ 2.34) |
+| R36S original / ArkOS AeUX (CFW `11072025`) | **2.30** | **não** — falta `GLIBC_2.34` |
+
+A exigência de `GLIBC_2.34` não vem de função nova. Vem de `pthread_create`, `pthread_join`,
+`pthread_mutex_trylock`, `dlopen`, `dlsym` e outras — funções antigas, mas que **mudaram de versão
+de símbolo** quando a `libpthread` foi fundida na própria `libc`, na `glibc` 2.34. Todo binário
+linkado num host com `glibc` ≥ 2.34 herda essa exigência para essas funções, ainda que elas
+existam desde muito antes.
+
+**A correção é onde se builda, não o código.** `cargo zigbuild`, usando o `zig` como *linker*, deixa
+escolher a `glibc` mínima explicitamente — `aarch64-unknown-linux-gnu.2.28`, por exemplo — e o
+binário sai vinculado a essa versão **independente da `glibc` do runner**. 2.28 fica abaixo dos 2.30
+do R36S, com uma margem para aparelhos mais antigos ainda. Ver o job `core-linux-aarch64` de
+`libretro.yml` para a mudança.
+
+### Android AArch64: o `linux-aarch64` da matriz não é o mesmo alvo
+
+**Achado em 2026-09-23, ao investigar se faltava CI para o core Libretro em Android.**
+
+A matriz de build tem `linux-aarch64` (`aarch64-unknown-linux-gnu`, `glibc`) e o workflow
+`android.yml` builda `frontends/android` (`aarch64-linux-android`, Bionic) — mas nenhum dos dois é
+"o core Libretro para Android". São alvos de C runtime **diferentes**: Bionic não é `glibc`, o
+*dynamic linker* é outro (`/system/bin/linker64`), e um `.so` `linux-aarch64` não passa do
+`dlopen` num RetroArch Android de verdade.
+
+`libretro.yml` não tem alvo Android na matriz — só `linux-x86_64`, `linux-aarch64`,
+`windows-x86_64/aarch64`, `macos-x86_64/arm64`. Quem quer o core Zeebx **dentro do RetroArch no
+Android** (celular, Retroid, tablet, ou um handheld Android) hoje não tem artefato de CI nenhum.
+`android.yml` resolve isso só para o app standalone Zeebx, que é outro frontend
+(`frontends/android`), não o core Libretro (`frontends/libretro`).
+
+**Falta um alvo `android-aarch64` em `libretro.yml`**, buildando só `-p zeebx-libretro --target
+aarch64-linux-android` (sem APK, o `.so` cru), reaproveitando a mesma infraestrutura de NDK que o
+`android.yml` já usa — mesma versão de NDK fixada, mesmo `cargo-ndk`. Testado à mão nesta máquina
+(NDK r27c): o build funciona, mas exige um contorno — o `cmake` do `unicorn`/`dynarmic` não acha o
+`clang-scan-deps` com nome simples, e resolve-se criando symlinks `<arquitetura>-clang-scan-deps`
+apontando para o `clang-scan-deps` do NDK, para as quatro arquiteturas Android. O run do
+`android.yml` em CI (`ubuntu-22.04`, NDK via `sdkmanager`) **não** bateu nesse problema — o
+contorno pode ser só desta instalação manual de NDK, e vale confirmar antes de portar para o job
+novo.
+
+### Nota de campo: cartão do R36S original investigado (2026-09-23)
+
+CFW `ArkOS AeUX` (`CFW_VERSION=11072025`), base Ubuntu 19.10, Cortex-A35, 1 GB RAM, `glibc 2.30`.
+RetroArch 1.21.0, instalação dupla (`retroarch` AArch64 + `retroarch32` armhf), 148 cores AArch64
+instalados. **Zeebo não está integrado**: existem ícones de tema prontos (Ozone, XMB) para um
+sistema "Zeebo - Zeebo", mas **não há** entrada `<system>` para `zeebo` no `es_systems.cfg` (126
+sistemas cadastrados, nenhum é Zeebo) nem core instalado. Contexto: o cartão será substituído por
+outra CFW em breve, então a integração completa (entrada no ES, core, RDB) fica para quando o
+aparelho tiver a CFW definitiva — mas o achado de `glibc` acima vale independente da CFW específica.
+
+### Atualização (2026-09-23): o cartão do R36S vai trocar de CFW, e isso muda a prioridade
+
+**ArkOS está descontinuado.** O próprio repositório `AeolusUX/ArkOS-R3XS` (o que está no cartão,
+build `11072025`) diz: *"dArkOS has replaced ArkOS. ArkOS will no longer be maintained effective
+immediately."* O usuário vai instalar `djparentx/dArkOSen-R36S` no lugar.
+
+**`dArkOSen` é `dArkOS` — e `dArkOS` é Debian, não Ubuntu 19.10.** O README do próprio dArkOSen diz
+`Built from dArkOS_RG351MP_trixie_07262026` — **Debian 13 "trixie"**, a mesma distro do host deste
+projeto. O README do `dArkOS` confirma: *"this OS is based on the latest stable version of
+Debian"*, com build via `chroot` (`make <device_name>`) e suporte a userspace de 64 e 32 bits
+(`BUILD_ARMHF`), como o ArkOS antigo.
+
+Isso muda a conclusão da seção anterior: **o problema de `GLIBC_2.34` deixa de existir assim que o
+cartão trocar de CFW.** O Debian trixie do host já mostrou `glibc` até **2.41** disponível
+(`objdump -T /usr/aarch64-linux-gnu/lib/libc.so.6`); um `dArkOSen` de verdade na mesma base cobre
+os 2.34 do CI com folga. **Não há mais motivo para perseguir o build com `glibc` antiga
+(`cargo zigbuild` + `g++` cruzado) para este aparelho específico** — o esforço foi pausado depois
+de esbarrar num problema de PCH/módulos C++20 do `dynarmic` com o `g++` cruzado montado na mão, e
+não vale a pena resolver isso para um alvo que está prestes a desaparecer.
+
+| CFW | base | `glibc` medido/estimado | o core `core-linux-aarch64` de hoje carrega? |
+|---|---|---|---|
+| ArkOS AeUX `11072025` (no cartão, será substituído) | Ubuntu 19.10 | 2.30 | não |
+| **dArkOSen** (`dArkOS` Debian trixie, próxima CFW) | Debian 13 | ~2.40–2.41 | **sim, com folga** |
+| RG40XX-H / muOS 2508 | Buildroot | 2.38 | sim, por pouco |
+
+**O que fica pronto e não precisa refazer:** a entrada `<system>zeebo</system>` em
+`es_systems.cfg`, a pasta `/roms/zeebo/` com uma ROM de teste, e o apontamento para
+`~/.config/retroarch/cores/zeebx_libretro.so` — tudo isso sobrevive à troca de CFW, porque
+`dArkOSen` é fork leve do `dArkOS` e mantém a mesma estrutura de EmulationStation + RetroArch. Só
+falta copiar o `.so` (o artefato `core-linux-aarch64` do CI já serve) depois da reinstalação.
+
 ## Estado dos itens, com a prova de cada um
 
 | Item | Estado | Prova |
