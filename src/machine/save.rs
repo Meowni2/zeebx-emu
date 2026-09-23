@@ -172,6 +172,9 @@ impl<C: CpuBackend> Machine<C> {
         self.grava_widgets(&mut secoes);
         self.grava_bibliotecas(&mut secoes);
         self.grava_ultimos(&mut secoes);
+        // O rasterizador e estado do guest. Sem ele, CPU e memoria voltam mas texturas,
+        // matrizes, luzes e buffers 3D ficam no instante errado.
+        self.gl.grava_estado(&mut secoes);
         self.heap.grava_com_prefixo("heap", &mut secoes);
         self.objects.grava(&mut secoes);
         self.superficies.grava_com_prefixo("surfaces", &mut secoes);
@@ -245,6 +248,12 @@ impl<C: CpuBackend> Machine<C> {
         self.restaura_widgets(&leitor)?;
         self.restaura_bibliotecas(&leitor)?;
         self.restaura_ultimos(&leitor)?;
+        // A 0.3.0 original gravava estados sem as secoes GL por um lapso na integracao.
+        // Continuar aceitando esses arquivos preserva os slots antigos de jogos 2D; estados
+        // novos sempre carregam o rasterizador completo.
+        if leitor.secao("gl.matrizes").is_some() {
+            self.gl.restaura_estado(&leitor)?;
+        }
         self.heap.restaura_com_prefixo("heap", &leitor)?;
         self.objects.restaura(&leitor)?;
         self.superficies
@@ -2870,6 +2879,41 @@ mod tests {
 
         assert_eq!(depois.cpu.cpsr(), cpsr, "as flags não voltaram");
         assert_eq!(depois.cpu.instructions(), 12_345_678, "o relógio não voltou");
+    }
+
+    /// O arquivo da Machine inclui o estado do rasterizador, e nao apenas a prova isolada do
+    /// GlState. Foi esta ligacao que faltou na 0.3.0: os testes do rasterizador passavam, mas o
+    /// ZBXS final de um jogo nao continha nenhuma secao gl.*.
+    #[test]
+    fn a_maquina_grava_e_restaura_o_rasterizador() {
+        let mut antes = maquina();
+        antes.gl.set_clear_color([0.125, 0.25, 0.5, 1.0]);
+        antes.gl.bind_texture(0x1234);
+        antes.gl.upload_level(
+            0x1234,
+            0,
+            2,
+            1,
+            vec![[255, 0, 0, 255], [0, 0, 255, 255]],
+        );
+
+        let arquivo = antes.grava_estado();
+        let leitor = Leitor::abre(&arquivo).expect("estado valido");
+        assert!(leitor.secao("gl.matrizes").is_some(), "faltou o estado GL");
+        assert_eq!(leitor.u32s("tex.ids").unwrap(), vec![0x1234]);
+
+        let mut depois = maquina();
+        depois.restaura_estado(&arquivo).expect("restaurou");
+        let mut secoes = Secoes::nova();
+        depois.gl.grava_estado(&mut secoes);
+        let arquivo_gl = secoes.fecha();
+        let gl = Leitor::abre(&arquivo_gl).expect("estado GL restaurado");
+        assert_eq!(gl.u32s("tex.ids").unwrap(), vec![0x1234]);
+        assert_eq!(
+            leitor.secao("gl.onde").unwrap(),
+            gl.secao("gl.onde").unwrap(),
+            "cores e destino GL mudaram na volta"
+        );
     }
 
     /// **O estado volta igual**: registradores, heap, pilha e o livro do heap.

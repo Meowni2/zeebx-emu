@@ -29,7 +29,10 @@ type ContextoProprio = Contexto;
 #[cfg(not(feature = "gpu"))]
 type ContextoProprio = ();
 use super::gles;
-use super::rasterizer::{GlState, Matrix, QuadroNaPlaca, Rasterizador, TexEnv, UnidadeDeTextura, Vertex};
+use super::rasterizer::{
+    GlState, Matrix, QuadroNaPlaca, Rasterizador, TexEnv, Texture as TexturaSalva,
+    UnidadeDeTextura, Vertex,
+};
 use glow::{self, HasContext};
 use std::collections::HashMap;
 
@@ -577,9 +580,11 @@ impl GpuState {
         self.fill.mascara_escrita_stencil = e.stencil_write_mask;
         self.fill.op_stencil = e.stencil_op;
         self.fill.env_textura = e.texture_env;
+        self.fill.unidade1 = e.unidade1();
         self.fill.textura_ligada = e.bound_texture;
         self.fill.texturando = e.texture_2d;
         self.fill.viewport = e.viewport;
+        self.fill.viewport_do_topo_fixa = None;
         // O espelho guarda a tesoura **crua** e uma bandeira: ele não tem o estado "sem tesoura",
         // e é a bandeira que o `aplica` consulta para ligá-la ou não.
         self.fill.tesoura = e.tesoura_crua;
@@ -587,6 +592,115 @@ impl GpuState {
         self.fill.limpa_cor = e.clear_color;
         self.fill.limpa_profundidade = e.clear_depth;
         self.fill.limpa_stencil = i32::from(e.clear_stencil);
+    }
+
+    /// Refaz os objetos de textura da placa a partir da copia autoritativa do estado GL.
+    fn recria_texturas_restauradas(&mut self) {
+        let gl = self.gl.clone();
+        for (_, textura) in self.texturas.drain() {
+            unsafe { gl.delete_texture(textura.objeto) };
+        }
+
+        let salvas: Vec<(u32, TexturaSalva)> = self
+            .estado
+            .textures
+            .iter()
+            .map(|(&nome, textura)| (nome, textura.clone()))
+            .collect();
+        unsafe { gl.active_texture(glow::TEXTURE0) };
+
+        for (nome, salva) in salvas {
+            if salva.width == 0
+                || salva.height == 0
+                || salva.pixels.len() < salva.width * salva.height
+            {
+                continue;
+            }
+            let Ok(objeto) = (unsafe { gl.create_texture() }) else {
+                continue;
+            };
+            unsafe {
+                gl.bind_texture(glow::TEXTURE_2D, Some(objeto));
+                gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+                gl.tex_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    glow::RGBA8 as i32,
+                    salva.width as i32,
+                    salva.height as i32,
+                    0,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelUnpackData::Slice(Some(bytes_de_rgba(&salva.pixels))),
+                );
+            }
+
+            let mut maior_nivel = 0u32;
+            for (indice, nivel) in salva.mipmaps.iter().enumerate() {
+                if nivel.width == 0
+                    || nivel.height == 0
+                    || nivel.pixels.len() < nivel.width * nivel.height
+                {
+                    break;
+                }
+                let nivel_gl = (indice + 1) as u32;
+                unsafe {
+                    gl.tex_image_2d(
+                        glow::TEXTURE_2D,
+                        nivel_gl as i32,
+                        glow::RGBA8 as i32,
+                        nivel.width as i32,
+                        nivel.height as i32,
+                        0,
+                        glow::RGBA,
+                        glow::UNSIGNED_BYTE,
+                        glow::PixelUnpackData::Slice(Some(bytes_de_rgba(&nivel.pixels))),
+                    );
+                }
+                maior_nivel = nivel_gl;
+            }
+            unsafe { gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4) };
+
+            self.texturas.insert(
+                nome,
+                Textura {
+                    objeto,
+                    largura: salva.width,
+                    altura: salva.height,
+                    maior_nivel,
+                    crop: salva.crop,
+                    filtro: salva.filter,
+                    filtro_min: salva.min_filter,
+                    wrap: salva.wrap,
+                },
+            );
+            if let Some(textura) = self.texturas.get(&nome) {
+                self.parametros(textura);
+            }
+        }
+        unsafe { gl.bind_texture(glow::TEXTURE_2D, None) };
+    }
+
+    /// Descarta os recursos que representam o quadro do host, nao o estado do guest.
+    fn descarta_caches_de_quadro(&mut self) {
+        let gl = self.gl.clone();
+        unsafe {
+            if let Some(destino) = self.quadro.take() {
+                solta_destino(&gl, destino);
+            }
+            if let Some((fbo, cor, _)) = self.reduzido.take() {
+                gl.delete_framebuffer(fbo);
+                gl.delete_texture(cor);
+            }
+        }
+        self.uniformes = Uniformes::default();
+        self.anel = (0, 0);
+        self.vao_pronto = false;
+        self.lote.clear();
+        self.estado_do_lote = None;
+        self.soltos.clear();
+        self.vertices.clear();
+        self.sujo = true;
     }
 
     fn aplica(&mut self) {
@@ -1112,8 +1226,13 @@ fn poe_em(destino: &mut Vec<f32>, v: &Vertex) {
 
 /// Os bytes de um vetor de `f32`, para o `buffer_data`.
 fn bytes_de_f32(dados: &[f32]) -> &[u8] {
-    // Um `f32` não tem invariante de bits, e o alinhamento de quatro serve para um de um.
+    // Um f32 nao tem invariante de bits, e o alinhamento de quatro serve para um de um.
     unsafe { std::slice::from_raw_parts(dados.as_ptr().cast(), std::mem::size_of_val(dados)) }
+}
+
+/// Os texels RGBA ja estao no formato de quatro bytes que a placa recebe.
+fn bytes_de_rgba(dados: &[[u8; 4]]) -> &[u8] {
+    unsafe { std::slice::from_raw_parts(dados.as_ptr().cast(), dados.len() * 4) }
 }
 
 /// O código que o shader usa para cada modo de `glTexEnv`. Ver [`TexEnv::aplica`].
@@ -1435,14 +1554,13 @@ impl Rasterizador for GpuState {
         origem: &crate::save_state::Leitor<'_>,
     ) -> Result<(), crate::save_state::Erro> {
         crate::save_state::Guardavel::restaura(&mut self.estado, origem)?;
-        // **Os objetos de placa são cache do estado**, e não estado: as texturas já subidas, os
-        // programas e os buffers saem daqui do `GlState`. Derrubá-las faz subir de novo na próxima
-        // vez que o jogo desenhar, e é o caminho mais seguro — não há o que ficar pela metade.
-        self.texturas.clear();
+        self.descarta_caches_de_quadro();
+        self.recria_texturas_restauradas();
         // O espelho de estado de desenho é mantido **incrementalmente** pelos métodos do trait, e
-        // não reconstruído do `GlState`. Depois de carregar, ele descreveria o mundo anterior, e é
+        // não reconstruído do GlState. Depois de carregar, ele descreveria o mundo anterior, e é
         // ele que vai para o GL a cada lote — a cena sairia com a matriz e as bandeiras de antes.
         self.ressincroniza_o_espelho();
+        self.devolve_o_contexto();
         Ok(())
     }
 
@@ -2305,6 +2423,40 @@ mod tests {
                 None
             }
         }
+    }
+
+    /// O restore da placa precisa recriar os objetos reais de textura e as duas unidades.
+    ///
+    /// RE4 usa a unidade 1 para combinar a textura base com a segunda camada. O estado de software
+    /// sempre guardou as duas, mas a 0.3.0 limpava o cache de objetos da GPU e esquecia de copiar a
+    /// unidade 1 para o espelho de desenho; o resultado era a cena branca depois de Load.
+    #[test]
+    fn save_state_recria_texturas_e_a_segunda_unidade() {
+        let Some((mut gpu, _)) = par(16, 16) else {
+            return;
+        };
+        gpu.set_active_texture(0);
+        gpu.bind_texture(10);
+        gpu.upload_level(10, 0, 1, 1, vec![[255, 0, 0, 255]]);
+        gpu.set_capability(gles::GL_TEXTURE_2D, true);
+        gpu.set_active_texture(1);
+        gpu.bind_texture(20);
+        gpu.upload_level(20, 0, 1, 1, vec![[0, 255, 0, 255]]);
+        gpu.set_capability(gles::GL_TEXTURE_2D, true);
+
+        let mut secoes = crate::save_state::Secoes::nova();
+        gpu.grava_estado(&mut secoes);
+        let arquivo = secoes.fecha();
+        let leitor = crate::save_state::Leitor::abre(&arquivo).unwrap();
+
+        gpu.delete_texture(10);
+        gpu.delete_texture(20);
+        gpu.restaura_estado(&leitor).unwrap();
+
+        assert!(gpu.texturas.contains_key(&10), "a textura base nao voltou para a placa");
+        assert!(gpu.texturas.contains_key(&20), "a textura da unidade 1 nao voltou para a placa");
+        assert!(gpu.fill.unidade1.ligada, "a unidade 1 perdeu o GL_TEXTURE_2D");
+        assert_eq!(gpu.fill.unidade1.textura, 20, "a unidade 1 voltou com outro nome");
     }
 
     /// Desenha a mesma coisa nos dois e devolve os quadros em RGB565, para comparar.
