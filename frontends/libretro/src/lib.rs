@@ -617,6 +617,8 @@ struct Core {
     /// novo a cada quadro não muda a resposta, e a documentação do próprio Libretro pede
     /// moderação nesta chamada.
     frameskip_callback_pedido: bool,
+    /// Se já avisamos que `glReadPixels` tornou frameskip de rasterização inseguro.
+    frameskip_leitura_pixels_avisada: bool,
     /// Se o desfecho já foi relatado ao frontend.
     ///
     /// Sem isto o core repetiria a mesma linha a cada quadro depois da parada, e um log que cresce
@@ -1454,8 +1456,10 @@ static AUDIO_ESTOURO_PROVAVEL: std::sync::atomic::AtomicBool = std::sync::atomic
 /// Guarda só `underrun_likely`, que é a própria `libretro.h` quem diz o que fazer com ele: *"se
 /// verdadeiro, o core deveria tentar pular quadro"*. A ocupação em si não muda a decisão — o
 /// frontend já fez a conta e decidiu que **agora** é a hora de pular.
-unsafe extern "C" fn audio_buffer_status(_active: bool, _occupancy: u32, underrun_likely: bool) {
-    AUDIO_ESTOURO_PROVAVEL.store(underrun_likely, std::sync::atomic::Ordering::Relaxed);
+unsafe extern "C" fn audio_buffer_status(active: bool, _occupancy: u32, underrun_likely: bool) {
+    // Sem áudio no frontend não há buffer para proteger. Guardar um `true` velho nesse caso faria
+    // Automático pular desenho para sempre depois que o usuário desliga e liga o áudio no menu.
+    AUDIO_ESTOURO_PROVAVEL.store(active && underrun_likely, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Pede ao frontend para avisar sobre o buffer de áudio, e mais folga nele para o aviso chegar a
@@ -1463,7 +1467,7 @@ unsafe extern "C" fn audio_buffer_status(_active: bool, _occupancy: u32, underru
 ///
 /// **Uma vez só**, e não a cada quadro — ver o campo `frameskip_callback_pedido`. Pedir de novo
 /// não muda a resposta, e a documentação do `SET_MINIMUM_AUDIO_LATENCY` pede moderação.
-fn pede_callback_de_audio() {
+fn pede_callback_de_audio() -> bool {
     let cb = RetroAudioBufferStatusCallback {
         callback: Some(audio_buffer_status),
     };
@@ -1475,21 +1479,46 @@ fn pede_callback_de_audio() {
     };
     if aceito {
         log("Zeebx: frameskip automático pediu o aviso de buffer de áudio ao frontend");
+        // Seis quadros a 60 Hz: a faixa que a própria `libretro.h` recomenda (seis a oito) para
+        // o aviso de estouro chegar com folga suficiente para o core reagir a tempo.
+        let latencia_ms: u32 = 96;
+        unsafe {
+            environ(
+                ENV_SET_MINIMUM_AUDIO_LATENCY,
+                &latencia_ms as *const u32 as *mut c_void,
+            );
+        }
     } else {
         // **Degrada sozinho, sem quebrar nada.** Sem o callback, `AUDIO_ESTOURO_PROVAVEL` nunca
         // muda de `false`, e o modo Automático se comporta como Desligado — nunca pula. É pior
         // que funcionar, mas melhor que um frontend velho impedir o core de rodar.
         aviso("Zeebx: frontend não aceita o aviso de buffer de áudio; frameskip automático não vai pular quadro nenhum");
     }
-    // Seis quadros a 60 Hz: a faixa que a própria `libretro.h` recomenda (seis a oito) para o
-    // aviso de estouro chegar com folga suficiente para o core reagir a tempo.
-    let latencia_ms: u32 = 96;
+    aceito
+}
+
+/// Retira o callback e devolve ao frontend a latência que ele já tinha.
+///
+/// Isto não é limpeza estética: o ponteiro do callback mora no frontend. Se ficar apontando para
+/// esta `.so` depois de `retro_deinit`, um frontend que entregar áudio tarde pode chamar memória
+/// que o carregador já descarregou. E 96 ms fazem sentido só com Automático ligado — deixar a
+/// folga pedida depois de o usuário desligar o modo troca latência por nada.
+fn retira_callback_de_audio() {
+    let vazio = RetroAudioBufferStatusCallback { callback: None };
+    unsafe {
+        environ(
+            ENV_SET_AUDIO_BUFFER_STATUS_CALLBACK,
+            &vazio as *const _ as *mut c_void,
+        );
+    }
+    let padrao: u32 = 0;
     unsafe {
         environ(
             ENV_SET_MINIMUM_AUDIO_LATENCY,
-            &latencia_ms as *const u32 as *mut c_void,
+            &padrao as *const u32 as *mut c_void,
         );
     }
+    AUDIO_ESTOURO_PROVAVEL.store(false, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Se o texto da opção de perfil pede o perfil Portátil.
@@ -1528,9 +1557,17 @@ fn aplica_opcoes_quentes(estado: &mut Core) {
         .as_deref()
         .and_then(Frameskip::de_texto)
     {
+        let antes = estado.frameskip;
+        if modo != antes {
+            // Mudar razão fixa no meio não pode herdar fase do modo anterior: 1/2 virar 1/7 no
+            // quinto quadro e pular logo o primeiro é surpresa sem ganho.
+            estado.frameskip_contador = 0;
+        }
         if modo == Frameskip::Automatico && !estado.frameskip_callback_pedido {
-            pede_callback_de_audio();
-            estado.frameskip_callback_pedido = true;
+            estado.frameskip_callback_pedido = pede_callback_de_audio();
+        } else if modo != Frameskip::Automatico && antes == Frameskip::Automatico {
+            retira_callback_de_audio();
+            estado.frameskip_callback_pedido = false;
         }
         estado.frameskip = modo;
     }
@@ -1709,6 +1746,9 @@ pub extern "C" fn retro_init() {}
 /// `retro_deinit`.
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_deinit() {
+    // O frontend guarda este ponteiro: retirar antes de esquecer o estado impede callback para
+    // uma biblioteca que ele pode descarregar logo depois do deinit.
+    retira_callback_de_audio();
     if let Ok(mut guard) = core().lock() {
         *guard = None;
     }
@@ -1970,6 +2010,7 @@ unsafe fn carrega(
         frameskip: Frameskip::Desligado,
         frameskip_contador: 0,
         frameskip_callback_pedido: false,
+        frameskip_leitura_pixels_avisada: false,
         session,
         mixer,
         portas,
@@ -2139,6 +2180,10 @@ pub extern "C" fn retro_run() {
         // **A decisão de pular é por quadro, e vale a cada quadro** — ao contrário do modo, que só
         // muda quando o usuário mexe na opção. Um `Fixo(n)` que só decidisse quando a opção muda
         // pularia (ou não) para sempre a partir da primeira leitura, e não a cada quadro n de n+1.
+        if estado.session.leu_pixels() && !estado.frameskip_leitura_pixels_avisada {
+            aviso("Zeebx: frameskip de rasterização foi desativado neste jogo porque ele usa glReadPixels");
+            estado.frameskip_leitura_pixels_avisada = true;
+        }
         let pula_este_quadro = match estado.frameskip {
             Frameskip::Desligado => {
                 estado.frameskip_contador = 0;
@@ -2154,7 +2199,9 @@ pub extern "C" fn retro_run() {
                 AUDIO_ESTOURO_PROVAVEL.load(std::sync::atomic::Ordering::Relaxed)
             }
         };
-        estado.session.define_pula_desenho(pula_este_quadro);
+        estado
+            .session
+            .define_pula_desenho(pula_este_quadro && !estado.session.leu_pixels());
         liga_a_placa(estado);
         // **O contexto se perdeu e a sessão estava nele.** O aviso sozinho não basta: a sessão
         // guarda o rasterizador de placa, e continuar desenhando por ele chamaria funções de GL que

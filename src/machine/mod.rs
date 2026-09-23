@@ -2629,6 +2629,12 @@ pub struct Machine<C: CpuBackend> {
     /// rasterizador — `gles_draw` e o `Clear` de `IGL` — sem mexer em nada que o jogo enxerga.
     /// Um jogo real não sabe se o pixel dele chegou à tela; hardware nenhum avisa isso.
     pula_desenho: bool,
+    /// O jogo já chamou `glReadPixels` nesta sessão.
+    ///
+    /// Frameskip não é seguro depois disso: pular um desenho e devolver a tela anterior para a
+    /// memória do guest deixa de ser só "perder imagem" e pode mudar a lógica dele (o Crash usa
+    /// a leitura para conferir a cena). Ver `gles_read_pixels`.
+    gl_leitura_de_pixels: bool,
 }
 
 /// Se o rasterizador na placa foi pedido.
@@ -3060,6 +3066,7 @@ impl<C: CpuBackend> Machine<C> {
             calls: BTreeMap::new(),
             calls_total: 0,
             pula_desenho: false,
+            gl_leitura_de_pixels: false,
         }
     }
 

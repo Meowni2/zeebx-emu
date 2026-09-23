@@ -1106,6 +1106,11 @@ impl Session {
         self.machine.define_pula_desenho(pula);
     }
 
+    /// Se o jogo já usou `glReadPixels` e, por segurança, desabilitou frameskip de rasterização.
+    pub fn leu_pixels(&self) -> bool {
+        self.machine.leu_pixels()
+    }
+
     /// Muda a resolução interna do 3D; vale a partir do próximo quadro.
     pub fn define_resolucao_interna(&mut self, escala: usize) {
         self.machine.define_resolucao_interna(escala);
