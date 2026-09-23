@@ -15,6 +15,27 @@ fn main() {
             println!("cargo:warning=sem ícone no .exe: {erro}");
         }
     }
+    #[cfg(feature = "ui-qt")]
+    interface_qt();
     println!("cargo:rerun-if-changed=assets/icones/zeebx.ico");
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// A ponte com o Qt: os `QObject`s escritos em Rust, a cola em C++ e o módulo QML. Ver
+/// `docs/implementacao/21-migracao-para-qt.md`.
+#[cfg(feature = "ui-qt")]
+fn interface_qt() {
+    use cxx_qt_build::{CxxQtBuilder, QmlModule};
+
+    CxxQtBuilder::new_qml_module(
+        QmlModule::new("zeebx").qml_file("qml/Principal.qml").depend("QtQuick"),
+    )
+    .files(["src/ui/qt/ponte.rs"])
+    .include_dir("src/ui/qt/cpp")
+    .cpp_files(["src/ui/qt/cpp/gl_qt.cpp"])
+    .qt_module("Quick")
+    // O Qt Qml pede o Network no macOS.
+    .qt_module("Network")
+    .build();
+    println!("cargo:rerun-if-changed=src/ui/qt/cpp/gl_qt.h");
 }
