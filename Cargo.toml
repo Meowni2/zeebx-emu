@@ -54,6 +54,14 @@ zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }
 symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
 discord-rich-presence = "1.1"
 ureq = "3"
+# O GL que o núcleo usa. É a mesma versão que o `eframe` reexporta — o tipo é um só — e tê-la
+# direto é o que deixa a interface Qt entregar ao rasterizador um contexto que não é do eframe.
+glow = "0.16"
+# A interface Qt, em prova de viabilidade (fase 0 de docs/implementacao/21-migracao-para-qt.md).
+# Fica atrás da feature `ui-qt` para quem não tem o Qt 6 instalado continuar compilando.
+cxx = { version = "1", optional = true }
+cxx-qt = { version = "0.10", optional = true }
+cxx-qt-lib = { version = "0.10", optional = true, features = ["qt_gui", "qt_qml"] }
 
 # O `ioctl` que lê a escala dos sensores de movimento em `/dev/input`. Já vinha na árvore por
 # várias dependências, então não acrescenta build nenhuma.
@@ -63,6 +71,11 @@ libc = "0.2"
 # O ícone dentro do `.exe` do Windows: é o que o Explorer e a barra de tarefas mostram.
 [build-dependencies]
 winresource = "0.1"
+cxx-qt-build = { version = "0.10", optional = true }
+
+[features]
+default = []
+ui-qt = ["dep:cxx", "dep:cxx-qt", "dep:cxx-qt-lib", "dep:cxx-qt-build"]
 
 # Os instaladores, gerados pelo `cargo packager --release`: `.deb` e AppImage no Linux, NSIS no
 # Windows, `.dmg` no macOS. O workflow `.github/workflows/release.yml` roda isto nos três sistemas
