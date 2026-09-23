@@ -49,6 +49,15 @@ pub mod soundfont;
 pub mod soundfont {
     use std::path::Path;
 
+    /// A taxa que o banco usaria, para o frontend ter o mesmo nome nos dois casos.
+    pub const TAXA_BANCO: u32 = 44_100;
+
+    /// Sem banco não há o que configurar; existe para o frontend não precisar de `cfg`.
+    pub fn define_taxa(_taxa: u32) {}
+
+    /// Sem banco não há o que configurar; existe para o frontend não precisar de `cfg`.
+    pub fn define_vozes(_vozes: usize) {}
+
     pub fn relato(aparelho: &Path) -> String {
         let pasta = aparelho.join("soundfonts");
         format!(

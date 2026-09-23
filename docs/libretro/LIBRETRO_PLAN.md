@@ -764,6 +764,36 @@ que suaviza a borda do polígono. Na GUI do desktop a **mesma** chamada do motor
 visível, porque lá o quadro grande vai para a janela por `Session::quadro_na_placa`, caminho que o
 core não usa. Copiar a descrição de lá para cá prometeria o que aqui não acontece.
 
+```text
+key:      zeebx_soundfont_taxa
+category: audio
+values:   44100 | 22050
+default:  44100
+aplica:   da próxima música em diante
+
+key:      zeebx_midi_vozes
+category: audio
+values:   128 | 96 | 64 | 48
+default:  128
+aplica:   da próxima música em diante
+
+key:      zeebx_cache_de_som_mb
+category: audio
+values:   24 | 48 | 16 | 8 | 4
+default:  24
+aplica:   do próximo descarte em diante
+```
+
+**Estas três são globais do motor, e não parâmetro de construção.** A política de sintetizador
+(`zeebx_midi_backend`) é parâmetro porque muda o que a máquina **é** quando nasce: o banco é aberto
+na construção. Taxa, vozes e teto de cache valem para a próxima música e para o próximo descarte —
+uma música já sintetizada não muda de taxa. Um parâmetro a mais em cinco assinaturas públicas para
+um valor que ninguém precisa no nascimento é custo sem troco, e o módulo do banco já guarda um
+global pelo mesmo motivo: o cache de bancos abertos.
+
+**O rótulo diz quando o efeito chega.** Nenhuma das três pede reinício, mas nenhuma vale na hora
+como o volume. Omitir isso faria o usuário concluir que a opção não funciona.
+
 ### Como uma opção nova deve nascer
 
 Toda opção que dá para aplicar sem recriar a sessão entra em `aplica_opcoes_quentes`, e **não**

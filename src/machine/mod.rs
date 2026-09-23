@@ -40,6 +40,10 @@ mod helper;
 mod hid;
 mod image;
 mod media;
+
+/// O teto do cache de sons decodificados, em bytes — reexportado porque quem o ajusta é o
+/// frontend, e o módulo que o guarda é interno.
+pub use media::define_teto_do_cache_de_som;
 mod net;
 mod probe;
 mod shell;

@@ -1030,7 +1030,55 @@ unsafe fn registra_opcoes_do_core() {
             };
         }
 
-        let definicoes: [RetroCoreOptionV2Definition; 8] = [
+        let mut taxa_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        taxa_values[0] = RetroCoreOptionValue {
+            value: c"44100".as_ptr(),
+            label: c"44.100 Hz — com brilho (padrão)".as_ptr(),
+        };
+        taxa_values[1] = RetroCoreOptionValue {
+            value: c"22050".as_ptr(),
+            label: c"22.050 Hz — metade do custo e da memória".as_ptr(),
+        };
+
+        let mut vozes_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        const VOZES_OPC: [(&CStr, &CStr); 4] = [
+            (c"128", c"128 (padrão)"),
+            (c"96", c"96"),
+            (c"64", c"64"),
+            (c"48", c"48 — portáteis fracos"),
+        ];
+        for (i, (valor, rotulo)) in VOZES_OPC.iter().enumerate() {
+            vozes_values[i] = RetroCoreOptionValue {
+                value: valor.as_ptr(),
+                label: rotulo.as_ptr(),
+            };
+        }
+
+        let mut cache_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        const CACHES: [(&CStr, &CStr); 5] = [
+            (c"24", c"24 MiB (padrão)"),
+            (c"48", c"48 MiB"),
+            (c"16", c"16 MiB"),
+            (c"8", c"8 MiB — portáteis fracos"),
+            (c"4", c"4 MiB"),
+        ];
+        for (i, (valor, rotulo)) in CACHES.iter().enumerate() {
+            cache_values[i] = RetroCoreOptionValue {
+                value: valor.as_ptr(),
+                label: rotulo.as_ptr(),
+            };
+        }
+
+        let definicoes: [RetroCoreOptionV2Definition; 11] = [
             RetroCoreOptionV2Definition {
                 key: c"zeebx_midi_backend".as_ptr(),
                 desc: c"Sintetizador MIDI (reinício)".as_ptr(),
@@ -1050,6 +1098,36 @@ unsafe fn registra_opcoes_do_core() {
                 category_key: c"audio".as_ptr(),
                 values: vol_values,
                 default_value: c"100".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_soundfont_taxa".as_ptr(),
+                desc: c"Taxa do SoundFont".as_ptr(),
+                desc_categorized: c"Taxa do SoundFont".as_ptr(),
+                info: c"Em que taxa a música MIDI é sintetizada pelo banco de amostras. 44.100 Hz preserva o brilho das amostras do .sf2, que sao gravadas nessa taxa. 22.050 Hz custa metade do tempo e da memória, e é o que serve a portátil fraco. Vale da próxima música em diante.".as_ptr(),
+                info_categorized: c"44.100 Hz preserva o brilho; 22.050 Hz custa metade. Vale da próxima música em diante.".as_ptr(),
+                category_key: c"audio".as_ptr(),
+                values: taxa_values,
+                default_value: c"44100".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_midi_vozes".as_ptr(),
+                desc: c"Vozes do MIDI".as_ptr(),
+                desc_categorized: c"Vozes".as_ptr(),
+                info: c"Quantas notas podem soar ao mesmo tempo no banco de amostras. Menos vozes custa menos processador e rouba nota em trecho denso, que soa como nota que some. Vale da próxima música em diante.".as_ptr(),
+                info_categorized: c"Notas simultâneas no banco. Menos custa menos e rouba nota.".as_ptr(),
+                category_key: c"audio".as_ptr(),
+                values: vozes_values,
+                default_value: c"128".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_cache_de_som_mb".as_ptr(),
+                desc: c"Cache de som".as_ptr(),
+                desc_categorized: c"Cache de som".as_ptr(),
+                info: c"Quanta memória guardar de som já decodificado. Menos memória faz o emulador esquecer música tocada e sintetizá-la de novo quando ela voltar, o que custa uma pausa; mais memória evita a pausa e ocupa RAM. Vale do próximo descarte em diante.".as_ptr(),
+                info_categorized: c"Memória de som já decodificado. Menos custa pausa; mais ocupa RAM.".as_ptr(),
+                category_key: c"audio".as_ptr(),
+                values: cache_values,
+                default_value: c"24".as_ptr(),
             },
             RetroCoreOptionV2Definition {
                 key: c"zeebx_rasterizador".as_ptr(),
@@ -1125,7 +1203,7 @@ unsafe fn registra_opcoes_do_core() {
             );
         }
     } else {
-        static VARIAVEIS: [RetroVariable; 8] = [
+        static VARIAVEIS: [RetroVariable; 11] = [
             RetroVariable {
                 key: c"zeebx_midi_backend".as_ptr(),
                 value: c"Sintetizador MIDI (reinício); auto|timbres|soundfont".as_ptr(),
@@ -1133,6 +1211,18 @@ unsafe fn registra_opcoes_do_core() {
             RetroVariable {
                 key: c"zeebx_volume".as_ptr(),
                 value: c"Volume; 100|90|80|70|60|50|40|30|20|10|0".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_soundfont_taxa".as_ptr(),
+                value: c"Taxa do SoundFont; 44100|22050".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_midi_vozes".as_ptr(),
+                value: c"Vozes do MIDI; 128|96|64|48".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_cache_de_som_mb".as_ptr(),
+                value: c"Cache de som (MiB); 24|48|16|8|4".as_ptr(),
             },
             RetroVariable {
                 key: c"zeebx_rasterizador".as_ptr(),
@@ -1252,6 +1342,28 @@ fn aplica_opcoes_quentes(estado: &mut Core) {
         .and_then(|texto| numero_de_texto(texto, 1, 8))
     {
         estado.session.define_resolucao_interna(escala);
+    }
+    // **Áudio e memória valem para o que vier depois.** A música já sintetizada não muda de taxa
+    // e o som já guardado não encolhe: estas três valem da próxima música e do próximo descarte em
+    // diante, e é por isso que não pedem reinício — mas também por isso o efeito não é imediato
+    // como o do volume, e os rótulos dizem isso.
+    if let Some(taxa) = unsafe { le_opcao(c"zeebx_soundfont_taxa") }
+        .as_deref()
+        .and_then(|texto| texto.trim().parse::<u32>().ok())
+    {
+        zeebx::audio::soundfont::define_taxa(taxa);
+    }
+    if let Some(vozes) = unsafe { le_opcao(c"zeebx_midi_vozes") }
+        .as_deref()
+        .and_then(|texto| numero_de_texto(texto, 8, 256))
+    {
+        zeebx::audio::soundfont::define_vozes(vozes);
+    }
+    if let Some(mib) = unsafe { le_opcao(c"zeebx_cache_de_som_mb") }
+        .as_deref()
+        .and_then(|texto| numero_de_texto(texto, 1, 256))
+    {
+        zeebx::machine::define_teto_do_cache_de_som(mib * 1024 * 1024);
     }
     // **As duas melhorias entram na mesma chamada**, porque a API do motor as recebe juntas:
     // aplicar uma sozinha apagaria a outra com o valor de antes.

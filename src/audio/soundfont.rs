@@ -28,6 +28,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
@@ -60,6 +61,43 @@ const BLOCO: usize = 1024;
 /// não há reamostragem nenhuma no caminho — e é a mesma escolha que o emulador de referência
 /// `zeemu` faz no caminho dele de SoundFont.
 pub const TAXA_BANCO: u32 = 44_100;
+
+/// A taxa escolhida agora, que começa em [`TAXA_BANCO`] e o frontend pode mudar.
+///
+/// **É um global, e isso é escolha consciente.** A alternativa seria levar a taxa por parâmetro de
+/// `Session::start_*` até `Machine` e daí até aqui, como se fez com a política de sintetizador —
+/// e naquele caso valeu a pena, porque a escolha muda o que a máquina **é** quando nasce. Esta
+/// não: ela vale para a próxima música sintetizada, e uma música já sintetizada não muda de taxa.
+/// Um parâmetro a mais em cinco assinaturas públicas para um valor que ninguém precisa no
+/// nascimento é custo sem troco. Este módulo já guarda um global pelo mesmo motivo — o cache de
+/// bancos abertos.
+static TAXA_ESCOLHIDA: AtomicU32 = AtomicU32::new(TAXA_BANCO);
+
+/// Muda a taxa em que o banco será sintetizado daqui para a frente.
+///
+/// Valores fora de 8.000–48.000 são ignorados: o `rustysynth` recusa fora de 16.000–192.000, e uma
+/// taxa absurda vinda de um `.opt` editado à mão não pode derrubar o som.
+pub fn define_taxa(taxa: u32) {
+    if (8_000..=48_000).contains(&taxa) {
+        TAXA_ESCOLHIDA.store(taxa, Ordering::Relaxed);
+    }
+}
+
+/// A taxa em que o banco é sintetizado agora.
+pub fn taxa() -> u32 {
+    TAXA_ESCOLHIDA.load(Ordering::Relaxed)
+}
+
+/// As vozes escolhidas agora. Ver [`VOZES`] para o porquê do padrão.
+static VOZES_ESCOLHIDAS: AtomicUsize = AtomicUsize::new(VOZES);
+
+/// Muda o teto de vozes simultâneas daqui para a frente.
+///
+/// O `rustysynth` aceita de 8 a 256 e recusa fora disso, então o valor é preso à faixa em vez de
+/// recusado: quem pediu 512 quer o máximo, e falhar a síntese inteira por causa disso seria pior.
+pub fn define_vozes(vozes: usize) {
+    VOZES_ESCOLHIDAS.store(vozes.clamp(8, 256), Ordering::Relaxed);
+}
 
 /// Quantas vozes o banco pode tocar ao mesmo tempo.
 ///
@@ -209,7 +247,7 @@ pub fn toca(banco: &Banco, bytes: &[u8], taxa: u32) -> Option<Sound> {
     ajustes.block_size = BLOCO;
     ajustes.enable_reverb_and_chorus = false;
     // 3. `maximum_polyphony`: ver [`VOZES`] — o padrão de 64 rouba nota em trecho denso.
-    ajustes.maximum_polyphony = VOZES;
+    ajustes.maximum_polyphony = VOZES_ESCOLHIDAS.load(Ordering::Relaxed);
     let mut sintetizador = rustysynth::Synthesizer::new(&banco.fonte, &ajustes).ok()?;
     // 4. O volume mestre é fixo, e não vem de normalização depois. Ver [`VOLUME_MESTRE`].
     sintetizador.set_master_volume(VOLUME_MESTRE);
@@ -304,6 +342,39 @@ pub fn relato(aparelho: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A taxa e as vozes escolhidas pelo frontend param no que o sintetizador aceita.
+    ///
+    /// **O que se cobra é o valor absurdo não passar.** As duas vêm de um arquivo que o usuário
+    /// edita à mão, e o `rustysynth` recusa a criação do sintetizador fora das faixas dele — uma
+    /// recusa que chegaria ao jogo como música que simplesmente não toca, sem dizer por quê.
+    ///
+    /// O teste devolve os padrões no fim porque o estado é global e compartilhado pelos outros
+    /// testes deste módulo (ver [`TAXA_ESCOLHIDA`]); deixá-lo sujo faria a ordem dos testes mudar
+    /// o resultado deles.
+    #[test]
+    fn a_taxa_e_as_vozes_escolhidas_ficam_na_faixa_que_o_sintetizador_aceita() {
+        define_taxa(22_050);
+        assert_eq!(taxa(), 22_050);
+        // Fora da faixa é **ignorado**, e não preso: uma taxa absurda costuma ser arquivo
+        // estragado, e herdar a anterior é mais seguro que inventar um número.
+        define_taxa(1);
+        assert_eq!(taxa(), 22_050, "taxa absurda não podia ter passado");
+        define_taxa(999_999);
+        assert_eq!(taxa(), 22_050, "taxa absurda não podia ter passado");
+        define_taxa(TAXA_BANCO);
+        assert_eq!(taxa(), TAXA_BANCO);
+
+        // As vozes são **presas** à faixa, e não ignoradas: quem pede 512 quer o máximo, e o
+        // máximo é um pedido que dá para atender.
+        define_vozes(4);
+        assert_eq!(VOZES_ESCOLHIDAS.load(Ordering::Relaxed), 8);
+        define_vozes(512);
+        assert_eq!(VOZES_ESCOLHIDAS.load(Ordering::Relaxed), 256);
+        define_vozes(48);
+        assert_eq!(VOZES_ESCOLHIDAS.load(Ordering::Relaxed), 48);
+        define_vozes(VOZES);
+    }
 
     /// O banco de teste, do harness de comparação que vive fora do repositório.
     fn banco_de_teste() -> Option<PathBuf> {
