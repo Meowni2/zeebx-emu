@@ -29,6 +29,7 @@ pub mod qobject {
         fn gl_cria() -> bool;
         fn gl_torna_corrente() -> bool;
         fn gl_solta();
+        fn gl_destroi();
         fn gl_funcao(nome: &str) -> usize;
     }
 
@@ -79,10 +80,10 @@ use std::time::{Duration, Instant};
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QImage, QImageFormat, QPainterRenderHint, QRect, QString};
 
-use crate::input::bindings::Source;
-use crate::input::gamepads::Gamepads;
-use crate::session::Session;
-use crate::ui::settings::Settings;
+use zeebx::input::bindings::Source;
+use zeebx::input::gamepads::Gamepads;
+use zeebx::session::Session;
+use zeebx::ui::settings::Settings;
 
 /// O mesmo teto do egui: uma pausa longa não vira uma fatia gigante de emulação.
 const MAX_SLICE: Duration = Duration::from_millis(100);
@@ -403,7 +404,7 @@ mod tests {
             (0x0100_0039, "F10"),
         ] {
             assert_eq!(nome_da_tecla(codigo).as_deref(), Some(nome));
-            assert!(eframe::egui::Key::from_name(nome).is_some(), "{nome} não é tecla do egui");
+            assert!(zeebx::eframe::egui::Key::from_name(nome).is_some(), "{nome} não é tecla do egui");
         }
     }
 }

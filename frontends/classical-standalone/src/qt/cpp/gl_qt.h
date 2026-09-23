@@ -18,6 +18,11 @@ bool gl_cria();
 bool gl_torna_corrente();
 void gl_solta();
 
+// Destrói o contexto. Precisa acontecer depois de a sessão sumir — ela solta texturas nele — e
+// antes do QGuiApplication: deixado para os destrutores estáticos, o QOffscreenSurface morre
+// depois do Qt e o processo cai com SIGSEGV ao fechar a janela.
+void gl_destroi();
+
 // O endereço de uma função de GL, para o `glow`. Zero se não houver.
 std::size_t gl_funcao(rust::Str nome);
 

@@ -12,8 +12,8 @@
 namespace zeebx {
 
 namespace {
-// Vivem até o fim do processo: o contexto não pode morrer com a janela do jogo, porque a
-// Z-Wheel reabre jogos e as texturas do rasterizador moram nele.
+// Vivem até o `gl_destroi`, no fim do `launch`: o contexto não pode morrer com a janela do jogo,
+// porque a Z-Wheel reabre jogos e as texturas do rasterizador moram nele.
 std::unique_ptr<QOpenGLContext> contexto;
 std::unique_ptr<QOffscreenSurface> superficie;
 } // namespace
@@ -72,6 +72,15 @@ void gl_solta()
     if (contexto) {
         contexto->doneCurrent();
     }
+}
+
+void gl_destroi()
+{
+    if (contexto) {
+        contexto->doneCurrent();
+    }
+    contexto.reset();
+    superficie.reset();
 }
 
 std::size_t gl_funcao(rust::Str nome)

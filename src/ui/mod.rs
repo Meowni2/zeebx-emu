@@ -29,8 +29,6 @@ pub mod depuracao;
 pub mod gpu;
 pub mod i18n;
 pub mod library;
-#[cfg(feature = "ui-qt")]
-pub mod qt;
 pub mod saves;
 pub mod settings;
 
