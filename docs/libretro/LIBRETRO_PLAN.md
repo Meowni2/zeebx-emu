@@ -720,7 +720,61 @@ category: audio
 values:   100 | 90 | 80 | 70 | 60 | 50 | 40 | 30 | 20 | 10 | 0
 default:  100
 aplica:   na hora
+
+key:      zeebx_rasterizador
+category: video
+values:   auto | software
+default:  auto
+aplica:   ao recarregar o conteúdo
+
+key:      zeebx_resolucao_interna
+category: video
+values:   1 | 2 | 3 | 4
+default:  1
+aplica:   no quadro seguinte
+
+key:      zeebx_antialias
+category: video
+values:   1 | 2 | 4 | 8
+default:  1
+aplica:   na hora
+
+key:      zeebx_filtro_anisotropico
+category: video
+values:   1 | 2 | 4 | 8
+default:  1
+aplica:   na hora
+
+key:      zeebx_neblina
+category: video
+values:   enabled | disabled
+default:  enabled
+aplica:   na hora
 ```
+
+**`zeebx_rasterizador` é o único escape para um driver de GL que aceita o contexto e desenha
+errado.** Quando o driver falha de verdade o core já recua sozinho; quando ele aceita tudo e
+entrega imagem preta, do ponto de vista do core nada falhou, e sem esta opção o remédio seria
+trocar de frontend ou de aparelho.
+
+**A resolução interna é supersampling aqui, e não imagem maior.** O quadro entregue ao frontend
+continua 640×480 — é o que `retro_get_system_av_info` declara como `max_width`/`max_height`, e
+entregar mais que isso seria defeito. O desenho acontece em escala e a leitura reduz de volta, o
+que suaviza a borda do polígono. Na GUI do desktop a **mesma** chamada do motor tem outro efeito
+visível, porque lá o quadro grande vai para a janela por `Session::quadro_na_placa`, caminho que o
+core não usa. Copiar a descrição de lá para cá prometeria o que aqui não acontece.
+
+### Como uma opção nova deve nascer
+
+Toda opção que dá para aplicar sem recriar a sessão entra em `aplica_opcoes_quentes`, e **não**
+num `if` próprio. O aviso de `GET_VARIABLE_UPDATE` é consumido na primeira pergunta: uma opção por
+`if` faria a primeira comer o aviso das outras, e o defeito apareceria como "às vezes não pega".
+
+A mesma função roda quando a sessão nasce e quando ela é trocada, para não haver duas cópias da
+aplicação — a que roda menos é a que fica errada sem ninguém ver.
+
+Opção ausente ou com valor estragado **mantém o que havia**, em vez de voltar ao padrão: um
+frontend antigo, que não conhece a chave, não pode desfazer a escolha de quem configurou.
 
 **Os valores são tokens, e o texto humano vai no `label`.** O valor é o que fica gravado no
 `.opt` do usuário e o que o `FromStr` reparseia: `Tabela de timbres`, com acento e espaços, é

@@ -970,7 +970,67 @@ unsafe fn registra_opcoes_do_core() {
             };
         }
 
-        let definicoes: [RetroCoreOptionV2Definition; 3] = [
+        let mut ras_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        ras_values[0] = RetroCoreOptionValue {
+            value: c"auto".as_ptr(),
+            label: c"Automático (placa quando o frontend oferece)".as_ptr(),
+        };
+        ras_values[1] = RetroCoreOptionValue {
+            value: c"software".as_ptr(),
+            label: c"Processador (compatibilidade)".as_ptr(),
+        };
+
+        let mut lig_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        lig_values[0] = RetroCoreOptionValue {
+            value: c"enabled".as_ptr(),
+            label: c"Ligada".as_ptr(),
+        };
+        lig_values[1] = RetroCoreOptionValue {
+            value: c"disabled".as_ptr(),
+            label: c"Desligada".as_ptr(),
+        };
+
+        let mut escala_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        const ESCALAS: [(&CStr, &CStr); 4] = [
+            (c"1", c"1x — sem supersampling (padrão)"),
+            (c"2", c"2x — desenha em 1280×960"),
+            (c"3", c"3x — desenha em 1920×1440"),
+            (c"4", c"4x — desenha em 2560×1920"),
+        ];
+        for (i, (valor, rotulo)) in ESCALAS.iter().enumerate() {
+            escala_values[i] = RetroCoreOptionValue {
+                value: valor.as_ptr(),
+                label: rotulo.as_ptr(),
+            };
+        }
+
+        let mut amostras_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        const AMOSTRAS: [(&CStr, &CStr); 4] = [
+            (c"1", c"Desligado"),
+            (c"2", c"2x"),
+            (c"4", c"4x"),
+            (c"8", c"8x"),
+        ];
+        for (i, (valor, rotulo)) in AMOSTRAS.iter().enumerate() {
+            amostras_values[i] = RetroCoreOptionValue {
+                value: valor.as_ptr(),
+                label: rotulo.as_ptr(),
+            };
+        }
+
+        let definicoes: [RetroCoreOptionV2Definition; 8] = [
             RetroCoreOptionV2Definition {
                 key: c"zeebx_midi_backend".as_ptr(),
                 desc: c"Sintetizador MIDI (reinício)".as_ptr(),
@@ -990,6 +1050,56 @@ unsafe fn registra_opcoes_do_core() {
                 category_key: c"audio".as_ptr(),
                 values: vol_values,
                 default_value: c"100".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_rasterizador".as_ptr(),
+                desc: c"Rasterizador (reinício)".as_ptr(),
+                desc_categorized: c"Rasterizador (reinício)".as_ptr(),
+                info: c"Quem preenche o 3D: Automático usa a placa quando o frontend oferece render em hardware; Processador força o caminho de software. Use Processador quando a imagem sair errada ou preta com driver de vídeo problemático. Recarregue o jogo para aplicar.".as_ptr(),
+                info_categorized: c"Automático usa a placa quando há render em hardware; Processador força software. Recarregue o jogo para aplicar.".as_ptr(),
+                category_key: c"video".as_ptr(),
+                values: ras_values,
+                default_value: c"auto".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_resolucao_interna".as_ptr(),
+                desc: c"Resolução interna do 3D".as_ptr(),
+                desc_categorized: c"Resolução interna".as_ptr(),
+                info: c"Desenha o 3D numa resolução maior e reduz de volta para os 640x480 do console, o que suaviza a borda do polígono (supersampling). O quadro entregue ao frontend continua 640x480: shader e proporção nao mudam. Só tem efeito com o rasterizador de placa, e custa memória e preenchimento.".as_ptr(),
+                info_categorized: c"Desenha o 3D maior e reduz para 640x480, suavizando a borda. Só na placa.".as_ptr(),
+                category_key: c"video".as_ptr(),
+                values: escala_values,
+                default_value: c"1".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_antialias".as_ptr(),
+                desc: c"Antisserrilhado".as_ptr(),
+                desc_categorized: c"Antisserrilhado".as_ptr(),
+                info: c"Amostras por pixel no 3D preenchido pela placa. Suaviza a borda do polígono e custa preenchimento. Sem efeito no rasterizador de processador.".as_ptr(),
+                info_categorized: c"Amostras por pixel no 3D da placa. Sem efeito no processador.".as_ptr(),
+                category_key: c"video".as_ptr(),
+                values: amostras_values,
+                default_value: c"1".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_filtro_anisotropico".as_ptr(),
+                desc: c"Filtro anisotrópico".as_ptr(),
+                desc_categorized: c"Filtro anisotrópico".as_ptr(),
+                info: c"Nitidez da textura vista de lado, no 3D preenchido pela placa. Sem efeito no rasterizador de processador.".as_ptr(),
+                info_categorized: c"Nitidez da textura vista de lado. Só na placa.".as_ptr(),
+                category_key: c"video".as_ptr(),
+                values: amostras_values,
+                default_value: c"1".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_neblina".as_ptr(),
+                desc: c"Névoa".as_ptr(),
+                desc_categorized: c"Névoa".as_ptr(),
+                info: c"A névoa que o jogo pede. Desligar deixa o cenário distante visível, o que alguns preferem; é escolha de quem joga, e não correção. Vale na hora.".as_ptr(),
+                info_categorized: c"A névoa que o jogo pede. Vale na hora.".as_ptr(),
+                category_key: c"video".as_ptr(),
+                values: lig_values,
+                default_value: c"enabled".as_ptr(),
             },
             RetroCoreOptionV2Definition {
                 key: std::ptr::null(),
@@ -1015,7 +1125,7 @@ unsafe fn registra_opcoes_do_core() {
             );
         }
     } else {
-        static VARIAVEIS: [RetroVariable; 3] = [
+        static VARIAVEIS: [RetroVariable; 8] = [
             RetroVariable {
                 key: c"zeebx_midi_backend".as_ptr(),
                 value: c"Sintetizador MIDI (reinício); auto|timbres|soundfont".as_ptr(),
@@ -1023,6 +1133,26 @@ unsafe fn registra_opcoes_do_core() {
             RetroVariable {
                 key: c"zeebx_volume".as_ptr(),
                 value: c"Volume; 100|90|80|70|60|50|40|30|20|10|0".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_rasterizador".as_ptr(),
+                value: c"Rasterizador (reinício); auto|software".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_resolucao_interna".as_ptr(),
+                value: c"Resolução interna do 3D; 1|2|3|4".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_antialias".as_ptr(),
+                value: c"Antisserrilhado; 1|2|4|8".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_filtro_anisotropico".as_ptr(),
+                value: c"Filtro anisotrópico; 1|2|4|8".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_neblina".as_ptr(),
+                value: c"Névoa; enabled|disabled".as_ptr(),
             },
             RetroVariable {
                 key: std::ptr::null(),
@@ -1057,13 +1187,14 @@ unsafe fn le_opcao_midi_backend() -> zeebx::audio::MidiBackend {
     zeebx::audio::MidiBackend::Auto
 }
 
-/// Lê o volume mestre escolhido nas opções, de 0,0 a 1,0.
+/// Lê o valor de uma opção do core como texto. `None` quando o frontend não tem a chave.
 ///
-/// Devolve `None` quando a chave não existe ou não é número: o frontend pode ser antigo, e um
-/// valor estragado não pode virar silêncio sem aviso — quem chama mantém o que já tinha.
-unsafe fn le_opcao_volume() -> Option<f32> {
+/// Existe para não repetir o mesmo bloco de `unsafe` a cada opção: a parte insegura é sempre a
+/// mesma — montar a consulta, chamar o frontend, conferir que o ponteiro voltou não nulo — e
+/// repeti-la por chave é como um `unsafe` deixa de ser revisado.
+unsafe fn le_opcao(chave: &CStr) -> Option<String> {
     let mut consulta = RetroVariable {
-        key: c"zeebx_volume".as_ptr(),
+        key: chave.as_ptr(),
         value: std::ptr::null(),
     };
     // SAFETY: chamada ao callback environ e leitura de string C válida entregue pelo frontend.
@@ -1074,8 +1205,67 @@ unsafe fn le_opcao_volume() -> Option<f32> {
     if !ok {
         return None;
     }
-    let texto = unsafe { CStr::from_ptr(consulta.value) }.to_string_lossy();
-    volume_de_texto(&texto)
+    Some(unsafe { CStr::from_ptr(consulta.value) }.to_string_lossy().into_owned())
+}
+
+/// Lê o volume mestre escolhido nas opções, de 0,0 a 1,0.
+///
+/// Devolve `None` quando a chave não existe ou não é número: o frontend pode ser antigo, e um
+/// valor estragado não pode virar silêncio sem aviso — quem chama mantém o que já tinha.
+unsafe fn le_opcao_volume() -> Option<f32> {
+    volume_de_texto(&unsafe { le_opcao(c"zeebx_volume") }?)
+}
+
+/// Lê um número inteiro de uma opção, preso à faixa que o motor aceita.
+fn numero_de_texto(texto: &str, minimo: usize, maximo: usize) -> Option<usize> {
+    let valor: usize = texto.trim().parse().ok()?;
+    Some(valor.clamp(minimo, maximo))
+}
+
+/// Lê um interruptor. A convenção de valor é `enabled`/`disabled`, que é a do ecossistema.
+fn ligado_de_texto(texto: &str) -> Option<bool> {
+    match texto.trim().to_ascii_lowercase().as_str() {
+        "enabled" | "ligado" | "on" | "true" | "1" => Some(true),
+        "disabled" | "desligado" | "off" | "false" | "0" => Some(false),
+        _ => None,
+    }
+}
+
+/// Aplica, de uma vez, **todas** as opções que valem sem recriar a sessão.
+///
+/// **De uma vez é a parte que importa.** O aviso do frontend (ver [`opcoes_mudaram`]) é consumido
+/// na primeira pergunta: se cada opção fosse relida no seu próprio `if`, a primeira comeria o
+/// aviso e as outras só mudariam no próximo mexe-mexe do usuário — um defeito que aparece como
+/// "às vezes não pega".
+///
+/// Cada opção ausente ou estragada mantém o que já havia, em vez de voltar ao padrão: um frontend
+/// antigo, que não conhece a chave, não pode desfazer a escolha de quem configurou.
+fn aplica_opcoes_quentes(estado: &mut Core) {
+    if let Some(volume) = unsafe { le_opcao_volume() } {
+        estado.mixer.set_master(volume, false);
+    }
+    if let Some(neblina) = unsafe { le_opcao(c"zeebx_neblina") }.as_deref().and_then(ligado_de_texto) {
+        estado.session.define_neblina(neblina);
+    }
+    if let Some(escala) = unsafe { le_opcao(c"zeebx_resolucao_interna") }
+        .as_deref()
+        .and_then(|texto| numero_de_texto(texto, 1, 8))
+    {
+        estado.session.define_resolucao_interna(escala);
+    }
+    // **As duas melhorias entram na mesma chamada**, porque a API do motor as recebe juntas:
+    // aplicar uma sozinha apagaria a outra com o valor de antes.
+    let antialias = unsafe { le_opcao(c"zeebx_antialias") }
+        .as_deref()
+        .and_then(|texto| numero_de_texto(texto, 1, 16));
+    let anisotropico = unsafe { le_opcao(c"zeebx_filtro_anisotropico") }
+        .as_deref()
+        .and_then(|texto| numero_de_texto(texto, 1, 16));
+    if antialias.is_some() || anisotropico.is_some() {
+        estado
+            .session
+            .define_melhorias(antialias.unwrap_or(1), anisotropico.unwrap_or(1));
+    }
 }
 
 /// Converte o texto da opção de volume (por cento) no fator de 0,0 a 1,0 do mixer.
@@ -1356,7 +1546,17 @@ unsafe fn carrega(
     // **Pede o contexto de placa ao frontend, se ele tiver um.** Quem aceita é ele; nós só usamos
     // mais tarde, quando o `context_reset` chegar. Recusar aqui não muda nada: a sessão de
     // software já nasceu e é ela que roda até prova em contrário.
-    pede_o_contexto_de_placa();
+    //
+    // **Salvo quando o usuário pediu software.** Este é o único escape para um driver de GL que
+    // aceita o contexto e desenha errado — ou não desenha: nesse caso o recuo automático não
+    // dispara, porque do ponto de vista do core nada falhou. Sem a opção, o único remédio é trocar
+    // o frontend ou o aparelho.
+    let rasterizador = unsafe { le_opcao(c"zeebx_rasterizador") }.unwrap_or_default();
+    if rasterizador.trim().eq_ignore_ascii_case("software") {
+        log("Zeebx: rasterizador fixado no processador pela opção do core; nenhum contexto de placa será pedido");
+    } else {
+        pede_o_contexto_de_placa();
+    }
 
     let mut session = Session::start_software_with_storage_installed_policy(
         std::path::Path::new(caminho),
@@ -1367,13 +1567,10 @@ unsafe fn carrega(
         midi_backend,
     )?;
     let mixer = session.grava_audio(SAMPLE_RATE);
-    if let Some(volume) = unsafe { le_opcao_volume() } {
-        mixer.set_master(volume, false);
-    }
-    // **1x e proporção nativa, sempre.** O core entrega o quadro do console em 640×480, sem
-    // resolução interna ampliada e sem esticar: quem ajusta shader precisa de uma fonte previsível,
-    // e o upscale é papel do frontend.
-    session.define_resolucao_interna(1);
+    // **Proporção nativa, sempre.** O core entrega o quadro do console em 640×480 sem esticar:
+    // quem ajusta shader precisa de uma fonte previsível, e o upscale é papel do frontend. A
+    // resolução interna deixou de ser fixada aqui porque virou opção — ver
+    // [`aplica_opcoes_quentes`], que roda logo depois que o estado existe.
     session.define_proporcao(None);
     if !jogos.is_empty() {
         session.set_installed_applets(
@@ -1413,7 +1610,7 @@ unsafe fn carrega(
         false => None,
     };
 
-    Ok(Core {
+    let mut core = Core {
         placa_ligada: false,
         session,
         mixer,
@@ -1436,7 +1633,12 @@ unsafe fn carrega(
         pad_antes: [Pad::default(); zeebx::input::PORTAS],
         quadros_apos_parar: 0,
         parou: false,
-    })
+    };
+    // As opções valem desde o primeiro quadro. É a **mesma** função do caminho quente de propósito:
+    // duas cópias da aplicação divergem com o tempo, e a que roda menos é a que fica errada sem
+    // ninguém ver.
+    aplica_opcoes_quentes(&mut core);
+    Ok(core)
 }
 
 /// A biblioteca de jogos ao lado do conteúdo: `(pasta, [(ClassID, o que carregar)])`.
@@ -1521,15 +1723,13 @@ fn troca_para(estado: &mut Core, caminho: &Path, aberto_pela_z_wheel: bool) -> R
         )?,
     };
     let mixer = session.grava_audio(SAMPLE_RATE);
-    // O volume escolhido nas opções vale desde o primeiro quadro, e não só depois que o usuário
-    // mexer no menu de novo.
-    if let Some(volume) = unsafe { le_opcao_volume() } {
-        mixer.set_master(volume, false);
-    }
-    session.define_resolucao_interna(1);
     session.define_proporcao(None);
     estado.session = session;
     estado.mixer = mixer;
+    // As opções valem desde o primeiro quadro, e não só depois que o usuário mexer no menu de
+    // novo. É a **mesma** função do caminho quente: duas cópias da aplicação divergem com o tempo,
+    // e a que roda menos é a que fica errada sem ninguém ver.
+    aplica_opcoes_quentes(estado);
     estado.path = caminho.to_path_buf();
     estado.aberto_pela_z_wheel = aberto_pela_z_wheel;
     estado.parou = false;
@@ -1571,13 +1771,12 @@ pub extern "C" fn retro_run() {
         // lugar em que ele pode estar pronto. Recriar a sessão custa um reinício que ninguém vê:
         // nenhum quadro foi entregue ainda.
         // **As opções que dá para aplicar a quente.** Ver [`opcoes_mudaram`]: o frontend avisa uma
-        // vez, e só então vale reler. O sintetizador MIDI **não** entra aqui de propósito — ele é
-        // escolhido quando a sessão nasce, e por isso o rótulo dele diz "(reinício)".
-        if opcoes_mudaram()
-            && let Some(volume) = unsafe { le_opcao_volume() }
-        {
-            estado.mixer.set_master(volume, false);
-            log(&format!("Zeebx: volume ajustado para {:.0}%", volume * 100.0));
+        // vez, e só então vale reler — e a releitura trata todas juntas, porque o aviso é
+        // consumido na primeira pergunta (ver [`aplica_opcoes_quentes`]). O sintetizador MIDI e o
+        // rasterizador **não** entram aqui de propósito: os dois são escolhidos quando a sessão
+        // nasce, e por isso os rótulos deles dizem "(reinício)".
+        if opcoes_mudaram() {
+            aplica_opcoes_quentes(estado);
         }
         liga_a_placa(estado);
         // **O contexto se perdeu e a sessão estava nele.** O aviso sozinho não basta: a sessão
@@ -2156,6 +2355,33 @@ mod testes {
                 None => "nem os quatro botoes nem o manche mudaram a imagem".to_string(),
             }
         );
+    }
+
+    /// Os interruptores e os números das opções aceitam o que o frontend entrega, e recusam lixo.
+    ///
+    /// O que se cobra aqui é a **recusa**: um valor que não dá para entender tem de virar `None`,
+    /// porque quem chama trata `None` mantendo o que já havia. Se virasse um padrão qualquer, um
+    /// frontend antigo — que não conhece a chave — desfaria a escolha de quem configurou.
+    #[test]
+    fn os_valores_das_opcoes_sao_lidos_e_o_lixo_e_recusado() {
+        // A convenção do ecossistema é enabled/disabled; as outras grafias existem porque um .opt
+        // editado à mão não segue convenção nenhuma.
+        assert_eq!(ligado_de_texto("enabled"), Some(true));
+        assert_eq!(ligado_de_texto("disabled"), Some(false));
+        assert_eq!(ligado_de_texto(" ON "), Some(true));
+        assert_eq!(ligado_de_texto("false"), Some(false));
+        assert_eq!(ligado_de_texto("talvez"), None);
+        assert_eq!(ligado_de_texto(""), None);
+
+        // O número é preso à faixa que o motor aceita, e não recusado: quem pediu 99 quer o máximo.
+        assert_eq!(numero_de_texto("1", 1, 8), Some(1));
+        assert_eq!(numero_de_texto("4", 1, 8), Some(4));
+        assert_eq!(numero_de_texto("99", 1, 8), Some(8));
+        assert_eq!(numero_de_texto(" 2 ", 1, 8), Some(2));
+        // Zero e negativo sobem para o mínimo; o motor não desenha em escala zero.
+        assert_eq!(numero_de_texto("0", 1, 8), Some(1));
+        assert_eq!(numero_de_texto("-3", 1, 8), None);
+        assert_eq!(numero_de_texto("muito", 1, 8), None);
     }
 
     /// O texto da opção de volume vira fator do mixer, e o texto estragado **não** vira silêncio.
