@@ -918,7 +918,7 @@ const MAX_TEXT: usize = 64;
 const MAX_CALLS: u64 = 200_000_000;
 
 /// Instruções por milissegundo do relógio virtual: o ARM11 do MSM7201A roda a 528 MHz, e o
-/// núcleo do unicorn não é superescalar, então uma instrução por ciclo é a conta certa.
+/// O núcleo ARM11 do console não é superescalar, então uma instrução por ciclo é a conta certa.
 const INSTRUCTIONS_PER_US: u64 = 528;
 
 /// Período do retraço vertical da tela do console, em microssegundos — 60 Hz.
@@ -2329,7 +2329,7 @@ pub struct Machine<C: CpuBackend> {
     images: HashMap<u32, std::rc::Rc<DecodedImage>>,
     /// A superfície já materializada de cada imagem, para o `IPARM_GETBITMAP`.
     image_bitmaps: HashMap<u32, u32>,
-    /// Quanto tempo **real** cada método de API custou, ligado pelo `--profile`.
+    /// Quanto tempo **real** cada método de API custou, quando o diagnóstico pede a medição.
     ///
     /// O perfil do guest diz onde o jogo gasta o tempo dele; este diz onde o emulador gasta o
     /// nosso. Sem ele, um método que custa meio milissegundo por chamada se esconde atrás de
@@ -2544,7 +2544,7 @@ pub struct Machine<C: CpuBackend> {
     /// host, e importar o buffer seria trazer a imagem velha por cima da nova. Sai daqui quando
     /// o host publica os próprios pixels.
     ///
-    /// No Unicorn isso passava despercebido porque a vigia de escrita dizia "o jogo não mexeu" e
+    /// Antes isto passava despercebido porque a vigia de escrita dizia "o jogo não mexeu" e
     /// a importação não acontecia. O Dynarmic não tem vigia e responde sempre "sujo", que só é
     /// seguro se o buffer nunca estiver atrás do host — e aqui estava: as letras do Tekken 2 e
     /// do Kingdom Hearts viravam blocos, com a folha de glifos substituída pela imagem

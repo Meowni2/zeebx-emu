@@ -107,7 +107,8 @@ pub enum Step {
 pub struct Session {
     /// O mesmo agendador BREW usado pela bancada e pela linha de comando, com o núcleo que
     /// recompila os blocos ARM do módulo. O Kingdom Hearts desenha a intro no seu próprio
-    /// rasterizador ARM; deixá-lo no Unicorn aqui anulava o ganho medido no `bench`.
+    /// rasterizador ARM; por isso a sessão usa o JIT diretamente. No `wasm32` esse lugar é o
+    /// interpretador.
     machine: Machine<CpuDaSessao>,
     /// O applet criado e ainda **não** iniciado, com o ClassID dele.
     ///

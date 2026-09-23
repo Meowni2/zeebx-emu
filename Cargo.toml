@@ -12,9 +12,10 @@ resolver = "3"
 name = "zeebx"
 version = "0.3.0"
 edition = "2024"
-# GPLv2 porque o unicorn-engine é GPLv2 e vai compilado dentro do binário. Ver LICENSE.
+# O código do Zeebx é GPLv2 ou posterior. O backend de CPU padrão é o Dynarmic, para manter o
+# núcleo compatível com frontends GPLv3 como Qt 6.
 authors = ["ZeebxTeam"]
-license = "GPL-2.0-only"
+license = "GPL-2.0-or-later"
 repository = "https://github.com/ZeebxTeam/zeebx-emu"
 description = "O emulador definitivo de Zeebo!"
 
@@ -36,7 +37,6 @@ desktop = [
     # O banco de amostras para o MIDI é Rust puro e sem dependência de host, então entra por
     # padrão: sem um `.sf2` instalado ele nem é carregado, e sem ele a música é a mesma de antes.
     "soundfont",
-    "unicorn",
     "dep:discord-rich-presence",
     "dep:eframe",
     "dep:gilrs",
@@ -70,10 +70,6 @@ soundfont = ["dep:rustysynth"]
 # janela. Aqui entra o `glutin`, que linka EGL/GLX — motivo pelo qual o core não usa esta feature:
 # um core não pode depender de biblioteca de interface do host.
 gpu = ["gl", "dep:glutin", "dep:raw-window-handle"]
-# Backend de referência do standalone. O core Libretro não o habilita: usa Dynarmic e não leva
-# o QEMU/unicorn-engine nem libatomic para os handhelds Linux AArch64.
-unicorn = ["dep:unicorn-engine"]
-
 # O binário é a interface desktop: sem a feature ele nem é construído.
 [dependencies]
 # Tipos de interface compartilhados pelo desktop e pelo frontend Android; não abre janela sozinho.
@@ -110,7 +106,7 @@ resvg = { version = "0.48.1", default-features = false }
 # O `AEECLSID_SQLMGR` do console é SQLite de verdade: os `.db` que a Z-Wheel traz no pacote
 # começam com "SQLite format 3", e as consultas dela usam `INSERT OR REPLACE`, `COLLATE NOCASE`
 # e JOIN. Reimplementar isso seria reinventar mal. A build é embutida para não depender de
-# biblioteca do sistema, e a toolchain C já é necessária por causa do unicorn.
+# biblioteca do sistema.
 rusqlite = { version = "0.37", features = ["bundled"] }
 # Rasterização de glifo para o `IDISPLAY_DrawText`. Já vinha na árvore por causa do `eframe`,
 # então usá-la direto não acrescenta build nenhuma — e escrever um interpretador de TrueType
@@ -122,7 +118,7 @@ zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }
 # Action Hero 3D, Need For Speed, zeetris e a Z-Wheel. Um decodificador de Layer III é Huffman,
 # requantização, IMDCT e banco de síntese, e escrever isso sem uma referência para comparar dá
 # som que toca e sai errado. O symphonia é Rust puro (sem build C) e MPL-2.0, que se combina com
-# o GPLv2 daqui. Só o MP3 entra: o resto dos codecs fica fora.
+# a licença GPLv2+ daqui. Só o MP3 entra: o resto dos codecs fica fora.
 # `mp3` é a música da maioria dos jogos; `ogg`/`vorbis` é a de quem entrega Opus/Vorbis —
 # o Turma da Mônica tem **86 sons** em Ogg, e sem a feature o jogo roda em silêncio absoluto
 # (medido: pico 0,000 no relatório da varredura). É o mesmo decodificador, com duas caixas a mais.
@@ -133,18 +129,10 @@ sevenz-rust2 = "0.23.0"
 # biblioteca de host, e por isso pode entrar no core Libretro.
 rustysynth = { version = "1.3.6", optional = true }
 
-# Tudo o que existe **só onde o unicorn compila**, como as dependências de sistema abaixo.
-#
-# O `unicorn-engine` traz o QEMU em C, e o QEMU do Windows monta `setjmp-wrapper-win32.asm` com o
-# `ml` do MSVC — que só existe para x86 e x64. Não há montador MASM para ARM64, então naquele alvo
-# o `unicorn-engine-sys` nem chega a compilar (o `ml` não é encontrado). Onde ele falta, o motor
-# usa o `dynarmic`, que recompila os blocos A32 e sustenta o mesmo contrato de `CpuBackend`.
-[target.'cfg(not(all(target_os = "windows", target_arch = "aarch64")))'.dependencies]
-unicorn-engine = { version = "2.1.5", optional = true }
-
-# O `dynarmic` recompila A32 para o código nativo do host. No `wasm32` não há para onde
-# recompilar — o navegador não executa o bloco que o JIT emitiria — então a dependência
-# nem entra no grafo. O núcleo de lá é o interpretador em `src/cpu/interpretador.rs`.
+# O `dynarmic` recompila A32 para o código nativo do host. O Kingdom Hearts precisa dele
+# porque a extensão 3D roda o próprio rasterizador ARM por milhões de pixels. No `wasm32`
+# não há para onde recompilar — o navegador não executa o bloco que o JIT emitiria — então
+# a dependência nem entra no grafo. O núcleo de lá é o interpretador em `src/cpu/interpretador.rs`.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 dynarmic = "0.1.3"
 

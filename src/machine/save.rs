@@ -2827,11 +2827,7 @@ impl<C: CpuBackend> Machine<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // **O backend padrão, e não o unicorn por nome.** No Windows ARM64 o `unicorn` não existe (o
-    // QEMU de lá precisa de um montador MASM que só há para x86), e o alias resolve para o
-    // `dynarmic`. Usar o nome do unicorn aqui deixava o alvo vermelho no CI — que é justamente
-    // quem enxerga o que o teste local não pode ver.
-    use crate::cpu::BackendPadrao as UnicornCpu;
+    use crate::cpu::BackendPadrao;
     use crate::loader::self as loader;
 
     /// O menor módulo que o carregador aceita. Não precisa fazer nada: o alvo aqui é o estado da
@@ -2845,9 +2841,9 @@ mod tests {
         crate::loader::modfile::ModImage::parse(code).unwrap()
     }
 
-    fn maquina() -> Machine<UnicornCpu> {
+    fn maquina() -> Machine<BackendPadrao> {
         let module = loader::load(&modulo()).unwrap();
-        let mut machine = Machine::new(UnicornCpu::new().unwrap(), module, ".");
+        let mut machine = Machine::new(BackendPadrao::new().unwrap(), module, ".");
         machine.cpu.reset(&machine.module.mem).unwrap();
         machine
     }
@@ -2950,7 +2946,7 @@ mod tests {
             &crate::loader::modfile::ModImage::parse(maior).unwrap(),
         )
         .unwrap();
-        let mut outra = Machine::new(UnicornCpu::new().unwrap(), module, ".");
+        let mut outra = Machine::new(BackendPadrao::new().unwrap(), module, ".");
         outra.cpu.reset(&outra.module.mem).unwrap();
 
         let proximo_antes = outra.heap.proximo();

@@ -147,8 +147,7 @@ pub fn fonte_do_sistema_em(cache: &Path, device: &Path) -> Option<PathBuf> {
 /// listava "texto na tela (ainda sem fonte para desenhar)".
 ///
 /// **Não é a causa da tela branca dele.** Medido: com a fonte instalada, o quadro do Double Dragon
-/// no core continua branco e uniforme. O que falta ali é outra coisa, no caminho Dynarmic/`Session`,
-/// porque o mesmo jogo desenha pelo caminho Unicorn da linha de comando.
+/// continuava branco e uniforme. O que faltava ali era outra coisa no caminho de execução.
 ///
 /// Extrai **só** o arquivo da fonte: não vale materializar o pacote inteiro por causa de 190 KB.
 pub fn instala_fonte_do_pacote(pacote: &Path, device: &Path) -> Option<PathBuf> {

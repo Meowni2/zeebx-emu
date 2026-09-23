@@ -60,7 +60,7 @@ cargo build --release
 
 ### O que mais precisa estar instalado
 
-O standalone usa dependências nativas para `unicorn-engine`, `dynarmic`, áudio, janela e controles.
+O standalone usa dependências nativas para `dynarmic`, áudio, janela e controles.
 Debian, Ubuntu e derivados:
 
 ```bash
@@ -186,7 +186,7 @@ O repositório não distribui jogos. Coloque os seus em `roms/`, que é ignorada
 
 ## Licença
 
-GPL-2.0, o texto completo em [LICENSE](LICENSE).
+GPL-2.0-or-later, o texto completo da GPLv2 em [LICENSE](LICENSE).
 
 
 ## Menções

@@ -135,7 +135,7 @@ impl<C: CpuBackend> Machine<C> {
             return Ok(Vec::new());
         }
         /// Quantas unidades por leitura. Mesmo motivo do `read_cbytes`: cada leitura
-        /// atravessa a FFI do unicorn, que procura a região antes de copiar — 57 ns para
+        /// atravessa o backend de CPU, que procura a região antes de copiar — 57 ns para
         /// trazer dois bytes. Sessenta e quatro unidades cobrem a string típica de uma vez.
         const BLOCO: usize = 64;
 

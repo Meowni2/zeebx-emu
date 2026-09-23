@@ -442,13 +442,17 @@ jobs:
           path: pacotes
           merge-multiple: true
 
-      # **O texto da release é o que vocês escreveram, não a lista de commits.** Cada versão deixa
-      # o seu em `docs/patch-notes/`, em linguagem de quem joga; era isso que ia para a página da
-      # release na mão, e o `generate_release_notes` do GitHub entregava outra coisa -- um resumo
-      # de commits que ninguém quer ler.
+      # **O texto da release é o que vocês escreveram, e a lista gerada vem depois dele.** Cada
+      # versão deixa a sua nota em `docs/patch-notes/`, em linguagem de quem joga; era isso que ia
+      # para a página da release na mão.
       #
-      # Sem o arquivo, a lista de commits volta a valer: é melhor que uma release muda, e serve de
-      # aviso de que a nota faltou.
+      # Os dois convivem, e não é truque nosso: a API do GitHub diz que, com `generate_release_notes`
+      # ligado, um `body` enviado junto é **posto na frente** das notas geradas. Sai a nota, e
+      # embaixo o "What's Changed", o "New Contributors" e o "Full Changelog" -- que é o crédito a
+      # quem contribuiu pela primeira vez, e um arquivo escrito à mão não tem como saber disso.
+      #
+      # Sem o arquivo, sobra só a lista gerada: é melhor que uma release muda, e serve de aviso de
+      # que a nota faltou.
       - name: As notas da versão
         id: notas
         shell: bash
@@ -468,7 +472,7 @@ jobs:
           name: ${{ inputs.versao || github.ref_name }}
           tag_name: ${{ inputs.versao || github.ref_name }}
           draft: true
-          # Um dos dois, nunca os dois: com o arquivo, ele é o corpo; sem ele, o GitHub gera.
+          # Os dois sempre: a nota vira o começo do corpo, e o GitHub acrescenta o resto.
           body_path: ${{ steps.notas.outputs.caminho }}
-          generate_release_notes: ${{ steps.notas.outputs.caminho == '' }}
+          generate_release_notes: true
           files: pacotes/*
