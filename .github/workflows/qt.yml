@@ -5,9 +5,13 @@
 # sai; este responde se a migração para Qt é viável fora do Linux em que ela nasceu. Um Qt que não
 # instala num runner não pode deixar vermelho o CI de quem só mexeu no motor.
 #
-# O Qt é o mesmo nos três sistemas, pelo `install-qt-action`: o 6.8, que é LTS. O do `apt` do
-# Ubuntu 24.04 é o 6.4, e comparar Windows e macOS num Qt contra o Linux noutro misturaria duas
-# perguntas.
+# O Qt é o mesmo nos três sistemas, pelo `install-qt-action`. O do `apt` do Ubuntu 24.04 é o 6.4,
+# e comparar Windows e macOS num Qt contra o Linux noutro misturaria duas perguntas.
+#
+# **É o 6.11, e não o 6.8 LTS.** O `6.8.*` resolveu para o 6.8.3, e o `qyieldcpu.h` dela chama `__yield()` direto no ARM. O clang do Xcode do
+# `macos-latest` passou a exigir o `<arm_acle.h>` para isso, e o macOS ARM64 não compilava nem o
+# `init.cpp` do próprio cxx-qt. O 6.11 tenta `__builtin_arm_yield` primeiro — conferido no
+# cabeçalho — e é o mesmo Qt do Linux em que a interface é desenvolvida.
 #
 # Fica de fora o Windows ARM64: o `install-qt-action` não tem ali o mesmo pacote de desktop que tem
 # no x64, e a pergunta da fase 0 é se a ponte compila com MSVC e com o clang da Apple, não em
@@ -73,7 +77,7 @@ jobs:
       - name: Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: "6.8.*"
+          version: "6.11.*"
           cache: true
 
       # O `cxx-qt-build` acha o Qt pelo `qmake`. Dizer qual evita pegar outro que esteja no PATH
