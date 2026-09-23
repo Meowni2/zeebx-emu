@@ -619,6 +619,10 @@ struct Core {
     frameskip_callback_pedido: bool,
     /// Se já avisamos que `glReadPixels` tornou frameskip de rasterização inseguro.
     frameskip_leitura_pixels_avisada: bool,
+    /// Teto de velocidade escolhido — ver [`LimiteFps`].
+    limite_fps: LimiteFps,
+    /// Fase da duplicação de apresentação do teto de 30 FPS.
+    limite_fps_contador: u32,
     /// Se o desfecho já foi relatado ao frontend.
     ///
     /// Sem isto o core repetiria a mesma linha a cada quadro depois da parada, e um log que cresce
@@ -1138,6 +1142,23 @@ unsafe fn registra_opcoes_do_core() {
             label: c"Portátil (aparelho de mão fraco)".as_ptr(),
         };
 
+        let mut limite_fps_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        limite_fps_values[0] = RetroCoreOptionValue {
+            value: c"60".as_ptr(),
+            label: c"60 FPS — velocidade do console (padrão)".as_ptr(),
+        };
+        limite_fps_values[1] = RetroCoreOptionValue {
+            value: c"30".as_ptr(),
+            label: c"30 FPS — velocidade normal, metade da imagem".as_ptr(),
+        };
+        limite_fps_values[2] = RetroCoreOptionValue {
+            value: c"desligado".as_ptr(),
+            label: c"Desligado — boost/unlimited".as_ptr(),
+        };
+
         let mut frameskip_values = [RetroCoreOptionValue {
             value: std::ptr::null(),
             label: std::ptr::null(),
@@ -1159,7 +1180,7 @@ unsafe fn registra_opcoes_do_core() {
             };
         }
 
-        let definicoes: [RetroCoreOptionV2Definition; 13] = [
+        let definicoes: [RetroCoreOptionV2Definition; 14] = [
             RetroCoreOptionV2Definition {
                 key: c"zeebx_midi_backend".as_ptr(),
                 desc: c"Sintetizador MIDI (reinício)".as_ptr(),
@@ -1271,6 +1292,16 @@ unsafe fn registra_opcoes_do_core() {
                 default_value: c"enabled".as_ptr(),
             },
             RetroCoreOptionV2Definition {
+                key: c"zeebx_limite_fps".as_ptr(),
+                desc: c"Limite de velocidade".as_ptr(),
+                desc_categorized: c"Limite de velocidade".as_ptr(),
+                info: c"Segura a lógica do jogo contra o relógio real, como o console faria. Use 60 FPS para impedir que títulos leves (RE4, Zeebo Extreme) corram rápido demais; 30 FPS mantém a velocidade lógica normal e mostra um em cada dois quadros. Desligado libera boost, útil se quiser acelerar jogos como Need for Speed. Vale na hora.".as_ptr(),
+                info_categorized: c"60 impede jogo rápido demais; 30 mantém a lógica e reduz imagem; Desligado libera boost. Vale na hora.".as_ptr(),
+                category_key: c"sistema".as_ptr(),
+                values: limite_fps_values,
+                default_value: c"60".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
                 key: c"zeebx_frameskip".as_ptr(),
                 desc: c"Pular quadros".as_ptr(),
                 desc_categorized: c"Pular quadros".as_ptr(),
@@ -1304,7 +1335,7 @@ unsafe fn registra_opcoes_do_core() {
             );
         }
     } else {
-        static VARIAVEIS: [RetroVariable; 13] = [
+        static VARIAVEIS: [RetroVariable; 14] = [
             RetroVariable {
                 key: c"zeebx_midi_backend".as_ptr(),
                 value: c"Sintetizador MIDI (reinício); auto|timbres|soundfont".as_ptr(),
@@ -1348,6 +1379,10 @@ unsafe fn registra_opcoes_do_core() {
             RetroVariable {
                 key: c"zeebx_neblina".as_ptr(),
                 value: c"Névoa; enabled|disabled".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_limite_fps".as_ptr(),
+                value: c"Limite de velocidade; 60|30|desligado".as_ptr(),
             },
             RetroVariable {
                 key: c"zeebx_frameskip".as_ptr(),
@@ -1441,6 +1476,37 @@ impl Frameskip {
             "automatico" => Some(Self::Automatico),
             outro => outro.parse::<u32>().ok().filter(|&n| n >= 1).map(Self::Fixo),
         }
+    }
+}
+
+/// O teto de velocidade do jogo, separado de frameskip.
+///
+/// **60 não quer dizer "chame retro_run 60 vezes"** — isso já é decisão do frontend. Quer dizer
+/// "não deixe o relógio virtual passar do relógio real", que é o freio que o desktop já usa para
+/// impedir Crash/Zeebo Extreme/NFS de correrem acima da velocidade do console.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum LimiteFps {
+    /// Sem freio: deixa quem quer boost (Need for Speed) usar o que o host aguenta.
+    Desligado,
+    /// Velocidade lógica real do console e apresentação normal.
+    #[default]
+    Sessenta,
+    /// Velocidade lógica real do console, mas apresenta só um em cada dois quadros.
+    Trinta,
+}
+
+impl LimiteFps {
+    fn de_texto(texto: &str) -> Option<Self> {
+        match texto.trim() {
+            "desligado" => Some(Self::Desligado),
+            "60" => Some(Self::Sessenta),
+            "30" => Some(Self::Trinta),
+            _ => None,
+        }
+    }
+
+    fn limita_velocidade(self) -> bool {
+        !matches!(self, Self::Desligado)
     }
 }
 
@@ -1553,6 +1619,17 @@ fn aplica_opcoes_quentes(estado: &mut Core) {
     // [`Frameskip`]: reler o modo só quando algo mudou é barato, mas a decisão em si (que quadro
     // pular) precisa de um contador ou do aviso do frontend, e os dois valem a cada quadro, não
     // só quando o usuário mexe no menu.
+    if let Some(limite) = unsafe { le_opcao(c"zeebx_limite_fps") }
+        .as_deref()
+        .and_then(LimiteFps::de_texto)
+    {
+        if limite != estado.limite_fps {
+            // A taxa de apresentação de 30 não pode herdar a paridade do limite anterior.
+            estado.limite_fps_contador = 0;
+        }
+        estado.limite_fps = limite;
+    }
+
     if let Some(modo) = unsafe { le_opcao(c"zeebx_frameskip") }
         .as_deref()
         .and_then(Frameskip::de_texto)
@@ -2011,6 +2088,8 @@ unsafe fn carrega(
         frameskip_contador: 0,
         frameskip_callback_pedido: false,
         frameskip_leitura_pixels_avisada: false,
+        limite_fps: LimiteFps::Sessenta,
+        limite_fps_contador: 0,
         session,
         mixer,
         portas,
@@ -2184,7 +2263,7 @@ pub extern "C" fn retro_run() {
             aviso("Zeebx: frameskip de rasterização foi desativado neste jogo porque ele usa glReadPixels");
             estado.frameskip_leitura_pixels_avisada = true;
         }
-        let pula_este_quadro = match estado.frameskip {
+        let pula_por_frameskip = match estado.frameskip {
             Frameskip::Desligado => {
                 estado.frameskip_contador = 0;
                 false
@@ -2199,9 +2278,23 @@ pub extern "C" fn retro_run() {
                 AUDIO_ESTOURO_PROVAVEL.load(std::sync::atomic::Ordering::Relaxed)
             }
         };
-        estado
-            .session
-            .define_pula_desenho(pula_este_quadro && !estado.session.leu_pixels());
+        // 30 FPS **não desacelera a lógica**: o freio de velocidade continua em 1x, e só a
+        // apresentação duplica um quadro a cada dois. É o oposto de alterar o período virtual
+        // de vsync — aquilo faria o jogo avançar 33 ms por chamada e poderia acelerá-lo.
+        let pula_por_limite = match estado.limite_fps {
+            LimiteFps::Trinta => {
+                let pula = estado.limite_fps_contador != 0;
+                estado.limite_fps_contador = (estado.limite_fps_contador + 1) % 2;
+                pula
+            }
+            LimiteFps::Desligado | LimiteFps::Sessenta => {
+                estado.limite_fps_contador = 0;
+                false
+            }
+        };
+        estado.session.define_pula_desenho(
+            (pula_por_frameskip || pula_por_limite) && !estado.session.leu_pixels(),
+        );
         liga_a_placa(estado);
         // **O contexto se perdeu e a sessão estava nele.** O aviso sozinho não basta: a sessão
         // guarda o rasterizador de placa, e continuar desenhando por ele chamaria funções de GL que
@@ -2303,7 +2396,9 @@ pub extern "C" fn retro_run() {
         // parado. Medido: a Z-Wheel congelava depois do confirmar (relógio virtual parado em
         // 37 012 ms) e só uma tecla chegava.
         if !estado.session.mostra_quadro_intermediario()
-            && let Step::Stopped = estado.session.run_frame()
+            && let Step::Stopped = estado
+                .session
+                .run_frame(estado.limite_fps.limita_velocidade())
         {
             if !estado.parou {
                 estado.parou = true;
@@ -2779,6 +2874,17 @@ mod testes {
                 None => "nem os quatro botoes nem o manche mudaram a imagem".to_string(),
             }
         );
+    }
+
+    /// O limite de velocidade separa console, meia imagem e boost — não aceita texto ambíguo.
+    #[test]
+    fn o_texto_do_limite_fps_vira_o_modo_certo() {
+        assert_eq!(LimiteFps::de_texto("60"), Some(LimiteFps::Sessenta));
+        assert_eq!(LimiteFps::de_texto("30"), Some(LimiteFps::Trinta));
+        assert_eq!(LimiteFps::de_texto("desligado"), Some(LimiteFps::Desligado));
+        assert_eq!(LimiteFps::de_texto("120"), None);
+        assert_eq!(LimiteFps::de_texto("automatico"), None);
+        assert_eq!(LimiteFps::de_texto(""), None);
     }
 
     /// O texto da opção de frameskip vira o modo certo, e lixo mantém o modo anterior (`None`).

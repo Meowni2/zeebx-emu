@@ -815,6 +815,50 @@ Enquanto ativo, o perfil **ganha** das opções individuais que cobre — elas c
 menu, mas ficam sem efeito. É a única forma de um preset funcionar sem a API ter um jeito de
 esconder opção.
 
+```text
+key:      zeebx_frameskip
+category: video
+values:   desligado | automatico | 1 | 2 | 3 | 4 | 5 | 6
+default:  desligado
+aplica:   na hora
+
+key:      zeebx_limite_fps
+category: sistema
+values:   60 | 30 | desligado
+default:  60
+aplica:   na hora
+```
+
+### Frameskip e limite de velocidade não são a mesma coisa
+
+**`zeebx_frameskip` economiza rasterização, não tempo de jogo.** `gles_draw` e `Clear` são
+chamados durante o despacho da API pelo CPU — não há fila de GPU separada como no Flycast. Quando
+um quadro é pulado, a lógica ARM continua; o que some é a leitura de vértices da memória do guest
+e o preenchimento de pixels. Fixo pula `N` quadros a cada `N+1`; Automático usa o mecanismo oficial
+`SET_AUDIO_BUFFER_STATUS_CALLBACK` (a `libretro.h` manda tentar pular quando
+`underrun_likely=true`) e pede 96 ms de folga de áudio, seis quadros a 60 Hz.
+
+`glReadPixels` é exceção de segurança: Crash Nitro Kart lê framebuffer de volta para a memória do
+guest. Depois da primeira leitura, frameskip se desliga para o resto da sessão e avisa — devolver o
+quadro anterior deixaria de ser perda visual e poderia mudar lógica. O primeiro `ReadPixels` ainda
+pode cair depois de um quadro pulado, porque não se sabe que ele virá antes de atender os `Draw*`
+anteriores; a proteção evita a corrupção repetida, não promete adivinhar o futuro.
+
+**`zeebx_limite_fps` limita velocidade real, não mexe no relógio virtual.** Existe porque o core
+Libretro usava `Session::run_frame`, que não tinha o freio `ahead_ms()` que o desktop já usava:
+Crash Nitro Kart foi medido a 1039% e Zeebo Extreme Rolima a 267% da velocidade do console quando
+o host sobra. Em 60, antes de avançar o próximo quadro, o core espera o relógio real alcançar o
+virtual; em 30, mantém a mesma lógica a 1x mas duplica a apresentação a cada dois quadros. Assim
+30 não é "avançar 33 ms por chamada" — isso poderia acelerar jogos, exatamente o defeito que a
+opção tenta evitar. Desligado preserva boost deliberado, útil para Need for Speed.
+
+**Áudio:** não há time-stretching/pitch-shifting. O mixer reamostra cada voz para a taxa da placa,
+fadeia underrun e descarta excesso para não acumular atraso; o core entrega amostras pela diferença
+do relógio virtual. No limitador normal, o sono vem **antes** de avançar o quadro seguinte: o áudio
+do quadro anterior toca enquanto o core espera, portanto não exige esticar áudio para manter 1x.
+Um salto anômalo do relógio nunca bloqueia mais de 50 ms numa chamada, para não congelar o frontend
+em carregamento.
+
 ### Defeito encontrado nesta fase: categoria "vídeo" nunca registrada
 
 As cinco opções de vídeo da fase anterior declaravam `category_key: c"video"`, mas o arranjo

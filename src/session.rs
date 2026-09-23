@@ -542,9 +542,24 @@ impl Session {
     /// É a unidade que um frontend repete: o tempo do jogo anda pelo relógio virtual, e nenhuma
     /// decisão depende de quão rápido o host executa. [`Session::step`] continua sendo o caminho
     /// da janela, que precisa devolver o controle ao sistema operacional de tempos em tempos.
-    pub fn run_frame(&mut self) -> Step {
+    pub fn run_frame(&mut self, limita_velocidade: bool) -> Step {
         if self.stopped.is_some() {
             return Step::Stopped;
+        }
+        if limita_velocidade {
+            // O desktop faz o mesmo freio devolvendo `Step::Ahead` para a janela. O Libretro não
+            // tem uma volta assíncrona que possa receber "volte depois": `retro_run` tem de
+            // devolver um quadro nesta chamada. Dormir **antes** de avançar é a tradução correta
+            // do mesmo contrato: o áudio do quadro anterior toca enquanto espera, e o próximo
+            // quadro só nasce quando o relógio real alcançou o virtual.
+            //
+            // Cinquenta ms é teto defensivo contra um salto anômalo do relógio virtual durante
+            // carregamento. No caso normal o adiantamento é um período (16–17 ms); sem o teto
+            // uma ROM que se adiantasse segundos congelaria o frontend numa chamada só.
+            let espera = self.ahead_ms().min(50);
+            if espera > 0 {
+                std::thread::sleep(Duration::from_millis(espera));
+            }
         }
         let inicio = u64::from(self.machine.clock_ms());
         for _ in 0..MAX_STEPS_PER_FRAME {
