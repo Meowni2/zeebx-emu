@@ -189,7 +189,7 @@ struct RetroHwRenderCallback {
 }
 
 /// O que o frontend respondeu ao pedido de render em hardware.
-static OFERTA_DE_PLACA: std::sync::OnceLock<RetroHwRenderCallback> = std::sync::OnceLock::new();
+static OFERTA_DE_PLACA: Mutex<Option<RetroHwRenderCallback>> = Mutex::new(None);
 
 /// Se o frontend já avisou que o contexto está utilizável.
 ///
@@ -212,7 +212,7 @@ fn placa() -> Option<std::sync::Arc<glow::Context>> {
 /// No `libretro`, quem **oferece** é o core: ele preenche o struct e chama o ambiente. O frontend
 /// devolve `true` se aceitar, e depois disso ele cria o contexto e chama o nosso `context_reset`.
 fn pede_o_contexto_de_placa() {
-    if OFERTA_DE_PLACA.get().is_some() {
+    if OFERTA_DE_PLACA.lock().is_ok_and(|g| g.is_some()) {
         return;
     }
     let mut oferta = RetroHwRenderCallback {
@@ -238,7 +238,7 @@ fn pede_o_contexto_de_placa() {
             "Zeebx: o frontend aceitou render em hardware (OpenGL {}.{}); o desenho passa a ser na placa",
             oferta.version_major, oferta.version_minor
         ));
-        let _ = OFERTA_DE_PLACA.set(oferta);
+        if let Ok(mut g) = OFERTA_DE_PLACA.lock() { *g = Some(oferta); }
     } else {
         log("Zeebx: o frontend não oferece render em hardware; o desenho fica no processador");
     }
@@ -260,7 +260,7 @@ fn liga_a_placa(estado: &mut Core) {
     // Tenta **uma vez**: um contexto que não veio não vem no quadro seguinte, e insistir a cada
     // quadro gastaria o log inteiro.
     estado.placa_ligada = true;
-    let Some(oferta) = OFERTA_DE_PLACA.get() else {
+    let Some(oferta) = OFERTA_DE_PLACA.lock().ok().and_then(|g| *g) else {
         return;
     };
     let Some(pega_endereco) = oferta.get_proc_address else {
@@ -348,6 +348,29 @@ const ENV_SET_INPUT_DESCRIPTORS: u32 = 11;
 const ENV_GET_LOG_INTERFACE: u32 = 27;
 const ENV_GET_SAVE_DIRECTORY: u32 = 31;
 const ENV_SET_CONTROLLER_INFO: u32 = 35;
+const ENV_SET_VARIABLES: u32 = 16;
+const ENV_GET_VARIABLE: u32 = 15;
+/// `RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE`: o frontend avisa que alguma opção mudou.
+///
+/// **Sem isto toda opção do core é opção de recarregar o jogo.** O `GET_VARIABLE` devolve o valor
+/// de agora, mas perguntar por ele a cada quadro, para cada chave, custa uma chamada ao frontend
+/// por chave por quadro. Este é o aviso barato: devolve `true` uma única vez depois que o usuário
+/// mexeu no menu, e só então vale reler o que dá para aplicar a quente.
+const ENV_GET_VARIABLE_UPDATE: u32 = 17;
+const ENV_GET_CORE_OPTIONS_VERSION: u32 = 52;
+const ENV_SET_CORE_OPTIONS_V2: u32 = 67;
+/// `RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK`: o frontend passa a avisar, antes de cada
+/// `retro_run`, o quanto do buffer de áudio dele está ocupado e se um estouro é provável.
+///
+/// É o mecanismo do próprio Libretro para frameskip automático — não é invenção nossa: o parágrafo
+/// da própria `libretro.h` diz "se `underrun_likely`, o core deveria tentar pular quadro".
+const ENV_SET_AUDIO_BUFFER_STATUS_CALLBACK: u32 = 62;
+/// `RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY`: pede mais folga no buffer de áudio do frontend.
+///
+/// A própria documentação do callback acima recomenda isto: sem folga, o aviso de estouro chega
+/// tarde demais para o core reagir a tempo. 96 ms (SAMPLE_RATE-independente, é o frontend que
+/// mede) é o de seis a oito quadros a 60 Hz, a faixa que a `libretro.h` sugere.
+const ENV_SET_MINIMUM_AUDIO_LATENCY: u32 = 63;
 
 /// Tipos de dispositivo e identificadores de botão do RetroPad.
 const DEVICE_NONE: u32 = 0;
@@ -381,6 +404,59 @@ struct RetroMessage {
     msg: *const c_char,
     frames: u32,
 }
+
+#[repr(C)]
+struct RetroVariable {
+    key: *const c_char,
+    value: *const c_char,
+}
+
+/// `retro_audio_buffer_status_callback_t`, o tipo da função — não a struct de registro.
+type RetroAudioBufferStatusCallbackFn = unsafe extern "C" fn(bool, u32, bool);
+
+#[repr(C)]
+struct RetroAudioBufferStatusCallback {
+    callback: Option<RetroAudioBufferStatusCallbackFn>,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RetroCoreOptionValue {
+    value: *const c_char,
+    label: *const c_char,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RetroCoreOptionV2Category {
+    key: *const c_char,
+    desc: *const c_char,
+    info: *const c_char,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RetroCoreOptionV2Definition {
+    key: *const c_char,
+    desc: *const c_char,
+    desc_categorized: *const c_char,
+    info: *const c_char,
+    info_categorized: *const c_char,
+    category_key: *const c_char,
+    values: [RetroCoreOptionValue; 128],
+    default_value: *const c_char,
+}
+
+#[repr(C)]
+struct RetroCoreOptionsV2 {
+    categories: *const RetroCoreOptionV2Category,
+    definitions: *const RetroCoreOptionV2Definition,
+}
+
+unsafe impl Sync for RetroVariable {}
+unsafe impl Sync for RetroCoreOptionsV2 {}
+unsafe impl Sync for RetroCoreOptionV2Category {}
+unsafe impl Sync for RetroCoreOptionV2Definition {}
 
 #[repr(C)]
 struct RetroKeyboardCallback {
@@ -512,6 +588,8 @@ struct Core {
     audio_pendente: Vec<i16>,
     /// Se já avisou que o quadro saiu do tamanho do console.
     avisou_tamanho: bool,
+    /// Política de síntese MIDI configurada nas opções do core.
+    midi_backend: zeebx::audio::MidiBackend,
     /// Estado anterior do Select do RetroPad, para o atalho de `AVK_CLR`.
     select_antes: bool,
     /// O controle da volta anterior, por porta, para o que muda virar **tecla do console**.
@@ -528,6 +606,28 @@ struct Core {
     /// Se já se tentou ligar o render em hardware. Uma vez só: um contexto que não veio não vem
     /// no quadro seguinte. Ver [`liga_a_placa`].
     placa_ligada: bool,
+    /// A política de frameskip escolhida agora — ver [`Frameskip`].
+    frameskip: Frameskip,
+    /// Quantos quadros já se passaram desde o último desenhado de verdade, no modo fixo.
+    ///
+    /// É contador, e não paridade (`quadro % 2`), porque o fixo aceita qualquer razão — pular 3
+    /// a cada 4 é tão válido quanto pular 1 a cada 2 — e só um contador serve às duas.
+    frameskip_contador: u32,
+    /// Se o `SET_AUDIO_BUFFER_STATUS_CALLBACK` já foi pedido ao frontend. Uma vez só: pedir de
+    /// novo a cada quadro não muda a resposta, e a documentação do próprio Libretro pede
+    /// moderação nesta chamada.
+    frameskip_callback_pedido: bool,
+    /// Se já avisamos que `glReadPixels` tornou frameskip de rasterização inseguro.
+    frameskip_leitura_pixels_avisada: bool,
+    /// Teto de velocidade escolhido — ver [`LimiteFps`].
+    limite_fps: LimiteFps,
+    /// Fase da duplicação de apresentação do teto de 30 FPS.
+    limite_fps_contador: u32,
+    /// Este quadro deve repetir a imagem anterior no callback de vídeo.
+    ///
+    /// Separado de `pula_desenho`: jogos 2D e jogos com `glReadPixels` podem não economizar
+    /// rasterização, mas 30 FPS ainda precisa limitar a apresentação de forma verdadeira.
+    limite_fps_duplica: bool,
     /// Se o desfecho já foi relatado ao frontend.
     ///
     /// Sem isto o core repetiria a mesma linha a cada quadro depois da parada, e um log que cresce
@@ -846,6 +946,826 @@ fn diretorio(cmd: u32) -> Option<PathBuf> {
     Some(PathBuf::from(texto))
 }
 
+/// Registra opções de configuração no RetroArch via V2 (com categorias) ou fallback V0 (SET_VARIABLES).
+unsafe fn registra_opcoes_do_core() {
+    let mut versao: u32 = 0;
+    let tem_v2 = unsafe {
+        environ(
+            ENV_GET_CORE_OPTIONS_VERSION,
+            &mut versao as *mut u32 as *mut c_void,
+        )
+    } && versao >= 2;
+
+    if tem_v2 {
+        // **Defeito da fase anterior, corrigido aqui.** Cinco opções de vídeo já declaravam
+        // `category_key: c"video"`, mas este arranjo só tinha a categoria `"audio"` — a de vídeo
+        // nunca foi registrada. O frontend não trava com uma chave que não bate com nenhuma
+        // categoria, mas a opção fica sem o agrupamento certo no menu, e ninguém tinha reparado.
+        static CATEGORIAS: [RetroCoreOptionV2Category; 4] = [
+            RetroCoreOptionV2Category {
+                key: c"audio".as_ptr(),
+                desc: c"Áudio".as_ptr(),
+                info: c"Configurações de síntese e saída de som do Zeebx".as_ptr(),
+            },
+            RetroCoreOptionV2Category {
+                key: c"video".as_ptr(),
+                desc: c"Vídeo".as_ptr(),
+                info: c"Configurações de rasterização e imagem do Zeebx".as_ptr(),
+            },
+            RetroCoreOptionV2Category {
+                key: c"sistema".as_ptr(),
+                desc: c"Sistema".as_ptr(),
+                info: c"Perfis e ajustes gerais do Zeebx".as_ptr(),
+            },
+            RetroCoreOptionV2Category {
+                key: std::ptr::null(),
+                desc: std::ptr::null(),
+                info: std::ptr::null(),
+            },
+        ];
+
+        let mut opt_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        opt_values[0] = RetroCoreOptionValue {
+            value: c"auto".as_ptr(),
+            label: c"Automático (SoundFont se disponível, senão Tabela)".as_ptr(),
+        };
+        opt_values[1] = RetroCoreOptionValue {
+            value: c"timbres".as_ptr(),
+            label: c"Tabela de timbres (rápido / portáteis)".as_ptr(),
+        };
+        opt_values[2] = RetroCoreOptionValue {
+            value: c"soundfont".as_ptr(),
+            label: c"SoundFont (.sf2)".as_ptr(),
+        };
+
+        let mut vol_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        // Onze degraus de dez em dez. Uma lista de cento e um itens não se navega com o direcional.
+        const DEGRAUS: [(&CStr, &CStr); 11] = [
+            (c"100", c"100% (padrão)"),
+            (c"90", c"90%"),
+            (c"80", c"80%"),
+            (c"70", c"70%"),
+            (c"60", c"60%"),
+            (c"50", c"50%"),
+            (c"40", c"40%"),
+            (c"30", c"30%"),
+            (c"20", c"20%"),
+            (c"10", c"10%"),
+            (c"0", c"0% (mudo)"),
+        ];
+        for (i, (valor, rotulo)) in DEGRAUS.iter().enumerate() {
+            vol_values[i] = RetroCoreOptionValue {
+                value: valor.as_ptr(),
+                label: rotulo.as_ptr(),
+            };
+        }
+
+        let mut ras_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        ras_values[0] = RetroCoreOptionValue {
+            value: c"auto".as_ptr(),
+            label: c"Automático (placa quando o frontend oferece)".as_ptr(),
+        };
+        ras_values[1] = RetroCoreOptionValue {
+            value: c"software".as_ptr(),
+            label: c"Processador (compatibilidade)".as_ptr(),
+        };
+
+        let mut lig_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        lig_values[0] = RetroCoreOptionValue {
+            value: c"enabled".as_ptr(),
+            label: c"Ligada".as_ptr(),
+        };
+        lig_values[1] = RetroCoreOptionValue {
+            value: c"disabled".as_ptr(),
+            label: c"Desligada".as_ptr(),
+        };
+
+        let mut escala_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        const ESCALAS: [(&CStr, &CStr); 4] = [
+            (c"1", c"1x — sem supersampling (padrão)"),
+            (c"2", c"2x — desenha em 1280×960"),
+            (c"3", c"3x — desenha em 1920×1440"),
+            (c"4", c"4x — desenha em 2560×1920"),
+        ];
+        for (i, (valor, rotulo)) in ESCALAS.iter().enumerate() {
+            escala_values[i] = RetroCoreOptionValue {
+                value: valor.as_ptr(),
+                label: rotulo.as_ptr(),
+            };
+        }
+
+        let mut amostras_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        const AMOSTRAS: [(&CStr, &CStr); 4] = [
+            (c"1", c"Desligado"),
+            (c"2", c"2x"),
+            (c"4", c"4x"),
+            (c"8", c"8x"),
+        ];
+        for (i, (valor, rotulo)) in AMOSTRAS.iter().enumerate() {
+            amostras_values[i] = RetroCoreOptionValue {
+                value: valor.as_ptr(),
+                label: rotulo.as_ptr(),
+            };
+        }
+
+        let mut taxa_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        taxa_values[0] = RetroCoreOptionValue {
+            value: c"44100".as_ptr(),
+            label: c"44.100 Hz — com brilho (padrão)".as_ptr(),
+        };
+        taxa_values[1] = RetroCoreOptionValue {
+            value: c"22050".as_ptr(),
+            label: c"22.050 Hz — metade do custo e da memória".as_ptr(),
+        };
+
+        let mut vozes_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        const VOZES_OPC: [(&CStr, &CStr); 4] = [
+            (c"128", c"128 (padrão)"),
+            (c"96", c"96"),
+            (c"64", c"64"),
+            (c"48", c"48 — portáteis fracos"),
+        ];
+        for (i, (valor, rotulo)) in VOZES_OPC.iter().enumerate() {
+            vozes_values[i] = RetroCoreOptionValue {
+                value: valor.as_ptr(),
+                label: rotulo.as_ptr(),
+            };
+        }
+
+        let mut cache_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        const CACHES: [(&CStr, &CStr); 5] = [
+            (c"24", c"24 MiB (padrão)"),
+            (c"48", c"48 MiB"),
+            (c"16", c"16 MiB"),
+            (c"8", c"8 MiB — portáteis fracos"),
+            (c"4", c"4 MiB"),
+        ];
+        for (i, (valor, rotulo)) in CACHES.iter().enumerate() {
+            cache_values[i] = RetroCoreOptionValue {
+                value: valor.as_ptr(),
+                label: rotulo.as_ptr(),
+            };
+        }
+
+        let mut perfil_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        perfil_values[0] = RetroCoreOptionValue {
+            value: c"padrao".as_ptr(),
+            label: c"Padrão".as_ptr(),
+        };
+        perfil_values[1] = RetroCoreOptionValue {
+            value: c"portatil".as_ptr(),
+            label: c"Portátil (aparelho de mão fraco)".as_ptr(),
+        };
+
+        let mut limite_fps_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        limite_fps_values[0] = RetroCoreOptionValue {
+            value: c"60".as_ptr(),
+            label: c"60 FPS — velocidade do console (padrão)".as_ptr(),
+        };
+        limite_fps_values[1] = RetroCoreOptionValue {
+            value: c"30".as_ptr(),
+            label: c"30 FPS — velocidade normal, metade da imagem".as_ptr(),
+        };
+        limite_fps_values[2] = RetroCoreOptionValue {
+            value: c"desligado".as_ptr(),
+            label: c"Desligado — boost/unlimited".as_ptr(),
+        };
+
+        let mut frameskip_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        const FRAMESKIP_OPC: [(&CStr, &CStr); 8] = [
+            (c"desligado", c"Desligado (padrão)"),
+            (c"automatico", c"Automático (pelo buffer de áudio)"),
+            (c"1", c"Fixo 1 — metade dos quadros"),
+            (c"2", c"Fixo 2 — um terço dos quadros"),
+            (c"3", c"Fixo 3 — um quarto dos quadros"),
+            (c"4", c"Fixo 4 — um quinto dos quadros"),
+            (c"5", c"Fixo 5 — um sexto dos quadros"),
+            (c"6", c"Fixo 6 — um sétimo dos quadros"),
+        ];
+        for (i, (valor, rotulo)) in FRAMESKIP_OPC.iter().enumerate() {
+            frameskip_values[i] = RetroCoreOptionValue {
+                value: valor.as_ptr(),
+                label: rotulo.as_ptr(),
+            };
+        }
+
+        let definicoes: [RetroCoreOptionV2Definition; 14] = [
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_midi_backend".as_ptr(),
+                desc: c"Sintetizador MIDI (reinício)".as_ptr(),
+                desc_categorized: c"Sintetizador MIDI (reinício)".as_ptr(),
+                info: c"Motor de reprodução MIDI: Auto usa SoundFont se instalado na pasta do sistema; Tabela de timbres inicia instantaneamente sem renderização pesada (recomendado para portáteis fracos como H700). Recarregue o jogo para aplicar.".as_ptr(),
+                info_categorized: c"Auto usa SoundFont se presente; Tabela inicia instantaneamente sem carga pesada de SF2. Recarregue o jogo para aplicar.".as_ptr(),
+                category_key: c"audio".as_ptr(),
+                values: opt_values,
+                default_value: c"auto".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_volume".as_ptr(),
+                desc: c"Volume".as_ptr(),
+                desc_categorized: c"Volume".as_ptr(),
+                info: c"Volume mestre do console, de 0 a 100%. Vale na hora, sem recarregar o jogo.".as_ptr(),
+                info_categorized: c"Volume mestre do console. Vale na hora.".as_ptr(),
+                category_key: c"audio".as_ptr(),
+                values: vol_values,
+                default_value: c"100".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_perfil".as_ptr(),
+                desc: c"Perfil".as_ptr(),
+                desc_categorized: c"Perfil".as_ptr(),
+                info: c"Portátil aplica de uma vez o que o aparelho de mão fraco (RG40XX-H, muOS) precisa: tabela de timbres em vez de SoundFont, taxa e vozes do MIDI reduzidas, cache de som menor e sem supersampling no 3D. Enquanto ativo, ignora as opções individuais que ele cobre (mas não volume, névoa nem rasterizador, que continuam por conta própria). O sintetizador MIDI muda ao recarregar o conteúdo; o resto vale sem recarregar.".as_ptr(),
+                info_categorized: c"Portátil junta os ajustes de desempenho para aparelho de mão fraco. Ignora as opções individuais que cobre.".as_ptr(),
+                category_key: c"sistema".as_ptr(),
+                values: perfil_values,
+                default_value: c"padrao".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_soundfont_taxa".as_ptr(),
+                desc: c"Taxa do SoundFont".as_ptr(),
+                desc_categorized: c"Taxa do SoundFont".as_ptr(),
+                info: c"Em que taxa a música MIDI é sintetizada pelo banco de amostras. 44.100 Hz preserva o brilho das amostras do .sf2, que sao gravadas nessa taxa. 22.050 Hz custa metade do tempo e da memória, e é o que serve a portátil fraco. Vale da próxima música em diante.".as_ptr(),
+                info_categorized: c"44.100 Hz preserva o brilho; 22.050 Hz custa metade. Vale da próxima música em diante.".as_ptr(),
+                category_key: c"audio".as_ptr(),
+                values: taxa_values,
+                default_value: c"44100".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_midi_vozes".as_ptr(),
+                desc: c"Vozes do MIDI".as_ptr(),
+                desc_categorized: c"Vozes".as_ptr(),
+                info: c"Quantas notas podem soar ao mesmo tempo no banco de amostras. Menos vozes custa menos processador e rouba nota em trecho denso, que soa como nota que some. Vale da próxima música em diante.".as_ptr(),
+                info_categorized: c"Notas simultâneas no banco. Menos custa menos e rouba nota.".as_ptr(),
+                category_key: c"audio".as_ptr(),
+                values: vozes_values,
+                default_value: c"128".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_cache_de_som_mb".as_ptr(),
+                desc: c"Cache de som".as_ptr(),
+                desc_categorized: c"Cache de som".as_ptr(),
+                info: c"Quanta memória guardar de som já decodificado. Menos memória faz o emulador esquecer música tocada e sintetizá-la de novo quando ela voltar, o que custa uma pausa; mais memória evita a pausa e ocupa RAM. Vale do próximo descarte em diante.".as_ptr(),
+                info_categorized: c"Memória de som já decodificado. Menos custa pausa; mais ocupa RAM.".as_ptr(),
+                category_key: c"audio".as_ptr(),
+                values: cache_values,
+                default_value: c"24".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_rasterizador".as_ptr(),
+                desc: c"Rasterizador (reinício)".as_ptr(),
+                desc_categorized: c"Rasterizador (reinício)".as_ptr(),
+                info: c"Quem preenche o 3D: Automático usa a placa quando o frontend oferece render em hardware; Processador força o caminho de software. Use Processador quando a imagem sair errada ou preta com driver de vídeo problemático. Recarregue o jogo para aplicar.".as_ptr(),
+                info_categorized: c"Automático usa a placa quando há render em hardware; Processador força software. Recarregue o jogo para aplicar.".as_ptr(),
+                category_key: c"video".as_ptr(),
+                values: ras_values,
+                default_value: c"auto".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_resolucao_interna".as_ptr(),
+                desc: c"Resolução interna do 3D".as_ptr(),
+                desc_categorized: c"Resolução interna".as_ptr(),
+                info: c"Desenha o 3D numa resolução maior e reduz de volta para os 640x480 do console, o que suaviza a borda do polígono (supersampling). O quadro entregue ao frontend continua 640x480: shader e proporção nao mudam. Só tem efeito com o rasterizador de placa, e custa memória e preenchimento.".as_ptr(),
+                info_categorized: c"Desenha o 3D maior e reduz para 640x480, suavizando a borda. Só na placa.".as_ptr(),
+                category_key: c"video".as_ptr(),
+                values: escala_values,
+                default_value: c"1".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_antialias".as_ptr(),
+                desc: c"Antisserrilhado".as_ptr(),
+                desc_categorized: c"Antisserrilhado".as_ptr(),
+                info: c"Amostras por pixel no 3D preenchido pela placa. Suaviza a borda do polígono e custa preenchimento. Sem efeito no rasterizador de processador.".as_ptr(),
+                info_categorized: c"Amostras por pixel no 3D da placa. Sem efeito no processador.".as_ptr(),
+                category_key: c"video".as_ptr(),
+                values: amostras_values,
+                default_value: c"1".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_filtro_anisotropico".as_ptr(),
+                desc: c"Filtro anisotrópico".as_ptr(),
+                desc_categorized: c"Filtro anisotrópico".as_ptr(),
+                info: c"Nitidez da textura vista de lado, no 3D preenchido pela placa. Sem efeito no rasterizador de processador.".as_ptr(),
+                info_categorized: c"Nitidez da textura vista de lado. Só na placa.".as_ptr(),
+                category_key: c"video".as_ptr(),
+                values: amostras_values,
+                default_value: c"1".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_neblina".as_ptr(),
+                desc: c"Névoa".as_ptr(),
+                desc_categorized: c"Névoa".as_ptr(),
+                info: c"A névoa que o jogo pede. Desligar deixa o cenário distante visível, o que alguns preferem; é escolha de quem joga, e não correção. Vale na hora.".as_ptr(),
+                info_categorized: c"A névoa que o jogo pede. Vale na hora.".as_ptr(),
+                category_key: c"video".as_ptr(),
+                values: lig_values,
+                default_value: c"enabled".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_limite_fps".as_ptr(),
+                desc: c"Limite de velocidade".as_ptr(),
+                desc_categorized: c"Limite de velocidade".as_ptr(),
+                info: c"Segura a lógica do jogo contra o relógio real, como o console faria. Use 60 FPS para impedir que títulos leves (RE4, Zeebo Extreme) corram rápido demais; 30 FPS mantém a velocidade lógica normal e mostra um em cada dois quadros. Desligado libera boost, útil se quiser acelerar jogos como Need for Speed. Vale na hora.".as_ptr(),
+                info_categorized: c"60 impede jogo rápido demais; 30 mantém a lógica e reduz imagem; Desligado libera boost. Vale na hora.".as_ptr(),
+                category_key: c"sistema".as_ptr(),
+                values: limite_fps_values,
+                default_value: c"60".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_frameskip".as_ptr(),
+                desc: c"Pular quadros".as_ptr(),
+                desc_categorized: c"Pular quadros".as_ptr(),
+                info: c"Pula o desenho 3D de alguns quadros para aliviar processador fraco, sem mudar a velocidade do jogo — a lógica roda igual, só o desenho some por um instante. Fixo pula sempre a mesma proporção; Automático só pula quando o frontend avisa que o áudio está prestes a estourar. Vale na hora.".as_ptr(),
+                info_categorized: c"Pula o desenho para aliviar processador fraco, sem mudar a velocidade do jogo. Vale na hora.".as_ptr(),
+                category_key: c"video".as_ptr(),
+                values: frameskip_values,
+                default_value: c"desligado".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: std::ptr::null(),
+                desc: std::ptr::null(),
+                desc_categorized: std::ptr::null(),
+                info: std::ptr::null(),
+                info_categorized: std::ptr::null(),
+                category_key: std::ptr::null(),
+                values: [RetroCoreOptionValue { value: std::ptr::null(), label: std::ptr::null() }; 128],
+                default_value: std::ptr::null(),
+            },
+        ];
+
+        let opcoes_v2 = RetroCoreOptionsV2 {
+            categories: CATEGORIAS.as_ptr(),
+            definitions: definicoes.as_ptr(),
+        };
+
+        unsafe {
+            environ(
+                ENV_SET_CORE_OPTIONS_V2,
+                &opcoes_v2 as *const _ as *mut c_void,
+            );
+        }
+    } else {
+        static VARIAVEIS: [RetroVariable; 14] = [
+            RetroVariable {
+                key: c"zeebx_midi_backend".as_ptr(),
+                value: c"Sintetizador MIDI (reinício); auto|timbres|soundfont".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_volume".as_ptr(),
+                value: c"Volume; 100|90|80|70|60|50|40|30|20|10|0".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_perfil".as_ptr(),
+                value: c"Perfil; padrao|portatil".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_soundfont_taxa".as_ptr(),
+                value: c"Taxa do SoundFont; 44100|22050".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_midi_vozes".as_ptr(),
+                value: c"Vozes do MIDI; 128|96|64|48".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_cache_de_som_mb".as_ptr(),
+                value: c"Cache de som (MiB); 24|48|16|8|4".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_rasterizador".as_ptr(),
+                value: c"Rasterizador (reinício); auto|software".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_resolucao_interna".as_ptr(),
+                value: c"Resolução interna do 3D; 1|2|3|4".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_antialias".as_ptr(),
+                value: c"Antisserrilhado; 1|2|4|8".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_filtro_anisotropico".as_ptr(),
+                value: c"Filtro anisotrópico; 1|2|4|8".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_neblina".as_ptr(),
+                value: c"Névoa; enabled|disabled".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_limite_fps".as_ptr(),
+                value: c"Limite de velocidade; 60|30|desligado".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_frameskip".as_ptr(),
+                value: c"Pular quadros; desligado|automatico|1|2|3|4|5|6".as_ptr(),
+            },
+            RetroVariable {
+                key: std::ptr::null(),
+                value: std::ptr::null(),
+            },
+        ];
+        unsafe {
+            environ(
+                ENV_SET_VARIABLES,
+                VARIAVEIS.as_ptr() as *mut c_void,
+            );
+        }
+    }
+}
+
+/// Consulta a política de síntese MIDI configurada no frontend RetroArch.
+unsafe fn le_opcao_midi_backend() -> zeebx::audio::MidiBackend {
+    let mut consulta = RetroVariable {
+        key: c"zeebx_midi_backend".as_ptr(),
+        value: std::ptr::null(),
+    };
+    // SAFETY: chamada ao callback environ e leitura de string C válida entregue pelo frontend.
+    let ok = unsafe {
+        environ(ENV_GET_VARIABLE, &mut consulta as *mut _ as *mut c_void) && !consulta.value.is_null()
+    };
+    if ok {
+        let val_str = unsafe { CStr::from_ptr(consulta.value) }.to_string_lossy();
+        if let Ok(backend) = val_str.parse::<zeebx::audio::MidiBackend>() {
+            return backend;
+        }
+    }
+    zeebx::audio::MidiBackend::Auto
+}
+
+/// Lê o valor de uma opção do core como texto. `None` quando o frontend não tem a chave.
+///
+/// Existe para não repetir o mesmo bloco de `unsafe` a cada opção: a parte insegura é sempre a
+/// mesma — montar a consulta, chamar o frontend, conferir que o ponteiro voltou não nulo — e
+/// repeti-la por chave é como um `unsafe` deixa de ser revisado.
+unsafe fn le_opcao(chave: &CStr) -> Option<String> {
+    let mut consulta = RetroVariable {
+        key: chave.as_ptr(),
+        value: std::ptr::null(),
+    };
+    // SAFETY: chamada ao callback environ e leitura de string C válida entregue pelo frontend.
+    let ok = unsafe {
+        environ(ENV_GET_VARIABLE, &mut consulta as *mut _ as *mut c_void)
+            && !consulta.value.is_null()
+    };
+    if !ok {
+        return None;
+    }
+    Some(unsafe { CStr::from_ptr(consulta.value) }.to_string_lossy().into_owned())
+}
+
+/// Lê o volume mestre escolhido nas opções, de 0,0 a 1,0.
+///
+/// Devolve `None` quando a chave não existe ou não é número: o frontend pode ser antigo, e um
+/// valor estragado não pode virar silêncio sem aviso — quem chama mantém o que já tinha.
+unsafe fn le_opcao_volume() -> Option<f32> {
+    volume_de_texto(&unsafe { le_opcao(c"zeebx_volume") }?)
+}
+
+/// Lê um número inteiro de uma opção, preso à faixa que o motor aceita.
+fn numero_de_texto(texto: &str, minimo: usize, maximo: usize) -> Option<usize> {
+    let valor: usize = texto.trim().parse().ok()?;
+    Some(valor.clamp(minimo, maximo))
+}
+
+/// A política de frameskip do core.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Frameskip {
+    #[default]
+    Desligado,
+    /// Pula `n` quadros a cada `n + 1` — `1` é metade, `2` é um terço, e por aí adiante.
+    Fixo(u32),
+    /// Decide por quadro, pelo aviso do frontend sobre o próprio buffer de áudio dele.
+    Automatico,
+}
+
+impl Frameskip {
+    /// Lê o texto declarado na opção. `None` para o que não é nenhum dos valores conhecidos —
+    /// e quem chama mantém o modo anterior, como as outras opções.
+    fn de_texto(texto: &str) -> Option<Self> {
+        match texto.trim().to_ascii_lowercase().as_str() {
+            "desligado" => Some(Self::Desligado),
+            "automatico" => Some(Self::Automatico),
+            outro => outro.parse::<u32>().ok().filter(|&n| (1..=6).contains(&n)).map(Self::Fixo),
+        }
+    }
+}
+
+/// O teto de velocidade do jogo, separado de frameskip.
+///
+/// **60 não quer dizer "chame retro_run 60 vezes"** — isso já é decisão do frontend. Quer dizer
+/// "não deixe o relógio virtual passar do relógio real", que é o freio que o desktop já usa para
+/// impedir Crash/Zeebo Extreme/NFS de correrem acima da velocidade do console.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum LimiteFps {
+    /// Sem freio: deixa quem quer boost (Need for Speed) usar o que o host aguenta.
+    Desligado,
+    /// Velocidade lógica real do console e apresentação normal.
+    #[default]
+    Sessenta,
+    /// Velocidade lógica real do console, mas apresenta só um em cada dois quadros.
+    Trinta,
+}
+
+impl LimiteFps {
+    fn de_texto(texto: &str) -> Option<Self> {
+        match texto.trim() {
+            "desligado" => Some(Self::Desligado),
+            "60" => Some(Self::Sessenta),
+            "30" => Some(Self::Trinta),
+            _ => None,
+        }
+    }
+
+    fn limita_velocidade(self) -> bool {
+        !matches!(self, Self::Desligado)
+    }
+}
+
+/// O que o `SET_AUDIO_BUFFER_STATUS_CALLBACK` avisou da última vez.
+///
+/// Global porque o callback do frontend não tem como devolver contexto nenhum — é só a
+/// assinatura que a ABI do C permite. Ver [`ENV_SET_AUDIO_BUFFER_STATUS_CALLBACK`].
+static AUDIO_ESTOURO_PROVAVEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `retro_audio_buffer_status_callback_t`: o frontend chama isto **antes** de cada `retro_run`,
+/// dizendo se o buffer de áudio dele está prestes a estourar.
+///
+/// Guarda só `underrun_likely`, que é a própria `libretro.h` quem diz o que fazer com ele: *"se
+/// verdadeiro, o core deveria tentar pular quadro"*. A ocupação em si não muda a decisão — o
+/// frontend já fez a conta e decidiu que **agora** é a hora de pular.
+unsafe extern "C" fn audio_buffer_status(active: bool, _occupancy: u32, underrun_likely: bool) {
+    // Sem áudio no frontend não há buffer para proteger. Guardar um `true` velho nesse caso faria
+    // Automático pular desenho para sempre depois que o usuário desliga e liga o áudio no menu.
+    AUDIO_ESTOURO_PROVAVEL.store(active && underrun_likely, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Pede ao frontend para avisar sobre o buffer de áudio, e mais folga nele para o aviso chegar a
+/// tempo de o core reagir.
+///
+/// **Uma vez só**, e não a cada quadro — ver o campo `frameskip_callback_pedido`. Pedir de novo
+/// não muda a resposta, e a documentação do `SET_MINIMUM_AUDIO_LATENCY` pede moderação.
+fn pede_callback_de_audio() -> bool {
+    let cb = RetroAudioBufferStatusCallback {
+        callback: Some(audio_buffer_status),
+    };
+    let aceito = unsafe {
+        environ(
+            ENV_SET_AUDIO_BUFFER_STATUS_CALLBACK,
+            &cb as *const _ as *mut c_void,
+        )
+    };
+    if aceito {
+        log("Zeebx: frameskip automático pediu o aviso de buffer de áudio ao frontend");
+        // Seis quadros a 60 Hz: a faixa que a própria `libretro.h` recomenda (seis a oito) para
+        // o aviso de estouro chegar com folga suficiente para o core reagir a tempo.
+        let latencia_ms: u32 = 96;
+        unsafe {
+            environ(
+                ENV_SET_MINIMUM_AUDIO_LATENCY,
+                &latencia_ms as *const u32 as *mut c_void,
+            );
+        }
+    } else {
+        // **Degrada sozinho, sem quebrar nada.** Sem o callback, `AUDIO_ESTOURO_PROVAVEL` nunca
+        // muda de `false`, e o modo Automático se comporta como Desligado — nunca pula. É pior
+        // que funcionar, mas melhor que um frontend velho impedir o core de rodar.
+        aviso("Zeebx: frontend não aceita o aviso de buffer de áudio; frameskip automático não vai pular quadro nenhum");
+    }
+    aceito
+}
+
+/// Retira o callback e devolve ao frontend a latência que ele já tinha.
+///
+/// Isto não é limpeza estética: o ponteiro do callback mora no frontend. Se ficar apontando para
+/// esta `.so` depois de `retro_deinit`, um frontend que entregar áudio tarde pode chamar memória
+/// que o carregador já descarregou. E 96 ms fazem sentido só com Automático ligado — deixar a
+/// folga pedida depois de o usuário desligar o modo troca latência por nada.
+fn retira_callback_de_audio() {
+    let vazio = RetroAudioBufferStatusCallback { callback: None };
+    unsafe {
+        environ(
+            ENV_SET_AUDIO_BUFFER_STATUS_CALLBACK,
+            &vazio as *const _ as *mut c_void,
+        );
+    }
+    let padrao: u32 = 0;
+    unsafe {
+        environ(
+            ENV_SET_MINIMUM_AUDIO_LATENCY,
+            &padrao as *const u32 as *mut c_void,
+        );
+    }
+    AUDIO_ESTOURO_PROVAVEL.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Se o texto da opção de perfil pede o perfil Portátil.
+///
+/// Extraída porque a checagem acontece em dois lugares — o nascimento da sessão, para o
+/// sintetizador MIDI, e a releitura a quente, para o resto — e as duas tinham a mesma
+/// comparação escrita de novo. Duas cópias divergem com o tempo; uma função não.
+fn perfil_e_portatil(texto: Option<&str>) -> bool {
+    texto.is_some_and(|texto| texto.trim().eq_ignore_ascii_case("portatil"))
+}
+
+/// Lê um interruptor. A convenção de valor é `enabled`/`disabled`, que é a do ecossistema.
+fn ligado_de_texto(texto: &str) -> Option<bool> {
+    match texto.trim().to_ascii_lowercase().as_str() {
+        "enabled" | "ligado" | "on" | "true" | "1" => Some(true),
+        "disabled" | "desligado" | "off" | "false" | "0" => Some(false),
+        _ => None,
+    }
+}
+
+/// Aplica, de uma vez, **todas** as opções que valem sem recriar a sessão.
+///
+/// **De uma vez é a parte que importa.** O aviso do frontend (ver [`opcoes_mudaram`]) é consumido
+/// na primeira pergunta: se cada opção fosse relida no seu próprio `if`, a primeira comeria o
+/// aviso e as outras só mudariam no próximo mexe-mexe do usuário — um defeito que aparece como
+/// "às vezes não pega".
+///
+/// Cada opção ausente ou estragada mantém o que já havia, em vez de voltar ao padrão: um frontend
+/// antigo, que não conhece a chave, não pode desfazer a escolha de quem configurou.
+fn aplica_opcoes_quentes(estado: &mut Core) {
+    // **O modo é lido aqui; a decisão de pular ou não é por quadro**, em `retro_run`. Ver
+    // [`Frameskip`]: reler o modo só quando algo mudou é barato, mas a decisão em si (que quadro
+    // pular) precisa de um contador ou do aviso do frontend, e os dois valem a cada quadro, não
+    // só quando o usuário mexe no menu.
+    if let Some(limite) = unsafe { le_opcao(c"zeebx_limite_fps") }
+        .as_deref()
+        .and_then(LimiteFps::de_texto)
+    {
+        if limite != estado.limite_fps {
+            // A taxa de apresentação de 30 não pode herdar a paridade do limite anterior.
+            estado.limite_fps_contador = 0;
+        }
+        estado.limite_fps = limite;
+    }
+
+    if let Some(modo) = unsafe { le_opcao(c"zeebx_frameskip") }
+        .as_deref()
+        .and_then(Frameskip::de_texto)
+    {
+        let antes = estado.frameskip;
+        if modo != antes {
+            // Mudar razão fixa no meio não pode herdar fase do modo anterior: 1/2 virar 1/7 no
+            // quinto quadro e pular logo o primeiro é surpresa sem ganho.
+            estado.frameskip_contador = 0;
+        }
+        // O registro do Automático acontece no primeiro `retro_run`, porque
+        // SET_MINIMUM_AUDIO_LATENCY só é válido dentro dessa chamada. Aqui, que também roda em
+        // retro_load_game, apenas guardamos a política. Sair de Automático pode limpar na hora.
+        if modo != Frameskip::Automatico && antes == Frameskip::Automatico && estado.frameskip_callback_pedido {
+            retira_callback_de_audio();
+            estado.frameskip_callback_pedido = false;
+        }
+        estado.frameskip = modo;
+    }
+    if let Some(volume) = unsafe { le_opcao_volume() } {
+        estado.mixer.set_master(volume, false);
+    }
+    if let Some(neblina) = unsafe { le_opcao(c"zeebx_neblina") }.as_deref().and_then(ligado_de_texto) {
+        estado.session.define_neblina(neblina);
+    }
+    // **O perfil "Portátil" ganha das opções individuais que ele cobre, quando ativo.** Volume e
+    // névoa ficam de fora de propósito: são gosto de quem joga, não custo de processador ou
+    // memória, e o perfil é sobre desempenho. O rasterizador também fica de fora — ele só muda ao
+    // recarregar, e forçar processador tiraria a placa de quem tem uma GPU capaz; a opção separada
+    // continua sendo o escape para quem precisa dela.
+    let perfil_portatil = perfil_e_portatil(unsafe { le_opcao(c"zeebx_perfil") }.as_deref());
+
+    let escala = if perfil_portatil {
+        Some(1)
+    } else {
+        unsafe { le_opcao(c"zeebx_resolucao_interna") }
+            .as_deref()
+            .and_then(|texto| numero_de_texto(texto, 1, 8))
+    };
+    if let Some(escala) = escala {
+        estado.session.define_resolucao_interna(escala);
+    }
+
+    // **Áudio e memória valem para o que vier depois.** A música já sintetizada não muda de taxa
+    // e o som já guardado não encolhe: estas três valem da próxima música e do próximo descarte em
+    // diante, e é por isso que não pedem reinício — mas também por isso o efeito não é imediato
+    // como o do volume, e os rótulos dizem isso.
+    let taxa = if perfil_portatil {
+        Some(zeebx::audio::midi::RATE)
+    } else {
+        unsafe { le_opcao(c"zeebx_soundfont_taxa") }
+            .as_deref()
+            .and_then(|texto| texto.trim().parse::<u32>().ok())
+    };
+    if let Some(taxa) = taxa {
+        zeebx::audio::soundfont::define_taxa(taxa);
+    }
+    let vozes = if perfil_portatil {
+        Some(48)
+    } else {
+        unsafe { le_opcao(c"zeebx_midi_vozes") }
+            .as_deref()
+            .and_then(|texto| numero_de_texto(texto, 8, 256))
+    };
+    if let Some(vozes) = vozes {
+        zeebx::audio::soundfont::define_vozes(vozes);
+    }
+    let mib = if perfil_portatil {
+        Some(8)
+    } else {
+        unsafe { le_opcao(c"zeebx_cache_de_som_mb") }
+            .as_deref()
+            .and_then(|texto| numero_de_texto(texto, 1, 256))
+    };
+    if let Some(mib) = mib {
+        zeebx::machine::define_teto_do_cache_de_som(mib * 1024 * 1024);
+    }
+
+    // **As duas melhorias entram na mesma chamada**, porque a API do motor as recebe juntas:
+    // aplicar uma sozinha apagaria a outra com o valor de antes.
+    let (antialias, anisotropico) = if perfil_portatil {
+        (Some(1), Some(1))
+    } else {
+        (
+            unsafe { le_opcao(c"zeebx_antialias") }
+                .as_deref()
+                .and_then(|texto| numero_de_texto(texto, 1, 16)),
+            unsafe { le_opcao(c"zeebx_filtro_anisotropico") }
+                .as_deref()
+                .and_then(|texto| numero_de_texto(texto, 1, 16)),
+        )
+    };
+    if antialias.is_some() || anisotropico.is_some() {
+        estado
+            .session
+            .define_melhorias(antialias.unwrap_or(1), anisotropico.unwrap_or(1));
+    }
+}
+
+/// Converte o texto da opção de volume (por cento) no fator de 0,0 a 1,0 do mixer.
+///
+/// Está separado da leitura do frontend de propósito: a conversão é a parte que pode errar — o
+/// valor vem de um arquivo que o usuário edita à mão — e ela só é testável se não exigir um
+/// callback de frontend para ser chamada.
+///
+/// `None` para o que não é número, e **não** zero: um `.opt` estragado não pode virar silêncio,
+/// porque silêncio parece defeito do emulador e não erro de configuração.
+fn volume_de_texto(texto: &str) -> Option<f32> {
+    let por_cento: f32 = texto.trim().parse().ok()?;
+    if !por_cento.is_finite() {
+        return None;
+    }
+    Some((por_cento / 100.0).clamp(0.0, 1.0))
+}
+
+/// O frontend mexeu em alguma opção desde a última pergunta?
+///
+/// Ver [`ENV_GET_VARIABLE_UPDATE`]. Perguntar isto uma vez por quadro é barato; reler cada chave
+/// por quadro não é.
+fn opcoes_mudaram() -> bool {
+    let mut mudou = false;
+    // SAFETY: o frontend escreve um `bool` no ponteiro entregue.
+    unsafe {
+        environ(
+            ENV_GET_VARIABLE_UPDATE,
+            &mut mudou as *mut bool as *mut c_void,
+        )
+    };
+    mudou
+}
+
 /// `retro_api_version`.
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_api_version() -> u32 {
@@ -862,6 +1782,7 @@ pub unsafe extern "C" fn retro_set_environment(callback: Option<EnvironmentFn>) 
     unsafe {
         registra_controladores();
         registra_botoes();
+        registra_opcoes_do_core();
     }
 }
 
@@ -905,12 +1826,43 @@ pub extern "C" fn retro_set_audio_sample(_callback: Option<unsafe extern "C" fn(
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_init() {}
 
+/// Limpa callbacks, contexto de vídeo e o conteúdo carregado.
+fn limpa_estado_do_frontend() {
+    // Retira o estado Rust primeiro, mas chama o frontend só depois de soltar o mutex: callbacks
+    // do frontend podem reentrar no core.
+    let tinha_audio = if let Ok(mut guard) = core().lock() {
+        let tinha = guard
+            .as_ref()
+            .is_some_and(|EstadoDoCore(c)| c.frameskip_callback_pedido);
+        *guard = None;
+        tinha
+    } else {
+        false
+    };
+    if tinha_audio {
+        retira_callback_de_audio();
+    }
+    let teclado = RetroKeyboardCallback { callback: None };
+    unsafe {
+        environ(
+            ENV_SET_KEYBOARD_CALLBACK,
+            &teclado as *const RetroKeyboardCallback as *mut c_void,
+        );
+    }
+    if let Ok(mut placa) = PLACA.lock() {
+        *placa = None;
+    }
+    if let Ok(mut oferta) = OFERTA_DE_PLACA.lock() {
+        *oferta = None;
+    }
+    CONTEXTO_PRONTO.store(false, std::sync::atomic::Ordering::Relaxed);
+    PERDEU_A_PLACA.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// `retro_deinit`.
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_deinit() {
-    if let Ok(mut guard) = core().lock() {
-        *guard = None;
-    }
+    limpa_estado_do_frontend();
 }
 
 /// `retro_get_system_info`.
@@ -1085,23 +2037,46 @@ unsafe fn carrega(
     // errado".
     log(&zeebx::audio::soundfont::relato(&storage.device));
 
+    // **O perfil vem antes das opções que ele substitui.** "Portátil" existe porque dez botões
+    // soltos não é o que um aparelho de mão precisa — é um único ajuste que junta o que a
+    // investigação em ARM fraco (RG40XX-H) mediu como o que mais custa: sintetizador pesado,
+    // banco de amostras em taxa alta, muitas vozes, cache grande, supersampling.
+    let perfil_portatil = perfil_e_portatil(unsafe { le_opcao(c"zeebx_perfil") }.as_deref());
+    let midi_backend = if perfil_portatil {
+        zeebx::audio::MidiBackend::Timbres
+    } else {
+        unsafe { le_opcao_midi_backend() }
+    };
+    log(&format!("Zeebx: sintetizador MIDI selecionado: {:?}{}", midi_backend, if perfil_portatil { " (perfil Portátil)" } else { "" }));
+
     // **Pede o contexto de placa ao frontend, se ele tiver um.** Quem aceita é ele; nós só usamos
     // mais tarde, quando o `context_reset` chegar. Recusar aqui não muda nada: a sessão de
     // software já nasceu e é ela que roda até prova em contrário.
-    pede_o_contexto_de_placa();
+    //
+    // **Salvo quando o usuário pediu software.** Este é o único escape para um driver de GL que
+    // aceita o contexto e desenha errado — ou não desenha: nesse caso o recuo automático não
+    // dispara, porque do ponto de vista do core nada falhou. Sem a opção, o único remédio é trocar
+    // o frontend ou o aparelho.
+    let rasterizador = unsafe { le_opcao(c"zeebx_rasterizador") }.unwrap_or_default();
+    if rasterizador.trim().eq_ignore_ascii_case("software") {
+        log("Zeebx: rasterizador fixado no processador pela opção do core; nenhum contexto de placa será pedido");
+    } else {
+        pede_o_contexto_de_placa();
+    }
 
-    let mut session = Session::start_software_with_storage_installed(
+    let mut session = Session::start_software_with_storage_installed_policy(
         std::path::Path::new(caminho),
         portas,
         ZWheel::default(),
         storage,
         &instalados,
+        midi_backend,
     )?;
     let mixer = session.grava_audio(SAMPLE_RATE);
-    // **1x e proporção nativa, sempre.** O core entrega o quadro do console em 640×480, sem
-    // resolução interna ampliada e sem esticar: quem ajusta shader precisa de uma fonte previsível,
-    // e o upscale é papel do frontend.
-    session.define_resolucao_interna(1);
+    // **Proporção nativa, sempre.** O core entrega o quadro do console em 640×480 sem esticar:
+    // quem ajusta shader precisa de uma fonte previsível, e o upscale é papel do frontend. A
+    // resolução interna deixou de ser fixada aqui porque virou opção — ver
+    // [`aplica_opcoes_quentes`], que roda logo depois que o estado existe.
     session.define_proporcao(None);
     if !jogos.is_empty() {
         session.set_installed_applets(
@@ -1141,8 +2116,15 @@ unsafe fn carrega(
         false => None,
     };
 
-    Ok(Core {
+    let mut core = Core {
         placa_ligada: false,
+        frameskip: Frameskip::Desligado,
+        frameskip_contador: 0,
+        frameskip_callback_pedido: false,
+        frameskip_leitura_pixels_avisada: false,
+        limite_fps: LimiteFps::Sessenta,
+        limite_fps_contador: 0,
+        limite_fps_duplica: false,
         session,
         mixer,
         portas,
@@ -1159,11 +2141,17 @@ unsafe fn carrega(
         ultimo_relogio_ms: 0,
         audio_pendente: Vec::new(),
         avisou_tamanho: false,
+        midi_backend,
         select_antes: false,
         pad_antes: [Pad::default(); zeebx::input::PORTAS],
         quadros_apos_parar: 0,
         parou: false,
-    })
+    };
+    // As opções valem desde o primeiro quadro. É a **mesma** função do caminho quente de propósito:
+    // duas cópias da aplicação divergem com o tempo, e a que roda menos é a que fica errada sem
+    // ninguém ver.
+    aplica_opcoes_quentes(&mut core);
+    Ok(core)
 }
 
 /// A biblioteca de jogos ao lado do conteúdo: `(pasta, [(ClassID, o que carregar)])`.
@@ -1227,7 +2215,7 @@ fn troca_para(estado: &mut Core, caminho: &Path, aberto_pela_z_wheel: bool) -> R
     // sintoma seria "o render em hardware funciona até o primeiro jogo".
     let instalados = instalados_da_biblioteca(&estado.jogos);
     let mut session = match placa() {
-        Some(contexto) => Session::start_with_storage_installed(
+        Some(contexto) => Session::start_with_storage_installed_policy(
             caminho,
             estado.portas,
             None,
@@ -1236,20 +2224,25 @@ fn troca_para(estado: &mut Core, caminho: &Path, aberto_pela_z_wheel: bool) -> R
             ZWheel::default(),
             &estado.storage,
             &instalados,
+            estado.midi_backend,
         )?,
-        None => Session::start_software_with_storage_installed(
+        None => Session::start_software_with_storage_installed_policy(
             caminho,
             estado.portas,
             ZWheel::default(),
             &estado.storage,
             &instalados,
+            estado.midi_backend,
         )?,
     };
     let mixer = session.grava_audio(SAMPLE_RATE);
-    session.define_resolucao_interna(1);
     session.define_proporcao(None);
     estado.session = session;
     estado.mixer = mixer;
+    // As opções valem desde o primeiro quadro, e não só depois que o usuário mexer no menu de
+    // novo. É a **mesma** função do caminho quente: duas cópias da aplicação divergem com o tempo,
+    // e a que roda menos é a que fica errada sem ninguém ver.
+    aplica_opcoes_quentes(estado);
     estado.path = caminho.to_path_buf();
     estado.aberto_pela_z_wheel = aberto_pela_z_wheel;
     estado.parou = false;
@@ -1290,6 +2283,58 @@ pub extern "C" fn retro_run() {
         // chama o `context_reset`, que acontece depois do `retro_load_game`; aqui é o primeiro
         // lugar em que ele pode estar pronto. Recriar a sessão custa um reinício que ninguém vê:
         // nenhum quadro foi entregue ainda.
+        // **As opções que dá para aplicar a quente.** Ver [`opcoes_mudaram`]: o frontend avisa uma
+        // vez, e só então vale reler — e a releitura trata todas juntas, porque o aviso é
+        // consumido na primeira pergunta (ver [`aplica_opcoes_quentes`]). O sintetizador MIDI e o
+        // rasterizador **não** entram aqui de propósito: os dois são escolhidos quando a sessão
+        // nasce, e por isso os rótulos deles dizem "(reinício)".
+        if opcoes_mudaram() {
+            aplica_opcoes_quentes(estado);
+        }
+        // **A decisão de pular é por quadro, e vale a cada quadro** — ao contrário do modo, que só
+        // muda quando o usuário mexe na opção. Um `Fixo(n)` que só decidisse quando a opção muda
+        // pularia (ou não) para sempre a partir da primeira leitura, e não a cada quadro n de n+1.
+        // Dentro de retro_run, como SET_MINIMUM_AUDIO_LATENCY exige.
+        if estado.frameskip == Frameskip::Automatico && !estado.frameskip_callback_pedido {
+            estado.frameskip_callback_pedido = pede_callback_de_audio();
+        }
+        if estado.session.leu_pixels() && !estado.frameskip_leitura_pixels_avisada {
+            aviso("Zeebx: frameskip de rasterização foi desativado neste jogo porque ele usa glReadPixels");
+            estado.frameskip_leitura_pixels_avisada = true;
+        }
+        let pula_por_frameskip = match estado.frameskip {
+            Frameskip::Desligado => {
+                estado.frameskip_contador = 0;
+                false
+            }
+            Frameskip::Fixo(n) => {
+                let pula = estado.frameskip_contador != 0;
+                estado.frameskip_contador = (estado.frameskip_contador + 1) % (n + 1);
+                pula
+            }
+            // A própria `libretro.h` diz o que fazer com o aviso: **é** a decisão, não uma dica.
+            Frameskip::Automatico => {
+                AUDIO_ESTOURO_PROVAVEL.load(std::sync::atomic::Ordering::Relaxed)
+            }
+        };
+        // 30 FPS **não desacelera a lógica**: o freio de velocidade continua em 1x, e só a
+        // apresentação duplica um quadro a cada dois. É o oposto de alterar o período virtual
+        // de vsync — aquilo faria o jogo avançar 33 ms por chamada e poderia acelerá-lo.
+        let pula_por_limite = match estado.limite_fps {
+            LimiteFps::Trinta => {
+                let pula = estado.limite_fps_contador != 0;
+                estado.limite_fps_contador = (estado.limite_fps_contador + 1) % 2;
+                pula
+            }
+            LimiteFps::Desligado | LimiteFps::Sessenta => {
+                estado.limite_fps_contador = 0;
+                false
+            }
+        };
+        estado.limite_fps_duplica = pula_por_limite;
+        estado.session.define_pula_desenho(
+            (pula_por_frameskip || pula_por_limite) && !estado.session.leu_pixels(),
+        );
         liga_a_placa(estado);
         // **O contexto se perdeu e a sessão estava nele.** O aviso sozinho não basta: a sessão
         // guarda o rasterizador de placa, e continuar desenhando por ele chamaria funções de GL que
@@ -1308,8 +2353,9 @@ pub extern "C" fn retro_run() {
         // Em modo de placa, o alvo do desenho é o framebuffer que o frontend indica **a cada
         // quadro** — ele pode trocar.
         if let Some(pega_framebuffer) = OFERTA_DE_PLACA
-            .get()
-            .and_then(|oferta| oferta.get_current_framebuffer)
+            .lock()
+            .ok()
+            .and_then(|oferta| oferta.as_ref().and_then(|o| o.get_current_framebuffer))
             && placa().is_some()
         {
             let fbo = unsafe { pega_framebuffer() };
@@ -1391,7 +2437,9 @@ pub extern "C" fn retro_run() {
         // parado. Medido: a Z-Wheel congelava depois do confirmar (relógio virtual parado em
         // 37 012 ms) e só uma tecla chegava.
         if !estado.session.mostra_quadro_intermediario()
-            && let Step::Stopped = estado.session.run_frame()
+            && let Step::Stopped = estado
+                .session
+                .run_frame(estado.limite_fps.limita_velocidade())
         {
             if !estado.parou {
                 estado.parou = true;
@@ -1436,10 +2484,18 @@ pub extern "C" fn retro_run() {
             ));
         }
         let mut quadro = std::mem::take(&mut estado.frame);
-        tela.write_rgb565_into(&mut quadro);
-        let assinatura = tela.signature();
-        let duplicado = estado.aceita_dupe && estado.ultima_assinatura == Some(assinatura);
-        estado.ultima_assinatura = Some(assinatura);
+        // 30 FPS é cadência de apresentação, não só otimização 3D: no quadro oculto preservamos
+        // os bytes anteriores. Se o frontend aceita dupe, entregaremos ponteiro nulo; se não
+        // aceita, entregaremos os mesmos bytes de novo — nos dois casos a imagem é realmente 30.
+        let duplicado = if estado.limite_fps_duplica {
+            estado.aceita_dupe
+        } else {
+            tela.write_rgb565_into(&mut quadro);
+            let assinatura = tela.signature();
+            let igual = estado.aceita_dupe && estado.ultima_assinatura == Some(assinatura);
+            estado.ultima_assinatura = Some(assinatura);
+            igual
+        };
         // Áudio: **o tempo vem do relógio virtual**, não de um número fixo. Um jogo que passa dois
         // quadros virtuais entre duas chamadas precisa entregar o dobro de amostras, senão o som
         // atrasa em relação à imagem e o frontend engasga ao tentar acompanhar.
@@ -1531,9 +2587,7 @@ pub extern "C" fn retro_run() {
 /// `retro_unload_game`.
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_unload_game() {
-    if let Ok(mut guard) = core().lock() {
-        *guard = None;
-    }
+    limpa_estado_do_frontend();
 }
 
 /// `retro_reset`: recarrega o conteúdo do zero, preservando saves e NAND.
@@ -1869,6 +2923,87 @@ mod testes {
         );
     }
 
+    /// O limite de velocidade separa console, meia imagem e boost — não aceita texto ambíguo.
+    #[test]
+    fn o_texto_do_limite_fps_vira_o_modo_certo() {
+        assert_eq!(LimiteFps::de_texto("60"), Some(LimiteFps::Sessenta));
+        assert_eq!(LimiteFps::de_texto("30"), Some(LimiteFps::Trinta));
+        assert_eq!(LimiteFps::de_texto("desligado"), Some(LimiteFps::Desligado));
+        assert_eq!(LimiteFps::de_texto("120"), None);
+        assert_eq!(LimiteFps::de_texto("automatico"), None);
+        assert_eq!(LimiteFps::de_texto(""), None);
+    }
+
+    /// O texto da opção de frameskip vira o modo certo, e lixo mantém o modo anterior (`None`).
+    #[test]
+    fn o_texto_do_frameskip_vira_o_modo_certo() {
+        assert_eq!(Frameskip::de_texto("desligado"), Some(Frameskip::Desligado));
+        assert_eq!(Frameskip::de_texto("automatico"), Some(Frameskip::Automatico));
+        assert_eq!(Frameskip::de_texto("1"), Some(Frameskip::Fixo(1)));
+        assert_eq!(Frameskip::de_texto("6"), Some(Frameskip::Fixo(6)));
+        assert_eq!(Frameskip::de_texto("4294967295"), None);
+        // Zero não é um modo fixo válido: pular zero quadros é o mesmo que desligado, e um "0"
+        // vindo de fora tem mais cara de opt estragado que de escolha deliberada.
+        assert_eq!(Frameskip::de_texto("0"), None);
+        assert_eq!(Frameskip::de_texto("nao-existe"), None);
+        assert_eq!(Frameskip::de_texto(""), None);
+    }
+
+    /// O perfil só é Portátil com o texto certo, e tudo o mais — inclusive ausência — é Padrão.
+    #[test]
+    fn so_o_texto_portatil_ativa_o_perfil() {
+        assert!(perfil_e_portatil(Some("portatil")));
+        assert!(perfil_e_portatil(Some(" PORTATIL ")));
+        assert!(!perfil_e_portatil(Some("padrao")));
+        assert!(!perfil_e_portatil(Some("portátil"))); // valor declarado é sem acento
+        assert!(!perfil_e_portatil(None));
+        assert!(!perfil_e_portatil(Some("")));
+    }
+
+    /// Os interruptores e os números das opções aceitam o que o frontend entrega, e recusam lixo.
+    ///
+    /// O que se cobra aqui é a **recusa**: um valor que não dá para entender tem de virar `None`,
+    /// porque quem chama trata `None` mantendo o que já havia. Se virasse um padrão qualquer, um
+    /// frontend antigo — que não conhece a chave — desfaria a escolha de quem configurou.
+    #[test]
+    fn os_valores_das_opcoes_sao_lidos_e_o_lixo_e_recusado() {
+        // A convenção do ecossistema é enabled/disabled; as outras grafias existem porque um .opt
+        // editado à mão não segue convenção nenhuma.
+        assert_eq!(ligado_de_texto("enabled"), Some(true));
+        assert_eq!(ligado_de_texto("disabled"), Some(false));
+        assert_eq!(ligado_de_texto(" ON "), Some(true));
+        assert_eq!(ligado_de_texto("false"), Some(false));
+        assert_eq!(ligado_de_texto("talvez"), None);
+        assert_eq!(ligado_de_texto(""), None);
+
+        // O número é preso à faixa que o motor aceita, e não recusado: quem pediu 99 quer o máximo.
+        assert_eq!(numero_de_texto("1", 1, 8), Some(1));
+        assert_eq!(numero_de_texto("4", 1, 8), Some(4));
+        assert_eq!(numero_de_texto("99", 1, 8), Some(8));
+        assert_eq!(numero_de_texto(" 2 ", 1, 8), Some(2));
+        // Zero e negativo sobem para o mínimo; o motor não desenha em escala zero.
+        assert_eq!(numero_de_texto("0", 1, 8), Some(1));
+        assert_eq!(numero_de_texto("-3", 1, 8), None);
+        assert_eq!(numero_de_texto("muito", 1, 8), None);
+    }
+
+    /// O texto da opção de volume vira fator do mixer, e o texto estragado **não** vira silêncio.
+    #[test]
+    fn o_volume_da_opcao_vira_fator_do_mixer() {
+        assert_eq!(volume_de_texto("100"), Some(1.0));
+        assert_eq!(volume_de_texto("0"), Some(0.0));
+        assert_eq!(volume_de_texto("50"), Some(0.5));
+        // O frontend pode entregar com espaço em volta; o arquivo é editável à mão.
+        assert_eq!(volume_de_texto(" 70 "), Some(0.7));
+        // Fora da faixa é preso na faixa, e não recusado: 150% é intenção clara de "no máximo".
+        assert_eq!(volume_de_texto("150"), Some(1.0));
+        assert_eq!(volume_de_texto("-10"), Some(0.0));
+        // O que não é número mantém o que já havia, em vez de emudecer o emulador.
+        assert_eq!(volume_de_texto("alto"), None);
+        assert_eq!(volume_de_texto(""), None);
+        assert_eq!(volume_de_texto("NaN"), None);
+    }
+
     #[test]
     fn os_deslocamentos_do_struct_da_placa_batem_com_o_libretro_h() {
         use std::mem::{offset_of, size_of};
@@ -1907,6 +3042,27 @@ mod testes {
             // outros faz o core seguir pelo caminho que ele usa no RetroArch.
             ENV_SET_PIXEL_FORMAT => {
                 !dados.is_null() && unsafe { *(dados as *const u32) } == PIXEL_FORMAT_RGB565
+            }
+            ENV_SET_VARIABLES | ENV_SET_CORE_OPTIONS_V2 | ENV_SET_INPUT_DESCRIPTORS | ENV_SET_CONTROLLER_INFO => {
+                true
+            }
+            ENV_GET_CORE_OPTIONS_VERSION => {
+                if !dados.is_null() {
+                    unsafe { *(dados as *mut u32) = 2 };
+                    true
+                } else {
+                    false
+                }
+            }
+            ENV_GET_VARIABLE => {
+                if !dados.is_null() {
+                    let var = dados as *mut RetroVariable;
+                    // Retorna None para simular valor padrão Auto
+                    unsafe { (*var).value = std::ptr::null() };
+                    true
+                } else {
+                    false
+                }
             }
             ENV_GET_SYSTEM_DIRECTORY | ENV_GET_SAVE_DIRECTORY => {
                 // O sistema pode vir de fora, e vem por `ZEEBX_CORE_SISTEMA`: é assim que o teste

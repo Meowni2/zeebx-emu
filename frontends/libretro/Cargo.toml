@@ -22,3 +22,6 @@ crate-type = ["cdylib"]
 zeebx = { path = "../..", default-features = false, features = ["gl", "soundfont"] }
 # O mesmo `glow` que o motor usa: o contexto que o frontend entrega é montado com ele.
 glow = "0.16"
+
+[build-dependencies]
+cc = "1.0"

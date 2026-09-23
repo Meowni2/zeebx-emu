@@ -28,7 +28,9 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
 use crate::audio::wav::Sound;
 
@@ -45,6 +47,87 @@ const MAX_SEGUNDOS: f64 = 300.0;
 
 /// Quantos quadros por bloco na renderização. O sequenciador do `rustysynth` trabalha em blocos.
 const BLOCO: usize = 1024;
+
+/// A taxa em que o banco é sintetizado, em Hz.
+///
+/// **Não é a taxa da tabela de timbres, e a diferença é medida.** A tabela sintetiza a 22.050 Hz
+/// porque o que ela produz é soma de harmônicos que ela mesma escolhe, e acima de 11 kHz não há
+/// nada ali. O banco é o contrário: das 920 amostras do `GeneralUser-GS.sf2`, 373 são gravadas a
+/// 44.100 Hz e há amostra a 48.000 — sintetizar a 22.050 joga fora **todo** o conteúdo acima de
+/// 11 kHz, e o misturador, que só interpola linearmente, não tem como devolver o que foi cortado.
+/// O resultado é o brilho que some: prato, chimbau e ataque de metal ficam abafados.
+///
+/// 44.100 é a taxa do próprio misturador do core (`SAMPLE_RATE` do frontend Libretro), então aqui
+/// não há reamostragem nenhuma no caminho — e é a mesma escolha que o emulador de referência
+/// `zeemu` faz no caminho dele de SoundFont.
+pub const TAXA_BANCO: u32 = 44_100;
+
+/// A taxa escolhida agora, que começa em [`TAXA_BANCO`] e o frontend pode mudar.
+///
+/// **É um global, e isso é escolha consciente.** A alternativa seria levar a taxa por parâmetro de
+/// `Session::start_*` até `Machine` e daí até aqui, como se fez com a política de sintetizador —
+/// e naquele caso valeu a pena, porque a escolha muda o que a máquina **é** quando nasce. Esta
+/// não: ela vale para a próxima música sintetizada, e uma música já sintetizada não muda de taxa.
+/// Um parâmetro a mais em cinco assinaturas públicas para um valor que ninguém precisa no
+/// nascimento é custo sem troco. Este módulo já guarda um global pelo mesmo motivo — o cache de
+/// bancos abertos.
+static TAXA_ESCOLHIDA: AtomicU32 = AtomicU32::new(TAXA_BANCO);
+
+/// Muda a taxa em que o banco será sintetizado daqui para a frente.
+///
+/// Valores fora de 8.000–48.000 são ignorados: o `rustysynth` recusa fora de 16.000–192.000, e uma
+/// taxa absurda vinda de um `.opt` editado à mão não pode derrubar o som.
+pub fn define_taxa(taxa: u32) {
+    if (8_000..=48_000).contains(&taxa) {
+        TAXA_ESCOLHIDA.store(taxa, Ordering::Relaxed);
+    }
+}
+
+/// A taxa em que o banco é sintetizado agora.
+pub fn taxa() -> u32 {
+    TAXA_ESCOLHIDA.load(Ordering::Relaxed)
+}
+
+/// As vozes escolhidas agora. Ver [`VOZES`] para o porquê do padrão.
+static VOZES_ESCOLHIDAS: AtomicUsize = AtomicUsize::new(VOZES);
+
+/// Muda o teto de vozes simultâneas daqui para a frente.
+///
+/// O `rustysynth` aceita de 8 a 256 e recusa fora disso, então o valor é preso à faixa em vez de
+/// recusado: quem pediu 512 quer o máximo, e falhar a síntese inteira por causa disso seria pior.
+pub fn define_vozes(vozes: usize) {
+    VOZES_ESCOLHIDAS.store(vozes.clamp(8, 256), Ordering::Relaxed);
+}
+
+/// Quantas vozes o banco pode tocar ao mesmo tempo.
+///
+/// O padrão do `rustysynth` é 64, e a trilha do Double Dragon usa até nove canais simultâneos com
+/// acordes: 64 vozes roubam nota em trecho denso, e roubo de voz soa como nota que some. 128 é o
+/// que o `zeemu` usa, e o teto do `rustysynth` é 256.
+const VOZES: usize = 128;
+
+/// O volume mestre do sintetizador, antes de qualquer soma.
+///
+/// **É ganho fixo, e não normalização — essa é a correção.** A versão anterior normalizava o pico
+/// de cada música para 0,8, e isso é medida errada por construção: uma trilha calma e esparsa
+/// subia até encostar no mesmo teto de uma trilha densa e cheia, de modo que o jogo perdia a
+/// diferença de intensidade entre elas e o equilíbrio com os efeitos (que são WAVE e **não** são
+/// normalizados) mudava a cada música que entrava.
+///
+/// Os dois motores de referência usam ganho fixo pela mesma razão: o `zeebulator` aplica -16 dB e
+/// o `zeemu` aplica -8 dB, ambos **antes** da soma interna do sintetizador, que é onde o corte
+/// aconteceria. Aqui o número é o padrão do próprio `rustysynth` (0,5, ou -6 dB), que é o ponto em
+/// que a trilha do Double Dragon foi medida com pico de 0,53 — perto do teto, sem encostar.
+///
+/// Fica como constante para ser calibrado de ouvido, que é como os dois motores de referência
+/// chegaram aos números deles.
+const VOLUME_MESTRE: f32 = 0.5;
+
+/// O teto do pico depois da soma.
+///
+/// Acima disto a onda **corta** no misturador, e corte é distorção. Abaixo, nada é mexido: é
+/// limitador, não normalizador — só desce o que passou do teto, e nunca sobe o que está baixo.
+const TETO: f32 = 0.95;
 
 /// Onde o banco é procurado, em ordem de preferência.
 ///
@@ -104,9 +187,21 @@ pub struct Banco {
 
 impl Banco {
     fn carrega(caminho: &Path) -> Option<Self> {
+        let t0 = Instant::now();
         let bytes = std::fs::read(caminho).ok()?;
+        let read_elapsed = t0.elapsed();
+        let t_parse = Instant::now();
         let mut leitor = std::io::Cursor::new(bytes);
         let fonte = Arc::new(rustysynth::SoundFont::new(&mut leitor).ok()?);
+        let parse_elapsed = t_parse.elapsed();
+        eprintln!(
+            "Zeebx: SoundFont '{}' carregado em {:.1}ms (leitura: {:.1}ms, parse/amostras: {:.1}ms, presets: {})",
+            caminho.display(),
+            t0.elapsed().as_secs_f64() * 1000.0,
+            read_elapsed.as_secs_f64() * 1000.0,
+            parse_elapsed.as_secs_f64() * 1000.0,
+            fonte.get_presets().len()
+        );
         Some(Self { fonte })
     }
 
@@ -124,6 +219,10 @@ pub fn abre(caminho: &Path) -> Option<Arc<Banco>> {
     let guarda = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut mapa = guarda.lock().ok()?;
     if let Some(banco) = mapa.get(caminho) {
+        eprintln!(
+            "Zeebx: SoundFont '{}' reutilizado do cache (hit)",
+            caminho.display()
+        );
         return Some(banco.clone());
     }
     let banco = Arc::new(Banco::carrega(caminho)?);
@@ -136,11 +235,22 @@ pub fn abre(caminho: &Path) -> Option<Arc<Banco>> {
 /// `None` quando o banco não abre, quando os bytes não são um SMF que o `rustysynth` aceite, ou
 /// quando não sobra nenhuma amostra — e aí quem chamou segue para a tabela de timbres.
 pub fn toca(banco: &Banco, bytes: &[u8], taxa: u32) -> Option<Sound> {
+    let t0 = Instant::now();
     let mut leitor = std::io::Cursor::new(bytes);
     let midi = rustysynth::MidiFile::new(&mut leitor).ok()?;
     let comprimento = midi.get_length().min(MAX_SEGUNDOS);
-    let ajustes = rustysynth::SynthesizerSettings::new(taxa as i32);
-    let sintetizador = rustysynth::Synthesizer::new(&banco.fonte, &ajustes).ok()?;
+    let mut ajustes = rustysynth::SynthesizerSettings::new(taxa as i32);
+    // Perfil de síntese seco e eficiente:
+    // 1. `block_size = 1024`: reduz em ~1,9x o overhead de blocos e sincronização do sequenciador.
+    // 2. `enable_reverb_and_chorus = false`: aproxima o áudio do comportamento seco nativo do
+    //    console / CMX e do TinySoundFont (que não implementa efeitos de reverberação/chorus).
+    ajustes.block_size = BLOCO;
+    ajustes.enable_reverb_and_chorus = false;
+    // 3. `maximum_polyphony`: ver [`VOZES`] — o padrão de 64 rouba nota em trecho denso.
+    ajustes.maximum_polyphony = VOZES_ESCOLHIDAS.load(Ordering::Relaxed);
+    let mut sintetizador = rustysynth::Synthesizer::new(&banco.fonte, &ajustes).ok()?;
+    // 4. O volume mestre é fixo, e não vem de normalização depois. Ver [`VOLUME_MESTRE`].
+    sintetizador.set_master_volume(VOLUME_MESTRE);
     let mut sequencia = rustysynth::MidiFileSequencer::new(sintetizador);
     sequencia.play(&Arc::new(midi), false);
 
@@ -163,16 +273,46 @@ pub fn toca(banco: &Banco, bytes: &[u8], taxa: u32) -> Option<Sound> {
     // A cauda: o banco pode terminar antes do comprimento declarado, e um som mais curto que a
     // partitura faria o jogo achar que a música acabou cedo.
     amostras.resize(total, 0.0);
-    // **O nível é o mesmo dos dois caminhos.** A tabela de timbres deixa o pico em 0,8 (ver
-    // `midi::normaliza`), e o banco saía em 0,53: a mesma música trocava de volume conforme o
-    // aparelho tivesse ou não um `.sf2` instalado, e no jogo isso muda o balanço entre a trilha e
-    // os efeitos, que passam pelo mesmo misturador.
-    crate::audio::midi::normaliza(&mut amostras);
+    // **Limitar, e não normalizar.** O ganho já foi dado uma vez, fixo, no volume mestre do
+    // sintetizador (ver [`VOLUME_MESTRE`]): o que sobra aqui é só impedir que uma soma densa passe
+    // do teto e corte. Uma música que ficou baixa **continua** baixa, porque é assim que ela é.
+    let pico = limita(&mut amostras);
+    let elapsed = t0.elapsed();
+    eprintln!(
+        "Zeebx: render MIDI SoundFont: {} bytes MIDI -> {:.1}s áudio ({} amostras @ {}Hz, pico bruto {:.3}) sintetizados em {:.1}ms ({:.2}x tempo real)",
+        bytes.len(),
+        comprimento,
+        amostras.len(),
+        taxa,
+        pico,
+        elapsed.as_secs_f64() * 1000.0,
+        if elapsed.as_secs_f64() > 0.0 { comprimento / elapsed.as_secs_f64() } else { 0.0 }
+    );
     Some(Sound {
         rate: taxa,
         channels: 1,
         samples: amostras,
     })
+}
+
+/// Desce o volume só quando o pico passou de [`TETO`]. Devolve o pico **antes** de mexer.
+///
+/// É o contrário de normalizar: normalizar iguala o pico de toda música, e com isso apaga a
+/// diferença de intensidade entre uma trilha calma e uma cheia. Aqui, música baixa continua baixa,
+/// e só a que encostaria no teto desce — pelo fator da música inteira, o que preserva a proporção
+/// entre as vozes dela.
+///
+/// Devolver o pico bruto é o que permite calibrar [`VOLUME_MESTRE`] de ouvido com número na mão:
+/// sem isso, saber se o ganho fixo está perto do teto exige gravar o áudio e medir fora.
+fn limita(amostras: &mut [f32]) -> f32 {
+    let pico = amostras.iter().fold(0.0f32, |a, s| a.max(s.abs()));
+    if pico > TETO {
+        let fator = TETO / pico;
+        for amostra in amostras.iter_mut() {
+            *amostra *= fator;
+        }
+    }
+    pico
 }
 
 
@@ -202,6 +342,39 @@ pub fn relato(aparelho: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A taxa e as vozes escolhidas pelo frontend param no que o sintetizador aceita.
+    ///
+    /// **O que se cobra é o valor absurdo não passar.** As duas vêm de um arquivo que o usuário
+    /// edita à mão, e o `rustysynth` recusa a criação do sintetizador fora das faixas dele — uma
+    /// recusa que chegaria ao jogo como música que simplesmente não toca, sem dizer por quê.
+    ///
+    /// O teste devolve os padrões no fim porque o estado é global e compartilhado pelos outros
+    /// testes deste módulo (ver [`TAXA_ESCOLHIDA`]); deixá-lo sujo faria a ordem dos testes mudar
+    /// o resultado deles.
+    #[test]
+    fn a_taxa_e_as_vozes_escolhidas_ficam_na_faixa_que_o_sintetizador_aceita() {
+        define_taxa(22_050);
+        assert_eq!(taxa(), 22_050);
+        // Fora da faixa é **ignorado**, e não preso: uma taxa absurda costuma ser arquivo
+        // estragado, e herdar a anterior é mais seguro que inventar um número.
+        define_taxa(1);
+        assert_eq!(taxa(), 22_050, "taxa absurda não podia ter passado");
+        define_taxa(999_999);
+        assert_eq!(taxa(), 22_050, "taxa absurda não podia ter passado");
+        define_taxa(TAXA_BANCO);
+        assert_eq!(taxa(), TAXA_BANCO);
+
+        // As vozes são **presas** à faixa, e não ignoradas: quem pede 512 quer o máximo, e o
+        // máximo é um pedido que dá para atender.
+        define_vozes(4);
+        assert_eq!(VOZES_ESCOLHIDAS.load(Ordering::Relaxed), 8);
+        define_vozes(512);
+        assert_eq!(VOZES_ESCOLHIDAS.load(Ordering::Relaxed), 256);
+        define_vozes(48);
+        assert_eq!(VOZES_ESCOLHIDAS.load(Ordering::Relaxed), 48);
+        define_vozes(VOZES);
+    }
 
     /// O banco de teste, do harness de comparação que vive fora do repositório.
     fn banco_de_teste() -> Option<PathBuf> {
@@ -520,5 +693,19 @@ mod tests {
             arco[0],
             palheta[0]
         );
+    }
+
+    #[test]
+    fn parse_da_politica_midi_backend() {
+        use crate::audio::MidiBackend;
+        use std::str::FromStr;
+
+        assert_eq!(MidiBackend::from_str("Auto"), Ok(MidiBackend::Auto));
+        assert_eq!(MidiBackend::from_str("automático"), Ok(MidiBackend::Auto));
+        assert_eq!(MidiBackend::from_str("Tabela de timbres"), Ok(MidiBackend::Timbres));
+        assert_eq!(MidiBackend::from_str("timbres"), Ok(MidiBackend::Timbres));
+        assert_eq!(MidiBackend::from_str("SoundFont"), Ok(MidiBackend::SoundFont));
+        assert_eq!(MidiBackend::from_str("sf2"), Ok(MidiBackend::SoundFont));
+        assert_eq!(MidiBackend::from_str("invalido"), Err(()));
     }
 }
