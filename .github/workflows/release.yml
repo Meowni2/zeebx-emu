@@ -10,6 +10,7 @@
 #   zeebx-headless-linux-x86_64.zip          o binário sem interface, para quem tem frontend próprio
 #   zeebx-android-arm64-v8a.apk              o aplicativo de Android
 #   zeebx_libretro-linux-aarch64.zip         o core Libretro, com o `.info`, para RetroArch
+#   zeebx_libretro-wasm.zip                  o mesmo core em WebAssembly, para o ROMBundler
 #
 # O APK sai assinado com a chave de depuração, que é a que o Gradle gera sozinho. Serve para
 # instalar de lado (`adb install`), **não** para a Play Store: aquela pede a chave de publicação,
@@ -119,6 +120,26 @@ jobs:
             mv -- "$arquivo" "$novo"
             echo "$arquivo -> $novo"
           done
+
+      # O Gatekeeper marca o que veio da internet e, sem assinatura da Apple, abre com
+      # "Zeebx.app is damaged". O aviso some com `xattr -dr com.apple.quarantine`. A nota
+      # entra na imagem, ao lado do aplicativo, para quem abre o `.dmg` ler antes de arrastar.
+      - name: Nota do Gatekeeper
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          dmg=$(echo target/pacotes/*.dmg)
+          tmp=$(mktemp -d)
+          mnt="$tmp/mnt"
+          mkdir -p "$mnt"
+          hdiutil convert "$dmg" -format UDRW -o "$tmp/rw"
+          hdiutil attach "$tmp/rw.dmg" -mountpoint "$mnt" -nobrowse
+          cp frontends/classical-standalone/LEIA-ME-macos.txt "$mnt/LEIA-ME.txt"
+          sync
+          hdiutil detach "$mnt"
+          rm -f "$dmg"
+          hdiutil convert "$tmp/rw.dmg" -format UDZO -o "${dmg%.dmg}"
+          rm -rf "$tmp"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -385,8 +406,46 @@ jobs:
           name: zeebx_libretro_${{ matrix.nome }}
           path: zeebx_libretro-${{ matrix.nome }}.zip
 
+  # O side module que o ROMBundler faz dlopen. O Emscripten é o 6.0.8 dessa página: um
+  # módulo de outra versão não carrega.
+  wasm:
+    name: core-wasm
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-emscripten
+          components: rust-src
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: "6.0.8"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: core-wasm
+
+      - name: Compila o side module
+        run: ./ferramentas/compilar_wasm.sh
+
+      - name: Empacota o core
+        run: |
+          mkdir -p pacote
+          cp target/wasm/zeebx_libretro_emscripten.wasm pacote/
+          cp frontends/libretro/zeebx_libretro.info pacote/
+          grep -q '^database = "Mobile - Zeebo"' pacote/zeebx_libretro.info
+          cd pacote && zip -r "../zeebx_libretro-wasm.zip" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeebx_libretro_wasm
+          path: zeebx_libretro-wasm.zip
+          if-no-files-found: error
+
   release:
-    needs: [standalone, headless, android, core]
+    needs: [standalone, headless, android, core, wasm]
     # Sai com o que deu certo: um sistema que falhou não segura os outros.
     #
     # A tag vem de dois lugares: do `push` de uma tag, e aí é o `github.ref_name`; ou do
@@ -403,13 +462,17 @@ jobs:
           path: pacotes
           merge-multiple: true
 
-      # **O texto da release é o que vocês escreveram, não a lista de commits.** Cada versão deixa
-      # o seu em `docs/patch-notes/`, em linguagem de quem joga; era isso que ia para a página da
-      # release na mão, e o `generate_release_notes` do GitHub entregava outra coisa -- um resumo
-      # de commits que ninguém quer ler.
+      # **O texto da release é o que vocês escreveram, e a lista gerada vem depois dele.** Cada
+      # versão deixa a sua nota em `docs/patch-notes/`, em linguagem de quem joga; era isso que ia
+      # para a página da release na mão.
       #
-      # Sem o arquivo, a lista de commits volta a valer: é melhor que uma release muda, e serve de
-      # aviso de que a nota faltou.
+      # Os dois convivem, e não é truque nosso: a API do GitHub diz que, com `generate_release_notes`
+      # ligado, um `body` enviado junto é **posto na frente** das notas geradas. Sai a nota, e
+      # embaixo o "What's Changed", o "New Contributors" e o "Full Changelog" -- que é o crédito a
+      # quem contribuiu pela primeira vez, e um arquivo escrito à mão não tem como saber disso.
+      #
+      # Sem o arquivo, sobra só a lista gerada: é melhor que uma release muda, e serve de aviso de
+      # que a nota faltou.
       - name: As notas da versão
         id: notas
         shell: bash
@@ -429,7 +492,7 @@ jobs:
           name: ${{ inputs.versao || github.ref_name }}
           tag_name: ${{ inputs.versao || github.ref_name }}
           draft: true
-          # Um dos dois, nunca os dois: com o arquivo, ele é o corpo; sem ele, o GitHub gera.
+          # Os dois sempre: a nota vira o começo do corpo, e o GitHub acrescenta o resto.
           body_path: ${{ steps.notas.outputs.caminho }}
-          generate_release_notes: ${{ steps.notas.outputs.caminho == '' }}
+          generate_release_notes: true
           files: pacotes/*

@@ -504,7 +504,7 @@ impl<C: CpuBackend> Machine<C> {
             "DrawElements" => {
                 let (mode, count, kind, list) = (a[0], a[1], a[2], a[3]);
                 // A lista inteira num pedido só, pelo mesmo motivo do `read_array`: cada
-                // travessia para o unicorn custa mais que os dois bytes que ela traz.
+                // travessia para o backend custa mais que os dois bytes que ela traz.
                 let largura = if kind == gles::GL_UNSIGNED_BYTE { 1 } else { 2 };
                 // Com um buffer de índices ligado, `list` é deslocamento dentro dele — e aqui
                 // vale a ligação **corrente**, ao contrário dos vetores de vértice.
@@ -594,7 +594,7 @@ impl<C: CpuBackend> Machine<C> {
         address: u32,
         fixed_point: bool,
     ) -> Result<rasterizer::Matrix, CpuError> {
-        // Os dezesseis de uma vez: eram dezesseis travessias para o unicorn a cada
+        // Os dezesseis de uma vez: eram dezesseis travessias para o backend a cada
         // `LoadMatrix`/`MultMatrix`, e a matriz é contígua por definição. Se qualquer parte
         // dela estiver fora do mapa, a leitura falha — como falhava antes, no primeiro
         // componente ruim.
@@ -857,8 +857,8 @@ impl<C: CpuBackend> Machine<C> {
     /// Lê um elemento de um vetor do cliente, completando os componentes que faltam.
     /// Lê de uma vez o trecho do array que os índices cobrem, e decodifica dali.
     ///
-    /// O caminho por componente atravessa a FFI do unicorn para copiar quatro bytes, e o
-    /// unicorn procura a região antes de copiar: **57 ns**, contra **0,3 ns** quando os mesmos
+    /// O caminho por componente atravessa o backend para copiar quatro bytes, e ele procura a
+    /// região antes de copiar: **57 ns**, contra **0,3 ns** quando os mesmos
     /// quatro bytes vêm de um `read_mem` de um quilobyte. No Quake são 6,6 milhões de vértices
     /// em 15 segundos virtuais, cada um com posição e coordenada de textura — e isso era
     /// **3,2 s dos 3,6 s** que as draw calls custavam, contra 400 ms do rasterizador de fato.

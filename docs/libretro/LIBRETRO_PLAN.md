@@ -1098,7 +1098,7 @@ supported_extensions = "mod|zip"
 categories = "Emulator"
 systemname = "Zeebo"
 manufacturer = "TecToy"
-licenses = "GPLv2"
+licenses = "GPLv2+"
 firmware_count = 0
 supports_no_game = "false"
 ```

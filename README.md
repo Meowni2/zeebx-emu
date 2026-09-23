@@ -64,7 +64,7 @@ cargo build --release
 
 ### O que mais precisa estar instalado
 
-O standalone usa dependências nativas para `unicorn-engine`, `dynarmic`, áudio, janela e controles.
+O standalone usa dependências nativas para `dynarmic`, áudio, janela e controles.
 Debian, Ubuntu e derivados:
 
 ```bash
@@ -112,6 +112,11 @@ São dois formatos em cada um dos quatro sistemas, e o nome do arquivo diz qual 
 | `zeebx-standalone-macos-arm64.dmg`, `-x86_64.dmg` | idem, nos dois Macs |
 | `zeebx-headless-<sistema>.zip` | o binário sem interface, com o `config.ini` e o leia-me |
 | `zeebx-android-arm64-v8a.apk` | o aplicativo de Android |
+
+No macOS, a primeira abertura pode dizer que o `Zeebx.app` está damaged. O aplicativo não está:
+o Gatekeeper marca o que veio da internet, e esta build ainda não é assinada pela Apple. A imagem
+traz um `LEIA-ME.txt` ao lado do aplicativo. O comando é
+`xattr -dr com.apple.quarantine "/Applications/Zeebx.app"`, depois de arrastar para Aplicativos.
 
 A APK sai assinada com a **chave de depuração**, que é a que o Gradle gera sozinho: serve para
 instalar de lado (`adb install`), não para a Play Store — aquela pede a chave de publicação, que
@@ -190,7 +195,7 @@ O repositório não distribui jogos. Coloque os seus em `roms/`, que é ignorada
 
 ## Licença
 
-GPL-2.0, o texto completo em [LICENSE](LICENSE).
+GPL-2.0-or-later, o texto completo da GPLv2 em [LICENSE](LICENSE).
 
 
 ## Menções

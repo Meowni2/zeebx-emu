@@ -147,8 +147,7 @@ pub fn fonte_do_sistema_em(cache: &Path, device: &Path) -> Option<PathBuf> {
 /// listava "texto na tela (ainda sem fonte para desenhar)".
 ///
 /// **Não é a causa da tela branca dele.** Medido: com a fonte instalada, o quadro do Double Dragon
-/// no core continua branco e uniforme. O que falta ali é outra coisa, no caminho Dynarmic/`Session`,
-/// porque o mesmo jogo desenha pelo caminho Unicorn da linha de comando.
+/// continuava branco e uniforme. O que faltava ali era outra coisa no caminho de execução.
 ///
 /// Extrai **só** o arquivo da fonte: não vale materializar o pacote inteiro por causa de 190 KB.
 pub fn instala_fonte_do_pacote(pacote: &Path, device: &Path) -> Option<PathBuf> {
@@ -315,6 +314,48 @@ pub fn find_manifest(pacote: &Path, module: &str) -> Option<Vec<u8>> {
         .read_to_end(&mut dados)
         .ok()?;
     (dados.len() as u64 <= MAX_MANIFEST_BYTES).then_some(dados)
+}
+
+/// Diz se um arquivo extraído ainda é byte a byte igual à entrada original do pacote.
+///
+/// Serve à migração de frontends que antigamente deixavam o jogo escrever dentro do cache:
+/// alguns títulos trazem um save "semente" no próprio ZIP e depois o sobrescrevem. Nesse caso o
+/// manifesto sozinho não distingue conteúdo do pacote de progresso do jogador.
+pub fn entrada_igual_ao_arquivo(
+    pacote: &Path,
+    nome: &str,
+    arquivo: &Path,
+) -> std::io::Result<bool> {
+    let meta = std::fs::metadata(arquivo)?;
+    if sete_z::eh_sete_z(pacote) {
+        let dados = sete_z::ler(pacote, nome, MAX_FILE_BYTES)
+            .ok_or_else(|| std::io::Error::other("não leu a entrada do 7z"))?;
+        if dados.len() as u64 != meta.len() {
+            return Ok(false);
+        }
+        return Ok(std::fs::read(arquivo)? == dados);
+    }
+
+    let origem = std::fs::File::open(pacote)?;
+    let mut zip = zip::ZipArchive::new(origem).map_err(std::io::Error::other)?;
+    validate_archive(&mut zip, ARCHIVE_LIMITS)?;
+    let mut entrada = zip.by_name(nome).map_err(std::io::Error::other)?;
+    if entrada.size() != meta.len() {
+        return Ok(false);
+    }
+    let mut atual = std::fs::File::open(arquivo)?;
+    let mut a = [0u8; 64 * 1024];
+    let mut b = [0u8; 64 * 1024];
+    loop {
+        let la = entrada.read(&mut a)?;
+        let lb = atual.read(&mut b)?;
+        if la != lb || a[..la] != b[..lb] {
+            return Ok(false);
+        }
+        if la == 0 {
+            return Ok(true);
+        }
+    }
 }
 
 /// Escolhe o `.mif` do título entre os nomes do pacote.
@@ -615,6 +656,11 @@ fn legacy_fingerprint(zip: &Path) -> std::io::Result<String> {
         .map(|duration| duration.as_secs())
         .unwrap_or(0);
     Ok(format!("{}-{}-{stamp}", cache_label(zip), meta.len()))
+}
+
+/// Caminho exato do cache anterior ao hash de conteúdo, para migrações de frontends.
+pub(crate) fn legacy_cache_in(zip: &Path, cache: &Path) -> std::io::Result<PathBuf> {
+    Ok(cache.join(legacy_fingerprint(zip)?))
 }
 
 #[cfg(test)]

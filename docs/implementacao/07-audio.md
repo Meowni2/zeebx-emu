@@ -332,10 +332,11 @@ ligado em `tools/game_probe.cpp`**. O `frontends/standalone/main.cpp` constrói 
 ele, então cai no sintetizador tosco — que é *mais escuro* ainda (rolloff 880 Hz). Quem comparar
 pelo standalone não está ouvindo soundfont nenhum; o binário com o banco é o `game_probe`.
 
-**Licença: o código do Zeebulator não serve.** Ele é **GPLv3** e o Zeebx é **GPL-2.0-only**; as
-duas não se combinam. O que serve é o que está sob licença própria: o **TinySoundFont** (MIT), o
-`rustysynth` (MIT, Rust puro) e o próprio banco GeneralUser GS (licença permissiva, embora o texto
-admita origem desconhecida de parte das amostras). O `oxisynth` é LGPL-2.1 e fica de fora.
+**Licença: o código do Zeebulator agora combina com a licença do projeto.** Ele é **GPLv3** e o
+Zeebx é **GPL-2.0-or-later**. O caminho comum continua usando o que está sob licença própria: o
+**TinySoundFont** (MIT), o `rustysynth` (MIT, Rust puro) e o próprio banco GeneralUser GS (licença
+permissiva, embora o texto admita origem desconhecida de parte das amostras). O `oxisynth` é
+LGPL-2.1 e fica de fora.
 
 **O custo, medido:** o banco tem **10,3×** o tamanho da árvore inteira do Zeebulator, pede
 **+64 MiB de RSS** na carga (o `tsf` converte tudo para `float`) e levaria o `.so` do core de
@@ -462,9 +463,8 @@ A tabela de timbres chegou ao limite do que uma soma de harmônicos alcança. O 
 **material de amostra**, e para isso entrou um sintetizador de SoundFont: `rustysynth`, MIT e Rust
 puro.
 
-**Por que `rustysynth` e não o código do Zeebulator.** O Zeebulator é **GPLv3** e o Zeebx é
-`GPL-2.0-only`; as duas licenças não se combinam, então nada dele pode ser copiado — nem o
-invólucro em volta do TinySoundFont. O `rustysynth` é MIT, então pode.
+**Por que `rustysynth` e não o código do Zeebulator.** Mesmo com a licença compatível, o caminho
+comum continua usando `rustysynth`, porque ele é MIT, Rust puro e serve para todos os builds.
 
 **Por que o banco não vem embutido.** São 32 MB (o GeneralUser GS mede 32.319.396 B) e a carga pede
 +64 MiB de RSS, porque as amostras viram `float`. Embutido, o `.so` do core iria de 15,6 MB para
