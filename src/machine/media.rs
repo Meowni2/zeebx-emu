@@ -6,6 +6,20 @@ use super::*;
 /// [`Machine::descarta_sons_sem_dono`].
 const MAX_SONS_GUARDADOS: usize = 64;
 
+/// Quanto de PCM decodificado o cache guarda, em bytes, antes de esquecer os que ninguém usa.
+///
+/// **Contar entradas não é contar memória, e a diferença cresceu.** Um efeito curto ocupa poucos
+/// quilobytes e uma trilha longa ocupa dezenas de megabytes: 64 entradas podem ser meio megabyte
+/// de efeitos ou mais de cem megabytes de música, e só o segundo caso importa. A trilha mais longa
+/// medida no Double Dragon tem 109 s, o que a 44.100 Hz em `f32` dá 19,3 MB — quatro delas
+/// guardadas passam de 77 MB.
+///
+/// O número cresceu de propósito junto com [`crate::audio::soundfont::TAXA_BANCO`]: sintetizar o
+/// banco a 44.100 em vez de 22.050 **dobra** o PCM de cada música. Num aparelho de mão o que
+/// sobra de RAM é pouco, e o custo de esquecer é uma re-síntese; o custo de não esquecer é o
+/// sistema matar o processo.
+const MAX_BYTES_DE_SOM: usize = 24 * 1024 * 1024;
+
 impl<C: CpuBackend> Machine<C> {
     /// `ISound` (`AEECLSID_SOUND` = `0x01001056`), de `inc/AEEISound.h`.
     ///
@@ -404,7 +418,17 @@ impl<C: CpuBackend> Machine<C> {
     /// efeitos diferentes no mesmo buffer de 500 KB, e cada um virava uma entrada para sempre.
     /// Uma voz tocando não perde nada: o PCM dela está num `Arc` que o mixer também segura.
     fn descarta_sons_sem_dono(&mut self, nova: u64) {
-        if self.cargas_de_midia.len() <= MAX_SONS_GUARDADOS {
+        // **Os dois tetos, e não só o de entradas.** Ver [`MAX_BYTES_DE_SOM`]: sessenta e quatro
+        // efeitos curtos cabem de sobra, e quatro músicas longas sintetizadas pelo banco já não
+        // cabem. Quem estoura primeiro manda.
+        let bytes_guardados: usize = self
+            .cargas_de_midia
+            .values()
+            .filter_map(|carga| carga.som.as_ref())
+            .map(|som| som.samples.len() * std::mem::size_of::<f32>())
+            .sum();
+        if self.cargas_de_midia.len() <= MAX_SONS_GUARDADOS && bytes_guardados <= MAX_BYTES_DE_SOM
+        {
             return;
         }
         let em_uso: std::collections::HashSet<u64> =
@@ -425,7 +449,10 @@ impl<C: CpuBackend> Machine<C> {
             return None;
         }
         let banco = self.banco_de_som.as_ref()?;
-        crate::audio::soundfont::toca(banco, bytes, crate::audio::midi::RATE)
+        // **A taxa do banco não é a da tabela.** Ver [`crate::audio::soundfont::TAXA_BANCO`]: as
+        // amostras do `.sf2` são gravadas a 44,1 kHz, e sintetizar a 22,05 cortava o brilho delas
+        // antes que o misturador tivesse qualquer chance de reamostrar de volta.
+        crate::audio::soundfont::toca(banco, bytes, crate::audio::soundfont::TAXA_BANCO)
     }
 
     /// Sem a feature, o caminho é sempre o da tabela de timbres.

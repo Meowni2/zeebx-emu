@@ -47,6 +47,50 @@ const MAX_SEGUNDOS: f64 = 300.0;
 /// Quantos quadros por bloco na renderização. O sequenciador do `rustysynth` trabalha em blocos.
 const BLOCO: usize = 1024;
 
+/// A taxa em que o banco é sintetizado, em Hz.
+///
+/// **Não é a taxa da tabela de timbres, e a diferença é medida.** A tabela sintetiza a 22.050 Hz
+/// porque o que ela produz é soma de harmônicos que ela mesma escolhe, e acima de 11 kHz não há
+/// nada ali. O banco é o contrário: das 920 amostras do `GeneralUser-GS.sf2`, 373 são gravadas a
+/// 44.100 Hz e há amostra a 48.000 — sintetizar a 22.050 joga fora **todo** o conteúdo acima de
+/// 11 kHz, e o misturador, que só interpola linearmente, não tem como devolver o que foi cortado.
+/// O resultado é o brilho que some: prato, chimbau e ataque de metal ficam abafados.
+///
+/// 44.100 é a taxa do próprio misturador do core (`SAMPLE_RATE` do frontend Libretro), então aqui
+/// não há reamostragem nenhuma no caminho — e é a mesma escolha que o emulador de referência
+/// `zeemu` faz no caminho dele de SoundFont.
+pub const TAXA_BANCO: u32 = 44_100;
+
+/// Quantas vozes o banco pode tocar ao mesmo tempo.
+///
+/// O padrão do `rustysynth` é 64, e a trilha do Double Dragon usa até nove canais simultâneos com
+/// acordes: 64 vozes roubam nota em trecho denso, e roubo de voz soa como nota que some. 128 é o
+/// que o `zeemu` usa, e o teto do `rustysynth` é 256.
+const VOZES: usize = 128;
+
+/// O volume mestre do sintetizador, antes de qualquer soma.
+///
+/// **É ganho fixo, e não normalização — essa é a correção.** A versão anterior normalizava o pico
+/// de cada música para 0,8, e isso é medida errada por construção: uma trilha calma e esparsa
+/// subia até encostar no mesmo teto de uma trilha densa e cheia, de modo que o jogo perdia a
+/// diferença de intensidade entre elas e o equilíbrio com os efeitos (que são WAVE e **não** são
+/// normalizados) mudava a cada música que entrava.
+///
+/// Os dois motores de referência usam ganho fixo pela mesma razão: o `zeebulator` aplica -16 dB e
+/// o `zeemu` aplica -8 dB, ambos **antes** da soma interna do sintetizador, que é onde o corte
+/// aconteceria. Aqui o número é o padrão do próprio `rustysynth` (0,5, ou -6 dB), que é o ponto em
+/// que a trilha do Double Dragon foi medida com pico de 0,53 — perto do teto, sem encostar.
+///
+/// Fica como constante para ser calibrado de ouvido, que é como os dois motores de referência
+/// chegaram aos números deles.
+const VOLUME_MESTRE: f32 = 0.5;
+
+/// O teto do pico depois da soma.
+///
+/// Acima disto a onda **corta** no misturador, e corte é distorção. Abaixo, nada é mexido: é
+/// limitador, não normalizador — só desce o que passou do teto, e nunca sobe o que está baixo.
+const TETO: f32 = 0.95;
+
 /// Onde o banco é procurado, em ordem de preferência.
 ///
 /// `ZEEBX_SOUNDFONT` primeiro porque é o caminho de quem está experimentando; depois a pasta do
@@ -164,7 +208,11 @@ pub fn toca(banco: &Banco, bytes: &[u8], taxa: u32) -> Option<Sound> {
     //    console / CMX e do TinySoundFont (que não implementa efeitos de reverberação/chorus).
     ajustes.block_size = BLOCO;
     ajustes.enable_reverb_and_chorus = false;
-    let sintetizador = rustysynth::Synthesizer::new(&banco.fonte, &ajustes).ok()?;
+    // 3. `maximum_polyphony`: ver [`VOZES`] — o padrão de 64 rouba nota em trecho denso.
+    ajustes.maximum_polyphony = VOZES;
+    let mut sintetizador = rustysynth::Synthesizer::new(&banco.fonte, &ajustes).ok()?;
+    // 4. O volume mestre é fixo, e não vem de normalização depois. Ver [`VOLUME_MESTRE`].
+    sintetizador.set_master_volume(VOLUME_MESTRE);
     let mut sequencia = rustysynth::MidiFileSequencer::new(sintetizador);
     sequencia.play(&Arc::new(midi), false);
 
@@ -187,18 +235,18 @@ pub fn toca(banco: &Banco, bytes: &[u8], taxa: u32) -> Option<Sound> {
     // A cauda: o banco pode terminar antes do comprimento declarado, e um som mais curto que a
     // partitura faria o jogo achar que a música acabou cedo.
     amostras.resize(total, 0.0);
-    // **O nível é o mesmo dos dois caminhos.** A tabela de timbres deixa o pico em 0,8 (ver
-    // `midi::normaliza`), e o banco saía em 0,53: a mesma música trocava de volume conforme o
-    // aparelho tivesse ou não um `.sf2` instalado, e no jogo isso muda o balanço entre a trilha e
-    // os efeitos, que passam pelo mesmo misturador.
-    crate::audio::midi::normaliza(&mut amostras);
+    // **Limitar, e não normalizar.** O ganho já foi dado uma vez, fixo, no volume mestre do
+    // sintetizador (ver [`VOLUME_MESTRE`]): o que sobra aqui é só impedir que uma soma densa passe
+    // do teto e corte. Uma música que ficou baixa **continua** baixa, porque é assim que ela é.
+    let pico = limita(&mut amostras);
     let elapsed = t0.elapsed();
     eprintln!(
-        "Zeebx: render MIDI SoundFont: {} bytes MIDI -> {:.1}s áudio ({} amostras @ {}Hz) sintetizados em {:.1}ms ({:.2}x tempo real)",
+        "Zeebx: render MIDI SoundFont: {} bytes MIDI -> {:.1}s áudio ({} amostras @ {}Hz, pico bruto {:.3}) sintetizados em {:.1}ms ({:.2}x tempo real)",
         bytes.len(),
         comprimento,
         amostras.len(),
         taxa,
+        pico,
         elapsed.as_secs_f64() * 1000.0,
         if elapsed.as_secs_f64() > 0.0 { comprimento / elapsed.as_secs_f64() } else { 0.0 }
     );
@@ -207,6 +255,26 @@ pub fn toca(banco: &Banco, bytes: &[u8], taxa: u32) -> Option<Sound> {
         channels: 1,
         samples: amostras,
     })
+}
+
+/// Desce o volume só quando o pico passou de [`TETO`]. Devolve o pico **antes** de mexer.
+///
+/// É o contrário de normalizar: normalizar iguala o pico de toda música, e com isso apaga a
+/// diferença de intensidade entre uma trilha calma e uma cheia. Aqui, música baixa continua baixa,
+/// e só a que encostaria no teto desce — pelo fator da música inteira, o que preserva a proporção
+/// entre as vozes dela.
+///
+/// Devolver o pico bruto é o que permite calibrar [`VOLUME_MESTRE`] de ouvido com número na mão:
+/// sem isso, saber se o ganho fixo está perto do teto exige gravar o áudio e medir fora.
+fn limita(amostras: &mut [f32]) -> f32 {
+    let pico = amostras.iter().fold(0.0f32, |a, s| a.max(s.abs()));
+    if pico > TETO {
+        let fator = TETO / pico;
+        for amostra in amostras.iter_mut() {
+            *amostra *= fator;
+        }
+    }
+    pico
 }
 
 

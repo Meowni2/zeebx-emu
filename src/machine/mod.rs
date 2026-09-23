@@ -2794,6 +2794,12 @@ impl<C: CpuBackend> Machine<C> {
     }
 
     /// Como [`Machine::new_with_storage`], mas recebe explicitamente a política de sintetizador MIDI.
+    ///
+    /// O `allow` é condicional e tem motivo: sem a feature `soundfont` não existe banco de
+    /// amostras para escolher, então a política não é lida por ninguém — e a alternativa, um
+    /// parâmetro com `_` no nome, mentiria sobre a assinatura pública em **todas** as compilações
+    /// por causa de uma só.
+    #[cfg_attr(not(feature = "soundfont"), allow(unused_variables))]
     pub fn new_with_storage_policy(
         cpu: C,
         module: LoadedModule,
