@@ -1140,7 +1140,7 @@ mod tests {
             out_module: loader::OBJECT_BASE,
             extensions: Vec::new(),
         };
-        let mut cpu = DynarmicCpu::new().unwrap();
+        let mut cpu = CpuDaSessao::new().unwrap();
         crate::cpu::CpuBackend::reset(&mut cpu, &modulo.mem).unwrap();
         let machine = Machine::new(
             cpu,
