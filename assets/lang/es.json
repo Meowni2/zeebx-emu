@@ -137,6 +137,7 @@
   "library.no_folder": "Aún no hay carpeta de ROMs elegida. Elige una en Ajustes.",
   "library.no_match": "Ningún juego coincide con “{query}”.",
   "library.rescan": "Buscar de nuevo",
+  "library.scanning": "Buscando juegos…",
   "library.title": "Biblioteca",
   "library.unknown_title": "Sin título",
   "nav.library": "Juegos",

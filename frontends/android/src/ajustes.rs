@@ -133,7 +133,13 @@ impl Emulador {
         let contagem = self
             .catalogo
             .format("library.count", &[("count", &self.jogos.len().to_string())]);
-        if widgets::navega(ui, self.catalogo.get("library.rescan"), &contagem) {
+        let pode_varrer = self.varredura.is_none();
+        if ui
+            .add_enabled_ui(pode_varrer, |ui| {
+                widgets::navega(ui, self.catalogo.get("library.rescan"), &contagem)
+            })
+            .inner
+        {
             self.recarrega();
         }
 

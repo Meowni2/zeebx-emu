@@ -137,6 +137,7 @@
   "library.no_folder": "No ROM folder chosen yet. Pick one in Settings.",
   "library.no_match": "No game matches “{query}”.",
   "library.rescan": "Scan again",
+  "library.scanning": "Scanning library…",
   "library.title": "Library",
   "library.unknown_title": "Untitled",
   "nav.library": "Games",

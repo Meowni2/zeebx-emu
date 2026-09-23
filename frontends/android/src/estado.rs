@@ -9,7 +9,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use zeebx::session::Session;
-use zeebx::storage::ContentId;
 use zeebx::video::display::Framebuffer;
 
 pub const SLOTS: usize = 5;
@@ -29,14 +28,6 @@ pub struct Miniatura {
 pub struct Slot {
     pub bytes: u64,
     pub miniatura: Option<Miniatura>,
-}
-
-/// A mesma identidade BLAKE3 que o armazenamento do núcleo usa para separar versões do conteúdo.
-pub fn identifica(path: &Path) -> Result<String, String> {
-    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    ContentId::from_reader(file)
-        .map(|id| id.as_str().to_string())
-        .map_err(|e| e.to_string())
 }
 
 pub fn lista(raiz: &Path, id: &str) -> [Option<Slot>; SLOTS] {

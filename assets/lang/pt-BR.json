@@ -137,6 +137,7 @@
   "library.no_folder": "Nenhuma pasta de ROMs escolhida. Escolha uma nas configurações.",
   "library.no_match": "Nenhum jogo com “{query}”.",
   "library.rescan": "Procurar de novo",
+  "library.scanning": "Procurando jogos…",
   "library.title": "Biblioteca",
   "library.unknown_title": "Sem título",
   "nav.library": "Jogos",
