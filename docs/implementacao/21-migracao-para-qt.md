@@ -147,7 +147,11 @@ O que a prova mostrou, no Linux com Wayland e NVIDIA (driver 615, Qt 6.11, cxx-q
 **O `qt.yml`** (ponto 4) passou no Linux, no Windows x64 e no macOS Intel com o Qt 6.8.3. O macOS
 ARM64 quebrou dentro de um cabeçalho do próprio Qt: o `qyieldcpu.h` do 6.8.3 chama `__yield()`, que
 o clang do Xcode novo só aceita com o `<arm_acle.h>`. O 6.11 tenta `__builtin_arm_yield` antes, e o
-workflow passou a usá-lo nos quatro alvos.
+workflow passou a usá-lo — **menos no Windows, que fica no 6.10**. A partir do 6.11 o repositório do
+Qt para Windows tem uma pasta por arquitetura (`qt6_6112/qt6_6112_msvc2022_64/`), e o índice único
+que o `aqtinstall` 3.3.0 procura dá 404; o passo falhava com "Failed to locate XML data". O 6.10
+ainda tem o índice antigo, e o `__yield` é defeito só do ARM. **Isso vale para a fase 9 também:**
+empacotar para Windows com o `aqtinstall` prende o Qt no 6.10 até ele entender o formato novo.
 
 Falta a entrada, que existe — teclado pelo nome do
 egui e controles pelo `gilrs`, com o mapeamento do `settings.json` — mas não foi exercitada à

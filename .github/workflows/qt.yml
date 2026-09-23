@@ -5,13 +5,21 @@
 # sai; este responde se a migração para Qt é viável fora do Linux em que ela nasceu. Um Qt que não
 # instala num runner não pode deixar vermelho o CI de quem só mexeu no motor.
 #
-# O Qt é o mesmo nos três sistemas, pelo `install-qt-action`. O do `apt` do Ubuntu 24.04 é o 6.4,
-# e comparar Windows e macOS num Qt contra o Linux noutro misturaria duas perguntas.
+# O Qt vem do `install-qt-action`, e não do sistema: o do `apt` do Ubuntu 24.04 é o 6.4.
 #
-# **É o 6.11, e não o 6.8 LTS.** O `6.8.*` resolveu para o 6.8.3, e o `qyieldcpu.h` dela chama `__yield()` direto no ARM. O clang do Xcode do
-# `macos-latest` passou a exigir o `<arm_acle.h>` para isso, e o macOS ARM64 não compilava nem o
-# `init.cpp` do próprio cxx-qt. O 6.11 tenta `__builtin_arm_yield` primeiro — conferido no
-# cabeçalho — e é o mesmo Qt do Linux em que a interface é desenvolvida.
+# **É o 6.11, e não o 6.8 LTS.** O `6.8.*` resolveu para o 6.8.3, e o `qyieldcpu.h` dela chama
+# `__yield()` direto no ARM. O clang do Xcode do `macos-latest` passou a exigir o `<arm_acle.h>`
+# para isso, e o macOS ARM64 não compilava nem o `init.cpp` do próprio cxx-qt. O 6.11 tenta
+# `__builtin_arm_yield` primeiro — conferido no cabeçalho — e é o mesmo Qt do Linux em que a
+# interface é desenvolvida.
+#
+# **Menos no Windows, que fica no 6.10.** A partir do 6.11 o repositório do Qt para Windows ganhou
+# uma pasta por arquitetura (`qt6_6112/qt6_6112_msvc2022_64/`), e o índice único que o
+# `aqtinstall` procura (`qt6_6112/qt6_6112/Updates.xml`) não existe mais: 404, conferido no
+# `download.qt.io`. O `aqtinstall` 3.3.0, o mais novo publicado, ainda não entende a pasta nova, e
+# o passo falhava com "Failed to locate XML data". O 6.10 ainda tem o índice antigo, com a
+# `win64_msvc2022_64`, e o defeito do `__yield` é só do ARM. Quando o `aqtinstall` entender o
+# formato novo, o Windows volta para o 6.11.
 #
 # Fica de fora o Windows ARM64: o `install-qt-action` não tem ali o mesmo pacote de desktop que tem
 # no x64, e a pergunta da fase 0 é se a ponte compila com MSVC e com o clang da Apple, não em
@@ -40,15 +48,19 @@ jobs:
           - nome: linux-x86_64
             sistema: ubuntu-24.04
             binario: target/release/zeebx
+            qt: "6.11.*"
           - nome: windows-x86_64
             sistema: windows-latest
             binario: target/release/zeebx.exe
+            qt: "6.10.*"
           - nome: macos-x86_64
             sistema: macos-15-intel
             binario: target/release/zeebx
+            qt: "6.11.*"
           - nome: macos-arm64
             sistema: macos-latest
             binario: target/release/zeebx
+            qt: "6.11.*"
     steps:
       - uses: actions/checkout@v4
 
@@ -77,7 +89,7 @@ jobs:
       - name: Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: "6.11.*"
+          version: ${{ matrix.qt }}
           cache: true
 
       # O `cxx-qt-build` acha o Qt pelo `qmake`. Dizer qual evita pegar outro que esteja no PATH
