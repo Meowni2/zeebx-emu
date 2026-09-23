@@ -121,6 +121,26 @@ jobs:
             echo "$arquivo -> $novo"
           done
 
+      # O Gatekeeper marca o que veio da internet e, sem assinatura da Apple, abre com
+      # "Zeebx.app is damaged". O aviso some com `xattr -dr com.apple.quarantine`. A nota
+      # entra na imagem, ao lado do aplicativo, para quem abre o `.dmg` ler antes de arrastar.
+      - name: Nota do Gatekeeper
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          dmg=$(echo target/pacotes/*.dmg)
+          tmp=$(mktemp -d)
+          mnt="$tmp/mnt"
+          mkdir -p "$mnt"
+          hdiutil convert "$dmg" -format UDRW -o "$tmp/rw"
+          hdiutil attach "$tmp/rw.dmg" -mountpoint "$mnt" -nobrowse
+          cp frontends/classical-standalone/LEIA-ME-macos.txt "$mnt/LEIA-ME.txt"
+          sync
+          hdiutil detach "$mnt"
+          rm -f "$dmg"
+          hdiutil convert "$tmp/rw.dmg" -format UDZO -o "${dmg%.dmg}"
+          rm -rf "$tmp"
+
       - uses: actions/upload-artifact@v4
         with:
           name: zeebx-standalone-${{ matrix.nome }}
