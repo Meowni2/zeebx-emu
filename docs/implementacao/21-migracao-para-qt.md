@@ -11,7 +11,8 @@ marcada aqui como feita.
 |---|---|
 | 0 — prova de viabilidade | feita no Linux (`frontends/classical-standalone/src/qt/`, feature `ui-qt`); no `qt.yml`, Linux, Windows x64 e macOS Intel passaram, e o macOS ARM64 espera a nova execução com o Qt 6.11 |
 | 1 — desacoplar | feita: `Viewport` do pintor, tradução de teclas, `ui::partida::Partida` e `ui::entrada::EntradaDoDesktop` |
-| 2 a 9 | não começadas |
+| 2 — estrutura | feita: núcleo da interface Qt, `Biblioteca` como modelo, janela principal e janela do jogo |
+| 3 a 9 | não começadas |
 
 ## Onde o egui está de verdade
 
@@ -111,12 +112,12 @@ Antes de migrar tela nenhuma, provar os quatro pontos que podem inviabilizar o p
 3. um `glow::Context` tirado de um contexto do Qt, com o `GpuState` rodando nele;
 4. o build nos três sistemas.
 
-Fica atrás da feature `ui-qt` e do subcomando `zeebx qt <jogo> [--placa]`, sem tocar no caminho
+Fica atrás da feature `ui-qt` e do subcomando `zeebx qt [jogo]`, sem tocar no caminho
 do egui:
 
 ```bash
 cargo run --release -p zeebx-classical-standalone --features ui-qt -- \
-    qt "Crash Bandicoot Nitro Kart 3D (Brazil) (Es,Pt).zip" --placa
+    qt "Crash Bandicoot Nitro Kart 3D (Brazil) (Es,Pt).zip"
 ```
 
 O código mora em `frontends/classical-standalone/` (`src/qt/`, `qml/`), e não no núcleo: o núcleo
@@ -212,9 +213,26 @@ voltando para ela pelo menu, e o jogo aberto pela biblioteca fechando a janela a
 
 ### 2 — Estrutura Qt ao lado do egui
 
-Features `ui-egui` (padrão) e `ui-qt`; o `build.rs` só chama o `CxxQtBuilder` com `ui-qt`,
-mantendo a `libatomic` e o `winresource`. Um `Rc<RefCell<Nucleo>>` na thread principal, e
-`QObject`s finos (`Biblioteca`, `Jogo`, `Configuracoes`, `Saves`) sobre ele.
+`zeebx qt` abre a biblioteca, e `zeebx qt <jogo>` abre o jogo direto; o `zeebx` sem argumento
+continua sendo o egui. O código é do `frontends/classical-standalone/`, atrás da feature `ui-qt`.
+
+- **`qt/nucleo.rs`**: o estado da interface — configurações, jogos, Z-Wheel, a entrada do desktop,
+  a partida e o contexto de GL — num `thread_local` com `RefCell`. Não é um `Rc<RefCell<…>>`
+  passado de mão em mão, como o plano dizia: o cxx-qt cria cada `QObject` a partir do QML, sem
+  argumentos, e não há por onde entregá-lo. A regra que isso impõe está no topo do arquivo:
+  **nunca emitir sinal de dentro do `com`**, porque o QML pode chamar de volta e o segundo
+  empréstimo derruba o programa.
+- **`QObject`s finos**: a `TelaDoJogo` só guarda o quadro que está na tela e repassa teclas; a
+  `Biblioteca` é um `QAbstractListModel` com os papéis `titulo` e `caminho`, e abre jogos.
+- **Duas janelas do sistema**, como no egui: `Principal.qml` com a lista e o botão da Z-Wheel, e
+  `Jogo.qml`, mostrada quando um jogo abre e que fecha o jogo ao ser fechada. `Esc` fecha e `P`
+  pausa, como no egui.
+- **O contexto de GL existe sempre**, criado na primeira abertura, e é a configuração
+  (`graphics.gpu_rasterizer`) que decide se o rasterizador vai para a placa — como no egui, que
+  sempre tem o contexto da janela. O `--placa` da prova de viabilidade saiu.
+
+Fica para depois o que o plano previa aqui: a feature `ui-egui`, que tiraria o `eframe` do
+standalone. O `eframe` vem pela feature `desktop` do núcleo, e separá-lo é a fase 8.
 
 ### 3 — A janela do jogo
 

@@ -27,9 +27,11 @@ fn interface_qt() {
     use cxx_qt_build::{CxxQtBuilder, QmlModule};
 
     CxxQtBuilder::new_qml_module(
-        QmlModule::new("zeebx").qml_file("qml/Principal.qml").depend("QtQuick"),
+        QmlModule::new("zeebx")
+            .qml_files(["qml/Principal.qml", "qml/Jogo.qml"])
+            .depend("QtQuick"),
     )
-    .files(["src/qt/ponte.rs"])
+    .files(["src/qt/ponte.rs", "src/qt/biblioteca.rs"])
     .include_dir("src/qt/cpp")
     .cpp_files(["src/qt/cpp/gl_qt.cpp"])
     .qt_module("Quick")

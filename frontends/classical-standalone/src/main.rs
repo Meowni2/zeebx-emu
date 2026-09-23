@@ -486,11 +486,13 @@ fn main() -> ExitCode {
         }
         // A interface Qt, em prova de viabilidade: docs/implementacao/21-migracao-para-qt.md.
         #[cfg(feature = "ui-qt")]
-        Some("qt") if args.len() >= 2 => qt::launch(&args[1], args.iter().any(|a| a == "--placa")),
+        Some("qt") => qt::launch(args.get(1).map(String::as_str)),
         // Sem argumento nenhum, o que se quer é o emulador, não a ajuda.
         None => launch(),
         _ => {
             eprintln!("uso: zeebx            abre a interface");
+            #[cfg(feature = "ui-qt")]
+            eprintln!("     zeebx qt [arquivo.zip]  a interface Qt, em migração: a biblioteca, ou o jogo direto");
             eprintln!("     zeebx info <arquivo.mod>");
             eprintln!(
                 "     zeebx run <arquivo.mod> [--window] [--seconds=N] [--keys=ms:tecla,...]

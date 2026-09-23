@@ -1,65 +1,102 @@
 import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
 import QtQuick.Window
 
 import zeebx
 
-// A janela do jogo da prova de viabilidade: a tela, a linha de estado e o passo a cada quadro.
+// A janela principal: a biblioteca. O jogo abre na janela dele, como no egui.
+//
+// Por enquanto é uma lista de títulos. A grade, o slider, as capas e a busca são da fase 4 de
+// `docs/implementacao/21-migracao-para-qt.md`.
 Window {
-    id: janela
+    id: principal
 
-    required property string jogo
-    required property bool placa
+    // O jogo pedido na linha de comando, se houve: abre direto, sem passar pela lista.
+    required property string jogoInicial
 
     width: 960
-    height: 760
+    height: 720
     visible: true
-    color: "black"
-    title: "Zeebx (Qt) — " + tela.estado
+    title: "Zeebx"
 
-    TelaDoJogo {
-        id: tela
+    // Fechar a biblioteca encerra tudo, com ou sem jogo aberto — como no egui.
+    onClosing: Qt.quit()
 
+    Component.onCompleted: {
+        if (jogoInicial !== "")
+            mostra(biblioteca.abreCaminho(jogoInicial))
+    }
+
+    // `erro` vazio é jogo aberto.
+    function mostra(erro) {
+        aviso.text = erro
+        if (erro === "") {
+            jogo.show()
+            jogo.raise()
+            jogo.requestActivate()
+        }
+    }
+
+    Biblioteca {
+        id: biblioteca
+    }
+
+    Jogo {
+        id: jogo
+    }
+
+    ColumnLayout {
         anchors.fill: parent
-        anchors.bottomMargin: 24
-        focus: true
+        anchors.margins: 8
+        spacing: 8
 
-        Component.onCompleted: abre(janela.jogo, janela.placa)
+        RowLayout {
+            Layout.fillWidth: true
 
-        Keys.onPressed: (evento) => {
-            if (evento.key === Qt.Key_F11) {
-                janela.visibility = janela.visibility === Window.FullScreen
-                    ? Window.Windowed : Window.FullScreen
-            } else if (!evento.isAutoRepeat) {
-                tecla(evento.key, true)
+            Button {
+                text: "▶ Z-Wheel"
+                enabled: biblioteca.temZWheel()
+                onClicked: principal.mostra(biblioteca.abreZWheel())
             }
-            evento.accepted = true
-        }
-        Keys.onReleased: (evento) => {
-            if (!evento.isAutoRepeat) {
-                tecla(evento.key, false)
+
+            Label {
+                Layout.fillWidth: true
+                elide: Text.ElideMiddle
+                text: lista.count + " jogos em " + biblioteca.pasta()
             }
-            evento.accepted = true
         }
-        onActiveFocusChanged: if (!activeFocus) solta()
-        // Um jogo aberto aqui que sai sozinho — sem Z-Wheel para onde voltar — fecha a janela,
-        // como a do egui.
-        onFechou: janela.close()
-    }
 
-    Text {
-        anchors.bottom: parent.bottom
-        anchors.left: parent.left
-        anchors.margins: 4
-        color: "#bbbbbb"
-        text: tela.estado
-    }
+        Label {
+            id: aviso
 
-    // Um passo por quadro da janela, no ritmo do vsync — como o `request_repaint` do egui. Um
-    // `Timer` de intervalo zero deixaria a CPU a 100% à toa.
-    FrameAnimation {
-        running: true
-        onTriggered: tela.passo()
-    }
+            Layout.fillWidth: true
+            visible: text !== ""
+            color: "#d04040"
+            wrapMode: Text.Wrap
+        }
 
-    onActiveChanged: if (!active) tela.solta()
+        ListView {
+            id: lista
+
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            clip: true
+            focus: true
+            model: biblioteca
+            ScrollBar.vertical: ScrollBar {}
+
+            delegate: ItemDelegate {
+                required property int index
+                required property string titulo
+
+                width: ListView.view.width
+                text: titulo
+                highlighted: ListView.isCurrentItem
+                onClicked: principal.mostra(biblioteca.abre(index))
+            }
+
+            Keys.onReturnPressed: principal.mostra(biblioteca.abre(currentIndex))
+        }
+    }
 }
