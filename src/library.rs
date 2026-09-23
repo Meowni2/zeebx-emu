@@ -149,6 +149,20 @@ pub fn z_wheel_em(caminho: &Path) -> Option<PathBuf> {
         .map(|jogo| jogo.path)
 }
 
+/// De onde abrir a Z-Wheel: o caminho configurado vale primeiro; sem ele, uma Z-Wheel que esteja
+/// entre os jogos da pasta de ROMs serve do mesmo jeito.
+///
+/// É a regra que as janelas usam para atender o pedido de voltar à Z-Wheel, e por isso mora aqui,
+/// e não em cada uma delas.
+pub fn z_wheel_de(configurada: Option<&Path>, jogos: &[Game]) -> Option<PathBuf> {
+    configurada.and_then(z_wheel_em).or_else(|| {
+        jogos
+            .iter()
+            .find(|jogo| jogo.clsid == Some(crate::session::Z_WHEEL))
+            .map(|jogo| jogo.path.clone())
+    })
+}
+
 /// Procura a Z-Wheel sem perguntar: primeiro entre os jogos da pasta de ROMs, depois ao lado
 /// dela, em `Downloads` e na pasta pessoal, em tudo que tenha "wheel" ou "tectoy" no nome.
 /// Olhar só esses nomes evita varrer o disco.

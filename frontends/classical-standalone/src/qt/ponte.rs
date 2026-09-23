@@ -1,7 +1,8 @@
 //! Os `QObject`s escritos em Rust, e a cola em C++ que eles chamam.
 //!
 //! Por enquanto é só a tela do jogo, e ainda pelo caminho mais simples: o quadro RGB565 da
-//! sessão pintado por um `QQuickPaintedItem`. O `QImage::Format_RGB16` **é** RGB565, então a
+//! sessão pintado por um `QQuickPaintedItem`. Abrir, rodar e trocar de jogo é a
+//! [`zeebx::ui::partida::Partida`], a mesma da janela do egui. O `QImage::Format_RGB16` **é** RGB565, então a
 //! CPU não converte nada — a mesma regra do egui de subir o quadro só quando a tela mudou vale
 //! aqui.
 
@@ -61,6 +62,10 @@ pub mod qobject {
         #[qinvokable]
         fn solta(self: Pin<&mut Self>);
 
+        /// O jogo saiu sozinho e não há para onde voltar: a janela fecha, como a do egui.
+        #[qsignal]
+        fn fechou(self: Pin<&mut Self>);
+
         #[inherit]
         fn size(self: &Self) -> QSizeF;
 
@@ -73,66 +78,118 @@ pub mod qobject {
 }
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
 
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QImage, QImageFormat, QPainterRenderHint, QRect, QString};
 
-use zeebx::input::bindings::Source;
-use zeebx::input::gamepads::Gamepads;
-use zeebx::session::Session;
+use zeebx::input;
+use zeebx::eframe::egui::Key;
+use zeebx::library::{self, Game};
+use zeebx::ui::entrada::EntradaDoDesktop;
+use zeebx::ui::partida::{Abertura, Partida, Saida};
 use zeebx::ui::settings::Settings;
-
-/// O mesmo teto do egui: uma pausa longa não vira uma fatia gigante de emulação.
-const MAX_SLICE: Duration = Duration::from_millis(100);
 
 pub struct TelaDoJogoRust {
     estado: QString,
     suave: bool,
     settings: Settings,
-    gamepads: Gamepads,
-    sessao: Option<Session>,
-    /// Se a sessão usa o contexto fora de tela do Qt. Com ele, todo passo — e a destruição da
-    /// sessão, que solta texturas — acontece com o contexto corrente.
-    na_placa: bool,
-    /// Pelo nome do egui: é o que o `settings.json` guarda.
-    teclas: HashSet<String>,
+    /// Os controles do host, os Wii Remotes e os sensores: a mesma leitura da janela do egui.
+    entrada: EntradaDoDesktop,
+    partida: Option<Partida>,
+    /// O contexto que o rasterizador na placa recebe emprestado; `None` é o de software. Com ele,
+    /// tudo que toca a sessão — o passo, a abertura, e o fim de uma partida, que solta texturas —
+    /// acontece com o contexto corrente.
+    gl: Option<Arc<glow::Context>>,
+    /// "software", ou a placa que o contexto achou: vai para a linha de estado.
+    onde: String,
+    /// Os jogos da pasta de ROMs: é deles que a Z-Wheel pede para lançar.
+    jogos: Vec<Game>,
+    z_wheel: Option<PathBuf>,
+    /// As teclas apertadas, como `egui::Key`: é contra ele que o mapeamento é conferido. Ver
+    /// [`tecla_mapeada`].
+    teclas: HashSet<Key>,
     quadro: Option<QImage>,
     chave: Option<(u64, u64)>,
-    ultimo_passo: Instant,
 }
 
 impl Default for TelaDoJogoRust {
     fn default() -> Self {
         let settings = Settings::load();
+        let jogos = settings
+            .roms_dir
+            .as_deref()
+            .map(library::scan)
+            .unwrap_or_default();
+        let z_wheel = library::z_wheel_de(settings.z_wheel_path.as_deref(), &jogos);
         Self {
             estado: QString::default(),
             suave: settings.graphics.smooth,
             settings,
-            gamepads: Gamepads::default(),
-            sessao: None,
-            na_placa: false,
+            entrada: EntradaDoDesktop::inicia(),
+            partida: None,
+            gl: None,
+            onde: "software".into(),
+            jogos,
+            z_wheel,
             teclas: HashSet::new(),
             quadro: None,
             chave: None,
-            ultimo_passo: Instant::now(),
         }
     }
 }
 
+/// Roda `f` com o contexto do rasterizador corrente, quando há um.
+fn no_contexto<T>(com_placa: bool, f: impl FnOnce() -> T) -> T {
+    let corrente = com_placa && qobject::gl_torna_corrente();
+    let resultado = f();
+    if corrente {
+        qobject::gl_solta();
+    }
+    resultado
+}
+
 impl TelaDoJogoRust {
-    /// Solta a sessão com o contexto dela corrente: soltar texturas com o contexto do Qt Quick
+    /// Troca a partida pela do jogo em `caminho`. Falhando, a de antes continua, como no egui.
+    fn abre_partida(&mut self, caminho: &Path) -> Result<(), String> {
+        self.teclas.clear();
+        if let Some(partida) = self.partida.as_mut() {
+            partida.esquece_entrada();
+        }
+        let abertura = Abertura {
+            settings: &self.settings,
+            serial: None,
+            gl: self.gl.clone(),
+            instalados: self
+                .jogos
+                .iter()
+                .filter_map(|jogo| Some((jogo.clsid?, library::id_do_modulo(&jogo.path)?)))
+                .collect(),
+        };
+        let anterior = self.partida.as_ref();
+        let aberta = no_contexto(self.gl.is_some(), || Partida::abre(caminho, abertura, anterior));
+        let partida = aberta.map_err(|erro| erro.to_string())?;
+        // A de antes sai aqui, e com o contexto corrente: as texturas dela moram nele.
+        no_contexto(self.gl.is_some(), || self.partida = Some(partida));
+        self.quadro = None;
+        self.chave = None;
+        Ok(())
+    }
+
+    fn estado_do_jogo(&self) -> String {
+        match &self.partida {
+            Some(partida) => format!("{} — {}", partida.sessao().title(), self.onde),
+            None => String::new(),
+        }
+    }
+
+    /// Solta a partida com o contexto dela corrente: soltar texturas com o contexto do Qt Quick
     /// corrente apagaria as dele.
     fn fecha(&mut self) {
-        if self.sessao.is_none() {
-            return;
-        }
-        let corrente = self.na_placa && qobject::gl_torna_corrente();
-        self.sessao = None;
-        if corrente {
-            qobject::gl_solta();
+        if self.partida.is_some() {
+            no_contexto(self.gl.is_some(), || self.partida = None);
         }
     }
 }
@@ -144,7 +201,7 @@ impl Drop for TelaDoJogoRust {
 }
 
 /// O contexto fora de tela, pronto para o `glow`. `Err` diz por que não deu.
-fn contexto_do_qt() -> Result<std::sync::Arc<glow::Context>, String> {
+fn contexto_do_qt() -> Result<Arc<glow::Context>, String> {
     if !qobject::gl_cria() {
         return Err("o Qt não criou o contexto fora de tela".into());
     }
@@ -157,119 +214,112 @@ fn contexto_do_qt() -> Result<std::sync::Arc<glow::Context>, String> {
                 .map_or(0, qobject::gl_funcao) as *const std::ffi::c_void
         })
     };
-    Ok(std::sync::Arc::new(gl))
+    qobject::gl_solta();
+    Ok(Arc::new(gl))
 }
 
 impl qobject::TelaDoJogo {
     pub fn abre(mut self: Pin<&mut Self>, caminho: &QString, placa: bool) {
-        let caminho = String::from(caminho);
+        let caminho = PathBuf::from(String::from(caminho));
         let estado = {
             let mut rust = self.as_mut().rust_mut();
             let rust = &mut *rust;
             rust.fecha();
-            rust.quadro = None;
-            rust.chave = None;
-            let contexto = match placa {
-                true => match contexto_do_qt() {
-                    Ok(gl) => Some(gl),
-                    Err(erro) => {
-                        eprintln!("{erro} — seguindo no rasterizador de software");
-                        None
+            if placa && rust.gl.is_none() {
+                match contexto_do_qt() {
+                    Ok(gl) => {
+                        use glow::HasContext;
+                        let placa = no_contexto(true, || unsafe {
+                            gl.get_parameter_string(glow::RENDERER)
+                        });
+                        rust.onde = format!("placa: {placa}");
+                        rust.gl = Some(gl);
                     }
-                },
-                false => None,
-            };
-            let descricao = contexto.as_ref().map(|gl| {
-                use glow::HasContext;
-                unsafe { gl.get_parameter_string(glow::RENDERER) }
-            });
-            rust.na_placa = contexto.is_some();
-            let portas = std::array::from_fn(|porta| {
-                rust.settings
-                    .controls
-                    .player(porta)
-                    .filter(|jogador| jogador.ligada)
-                    .map(|jogador| jogador.aparelho)
-            });
-            let aberta = Session::start_with(
-                Path::new(&caminho),
-                portas,
-                None,
-                rust.na_placa,
-                contexto,
-                rust.settings.z_wheel,
-            );
-            let estado = match aberta {
-                Ok(mut sessao) => {
-                    let audio = &rust.settings.audio;
-                    if let Some(erro) = sessao.set_audio(audio.enabled, audio.volume) {
-                        eprintln!("áudio: {erro}");
-                    }
-                    let onde = descricao.map_or("software".to_string(), |placa| format!("placa: {placa}"));
-                    let estado = format!("{} — {onde}", sessao.title());
-                    rust.sessao = Some(sessao);
-                    rust.ultimo_passo = Instant::now();
-                    estado
+                    Err(erro) => eprintln!("{erro} — seguindo no rasterizador de software"),
                 }
-                Err(erro) => format!("não abriu: {erro:?}"),
-            };
-            if rust.na_placa {
-                qobject::gl_solta();
             }
-            estado
+            match rust.abre_partida(&caminho) {
+                Ok(()) => rust.estado_do_jogo(),
+                Err(erro) => format!("não abriu: {erro}"),
+            }
         };
         self.set_estado(QString::from(&estado));
     }
 
     pub fn passo(mut self: Pin<&mut Self>) {
-        let (mudou, parou) = {
+        let (mudou, estado, fechou) = {
             let mut rust = self.as_mut().rust_mut();
             let rust = &mut *rust;
-            let Some(sessao) = rust.sessao.as_mut() else {
+            let Some(partida) = rust.partida.as_mut() else {
                 return;
             };
-            rust.gamepads.poll();
-            for (porta, jogador) in rust.settings.controls.ligadas() {
-                let device = jogador.device.as_deref();
-                let pad = jogador.pad(
-                    |fonte| match fonte {
-                        Source::Key { name } => rust.teclas.contains(name),
-                        _ => rust.gamepads.is_active(device, porta, fonte),
-                    },
-                    |eixo| rust.gamepads.value(device, porta, eixo),
-                );
-                sessao.set_port_pad(porta, pad);
+            let pads = rust.entrada.pads(&rust.settings.controls, &rust.teclas);
+            let movimentos = rust.entrada.movimentos(&rust.settings.controls);
+            let teclado = rust.teclas.iter().filter_map(|tecla| input::avk_de(*tecla));
+            let limite = rust.settings.graphics.speed_limit;
+            no_contexto(rust.gl.is_some(), || {
+                partida.avanca(&pads, movimentos, teclado, limite);
+            });
+
+            // O pedido de lançar vem antes da saída: ver [`Partida::pedido_de_lancamento`].
+            let lancado = partida.pedido_de_lancamento().and_then(|classe| {
+                rust.jogos
+                    .iter()
+                    .find(|jogo| jogo.clsid == Some(classe))
+                    .map(|jogo| jogo.path.clone())
+            });
+            let (proximo, pela_z_wheel, fechou) = match (lancado, partida.saida()) {
+                (Some(caminho), _) => (Some(caminho), true, false),
+                (None, Saida::Segue) => (None, false, false),
+                (None, Saida::ReabreZWheel) if rust.z_wheel.is_some() => {
+                    (rust.z_wheel.clone(), false, false)
+                }
+                (None, Saida::ReabreZWheel | Saida::Fecha) => (None, false, true),
+            };
+            let mut estado = None;
+            if let Some(caminho) = proximo {
+                match rust.abre_partida(&caminho) {
+                    Ok(()) => estado = Some(rust.estado_do_jogo()),
+                    Err(erro) => estado = Some(format!("não abriu: {erro}")),
+                }
+                if let Some(partida) = rust.partida.as_mut() {
+                    partida.aberta_pela_z_wheel |= pela_z_wheel;
+                    partida.reinicia_relogio();
+                }
             }
-            let agora = Instant::now();
-            let fatia = (agora - rust.ultimo_passo).min(MAX_SLICE);
-            rust.ultimo_passo = agora;
-            let corrente = rust.na_placa && qobject::gl_torna_corrente();
-            if !sessao.mostra_quadro_intermediario() {
-                let _ = sessao.step(fatia, rust.settings.graphics.speed_limit);
+            if fechou {
+                rust.fecha();
             }
-            if corrente {
-                qobject::gl_solta();
+
+            let mut mudou = false;
+            if let Some(partida) = &rust.partida {
+                let tela = partida.sessao().screen();
+                let chave = (tela.serie(), tela.escritas());
+                if rust.chave != Some(chave) {
+                    rust.quadro = Some(imagem_rgb565(
+                        &tela.to_rgb565_bytes(),
+                        tela.width() as usize,
+                        tela.height() as usize,
+                    ));
+                    rust.chave = Some(chave);
+                    mudou = true;
+                }
+                if estado.is_none() {
+                    estado = partida.sessao().stopped_reason();
+                }
             }
-            let tela = sessao.screen();
-            let chave = (tela.serie(), tela.escritas());
-            let mudou = rust.chave != Some(chave);
-            if mudou {
-                rust.quadro = Some(imagem_rgb565(
-                    &tela.to_rgb565_bytes(),
-                    tela.width() as usize,
-                    tela.height() as usize,
-                ));
-                rust.chave = Some(chave);
-            }
-            (mudou, sessao.stopped_reason())
+            (mudou, estado, fechou)
         };
-        if let Some(motivo) = parou {
-            if self.estado() != &QString::from(&motivo) {
-                self.as_mut().set_estado(QString::from(&motivo));
+        if let Some(estado) = estado.map(|texto| QString::from(&texto)) {
+            if self.estado() != &estado {
+                self.as_mut().set_estado(estado);
             }
         }
         if mudou {
-            self.update();
+            self.as_mut().update();
+        }
+        if fechou {
+            self.fechou();
         }
     }
 }
@@ -283,14 +333,19 @@ impl cxx_qt::Initialize for qobject::TelaDoJogo {
 
 impl qobject::TelaDoJogo {
     pub fn tecla(mut self: Pin<&mut Self>, codigo: i32, apertada: bool) {
-        let Some(nome) = nome_da_tecla(codigo) else {
+        let Some(tecla) = tecla_do_qt(codigo) else {
             return;
         };
         let mut rust = self.as_mut().rust_mut();
+        let rust = &mut *rust;
         match apertada {
-            true => rust.teclas.insert(nome),
-            false => rust.teclas.remove(&nome),
+            true => rust.teclas.insert(tecla),
+            false => rust.teclas.remove(&tecla),
         };
+        // Cada evento vai à partida na hora: ver [`Partida::teclado_mudou`].
+        if let Some(partida) = rust.partida.as_mut() {
+            partida.teclado_mudou(rust.teclas.iter().filter_map(|tecla| input::avk_de(*tecla)));
+        }
     }
 
     pub fn solta(mut self: Pin<&mut Self>) {
@@ -349,6 +404,11 @@ fn imagem_rgb565(bytes: &[u8], largura: usize, altura: usize) -> QImage {
 
 /// O nome que o egui dá à tecla, a partir do `Qt::Key`. É o nome que está gravado no
 /// `settings.json`: mudar de interface não pode desfazer o mapeamento de ninguém.
+/// O `egui::Key` de um `Qt::Key`, passando pelo nome.
+fn tecla_do_qt(codigo: i32) -> Option<Key> {
+    nome_da_tecla(codigo).and_then(|nome| Key::from_name(&nome))
+}
+
 fn nome_da_tecla(codigo: i32) -> Option<String> {
     let nome = match codigo {
         0x0100_0000 => "Escape",
@@ -389,7 +449,14 @@ fn nome_da_tecla(codigo: i32) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::nome_da_tecla;
+    use super::{Key, tecla_do_qt};
+
+    /// A seta do Qt é a seta do egui: daí em diante vale [`zeebx::ui::entrada::tecla_apertada`],
+    /// que aceita as duas grafias do `settings.json`.
+    #[test]
+    fn a_seta_do_qt_e_a_do_egui() {
+        assert_eq!(tecla_do_qt(0x0100_0013), Some(Key::ArrowUp));
+    }
 
     #[test]
     fn as_teclas_do_qt_tem_o_nome_do_egui() {
@@ -403,8 +470,8 @@ mod tests {
             (0x0100_0003, "Backspace"),
             (0x0100_0039, "F10"),
         ] {
-            assert_eq!(nome_da_tecla(codigo).as_deref(), Some(nome));
-            assert!(zeebx::eframe::egui::Key::from_name(nome).is_some(), "{nome} não é tecla do egui");
+            assert_eq!(tecla_do_qt(codigo), Key::from_name(nome), "{nome}");
+            assert!(Key::from_name(nome).is_some(), "{nome} não é tecla do egui");
         }
     }
 }

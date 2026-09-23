@@ -205,8 +205,7 @@ impl App {
                 }
                 (Comando::ZWheel, _) => {
                     if let Some(caminho) = self.z_wheel.clone() {
-                        self.aberto_pela_z_wheel = false;
-                        self.play(caminho);
+                        self.abre_pela_biblioteca(caminho);
                         return;
                     }
                     0
@@ -231,8 +230,7 @@ impl App {
         };
         self.vitrine.rolar = false;
         if let Some(i) = escolhido.or(clicado) {
-            self.aberto_pela_z_wheel = false;
-            self.play(self.games[i].path.clone());
+            self.abre_pela_biblioteca(self.games[i].path.clone());
         }
     }
 
@@ -241,7 +239,7 @@ impl App {
     /// A biblioteca só escuta com a janela principal livre: com um jogo aberto o controle é
     /// dele, e com as configurações abertas ele pode estar sendo mapeado.
     fn comandos_da_biblioteca(&mut self, ctx: &egui::Context) -> Vec<Comando> {
-        if self.session.is_some() || self.settings_open || self.capturing.is_some() {
+        if self.partida.is_some() || self.settings_open || self.capturing.is_some() {
             self.vitrine.antes = [true; 6];
             self.vitrine.segurando = None;
             return Vec::new();

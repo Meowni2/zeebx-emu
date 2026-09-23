@@ -41,6 +41,9 @@ Window {
             evento.accepted = true
         }
         onActiveFocusChanged: if (!activeFocus) solta()
+        // Um jogo aberto aqui que sai sozinho — sem Z-Wheel para onde voltar — fecha a janela,
+        // como a do egui.
+        onFechou: janela.close()
     }
 
     Text {

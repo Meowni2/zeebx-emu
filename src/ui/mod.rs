@@ -29,6 +29,9 @@ pub mod depuracao;
 pub mod gpu;
 pub mod i18n;
 pub mod library;
+// Sem gate: a partida só fala com a `session` e o `settings`, e é o que as janelas do egui e do Qt
+// usam para abrir e rodar um jogo do mesmo jeito.
+pub mod partida;
 pub mod saves;
 pub mod settings;
 
@@ -38,6 +41,9 @@ pub mod app;
 pub mod atualizacao;
 #[cfg(feature = "desktop")]
 pub mod discord;
+// Do desktop porque é o `gilrs`, que só o desktop traz; mas sem egui de janela: a Qt usa igual.
+#[cfg(feature = "desktop")]
+pub mod entrada;
 #[cfg(feature = "desktop")]
 pub mod window;
 

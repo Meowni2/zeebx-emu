@@ -10,7 +10,7 @@ marcada aqui como feita.
 | Fase | Situação |
 |---|---|
 | 0 — prova de viabilidade | feita no Linux (`frontends/classical-standalone/src/qt/`, feature `ui-qt`); no `qt.yml`, Linux, Windows x64 e macOS Intel passaram, e o macOS ARM64 espera a nova execução com o Qt 6.11 |
-| 1 — desacoplar | `Viewport` do pintor e tradução de teclas no núcleo feitos; falta o corte do `App` (proposta na fase 1) |
+| 1 — desacoplar | feita: `Viewport` do pintor, tradução de teclas, `ui::partida::Partida` e `ui::entrada::EntradaDoDesktop` |
 | 2 a 9 | não começadas |
 
 ## Onde o egui está de verdade
@@ -30,8 +30,11 @@ o que mais pesa na migração:
 `input/bindings.rs` **não** usa `egui::Key`: as teclas já são guardadas por nome. Mas o nome é o
 do egui, e é o que está gravado na configuração de quem já usa o
 emulador. O Qt precisa de uma tabela `Qt::Key → nome do egui`, com teste, e não de um formato
-novo. Os nomes são os do `egui::Key::name()`: `"Up"`, `"Enter"`, `"Space"`, `"Z"`, `"4"` — não
-`"ArrowUp"`, que é o nome da variante.
+novo. **E a comparação é pela tecla, nunca pelo texto:** o mesmo botão aparece com duas grafias
+no arquivo — o mapeamento de fábrica grava `"ArrowUp"`, e a tela de controles grava o
+`egui::Key::name()`, que é `"Up"`. O egui e o headless convertem os dois lados com
+`egui::Key::from_name`, que aceita as duas. A ponte Qt comparava o texto, e o direcional do teclado
+não chegava aos jogos — só à Z-Wheel, que navega pelas teclas do BREW.
 
 O `glutin` e o `ab_glyph` **ficam**. O primeiro dá o pbuffer do `run` e do `bench`, onde toda a
 medição é feita; o segundo é o `IDISPLAY_DrawText`. Nenhum dos dois é da interface.
@@ -165,29 +168,47 @@ Feito:
 - ~~`Viewport` próprio no `Pintor`~~. `ui::gpu::Viewport`, com `From<ViewportInPixels>` para quem
   tem egui na tela. O headless montava um `ViewportInPixels` à mão sem ter egui nenhum; agora só
   converte na chamada, e a lógica dele (e os testes) ficaram como estavam.
-- ~~A tradução de teclas no núcleo~~. `input::avks_ativos`, `input::transicoes` e
-  `input::avk_do_nome` saíram do `App`, que tinha também uma cópia idêntica do `input::avk_de`. A
+- ~~A tradução de teclas no núcleo~~. `input::avks_ativos` e `input::transicoes` saíram
+  do `App`, que tinha também uma cópia idêntica do `input::avk_de`. A
   interface Qt passou a entregar `EVT_KEY` com elas, como a do egui.
 
-Falta o corte do `App`, que é o item grande — 3.400 linhas, e é a interface que está em produção.
-A proposta é começar pelo que a janela do jogo precisa, e não pelo `App` inteiro:
+- ~~O laço do jogo fora do `App`~~. **`ui::partida::Partida`**, no núcleo e sem toolkit: a sessão,
+  as teclas entregues, o controle do quadro anterior, o relógio da fatia, a pausa e o "aberta pela
+  Z-Wheel". `teclado_mudou` recebe cada evento de teclado — um toque que começa e termina entre dois
+  quadros precisa chegar como aperto e soltura —, `avanca` entrega a entrada e faz o passo, e
+  `pedido_de_lancamento`/`saida` dizem o que vem depois: segue, lança um ClassID, reabre a Z-Wheel
+  ou fecha. `Partida::abre` monta a sessão a partir do `Settings` — resolução interna, proporção,
+  melhorias, neblina, som, os instalados para a Z-Wheel, a tela herdada. A regra de onde abrir a
+  Z-Wheel virou `library::z_wheel_de`.
 
-- **`ui::partida::Partida`**, no núcleo e sem toolkit: a sessão, as teclas entregues, o controle
-  do quadro anterior, o relógio da fatia, a pausa e o "aberto pela Z-Wheel". Um `avanca(entrada)`
-  recebe os controles, os movimentos e as teclas já em AVK, faz o passo (ou mostra a tela
-  intermediária) e devolve o desfecho: **segue**, **lança o ClassID tal**, **reabre a Z-Wheel** ou
-  **fecha**. É a parte do `playing_screen` que não desenha, e é hoje a que a ponte Qt duplica pela
-  metade — ela não trata lançamento nem a volta à Z-Wheel.
-- **A abertura** (`play`): montar a sessão a partir do `Settings` — resolução interna, proporção,
-  melhorias, neblina, áudio, os instalados para a Z-Wheel, a tela herdada — vira
-  `Partida::abre`, para as duas janelas abrirem um jogo igual.
-- Ficam em cada janela: ler a entrada do toolkit, achar o caminho do ClassID na biblioteca, e
-  desenhar. Os controles do host (`gilrs`, Wii Remote, sensores) ficam do lado do desktop, mas sem
-  egui: o `pad_of` passa a receber o conjunto de nomes de tecla apertados em vez de perguntar ao
-  `egui::Context`.
+  As duas janelas usam a mesma partida. A do egui ficou só com ler o teclado do `egui::Context`,
+  achar o caminho do ClassID na biblioteca e desenhar; a Qt passou a atender o lançamento pela
+  Z-Wheel e a volta para ela, e fecha a janela quando o jogo sai sem ter para onde voltar.
 
-O risco é o egui mudar de comportamento no caminho, e a medida é o que já existe: os testes, a
-varredura, e jogar a Z-Wheel lançando um jogo e voltando, nas duas janelas.
+  **O que não mudou de propósito.** Uma abertura que falha com outro jogo rodando zerava a entrada
+  e a pausa do jogo que fica: continua zerando (`Partida::esquece_entrada`), por mais que seja
+  discutível — o objetivo do corte é não mudar comportamento.
+
+Falta:
+
+- ~~A entrada do desktop fora do `App`~~. **`ui::entrada::EntradaDoDesktop`**: os controles do
+  host (`gilrs`), os Wii Remotes e os sensores de movimento, lidos pelo mapeamento de cada porta —
+  o controle de cada porta, o sensor que alimenta o Boomerang dela, e a troca de eixos do Wii
+  Remote e dos controles da Nintendo. O teclado é a única parte que cada janela lê: ela entrega o
+  conjunto de `egui::Key` apertadas — o egui pelo `keys_down`, que é exatamente o que o `key_down`
+  consulta; o Qt pela tabela `Qt::Key → egui::Key` —, e `tecla_apertada` confere o mapeamento
+  contra ele, nas duas grafias. Fica no desktop porque o `gilrs` é do desktop, mas sem egui de
+  janela. O `App` manteve os métodos como repasses, e a tela de controles não mudou; a janela Qt
+  passou a mandar o movimento de verdade em vez do repouso fixo.
+- O resto do `App` — biblioteca, configurações, saves — não se parte: cada tela é reescrita em QML
+  nas fases 4 a 6, sobre as mesmas peças do núcleo (`library`, `settings`, `saves`, `acervo`).
+
+**Medido:** os testes do núcleo e do standalone passam, com e sem `ui-qt` (a única falha,
+`video::gpu::tests::save_state_recria_texturas_e_a_segunda_unidade`, falha igual no HEAD limpo e
+não é desta mudança); na janela Qt, Crash Nitro Kart pela placa, Pac-Mania em software e a Z-Wheel
+pela placa rodam. **Não conferido:** o Boomerang pela janela Qt — um Wii Remote ou um controle com
+sensor na porta de Boomerang, no Crash Nitro Kart. **Conferido à mão**, nas duas janelas: a Z-Wheel lançando um jogo, o jogo
+voltando para ela pelo menu, e o jogo aberto pela biblioteca fechando a janela ao sair.
 
 ### 2 — Estrutura Qt ao lado do egui
 
