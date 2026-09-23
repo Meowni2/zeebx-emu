@@ -42,9 +42,8 @@ input_descriptors = "true"
 memory_descriptors = "false"
 # Os saves vão para a pasta que o `GET_SAVE_DIRECTORY` indica, e não para o lado do jogo.
 libretro_saves = "true"
-# Ainda não: o core não chama `SET_VARIABLES` nem `SET_CORE_OPTIONS`. Ver o plano em
-# `docs/libretro/LIBRETRO_PLAN.md`.
-core_options = "false"
+# O core registra Core Options V2 e fallback SET_VARIABLES. Ver `src/lib.rs`.
+core_options = "true"
 load_subsystem = "false"
 # O core pede contexto pelo `SET_HW_RENDER` e desenha no framebuffer do frontend. **Quando não
 # consegue, ele volta para o rasterizador de software** -- a linha abaixo é o que o desenho na

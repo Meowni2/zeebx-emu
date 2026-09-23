@@ -255,7 +255,11 @@ impl<C: CpuBackend> Machine<C> {
                 if a[0] & gles::GL_COLOR_BUFFER_BIT != 0 {
                     self.gl_clears = self.gl_clears.saturating_add(1);
                 }
-                self.gl.clear(a[0])
+                // A contagem de limpezas conta mesmo pulando — é diagnóstico do jogo, não do
+                // quadro que a tela mostrou. O que pula é só o preenchimento de verdade.
+                if !self.pula_desenho || self.gl_leitura_de_pixels {
+                    self.gl.clear(a[0]);
+                }
             }
             "ClearColorx" | "ClearColor" => {
                 let c = std::array::from_fn(|i| number(a[i]));
@@ -698,6 +702,10 @@ impl<C: CpuBackend> Machine<C> {
         if width == 0 || height == 0 || destino == 0 {
             return Ok(());
         }
+        // A partir daqui frameskip não pode mais pular draw/clear: este jogo observa o
+        // framebuffer, e entregar a imagem anterior deixa de ser perda visual e vira dado errado
+        // na memória do guest.
+        self.gl_leitura_de_pixels = true;
         let pixels = self.gl.read_rect(x, y, width, height);
         let bytes: Vec<u8> = match (format, kind) {
             (gles::GL_RGBA, gles::GL_UNSIGNED_BYTE) => pixels.concat(),
@@ -782,6 +790,13 @@ impl<C: CpuBackend> Machine<C> {
     /// Monta os vértices a partir dos vetores do cliente e manda desenhar.
     pub(super) fn gles_draw(&mut self, mode: u32, indices: &[u32]) -> Result<(), CpuError> {
         if !self.gl_vertices.em_uso() || indices.is_empty() {
+            return Ok(());
+        }
+        // **O quadro pulado sai daqui, antes de qualquer leitura de memória do guest.** É o que
+        // faz o pulo economizar de verdade: sem isto, o custo caro — atravessar a FFI do unicorn
+        // para trazer cada vértice — aconteceria do mesmo jeito, e só a rasterização sumiria. O
+        // jogo não vê diferença nenhuma: hardware real também não avisa se o pixel chegou à tela.
+        if self.pula_desenho && !self.gl_leitura_de_pixels {
             return Ok(());
         }
         let base = self.gl.current_color();
@@ -1094,6 +1109,19 @@ impl<C: CpuBackend> Machine<C> {
     /// [`rasterizer::Rasterizador::define_neblina`].
     pub fn define_neblina(&mut self, permitida: bool) {
         self.gl.define_neblina(permitida);
+    }
+
+    /// Se o quadro de agora deve pular o desenho — ver o campo `pula_desenho`.
+    ///
+    /// Chamado uma vez por quadro, antes do jogo rodar: a decisão vale para todo `gles_draw` e
+    /// `Clear` que acontecerem enquanto o CPU emula este quadro, e é reavaliada no próximo.
+    pub fn define_pula_desenho(&mut self, pula: bool) {
+        self.pula_desenho = pula;
+    }
+
+    /// Se o jogo leu pixels do framebuffer e portanto desabilitou frameskip de rasterização.
+    pub fn leu_pixels(&self) -> bool {
+        self.gl_leitura_de_pixels
     }
 
     /// Devolve ao dono o estado de GL que o rasterizador mexeu. Ver

@@ -12,6 +12,31 @@ pub mod midi;
 pub mod mp3;
 pub mod wav;
 
+/// Backend de síntese MIDI desejado pelo usuário ou frontend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MidiBackend {
+    /// Comportamento padrão: usa SoundFont (.sf2) se disponível e válido; recua para a tabela de timbres se não houver.
+    #[default]
+    Auto,
+    /// Força o sintetizador interno de tabela de timbres (início rápido sem carga ou renderização pesada de .sf2).
+    Timbres,
+    /// Exige SoundFont (.sf2); se não houver ou falhar, avisa e recua com relato explícito.
+    SoundFont,
+}
+
+impl std::str::FromStr for MidiBackend {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" | "automático" | "padrao" | "padrão" => Ok(Self::Auto),
+            "timbres" | "tabela" | "tabela de timbres" | "synth" => Ok(Self::Timbres),
+            "soundfont" | "sf2" | "banco" => Ok(Self::SoundFont),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Síntese por banco de amostras. Ver a feature `soundfont` e o cabeçalho do módulo.
 #[cfg(feature = "soundfont")]
 pub mod soundfont;
@@ -23,6 +48,15 @@ pub mod soundfont;
 #[cfg(not(feature = "soundfont"))]
 pub mod soundfont {
     use std::path::Path;
+
+    /// A taxa que o banco usaria, para o frontend ter o mesmo nome nos dois casos.
+    pub const TAXA_BANCO: u32 = 44_100;
+
+    /// Sem banco não há o que configurar; existe para o frontend não precisar de `cfg`.
+    pub fn define_taxa(_taxa: u32) {}
+
+    /// Sem banco não há o que configurar; existe para o frontend não precisar de `cfg`.
+    pub fn define_vozes(_vozes: usize) {}
 
     pub fn relato(aparelho: &Path) -> String {
         let pasta = aparelho.join("soundfonts");

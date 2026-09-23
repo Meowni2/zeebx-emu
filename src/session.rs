@@ -282,7 +282,27 @@ impl Session {
         storage: &StoragePaths,
         instalados: &[(u32, String)],
     ) -> Result<Self, StartError> {
-        Self::start_inner_with_storage(
+        Self::start_software_with_storage_installed_policy(
+            path,
+            portas,
+            z_wheel,
+            storage,
+            instalados,
+            crate::audio::MidiBackend::Auto,
+        )
+    }
+
+    /// Variante software recebendo explicitamente a política MIDI.
+    #[allow(dead_code)]
+    pub fn start_software_with_storage_installed_policy(
+        path: &Path,
+        portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
+        z_wheel: crate::config::ZWheel,
+        storage: &StoragePaths,
+        instalados: &[(u32, String)],
+        midi_policy: crate::audio::MidiBackend,
+    ) -> Result<Self, StartError> {
+        Self::start_inner_with_storage_policy(
             path,
             Some(portas),
             None,
@@ -291,6 +311,33 @@ impl Session {
             z_wheel,
             storage,
             instalados,
+            midi_policy,
+        )
+    }
+
+    /// Variante com aceleração por hardware recebendo explicitamente a política MIDI.
+    #[allow(dead_code)]
+    pub fn start_with_storage_installed_policy(
+        path: &Path,
+        portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
+        serial: Option<&Path>,
+        placa: bool,
+        contexto: Option<std::sync::Arc<glow::Context>>,
+        z_wheel: crate::config::ZWheel,
+        storage: &StoragePaths,
+        instalados: &[(u32, String)],
+        midi_policy: crate::audio::MidiBackend,
+    ) -> Result<Self, StartError> {
+        Self::start_inner_with_storage_policy(
+            path,
+            Some(portas),
+            serial,
+            placa,
+            contexto,
+            z_wheel,
+            storage,
+            instalados,
+            midi_policy,
         )
     }
 
@@ -322,6 +369,30 @@ impl Session {
         z_wheel: crate::config::ZWheel,
         storage: &StoragePaths,
         instalados: &[(u32, String)],
+    ) -> Result<Self, StartError> {
+        Self::start_inner_with_storage_policy(
+            path,
+            portas,
+            serial,
+            placa,
+            contexto,
+            z_wheel,
+            storage,
+            instalados,
+            crate::audio::MidiBackend::Auto,
+        )
+    }
+
+    fn start_inner_with_storage_policy(
+        path: &Path,
+        portas: Option<[Option<crate::input::bindings::Aparelho>; crate::input::PORTAS]>,
+        serial: Option<&Path>,
+        placa: bool,
+        contexto: Option<std::sync::Arc<glow::Context>>,
+        z_wheel: crate::config::ZWheel,
+        storage: &StoragePaths,
+        instalados: &[(u32, String)],
+        midi_policy: crate::audio::MidiBackend,
     ) -> Result<Self, StartError> {
         // Caminho escolhido no frontend, antes de extrair: é ele que identifica o conteúdo.
         let conteudo = path;
@@ -357,7 +428,7 @@ impl Session {
             false => None,
         };
         let cpu = CpuDaSessao::new().map_err(|e| StartError::NotLoadable(e.to_string()))?;
-        let mut machine = Machine::new_with_storage(cpu, module, root, storage, save_root);
+        let mut machine = Machine::new_with_storage_policy(cpu, module, root, storage, save_root, midi_policy);
         // A lista precisa existir antes de `run` e `create_applet`: a Z-Wheel a enumera no boot.
         machine.set_installed_applets(instalados.iter().cloned());
         // Antes de qualquer desenho: ver [`Machine::usa_placa`].
@@ -471,9 +542,24 @@ impl Session {
     /// É a unidade que um frontend repete: o tempo do jogo anda pelo relógio virtual, e nenhuma
     /// decisão depende de quão rápido o host executa. [`Session::step`] continua sendo o caminho
     /// da janela, que precisa devolver o controle ao sistema operacional de tempos em tempos.
-    pub fn run_frame(&mut self) -> Step {
+    pub fn run_frame(&mut self, limita_velocidade: bool) -> Step {
         if self.stopped.is_some() {
             return Step::Stopped;
+        }
+        if limita_velocidade {
+            // O desktop faz o mesmo freio devolvendo `Step::Ahead` para a janela. O Libretro não
+            // tem uma volta assíncrona que possa receber "volte depois": `retro_run` tem de
+            // devolver um quadro nesta chamada. Dormir **antes** de avançar é a tradução correta
+            // do mesmo contrato: o áudio do quadro anterior toca enquanto espera, e o próximo
+            // quadro só nasce quando o relógio real alcançou o virtual.
+            //
+            // Cinquenta ms é teto defensivo contra um salto anômalo do relógio virtual durante
+            // carregamento. No caso normal o adiantamento é um período (16–17 ms); sem o teto
+            // uma ROM que se adiantasse segundos congelaria o frontend numa chamada só.
+            let espera = self.ahead_ms().min(50);
+            if espera > 0 {
+                std::thread::sleep(Duration::from_millis(espera));
+            }
         }
         let inicio = u64::from(self.machine.clock_ms());
         for _ in 0..MAX_STEPS_PER_FRAME {
@@ -1029,6 +1115,17 @@ impl Session {
         self.machine.define_neblina(permitida);
     }
 
+    /// Se o quadro de agora deve pular o desenho 3D e a limpeza de tela. Ver
+    /// [`crate::machine::Machine::define_pula_desenho`].
+    pub fn define_pula_desenho(&mut self, pula: bool) {
+        self.machine.define_pula_desenho(pula);
+    }
+
+    /// Se o jogo já usou `glReadPixels` e, por segurança, desabilitou frameskip de rasterização.
+    pub fn leu_pixels(&self) -> bool {
+        self.machine.leu_pixels()
+    }
+
     /// Muda a resolução interna do 3D; vale a partir do próximo quadro.
     pub fn define_resolucao_interna(&mut self, escala: usize) {
         self.machine.define_resolucao_interna(escala);
@@ -1140,7 +1237,7 @@ mod tests {
             out_module: loader::OBJECT_BASE,
             extensions: Vec::new(),
         };
-        let mut cpu = DynarmicCpu::new().unwrap();
+        let mut cpu = CpuDaSessao::new().unwrap();
         crate::cpu::CpuBackend::reset(&mut cpu, &modulo.mem).unwrap();
         let machine = Machine::new(
             cpu,

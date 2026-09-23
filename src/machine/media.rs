@@ -6,6 +6,35 @@ use super::*;
 /// [`Machine::descarta_sons_sem_dono`].
 const MAX_SONS_GUARDADOS: usize = 64;
 
+/// Quanto de PCM decodificado o cache guarda, em bytes, antes de esquecer os que ninguém usa.
+///
+/// **Contar entradas não é contar memória, e a diferença cresceu.** Um efeito curto ocupa poucos
+/// quilobytes e uma trilha longa ocupa dezenas de megabytes: 64 entradas podem ser meio megabyte
+/// de efeitos ou mais de cem megabytes de música, e só o segundo caso importa. A trilha mais longa
+/// medida no Double Dragon tem 109 s, o que a 44.100 Hz em `f32` dá 19,3 MB — quatro delas
+/// guardadas passam de 77 MB.
+///
+/// O número cresceu de propósito junto com [`crate::audio::soundfont::TAXA_BANCO`]: sintetizar o
+/// banco a 44.100 em vez de 22.050 **dobra** o PCM de cada música. Num aparelho de mão o que
+/// sobra de RAM é pouco, e o custo de esquecer é uma re-síntese; o custo de não esquecer é o
+/// sistema matar o processo.
+const MAX_BYTES_DE_SOM: usize = 24 * 1024 * 1024;
+
+/// O teto escolhido agora, que começa em [`MAX_BYTES_DE_SOM`] e o frontend pode mudar.
+///
+/// Global pelo mesmo motivo da taxa do banco: o valor vale para o próximo descarte, e não para o
+/// nascimento da máquina. Ver `crate::audio::soundfont::define_taxa`.
+static TETO_ESCOLHIDO: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(MAX_BYTES_DE_SOM);
+
+/// Muda quanto de PCM decodificado o cache pode guardar, em bytes.
+///
+/// O piso de 1 MiB existe para que um valor pequeno demais não transforme o cache em "esquece
+/// tudo a cada som", que é pior que não ter cache: custaria uma re-síntese por efeito tocado.
+pub fn define_teto_do_cache_de_som(bytes: usize) {
+    TETO_ESCOLHIDO.store(bytes.max(1024 * 1024), std::sync::atomic::Ordering::Relaxed);
+}
+
 impl<C: CpuBackend> Machine<C> {
     /// `ISound` (`AEECLSID_SOUND` = `0x01001056`), de `inc/AEEISound.h`.
     ///
@@ -404,7 +433,18 @@ impl<C: CpuBackend> Machine<C> {
     /// efeitos diferentes no mesmo buffer de 500 KB, e cada um virava uma entrada para sempre.
     /// Uma voz tocando não perde nada: o PCM dela está num `Arc` que o mixer também segura.
     fn descarta_sons_sem_dono(&mut self, nova: u64) {
-        if self.cargas_de_midia.len() <= MAX_SONS_GUARDADOS {
+        // **Os dois tetos, e não só o de entradas.** Ver [`MAX_BYTES_DE_SOM`]: sessenta e quatro
+        // efeitos curtos cabem de sobra, e quatro músicas longas sintetizadas pelo banco já não
+        // cabem. Quem estoura primeiro manda.
+        let bytes_guardados: usize = self
+            .cargas_de_midia
+            .values()
+            .filter_map(|carga| carga.som.as_ref())
+            .map(|som| som.samples.len() * std::mem::size_of::<f32>())
+            .sum();
+        let teto = TETO_ESCOLHIDO.load(std::sync::atomic::Ordering::Relaxed);
+        if self.cargas_de_midia.len() <= MAX_SONS_GUARDADOS && bytes_guardados <= teto
+        {
             return;
         }
         let em_uso: std::collections::HashSet<u64> =
@@ -425,7 +465,10 @@ impl<C: CpuBackend> Machine<C> {
             return None;
         }
         let banco = self.banco_de_som.as_ref()?;
-        crate::audio::soundfont::toca(banco, bytes, crate::audio::midi::RATE)
+        // **A taxa do banco não é a da tabela.** Ver [`crate::audio::soundfont::TAXA_BANCO`]: as
+        // amostras do `.sf2` são gravadas a 44,1 kHz, e sintetizar a 22,05 cortava o brilho delas
+        // antes que o misturador tivesse qualquer chance de reamostrar de volta.
+        crate::audio::soundfont::toca(banco, bytes, crate::audio::soundfont::taxa())
     }
 
     /// Sem a feature, o caminho é sempre o da tabela de timbres.
@@ -455,15 +498,26 @@ impl<C: CpuBackend> Machine<C> {
                         ));
                         Some(sound)
                     }
-                    None => match crate::audio::midi::decode(bytes) {
-                    Some(sound) => {
-                        self.assumptions.insert(concat!(
-                            "a música MIDI é sintetizada aqui, com timbre aproximado — ",
-                            "o banco de instrumentos do console está no firmware que ainda não lemos"
-                        ));
-                        Some(sound)
-                    }
-                    None => {
+                    None => match {
+                        let t_midi = std::time::Instant::now();
+                        let dec = crate::audio::midi::decode(bytes);
+                        if let Some(ref sound) = dec {
+                            let dur_s = sound.samples.len() as f64 / sound.rate.max(1) as f64;
+                            eprintln!(
+                                "Zeebx: render MIDI Tabela de Timbres: {} bytes MIDI -> {:.1}s áudio sintetizados em {:.1}ms",
+                                bytes.len(),
+                                dur_s,
+                                t_midi.elapsed().as_secs_f64() * 1000.0
+                            );
+                            self.assumptions.insert(concat!(
+                                "a música MIDI é sintetizada aqui, com timbre aproximado — ",
+                                "o banco de instrumentos do console está no firmware que ainda não lemos"
+                            ));
+                        }
+                        dec
+                    } {
+                        Some(sound) => Some(sound),
+                        None => {
                     // Dizer *qual* formato chegou é o que permite saber o que implementar
                     // depois — e "não é um RIFF/WAVE" não diz. O que diz é a assinatura do
                     // próprio bloco: é assim que se soube que a trilha do Tekken 2 é MP3 sem

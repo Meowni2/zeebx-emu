@@ -95,11 +95,21 @@ aparece" por `dlopen` recusado.
 
 ### Instalar
 
-Com a partição ROOTFS do cartão do sistema montada, é **um comando**:
+Com a partição ROOTFS do cartão do sistema montada, é **um comando**. Se estiver usando os
+arquivos de um artefato/release, passe `--so` e `--info`; assim o instalador não exige um build
+local x86:
 
 ```bash
-python3 ferramentas/instala_core.py --muos /media/$USER/ROOTFS --banco GeneralUser-GS.sf2
+python3 ferramentas/instala_core.py --muos /media/$USER/ROOTFS \
+  --roms /media/$USER/ROMS \
+  --so zeebx_libretro.so --info zeebx_libretro.info \
+  --banco GeneralUser-GS.sf2 --font tectoy.ttf \
+  --rom 'Double Dragon (Brazil) (Es,Pt).zip' 
 ```
+
+Para um checkout com build local, `--so`/`--info` podem ser omitidos. O script faz backup datado,
+copia core + `.info`, cria as associações muOS, atualiza o nome da pasta quando a partição de
+ROMs está montada, instala ROMs/SoundFont opcionais e confere o SHA-256.
 
 Ele faz o backup do core anterior com data no nome antes de sobrescrever, copia o `.so` e o
 `.info`, cria as associações do sistema, acrescenta a chave nos dois JSON e confere o `sha256` no
@@ -177,3 +187,239 @@ deixe o core cair para software; isso é uma degradação suportada, não uma fa
 Portanto **3.2 é a capacidade anunciada do hardware e do libMali**, mas não é seguro afirmar que
 cada imagem com Panfrost expõe 3.2. O core solicita 3.2 para aproveitar o caminho de hardware e
 continua funcional em software quando o driver só oferece 3.1.
+
+
+## Procedimento atual de teste — R36S com ArkOS/AeolusUX/dArkOSen
+
+O R36S original tem dois RetroArchs:
+
+```text
+64-bit: /opt/retroarch/bin/retroarch
+32-bit: /opt/retroarch/bin/retroarch32
+```
+
+Use **somente o RetroArch 64-bit** para o Zeebx. O core é `aarch64` e não carrega no RetroArch
+`armhf`. O `retroarch32` fica para cores antigos do PortMaster e outros emuladores 32-bit.
+
+### Caminhos
+
+Com a partição `EASYROMS` montada pelo sistema em `/roms`:
+
+```text
+Core:       /home/ark/.config/retroarch/cores/zeebx_libretro.so
+Info:       /home/ark/.config/retroarch/cores/zeebx_libretro.info
+ROMs:       /roms/zeebo/*.zip
+BIOS/cache: /roms/bios/zeebx/
+SoundFont:  /roms/bios/zeebx/aparelho/soundfonts/GeneralUser-GS.sf2
+```
+
+Na montagem do cartão no Linux, `EASYROMS` é a raiz que aparece como `/roms` no aparelho. Não
+crie `EASYROMS/roms/zeebo`; o caminho correto é diretamente `EASYROMS/zeebo/`.
+
+### Instalação automática (recomendada)
+
+Baixe estes arquivos no mesmo diretório:
+
+```text
+zeebx_libretro.so
+zeebx_libretro.info
+GeneralUser-GS.sf2       (opcional, recomendado para MIDI real)
+Double Dragon ...zip      (ou outras ROMs)
+```
+
+Monte as três partições do cartão e rode o instalador do repositório:
+
+```bash
+python3 ferramentas/instala_arkos.py \
+  --rootfs /media/$USER/root \
+  --roms /media/$USER/EASYROMS \
+  --core zeebx_libretro.so \
+  --info zeebx_libretro.info \
+  --soundfont GeneralUser-GS.sf2 \
+  --font tectoy.ttf \
+  --rom 'Double Dragon (Brazil) (Es,Pt).zip'
+```
+
+Repita `--rom` para cada jogo. O instalador:
+
+- valida o ELF do core;
+- faz backup datado do core, `.info` e configurações antigas;
+- instala o `.so` 64-bit e o `.info`;
+- cria `EASYROMS/zeebo/` na posição correta (não `EASYROMS/roms/zeebo`);
+- copia ROMs, SoundFont e a fonte `tectoy.ttf` opcional;
+- insere/atualiza Zeebo no `es_systems.cfg` e valida o XML;
+- não desmonta o cartão, para você conferir o resumo antes de remover.
+
+O instalador não depende de build local. Use o `.so`/`.info` do artefato Linux AArch64 da release
+ou Actions. Para ArkOS antigo com glibc 2.30, use o artefato compatível com glibc 2.28; o core
+comum do CI pode exigir `GLIBC_2.34`.
+
+### Instalação manual
+
+1. Monte as partições `root`, `EASYROMS` e `BOOT`.
+2. Copie o par `.so` + `.info` para `home/ark/.config/retroarch/cores/`.
+3. Coloque os jogos diretamente em `EASYROMS/zeebo/`.
+4. Coloque o banco `.sf2` em `EASYROMS/bios/zeebx/aparelho/soundfonts/`.
+5. Se o sistema não listar o Zeebo, verifique `etc/emulationstation/es_systems.cfg`.
+
+A entrada do sistema deve apontar para `/roms/zeebo/` e para o core 64-bit:
+
+```xml
+<name>zeebo</name>
+<path>/roms/zeebo/</path>
+<extension>.mod .MOD .zip .ZIP .7z .7Z</extension>
+<command>sudo perfmax %GOVERNOR% %ROM%; nice -n -19 /usr/local/bin/retroarch -L /home/ark/.config/retroarch/cores/zeebx_libretro.so %ROM%; sudo perfnorm</command>
+```
+
+O EmulationStation também pode usar o override do usuário:
+
+```text
+/home/ark/.emulationstation/es_systems.cfg
+```
+
+Se esse arquivo existir, ele pode ter precedência sobre `/etc/emulationstation/es_systems.cfg`.
+Depois de qualquer edição, valide XML e reinicie o EmulationStation. Não deixe `&` literal dentro
+de texto XML: use `&amp;` (`2&gt;&amp;1` para o redirecionamento de shell).
+
+### Opções recomendadas no R36S
+
+No RetroArch 64-bit, em **Quick Menu → Core Options**:
+
+```text
+zeebx_perfil = "portatil"
+zeebx_limite_fps = "60"
+zeebx_frameskip = "automatico"
+```
+
+O perfil Portátil força tabela de timbres, 22.050 Hz, 48 vozes, cache de 8 MiB e sem
+supersampling. Volume e névoa continuam independentes. Se o jogo ficar instável ou perder
+imagem, use `zeebx_frameskip = "desligado"`; jogos que usam `glReadPixels` desligam frameskip
+sozinhos depois da primeira leitura.
+
+### Logs e diagnóstico
+
+Ative temporariamente no arquivo:
+
+```text
+/home/ark/.config/retroarch/retroarch.cfg
+```
+
+```ini
+log_verbosity = "true"
+log_to_file = "true"
+log_to_file_timestamp = "true"
+```
+
+Os logs ficam em:
+
+```text
+/home/ark/.config/retroarch/logs/
+```
+
+Mensagens importantes:
+
+```text
+Zeebx: sintetizador MIDI selecionado: Auto
+Zeebx: SoundFont ... carregado
+Zeebx: sem banco de amostras do MIDI
+Zeebx: desenhando na placa
+Zeebx: frameskip automático pediu o aviso de buffer de áudio ao frontend
+```
+
+Se aparecer `sem banco de amostras`, o caminho do `.sf2` está errado ou o banco não foi copiado.
+Se o core não carregar, verifique `file zeebx_libretro.so`: precisa dizer `ELF 64-bit ... ARM
+aarch64`. Um core Linux AArch64 comum pode exigir `GLIBC_2.34`; ArkOS antigo com glibc 2.30
+precisa do artefato compatível construído com `cargo zigbuild` e o shim `r36s_compat.c`.
+
+## Procedimento atual de teste — RG40XX-H com muOS Loose Goose
+
+Use o **RetroArch AArch64**. Não use `retroarch32`.
+
+### Caminhos muOS
+
+No cartão do sistema (`ROOTFS`):
+
+```text
+Core:      /opt/muos/share/core/zeebx_libretro.so
+Info:      /opt/muos/share/emulator/retroarch/info/zeebx_libretro.info
+Config:    /opt/muos/share/info/config/Zeebx/zeebo.cfg
+SoundFont: /opt/muos/share/emulator/retroarch/system/zeebx/aparelho/soundfonts/GeneralUser-GS.sf2
+```
+
+No cartão de ROMs:
+
+```text
+ROMs: /ROMS/Zeebo/*.zip
+```
+
+O arquivo de associação esperado é:
+
+```text
+/opt/muos/share/info/assign/Zeebo/zeebx.ini
+```
+
+```ini
+[zeebx]
+name=Zeebx
+core=zeebx_libretro.so
+
+[launch]
+prep=
+exec=/opt/muos/script/launch/lr-general.sh
+done=
+```
+
+Não coloque ROMs em `ROMS/ROMS/Zeebo`. Em configurações com dois cartões, o diretório correto é
+`ROMS/Zeebo` no cartão que o muOS expõe como a partição de ROMs.
+
+### Opções recomendadas no RG40XX-H
+
+Para comparar qualidade e desempenho:
+
+```text
+zeebx_perfil = "padrao"
+zeebx_midi_backend = "auto"
+zeebx_soundfont_taxa = "44100"
+zeebx_limite_fps = "60"
+zeebx_frameskip = "automatico"
+```
+
+Para priorizar fluidez no H700:
+
+```text
+zeebx_perfil = "portatil"
+zeebx_limite_fps = "60"
+zeebx_frameskip = "automatico"
+```
+
+Depois de alterar uma opção, observe o texto do rótulo: volume, névoa, frameskip e melhorias
+valem na hora; MIDI e rasterizador exigem recarregar o conteúdo; taxa/vozes/cache valem a partir
+da próxima música ou descarte.
+
+### Logs muOS/RetroArch
+
+No muOS, ative temporariamente `log_verbosity`, `log_to_file` e `log_to_file_timestamp` no
+`retroarch.cfg` do RetroArch 64-bit. Os logs normalmente ficam em:
+
+```text
+/home/ark/.config/retroarch/logs/
+```
+
+O `SYSTEM_DIRECTORY` que o core deve relatar é normalmente `/roms/bios`; portanto a mensagem
+esperada para o SoundFont é:
+
+```text
+/roms/bios/zeebx/aparelho/soundfonts/GeneralUser-GS.sf2
+```
+
+### Rollback
+
+Sempre faça backup antes de substituir o core:
+
+```text
+zeebx_libretro.so.before-AAAAmmdd-HHMMSS
+```
+
+Se o novo core não carregar, restaure o `.so` anterior e mantenha o `.info` correspondente. O
+problema mais comum em imagens antigas é `GLIBC_2.34 not found`; nesse caso não adianta trocar
+configuração do RetroArch — é necessário um core compilado com glibc mínima compatível.

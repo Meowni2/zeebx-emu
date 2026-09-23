@@ -40,6 +40,10 @@ mod helper;
 mod hid;
 mod image;
 mod media;
+
+/// O teto do cache de sons decodificados, em bytes — reexportado porque quem o ajusta é o
+/// frontend, e o módulo que o guarda é interno.
+pub use media::define_teto_do_cache_de_som;
 mod net;
 mod probe;
 mod shell;
@@ -1925,14 +1929,27 @@ fn font_do_modulo(raiz: &std::path::Path) -> Option<crate::video::font::Font> {
     crate::video::font::Font::load(std::fs::read(caminho).ok()?, nome)
 }
 
-/// O banco de amostras do MIDI, procurado na pasta do aparelho.
+/// O banco de amostras do MIDI, procurado na pasta do aparelho respeitando a política.
 ///
-/// Devolve `None` em silêncio quando não há banco: é o caso comum, e o motor continua com a tabela
-/// de timbres. O relatório é que diz, pela hipótese em uso, qual dos dois caminhos tocou.
+/// Se `politica` for `MidiBackend::Timbres`, devolve `None` imediatamente sem acessar disco nem carregar o SoundFont.
 #[cfg(feature = "soundfont")]
-fn banco_do_aparelho(aparelho: &std::path::Path) -> Option<std::sync::Arc<crate::audio::soundfont::Banco>> {
+fn banco_do_aparelho(
+    aparelho: &std::path::Path,
+    politica: crate::audio::MidiBackend,
+) -> Option<std::sync::Arc<crate::audio::soundfont::Banco>> {
+    if politica == crate::audio::MidiBackend::Timbres {
+        eprintln!("Zeebx: backend MIDI configurado para 'Tabela de timbres'; ignorando SoundFont");
+        return None;
+    }
     let caminho = crate::audio::soundfont::primeiro_banco(aparelho)?;
-    crate::audio::soundfont::abre(&caminho)
+    let banco = crate::audio::soundfont::abre(&caminho);
+    if banco.is_none() && politica == crate::audio::MidiBackend::SoundFont {
+        eprintln!(
+            "Zeebx: backend MIDI exige 'SoundFont', mas o arquivo '{}' não pôde ser carregado; recuando para timbres",
+            caminho.display()
+        );
+    }
+    banco
 }
 
 /// A fonte do aparelho, para quem não trouxe a sua.
@@ -2603,6 +2620,21 @@ pub struct Machine<C: CpuBackend> {
     calls: BTreeMap<(u32, u32), u64>,
     /// Total de chamadas atendidas, para aplicar o teto.
     calls_total: u64,
+    /// Se o quadro **de agora** deve pular o desenho — 3D e a limpeza de tela, não a lógica.
+    ///
+    /// **Quem decide é o frontend, quadro a quadro, e não o motor.** A política (fixo/automático,
+    /// e o que "automático" mede) depende de coisas que só o frontend sabe: se o áudio está
+    /// prestes a faltar, ou a contagem de quadros que o Libretro pediu. O motor só recebe a
+    /// decisão já tomada, e a aplica no único lugar que interessa: os dois pontos que tocam o
+    /// rasterizador — `gles_draw` e o `Clear` de `IGL` — sem mexer em nada que o jogo enxerga.
+    /// Um jogo real não sabe se o pixel dele chegou à tela; hardware nenhum avisa isso.
+    pula_desenho: bool,
+    /// O jogo já chamou `glReadPixels` nesta sessão.
+    ///
+    /// Frameskip não é seguro depois disso: pular um desenho e devolver a tela anterior para a
+    /// memória do guest deixa de ser só "perder imagem" e pode mudar a lógica dele (o Crash usa
+    /// a leitura para conferir a cena). Ver `gles_read_pixels`.
+    gl_leitura_de_pixels: bool,
 }
 
 /// Se o rasterizador na placa foi pedido.
@@ -2776,6 +2808,24 @@ impl<C: CpuBackend> Machine<C> {
         root: impl Into<std::path::PathBuf>,
         storage: &crate::storage::StoragePaths,
         save_root: Option<std::path::PathBuf>,
+    ) -> Self {
+        Self::new_with_storage_policy(cpu, module, root, storage, save_root, crate::audio::MidiBackend::Auto)
+    }
+
+    /// Como [`Machine::new_with_storage`], mas recebe explicitamente a política de sintetizador MIDI.
+    ///
+    /// O `allow` é condicional e tem motivo: sem a feature `soundfont` não existe banco de
+    /// amostras para escolher, então a política não é lida por ninguém — e a alternativa, um
+    /// parâmetro com `_` no nome, mentiria sobre a assinatura pública em **todas** as compilações
+    /// por causa de uma só.
+    #[cfg_attr(not(feature = "soundfont"), allow(unused_variables))]
+    pub fn new_with_storage_policy(
+        cpu: C,
+        module: LoadedModule,
+        root: impl Into<std::path::PathBuf>,
+        storage: &crate::storage::StoragePaths,
+        save_root: Option<std::path::PathBuf>,
+        midi_policy: crate::audio::MidiBackend,
     ) -> Self {
         let raiz: std::path::PathBuf = root.into();
         let aparelho: std::path::PathBuf = storage.device.clone();
@@ -3012,9 +3062,11 @@ impl<C: CpuBackend> Machine<C> {
             // O banco de amostras do MIDI, quando o aparelho tem um. É opcional de propósito: o
             // banco não vem embutido, e sem ele a música volta para a tabela de timbres.
             #[cfg(feature = "soundfont")]
-            banco_de_som: banco_do_aparelho(&aparelho),
+            banco_de_som: banco_do_aparelho(&aparelho, midi_policy),
             calls: BTreeMap::new(),
             calls_total: 0,
+            pula_desenho: false,
+            gl_leitura_de_pixels: false,
         }
     }
 
