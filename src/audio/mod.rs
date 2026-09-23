@@ -12,6 +12,31 @@ pub mod midi;
 pub mod mp3;
 pub mod wav;
 
+/// Backend de síntese MIDI desejado pelo usuário ou frontend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MidiBackend {
+    /// Comportamento padrão: usa SoundFont (.sf2) se disponível e válido; recua para a tabela de timbres se não houver.
+    #[default]
+    Auto,
+    /// Força o sintetizador interno de tabela de timbres (início rápido sem carga ou renderização pesada de .sf2).
+    Timbres,
+    /// Exige SoundFont (.sf2); se não houver ou falhar, avisa e recua com relato explícito.
+    SoundFont,
+}
+
+impl std::str::FromStr for MidiBackend {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" | "automático" | "padrao" | "padrão" => Ok(Self::Auto),
+            "timbres" | "tabela" | "tabela de timbres" | "synth" => Ok(Self::Timbres),
+            "soundfont" | "sf2" | "banco" => Ok(Self::SoundFont),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Síntese por banco de amostras. Ver a feature `soundfont` e o cabeçalho do módulo.
 #[cfg(feature = "soundfont")]
 pub mod soundfont;

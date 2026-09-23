@@ -29,6 +29,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
 use crate::audio::wav::Sound;
 
@@ -104,9 +105,21 @@ pub struct Banco {
 
 impl Banco {
     fn carrega(caminho: &Path) -> Option<Self> {
+        let t0 = Instant::now();
         let bytes = std::fs::read(caminho).ok()?;
+        let read_elapsed = t0.elapsed();
+        let t_parse = Instant::now();
         let mut leitor = std::io::Cursor::new(bytes);
         let fonte = Arc::new(rustysynth::SoundFont::new(&mut leitor).ok()?);
+        let parse_elapsed = t_parse.elapsed();
+        eprintln!(
+            "Zeebx: SoundFont '{}' carregado em {:.1}ms (leitura: {:.1}ms, parse/amostras: {:.1}ms, presets: {})",
+            caminho.display(),
+            t0.elapsed().as_secs_f64() * 1000.0,
+            read_elapsed.as_secs_f64() * 1000.0,
+            parse_elapsed.as_secs_f64() * 1000.0,
+            fonte.get_presets().len()
+        );
         Some(Self { fonte })
     }
 
@@ -124,6 +137,10 @@ pub fn abre(caminho: &Path) -> Option<Arc<Banco>> {
     let guarda = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut mapa = guarda.lock().ok()?;
     if let Some(banco) = mapa.get(caminho) {
+        eprintln!(
+            "Zeebx: SoundFont '{}' reutilizado do cache (hit)",
+            caminho.display()
+        );
         return Some(banco.clone());
     }
     let banco = Arc::new(Banco::carrega(caminho)?);
@@ -136,10 +153,17 @@ pub fn abre(caminho: &Path) -> Option<Arc<Banco>> {
 /// `None` quando o banco não abre, quando os bytes não são um SMF que o `rustysynth` aceite, ou
 /// quando não sobra nenhuma amostra — e aí quem chamou segue para a tabela de timbres.
 pub fn toca(banco: &Banco, bytes: &[u8], taxa: u32) -> Option<Sound> {
+    let t0 = Instant::now();
     let mut leitor = std::io::Cursor::new(bytes);
     let midi = rustysynth::MidiFile::new(&mut leitor).ok()?;
     let comprimento = midi.get_length().min(MAX_SEGUNDOS);
-    let ajustes = rustysynth::SynthesizerSettings::new(taxa as i32);
+    let mut ajustes = rustysynth::SynthesizerSettings::new(taxa as i32);
+    // Perfil de síntese seco e eficiente:
+    // 1. `block_size = 1024`: reduz em ~1,9x o overhead de blocos e sincronização do sequenciador.
+    // 2. `enable_reverb_and_chorus = false`: aproxima o áudio do comportamento seco nativo do
+    //    console / CMX e do TinySoundFont (que não implementa efeitos de reverberação/chorus).
+    ajustes.block_size = BLOCO;
+    ajustes.enable_reverb_and_chorus = false;
     let sintetizador = rustysynth::Synthesizer::new(&banco.fonte, &ajustes).ok()?;
     let mut sequencia = rustysynth::MidiFileSequencer::new(sintetizador);
     sequencia.play(&Arc::new(midi), false);
@@ -168,6 +192,16 @@ pub fn toca(banco: &Banco, bytes: &[u8], taxa: u32) -> Option<Sound> {
     // aparelho tivesse ou não um `.sf2` instalado, e no jogo isso muda o balanço entre a trilha e
     // os efeitos, que passam pelo mesmo misturador.
     crate::audio::midi::normaliza(&mut amostras);
+    let elapsed = t0.elapsed();
+    eprintln!(
+        "Zeebx: render MIDI SoundFont: {} bytes MIDI -> {:.1}s áudio ({} amostras @ {}Hz) sintetizados em {:.1}ms ({:.2}x tempo real)",
+        bytes.len(),
+        comprimento,
+        amostras.len(),
+        taxa,
+        elapsed.as_secs_f64() * 1000.0,
+        if elapsed.as_secs_f64() > 0.0 { comprimento / elapsed.as_secs_f64() } else { 0.0 }
+    );
     Some(Sound {
         rate: taxa,
         channels: 1,
@@ -520,5 +554,19 @@ mod tests {
             arco[0],
             palheta[0]
         );
+    }
+
+    #[test]
+    fn parse_da_politica_midi_backend() {
+        use crate::audio::MidiBackend;
+        use std::str::FromStr;
+
+        assert_eq!(MidiBackend::from_str("Auto"), Ok(MidiBackend::Auto));
+        assert_eq!(MidiBackend::from_str("automático"), Ok(MidiBackend::Auto));
+        assert_eq!(MidiBackend::from_str("Tabela de timbres"), Ok(MidiBackend::Timbres));
+        assert_eq!(MidiBackend::from_str("timbres"), Ok(MidiBackend::Timbres));
+        assert_eq!(MidiBackend::from_str("SoundFont"), Ok(MidiBackend::SoundFont));
+        assert_eq!(MidiBackend::from_str("sf2"), Ok(MidiBackend::SoundFont));
+        assert_eq!(MidiBackend::from_str("invalido"), Err(()));
     }
 }

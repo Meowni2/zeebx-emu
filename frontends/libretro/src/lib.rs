@@ -348,6 +348,10 @@ const ENV_SET_INPUT_DESCRIPTORS: u32 = 11;
 const ENV_GET_LOG_INTERFACE: u32 = 27;
 const ENV_GET_SAVE_DIRECTORY: u32 = 31;
 const ENV_SET_CONTROLLER_INFO: u32 = 35;
+const ENV_SET_VARIABLES: u32 = 16;
+const ENV_GET_VARIABLE: u32 = 15;
+const ENV_GET_CORE_OPTIONS_VERSION: u32 = 52;
+const ENV_SET_CORE_OPTIONS_V2: u32 = 67;
 
 /// Tipos de dispositivo e identificadores de botão do RetroPad.
 const DEVICE_NONE: u32 = 0;
@@ -381,6 +385,51 @@ struct RetroMessage {
     msg: *const c_char,
     frames: u32,
 }
+
+#[repr(C)]
+struct RetroVariable {
+    key: *const c_char,
+    value: *const c_char,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RetroCoreOptionValue {
+    value: *const c_char,
+    label: *const c_char,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RetroCoreOptionV2Category {
+    key: *const c_char,
+    desc: *const c_char,
+    info: *const c_char,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RetroCoreOptionV2Definition {
+    key: *const c_char,
+    desc: *const c_char,
+    desc_categorized: *const c_char,
+    info: *const c_char,
+    info_categorized: *const c_char,
+    category_key: *const c_char,
+    values: [RetroCoreOptionValue; 128],
+    default_value: *const c_char,
+}
+
+#[repr(C)]
+struct RetroCoreOptionsV2 {
+    categories: *const RetroCoreOptionV2Category,
+    definitions: *const RetroCoreOptionV2Definition,
+}
+
+unsafe impl Sync for RetroVariable {}
+unsafe impl Sync for RetroCoreOptionsV2 {}
+unsafe impl Sync for RetroCoreOptionV2Category {}
+unsafe impl Sync for RetroCoreOptionV2Definition {}
 
 #[repr(C)]
 struct RetroKeyboardCallback {
@@ -512,6 +561,8 @@ struct Core {
     audio_pendente: Vec<i16>,
     /// Se já avisou que o quadro saiu do tamanho do console.
     avisou_tamanho: bool,
+    /// Política de síntese MIDI configurada nas opções do core.
+    midi_backend: zeebx::audio::MidiBackend,
     /// Estado anterior do Select do RetroPad, para o atalho de `AVK_CLR`.
     select_antes: bool,
     /// O controle da volta anterior, por porta, para o que muda virar **tecla do console**.
@@ -846,6 +897,120 @@ fn diretorio(cmd: u32) -> Option<PathBuf> {
     Some(PathBuf::from(texto))
 }
 
+/// Registra opções de configuração no RetroArch via V2 (com categorias) ou fallback V0 (SET_VARIABLES).
+unsafe fn registra_opcoes_do_core() {
+    let mut versao: u32 = 0;
+    let tem_v2 = unsafe {
+        environ(
+            ENV_GET_CORE_OPTIONS_VERSION,
+            &mut versao as *mut u32 as *mut c_void,
+        )
+    } && versao >= 2;
+
+    if tem_v2 {
+        static CATEGORIAS: [RetroCoreOptionV2Category; 2] = [
+            RetroCoreOptionV2Category {
+                key: c"audio".as_ptr(),
+                desc: c"Áudio".as_ptr(),
+                info: c"Configurações de síntese e saída de som do Zeebx".as_ptr(),
+            },
+            RetroCoreOptionV2Category {
+                key: std::ptr::null(),
+                desc: std::ptr::null(),
+                info: std::ptr::null(),
+            },
+        ];
+
+        let mut opt_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        opt_values[0] = RetroCoreOptionValue {
+            value: c"Auto".as_ptr(),
+            label: c"Automático (SoundFont se disponível, senão Tabela)".as_ptr(),
+        };
+        opt_values[1] = RetroCoreOptionValue {
+            value: c"Tabela de timbres".as_ptr(),
+            label: c"Tabela de timbres (rápido / portáteis)".as_ptr(),
+        };
+        opt_values[2] = RetroCoreOptionValue {
+            value: c"SoundFont".as_ptr(),
+            label: c"SoundFont (.sf2)".as_ptr(),
+        };
+
+        let definicoes: [RetroCoreOptionV2Definition; 2] = [
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_midi_backend".as_ptr(),
+                desc: c"Sintetizador MIDI".as_ptr(),
+                desc_categorized: c"Sintetizador MIDI".as_ptr(),
+                info: c"Motor de reprodução MIDI: Auto usa SoundFont se instalado na pasta do sistema; Tabela de timbres inicia instantaneamente sem renderização pesada (recomendado para portáteis fracos como H700). Recarregue o jogo para aplicar.".as_ptr(),
+                info_categorized: c"Auto usa SoundFont se presente; Tabela inicia instantaneamente sem carga pesada de SF2. Recarregue o jogo para aplicar.".as_ptr(),
+                category_key: c"audio".as_ptr(),
+                values: opt_values,
+                default_value: c"Auto".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: std::ptr::null(),
+                desc: std::ptr::null(),
+                desc_categorized: std::ptr::null(),
+                info: std::ptr::null(),
+                info_categorized: std::ptr::null(),
+                category_key: std::ptr::null(),
+                values: [RetroCoreOptionValue { value: std::ptr::null(), label: std::ptr::null() }; 128],
+                default_value: std::ptr::null(),
+            },
+        ];
+
+        let opcoes_v2 = RetroCoreOptionsV2 {
+            categories: CATEGORIAS.as_ptr(),
+            definitions: definicoes.as_ptr(),
+        };
+
+        unsafe {
+            environ(
+                ENV_SET_CORE_OPTIONS_V2,
+                &opcoes_v2 as *const _ as *mut c_void,
+            );
+        }
+    } else {
+        static VARIAVEIS: [RetroVariable; 2] = [
+            RetroVariable {
+                key: c"zeebx_midi_backend".as_ptr(),
+                value: c"Sintetizador MIDI; Auto|Tabela de timbres|SoundFont".as_ptr(),
+            },
+            RetroVariable {
+                key: std::ptr::null(),
+                value: std::ptr::null(),
+            },
+        ];
+        unsafe {
+            environ(
+                ENV_SET_VARIABLES,
+                VARIAVEIS.as_ptr() as *mut c_void,
+            );
+        }
+    }
+}
+
+/// Consulta a política de síntese MIDI configurada no frontend RetroArch.
+unsafe fn le_opcao_midi_backend() -> zeebx::audio::MidiBackend {
+    let mut consulta = RetroVariable {
+        key: c"zeebx_midi_backend".as_ptr(),
+        value: std::ptr::null(),
+    };
+    // SAFETY: chamada ao callback environ e leitura de string C válida entregue pelo frontend.
+    let ok = unsafe {
+        environ(ENV_GET_VARIABLE, &mut consulta as *mut _ as *mut c_void) && !consulta.value.is_null()
+    };
+    if ok {
+        let val_str = unsafe { CStr::from_ptr(consulta.value) }.to_string_lossy();
+        if let Ok(backend) = val_str.parse::<zeebx::audio::MidiBackend>() {
+            return backend;
+        }
+    }
+    zeebx::audio::MidiBackend::Auto
+}
+
 /// `retro_api_version`.
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_api_version() -> u32 {
@@ -862,6 +1027,7 @@ pub unsafe extern "C" fn retro_set_environment(callback: Option<EnvironmentFn>) 
     unsafe {
         registra_controladores();
         registra_botoes();
+        registra_opcoes_do_core();
     }
 }
 
@@ -1085,17 +1251,21 @@ unsafe fn carrega(
     // errado".
     log(&zeebx::audio::soundfont::relato(&storage.device));
 
+    let midi_backend = unsafe { le_opcao_midi_backend() };
+    log(&format!("Zeebx: sintetizador MIDI selecionado: {:?}", midi_backend));
+
     // **Pede o contexto de placa ao frontend, se ele tiver um.** Quem aceita é ele; nós só usamos
     // mais tarde, quando o `context_reset` chegar. Recusar aqui não muda nada: a sessão de
     // software já nasceu e é ela que roda até prova em contrário.
     pede_o_contexto_de_placa();
 
-    let mut session = Session::start_software_with_storage_installed(
+    let mut session = Session::start_software_with_storage_installed_policy(
         std::path::Path::new(caminho),
         portas,
         ZWheel::default(),
         storage,
         &instalados,
+        midi_backend,
     )?;
     let mixer = session.grava_audio(SAMPLE_RATE);
     // **1x e proporção nativa, sempre.** O core entrega o quadro do console em 640×480, sem
@@ -1159,6 +1329,7 @@ unsafe fn carrega(
         ultimo_relogio_ms: 0,
         audio_pendente: Vec::new(),
         avisou_tamanho: false,
+        midi_backend,
         select_antes: false,
         pad_antes: [Pad::default(); zeebx::input::PORTAS],
         quadros_apos_parar: 0,
@@ -1227,7 +1398,7 @@ fn troca_para(estado: &mut Core, caminho: &Path, aberto_pela_z_wheel: bool) -> R
     // sintoma seria "o render em hardware funciona até o primeiro jogo".
     let instalados = instalados_da_biblioteca(&estado.jogos);
     let mut session = match placa() {
-        Some(contexto) => Session::start_with_storage_installed(
+        Some(contexto) => Session::start_with_storage_installed_policy(
             caminho,
             estado.portas,
             None,
@@ -1236,13 +1407,15 @@ fn troca_para(estado: &mut Core, caminho: &Path, aberto_pela_z_wheel: bool) -> R
             ZWheel::default(),
             &estado.storage,
             &instalados,
+            estado.midi_backend,
         )?,
-        None => Session::start_software_with_storage_installed(
+        None => Session::start_software_with_storage_installed_policy(
             caminho,
             estado.portas,
             ZWheel::default(),
             &estado.storage,
             &instalados,
+            estado.midi_backend,
         )?,
     };
     let mixer = session.grava_audio(SAMPLE_RATE);
@@ -1907,6 +2080,27 @@ mod testes {
             // outros faz o core seguir pelo caminho que ele usa no RetroArch.
             ENV_SET_PIXEL_FORMAT => {
                 !dados.is_null() && unsafe { *(dados as *const u32) } == PIXEL_FORMAT_RGB565
+            }
+            ENV_SET_VARIABLES | ENV_SET_CORE_OPTIONS_V2 | ENV_SET_INPUT_DESCRIPTORS | ENV_SET_CONTROLLER_INFO => {
+                true
+            }
+            ENV_GET_CORE_OPTIONS_VERSION => {
+                if !dados.is_null() {
+                    unsafe { *(dados as *mut u32) = 2 };
+                    true
+                } else {
+                    false
+                }
+            }
+            ENV_GET_VARIABLE => {
+                if !dados.is_null() {
+                    let var = dados as *mut RetroVariable;
+                    // Retorna None para simular valor padrão Auto
+                    unsafe { (*var).value = std::ptr::null() };
+                    true
+                } else {
+                    false
+                }
             }
             ENV_GET_SYSTEM_DIRECTORY | ENV_GET_SAVE_DIRECTORY => {
                 // O sistema pode vir de fora, e vem por `ZEEBX_CORE_SISTEMA`: é assim que o teste

@@ -282,7 +282,27 @@ impl Session {
         storage: &StoragePaths,
         instalados: &[(u32, String)],
     ) -> Result<Self, StartError> {
-        Self::start_inner_with_storage(
+        Self::start_software_with_storage_installed_policy(
+            path,
+            portas,
+            z_wheel,
+            storage,
+            instalados,
+            crate::audio::MidiBackend::Auto,
+        )
+    }
+
+    /// Variante software recebendo explicitamente a política MIDI.
+    #[allow(dead_code)]
+    pub fn start_software_with_storage_installed_policy(
+        path: &Path,
+        portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
+        z_wheel: crate::config::ZWheel,
+        storage: &StoragePaths,
+        instalados: &[(u32, String)],
+        midi_policy: crate::audio::MidiBackend,
+    ) -> Result<Self, StartError> {
+        Self::start_inner_with_storage_policy(
             path,
             Some(portas),
             None,
@@ -291,6 +311,33 @@ impl Session {
             z_wheel,
             storage,
             instalados,
+            midi_policy,
+        )
+    }
+
+    /// Variante com aceleração por hardware recebendo explicitamente a política MIDI.
+    #[allow(dead_code)]
+    pub fn start_with_storage_installed_policy(
+        path: &Path,
+        portas: [Option<crate::input::bindings::Aparelho>; crate::input::PORTAS],
+        serial: Option<&Path>,
+        placa: bool,
+        contexto: Option<std::sync::Arc<glow::Context>>,
+        z_wheel: crate::config::ZWheel,
+        storage: &StoragePaths,
+        instalados: &[(u32, String)],
+        midi_policy: crate::audio::MidiBackend,
+    ) -> Result<Self, StartError> {
+        Self::start_inner_with_storage_policy(
+            path,
+            Some(portas),
+            serial,
+            placa,
+            contexto,
+            z_wheel,
+            storage,
+            instalados,
+            midi_policy,
         )
     }
 
@@ -322,6 +369,30 @@ impl Session {
         z_wheel: crate::config::ZWheel,
         storage: &StoragePaths,
         instalados: &[(u32, String)],
+    ) -> Result<Self, StartError> {
+        Self::start_inner_with_storage_policy(
+            path,
+            portas,
+            serial,
+            placa,
+            contexto,
+            z_wheel,
+            storage,
+            instalados,
+            crate::audio::MidiBackend::Auto,
+        )
+    }
+
+    fn start_inner_with_storage_policy(
+        path: &Path,
+        portas: Option<[Option<crate::input::bindings::Aparelho>; crate::input::PORTAS]>,
+        serial: Option<&Path>,
+        placa: bool,
+        contexto: Option<std::sync::Arc<glow::Context>>,
+        z_wheel: crate::config::ZWheel,
+        storage: &StoragePaths,
+        instalados: &[(u32, String)],
+        midi_policy: crate::audio::MidiBackend,
     ) -> Result<Self, StartError> {
         // Caminho escolhido no frontend, antes de extrair: é ele que identifica o conteúdo.
         let conteudo = path;
@@ -357,7 +428,7 @@ impl Session {
             false => None,
         };
         let cpu = CpuDaSessao::new().map_err(|e| StartError::NotLoadable(e.to_string()))?;
-        let mut machine = Machine::new_with_storage(cpu, module, root, storage, save_root);
+        let mut machine = Machine::new_with_storage_policy(cpu, module, root, storage, save_root, midi_policy);
         // A lista precisa existir antes de `run` e `create_applet`: a Z-Wheel a enumera no boot.
         machine.set_installed_applets(instalados.iter().cloned());
         // Antes de qualquer desenho: ver [`Machine::usa_placa`].

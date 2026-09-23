@@ -455,15 +455,26 @@ impl<C: CpuBackend> Machine<C> {
                         ));
                         Some(sound)
                     }
-                    None => match crate::audio::midi::decode(bytes) {
-                    Some(sound) => {
-                        self.assumptions.insert(concat!(
-                            "a música MIDI é sintetizada aqui, com timbre aproximado — ",
-                            "o banco de instrumentos do console está no firmware que ainda não lemos"
-                        ));
-                        Some(sound)
-                    }
-                    None => {
+                    None => match {
+                        let t_midi = std::time::Instant::now();
+                        let dec = crate::audio::midi::decode(bytes);
+                        if let Some(ref sound) = dec {
+                            let dur_s = sound.samples.len() as f64 / sound.rate.max(1) as f64;
+                            eprintln!(
+                                "Zeebx: render MIDI Tabela de Timbres: {} bytes MIDI -> {:.1}s áudio sintetizados em {:.1}ms",
+                                bytes.len(),
+                                dur_s,
+                                t_midi.elapsed().as_secs_f64() * 1000.0
+                            );
+                            self.assumptions.insert(concat!(
+                                "a música MIDI é sintetizada aqui, com timbre aproximado — ",
+                                "o banco de instrumentos do console está no firmware que ainda não lemos"
+                            ));
+                        }
+                        dec
+                    } {
+                        Some(sound) => Some(sound),
+                        None => {
                     // Dizer *qual* formato chegou é o que permite saber o que implementar
                     // depois — e "não é um RIFF/WAVE" não diz. O que diz é a assinatura do
                     // próprio bloco: é assim que se soube que a trilha do Tekken 2 é MP3 sem
