@@ -462,7 +462,11 @@ mod tests {
         // O topo é a última linha guardada: verde, verde, verde, vazio.
         assert_eq!(&image.rgba[0..4], &[0, 255, 0, 255]);
         assert_eq!(&image.rgba[8..12], &[0, 255, 0, 255]);
-        assert_eq!(&image.rgba[12..16], &[0, 0, 0, 255], "o que não foi coberto fica no índice 0");
+        assert_eq!(
+            &image.rgba[12..16],
+            &[0, 0, 0, 255],
+            "o que não foi coberto fica no índice 0"
+        );
         // A base é a primeira linha guardada: quatro vermelhos.
         assert_eq!(&image.rgba[16..20], &[255, 0, 0, 255]);
         assert_eq!(&image.rgba[28..32], &[255, 0, 0, 255]);

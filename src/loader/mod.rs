@@ -10,10 +10,10 @@
 //! ```
 
 pub mod archive;
-pub mod sete_z;
 pub mod miffile;
 pub mod modfile;
 pub mod resfile;
+pub mod sete_z;
 
 use crate::brew::aee::{self, Interface};
 use crate::cpu::CpuError;
@@ -265,12 +265,7 @@ pub fn load_with(
         let mut bytes = vec![0u8; MODULE_PREFIX as usize];
         bytes.extend_from_slice(extensao.image.image());
         bytes.resize(bytes.len() + MODULE_BSS_SLACK, 0);
-        mem.map(
-            EXT_REGION_NAMES[i],
-            base - MODULE_PREFIX,
-            bytes,
-            true,
-        )?;
+        mem.map(EXT_REGION_NAMES[i], base - MODULE_PREFIX, bytes, true)?;
         // As mesmas duas palavras que o `AEEStdLib.h` lê antes da base do módulo. Sem elas a
         // extensão acha a tabela de helpers em zero e morre na primeira chamada de `MALLOC`.
         mem.write_u32(base - 8, HELPER_VERSION)?;
@@ -358,7 +353,8 @@ mod tests {
         assert_eq!(
             names,
             [
-                "module", "nulo", "heap", "stack", "objects", "helpers", "stubs", "surfaces", "vtables"
+                "module", "nulo", "heap", "stack", "objects", "helpers", "stubs", "surfaces",
+                "vtables"
             ]
         );
     }

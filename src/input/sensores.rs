@@ -258,8 +258,7 @@ mod linux {
         let pedido = 0x8000_0000u64 | (24 << 16) | ((b'E' as u64) << 8) | (0x40 + eixo as u64);
         let mut info = [0i32; 6];
         // SAFETY: o `ioctl` escreve exatamente os 24 bytes do `input_absinfo` em `info`.
-        let resultado =
-            unsafe { libc::ioctl(arquivo.as_raw_fd(), pedido as _, info.as_mut_ptr()) };
+        let resultado = unsafe { libc::ioctl(arquivo.as_raw_fd(), pedido as _, info.as_mut_ptr()) };
         match (resultado, info[5]) {
             (0, resolucao) if resolucao > 0 => resolucao as f32,
             _ => UNIDADES_POR_G_SEM_RESOLUCAO,
@@ -349,8 +348,14 @@ mod tests {
             lista.push(("/dev/input/event22".into(), primeiro));
             lista.push(("/dev/input/event30".into(), segundo));
         }
-        let segundo = sensores.do_controle("Pro Controller", 0x057e, 0x2009, 1).unwrap();
+        let segundo = sensores
+            .do_controle("Pro Controller", 0x057e, 0x2009, 1)
+            .unwrap();
         assert_eq!(segundo.aceleracao, [0.0, 1.0, 0.0]);
-        assert!(sensores.do_controle("Pro Controller", 0x057e, 0x2009, 2).is_none());
+        assert!(
+            sensores
+                .do_controle("Pro Controller", 0x057e, 0x2009, 2)
+                .is_none()
+        );
     }
 }

@@ -76,9 +76,12 @@ impl AvisoDeCalibracao {
         self.recentes.push_back(leitura);
         let parado = self.recentes.len() == Self::LEITURAS
             && (0..3).all(|eixo| {
-                let (menor, maior) = self.recentes.iter().fold((f32::MAX, f32::MIN), |(a, b), l| {
-                    (a.min(l[eixo]), b.max(l[eixo]))
-                });
+                let (menor, maior) = self
+                    .recentes
+                    .iter()
+                    .fold((f32::MAX, f32::MIN), |(a, b), l| {
+                        (a.min(l[eixo]), b.max(l[eixo]))
+                    });
                 maior - menor < Self::TOLERANCIA
             });
         match (parado, self.parado_desde) {
@@ -446,7 +449,10 @@ impl App {
             ui.add_space(8.0);
             ui.label(self.catalog.format(
                 "update.available",
-                &[("new", &lancamento.versao), ("current", atualizacao::VERSAO_ATUAL)],
+                &[
+                    ("new", &lancamento.versao),
+                    ("current", atualizacao::VERSAO_ATUAL),
+                ],
             ));
             ui.add_space(12.0);
             ui.horizontal(|ui| {
@@ -480,7 +486,10 @@ impl App {
         ui.horizontal(|ui| {
             let procurando = self.procura_de_atualizacao.is_some();
             if ui
-                .add_enabled(!procurando, egui::Button::new(self.catalog.get("settings.updates.check")))
+                .add_enabled(
+                    !procurando,
+                    egui::Button::new(self.catalog.get("settings.updates.check")),
+                )
                 .clicked()
             {
                 self.atualizacao = None;
@@ -488,10 +497,9 @@ impl App {
             }
             let estado = match (&self.atualizacao, procurando) {
                 (_, true) => self.catalog.get("settings.updates.checking").to_string(),
-                (Some(atualizacao::Resposta::Nova(lancamento)), _) => self.catalog.format(
-                    "settings.updates.new",
-                    &[("version", &lancamento.versao)],
-                ),
+                (Some(atualizacao::Resposta::Nova(lancamento)), _) => self
+                    .catalog
+                    .format("settings.updates.new", &[("version", &lancamento.versao)]),
                 (Some(atualizacao::Resposta::EmDia), _) => {
                     self.catalog.get("settings.updates.up_to_date").to_string()
                 }
@@ -503,7 +511,8 @@ impl App {
             ui.label(estado);
             if let Some(atualizacao::Resposta::Nova(lancamento)) = &self.atualizacao {
                 if ui.button(self.catalog.get("update.download")).clicked() {
-                    ui.ctx().open_url(egui::OpenUrl::new_tab(&lancamento.pagina));
+                    ui.ctx()
+                        .open_url(egui::OpenUrl::new_tab(&lancamento.pagina));
                 }
             }
         });
@@ -573,13 +582,16 @@ impl App {
         };
         let mut gravadas = 0usize;
         let mut erro = None;
-        let mut grava = |nome: String, dados: Result<Vec<u8>, String>| {
-            match dados.and_then(|d| std::fs::write(pasta.join(nome), d).map_err(|e| e.to_string())) {
-                Ok(()) => gravadas += 1,
-                Err(e) => erro = Some(e),
-            }
+        let mut grava = |nome: String, dados: Result<Vec<u8>, String>| match dados
+            .and_then(|d| std::fs::write(pasta.join(nome), d).map_err(|e| e.to_string()))
+        {
+            Ok(()) => gravadas += 1,
+            Err(e) => erro = Some(e),
         };
-        grava(format!("{}.png", discord::CHAVE_DO_ICONE), Ok(PLACEHOLDER.to_vec()));
+        grava(
+            format!("{}.png", discord::CHAVE_DO_ICONE),
+            Ok(PLACEHOLDER.to_vec()),
+        );
         for jogo in &self.games {
             let Some(classe) = jogo.clsid.filter(|&c| c != crate::session::Z_WHEEL) else {
                 continue;
@@ -592,13 +604,19 @@ impl App {
                 .or(jogo.art.as_ref());
             if let Some(capa) = capa {
                 let chave = discord::chave_da_capa(classe);
-                grava(format!("{chave}.png"), discord::png(&discord::capa_quadrada(capa)));
+                grava(
+                    format!("{chave}.png"),
+                    discord::png(&discord::capa_quadrada(capa)),
+                );
             }
         }
         self.discord_recado = Some(match erro {
             None => self.catalog.format(
                 "settings.discord.exported",
-                &[("count", &gravadas.to_string()), ("path", &pasta.display().to_string())],
+                &[
+                    ("count", &gravadas.to_string()),
+                    ("path", &pasta.display().to_string()),
+                ],
             ),
             Some(motivo) => self
                 .catalog
@@ -610,7 +628,10 @@ impl App {
         let mut changed = false;
         ui.label(self.tr("settings.discord"));
         changed |= ui
-            .checkbox(&mut self.settings.discord.ativo, self.catalog.get("settings.discord.on"))
+            .checkbox(
+                &mut self.settings.discord.ativo,
+                self.catalog.get("settings.discord.on"),
+            )
             .changed();
         ui.add_enabled_ui(self.settings.discord.ativo, |ui| {
             let estado = match self.presenca.conectado() {
@@ -711,12 +732,16 @@ impl App {
                     self.settings.graphics.anisotropico as usize,
                 );
                 session.define_neblina(self.settings.graphics.neblina);
-                if let Some(tela) = tela_anterior.filter(|_| session.classe() != crate::session::Z_WHEEL) {
+                if let Some(tela) =
+                    tela_anterior.filter(|_| session.classe() != crate::session::Z_WHEEL)
+                {
                     session.herda_tela(&tela);
                 }
-                session.set_installed_applets(self.games.iter().filter_map(|game| {
-                    Some((game.clsid?, library::id_do_modulo(&game.path)?))
-                }));
+                session.set_installed_applets(
+                    self.games
+                        .iter()
+                        .filter_map(|game| Some((game.clsid?, library::id_do_modulo(&game.path)?))),
+                );
                 // Ligar o som aqui é seguro **porque o jogo ainda não começou**: o `start` só
                 // prepara, e o `EVT_APP_START` sai na primeira volta do laço. Antes disso o
                 // jogo já tocava dentro do `start`, e o som saía com a tela vazia.
@@ -882,17 +907,21 @@ impl App {
                     mudou = true;
                 }
             }
-            if ui.button(self.catalog.get("settings.z_wheel.folder")).clicked() {
+            if ui
+                .button(self.catalog.get("settings.z_wheel.folder"))
+                .clicked()
+            {
                 if let Some(pasta) = rfd::FileDialog::new().pick_folder() {
                     self.settings.z_wheel_path = Some(pasta);
                     mudou = true;
                 }
             }
-            if ui.button(self.catalog.get("settings.z_wheel.detect")).clicked() {
-                let achada = library::detecta_z_wheel(
-                    self.settings.roms_dir.as_deref(),
-                    &self.games,
-                );
+            if ui
+                .button(self.catalog.get("settings.z_wheel.detect"))
+                .clicked()
+            {
+                let achada =
+                    library::detecta_z_wheel(self.settings.roms_dir.as_deref(), &self.games);
                 if achada.is_some() {
                     self.settings.z_wheel_path = achada;
                     mudou = true;
@@ -903,9 +932,10 @@ impl App {
             self.atualiza_z_wheel();
         }
         let aviso = match (&self.z_wheel, &self.acervo) {
-            (Some(_), Some(acervo)) => self
-                .catalog
-                .format("settings.z_wheel.found", &[("count", &acervo.len().to_string())]),
+            (Some(_), Some(acervo)) => self.catalog.format(
+                "settings.z_wheel.found",
+                &[("count", &acervo.len().to_string())],
+            ),
             (Some(_), None) => self.tr("settings.z_wheel.found_no_art"),
             (None, _) => self.tr("settings.z_wheel.not_found"),
         };
@@ -1121,7 +1151,10 @@ impl App {
                     std::array::from_fn(|i| amostras.iter().map(|a| a[i]).sum::<f32>() / n);
                 match crate::input::bindings::CalibracaoDeMovimento::de_repouso(media) {
                     Some(calibracao) => {
-                        self.settings.controls.player_mut(porta).calibracao_movimento = calibracao;
+                        self.settings
+                            .controls
+                            .player_mut(porta)
+                            .calibracao_movimento = calibracao;
                         self.calibracao_recusada = false;
                         self.save();
                     }
@@ -1170,9 +1203,13 @@ impl App {
             ));
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(com_leitura && !calibrando, |ui| {
-                    calibrar = ui.button(self.catalog.get("controls.boomerang.calibrate")).clicked();
+                    calibrar = ui
+                        .button(self.catalog.get("controls.boomerang.calibrate"))
+                        .clicked();
                 });
-                restaurar = ui.button(self.catalog.get("controls.boomerang.calibrate_reset")).clicked();
+                restaurar = ui
+                    .button(self.catalog.get("controls.boomerang.calibrate_reset"))
+                    .clicked();
             });
             if self.calibracao_recusada && !calibrando {
                 ui.colored_label(
@@ -1190,7 +1227,10 @@ impl App {
         }
         if restaurar {
             self.calibrando = None;
-            self.settings.controls.player_mut(porta).calibracao_movimento = Default::default();
+            self.settings
+                .controls
+                .player_mut(porta)
+                .calibracao_movimento = Default::default();
             self.save();
         }
     }
@@ -1228,7 +1268,10 @@ impl App {
         use crate::input::bindings::Aparelho;
         let agora = std::time::Instant::now();
         let (comecadas, terminadas) = calibracao;
-        let novas = (comecadas > self.calibracoes_vistas.0, terminadas > self.calibracoes_vistas.1);
+        let novas = (
+            comecadas > self.calibracoes_vistas.0,
+            terminadas > self.calibracoes_vistas.1,
+        );
         self.calibracoes_vistas = calibracao;
         let Some(porta) = self
             .settings
@@ -1287,13 +1330,15 @@ impl App {
                             egui::vec2(largura, largura * 0.7),
                             egui::Sense::hover(),
                         );
-                        egui::Image::new(&textura).rotate(giro, egui::Vec2::splat(0.5)).paint_at(
-                            ui,
-                            egui::Rect::from_center_size(
-                                area.center(),
-                                egui::vec2(largura, largura * fonte.y / fonte.x),
-                            ),
-                        );
+                        egui::Image::new(&textura)
+                            .rotate(giro, egui::Vec2::splat(0.5))
+                            .paint_at(
+                                ui,
+                                egui::Rect::from_center_size(
+                                    area.center(),
+                                    egui::vec2(largura, largura * fonte.y / fonte.x),
+                                ),
+                            );
                         ui.vertical(|ui| {
                             ui.strong(titulo);
                             if !estado.is_empty() {
@@ -1427,7 +1472,9 @@ impl App {
                 *atual = match device {
                     // O Wii Remote não passa pelo gilrs, mas é um controle como os outros: o
                     // mapeamento típico dele vem junto, e muda-se na tela como qualquer outro.
-                    Some(name) if crate::input::wiimote::Wiimotes::indice_do_nome(&name).is_some() => {
+                    Some(name)
+                        if crate::input::wiimote::Wiimotes::indice_do_nome(&name).is_some() =>
+                    {
                         crate::input::bindings::Player::with_wiimote(name)
                     }
                     Some(name) => crate::input::bindings::Player::with_gamepad(name),
@@ -1648,7 +1695,9 @@ impl App {
                 // O Wii Remote escolhido responde pelos botões dele; os outros, pelo gilrs.
                 match self.wiimote_da_porta(self.porta_editada) {
                     Some(wiimote) if device.is_some() => wiimote.primeira_fonte(),
-                    _ => self.gamepads.first_active(device.as_deref(), self.porta_editada),
+                    _ => self
+                        .gamepads
+                        .first_active(device.as_deref(), self.porta_editada),
                 }
             }
         };
@@ -1848,7 +1897,10 @@ impl App {
                             .changed();
                     }
                 });
-            ui.colored_label(ui.visuals().warn_fg_color, self.catalog.get("graphics.aspect.hint"));
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                self.catalog.get("graphics.aspect.hint"),
+            );
 
             ui.add_space(8.0);
             ui.label(self.catalog.get("graphics.antialias"));
@@ -1857,7 +1909,11 @@ impl App {
                 .show_ui(ui, |ui| {
                     for n in [1u8, 2, 4, 8] {
                         melhoria_mudou |= ui
-                            .selectable_value(&mut graphics.antialias, n, rotulo_de_nivel(n, "MSAA", &desligado))
+                            .selectable_value(
+                                &mut graphics.antialias,
+                                n,
+                                rotulo_de_nivel(n, "MSAA", &desligado),
+                            )
                             .changed();
                     }
                 });
@@ -1870,7 +1926,11 @@ impl App {
                 .show_ui(ui, |ui| {
                     for n in [1u8, 2, 4, 8, 16] {
                         melhoria_mudou |= ui
-                            .selectable_value(&mut graphics.anisotropico, n, rotulo_de_nivel(n, "AF", &desligado))
+                            .selectable_value(
+                                &mut graphics.anisotropico,
+                                n,
+                                rotulo_de_nivel(n, "AF", &desligado),
+                            )
                             .changed();
                     }
                 });
@@ -2006,10 +2066,16 @@ impl App {
             ui.add_space(6.0);
             ui.label(self.catalog.get("welcome.controls"));
             ui.add_space(12.0);
-            ui.checkbox(&mut self.aviso_nao_mostrar, self.catalog.get("welcome.dont_show"));
+            ui.checkbox(
+                &mut self.aviso_nao_mostrar,
+                self.catalog.get("welcome.dont_show"),
+            );
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button(self.catalog.get("welcome.controls.open")).clicked() {
+                if ui
+                    .button(self.catalog.get("welcome.controls.open"))
+                    .clicked()
+                {
                     configurar = true;
                 }
                 if ui.button(self.catalog.get("welcome.dismiss")).clicked() {
@@ -2465,10 +2531,16 @@ impl App {
     /// Em uma linha, de onde vem o movimento do Boomerang e se ele está chegando.
     fn descreve_sensor(&self, sensor: &SensorDaPorta) -> String {
         let (chave, nome) = match sensor {
-            SensorDaPorta::Wiimote(w) if w.com_acelerometro => ("controls.boomerang.sensor", "Wii Remote"),
+            SensorDaPorta::Wiimote(w) if w.com_acelerometro => {
+                ("controls.boomerang.sensor", "Wii Remote")
+            }
             SensorDaPorta::Wiimote(_) => ("controls.boomerang.sensor_waiting", "Wii Remote"),
-            SensorDaPorta::Controle(s) if s.sem_permissao => ("controls.boomerang.sensor_denied", s.nome.as_str()),
-            SensorDaPorta::Controle(s) if s.com_leitura => ("controls.boomerang.sensor", s.nome.as_str()),
+            SensorDaPorta::Controle(s) if s.sem_permissao => {
+                ("controls.boomerang.sensor_denied", s.nome.as_str())
+            }
+            SensorDaPorta::Controle(s) if s.com_leitura => {
+                ("controls.boomerang.sensor", s.nome.as_str())
+            }
             SensorDaPorta::Controle(s) => ("controls.boomerang.sensor_waiting", s.nome.as_str()),
             SensorDaPorta::SemSensor(nome) => ("controls.boomerang.no_sensor", nome.as_str()),
             SensorDaPorta::Nenhum => ("controls.boomerang.no_device", ""),
@@ -2494,7 +2566,8 @@ impl App {
                 None => SensorDaPorta::Nenhum,
             };
         }
-        let Some((nome, vendor, product, ordem)) = self.gamepads.identidade(escolhido, porta) else {
+        let Some((nome, vendor, product, ordem)) = self.gamepads.identidade(escolhido, porta)
+        else {
             return SensorDaPorta::Nenhum;
         };
         match self.sensores.do_controle(&nome, vendor, product, ordem) {
@@ -3243,7 +3316,10 @@ mod tests {
         ] {
             let mut agora = Pad::default();
             agora.press(Pad::button_by_name(nome).unwrap(), true);
-            assert_eq!(input::teclas_do_controle(&antes, &agora), vec![(esperado, true)]);
+            assert_eq!(
+                input::teclas_do_controle(&antes, &agora),
+                vec![(esperado, true)]
+            );
         }
         let mut voltar = Pad::default();
         voltar.press(Pad::button_by_name("b2").unwrap(), true);
@@ -3270,7 +3346,12 @@ mod tests {
     #[test]
     fn a_ampliacao_inteira_so_usa_multiplos_exatos() {
         // Numa janela de 1500x1100 cabem duas vezes a tela de 640x480, e não duas e pouco.
-        let size = placement(egui::vec2(1500.0, 1100.0), Scaling::Integer, true, 4.0 / 3.0);
+        let size = placement(
+            egui::vec2(1500.0, 1100.0),
+            Scaling::Integer,
+            true,
+            4.0 / 3.0,
+        );
         assert_eq!(size, egui::vec2(1280.0, 960.0));
     }
 

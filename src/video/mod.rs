@@ -3,12 +3,12 @@
 pub mod atc;
 #[cfg(feature = "gpu")]
 pub mod contexto;
-#[cfg(feature = "gl")]
-pub mod gpu;
 pub mod display;
 pub mod font;
 pub mod gif;
 pub mod gles;
+#[cfg(feature = "gl")]
+pub mod gpu;
 pub mod icon;
 pub mod paltex;
 pub mod rasterizer;

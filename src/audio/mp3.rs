@@ -218,7 +218,12 @@ pub fn decode_detalhado(data: &[u8]) -> Result<crate::audio::wav::Sound, String>
     let id = trilha.id;
     let mut decodificador = symphonia::default::get_codecs()
         .make(&trilha.codec_params, &DecoderOptions::default())
-        .map_err(|erro| format!("sem decodificador para {:#?}: {erro}", trilha.codec_params.codec))?;
+        .map_err(|erro| {
+            format!(
+                "sem decodificador para {:#?}: {erro}",
+                trilha.codec_params.codec
+            )
+        })?;
 
     let mut samples: Vec<f32> = Vec::new();
     let mut rate = 0;

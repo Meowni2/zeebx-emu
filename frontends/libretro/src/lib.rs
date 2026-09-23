@@ -120,6 +120,13 @@ const ENV_SET_HW_RENDER: u32 = 14;
 ///
 /// No desktop o valor 1 (`RETRO_HW_CONTEXT_OPENGL`, compatibilidade) não serve: em RetroArch/EGL
 /// ele entregava perfil diferente do que o motor esperava e falhava com `GL: Invalid enum`.
+#[cfg(target_os = "emscripten")]
+const HW_CONTEXT: u32 = 4; // RETRO_HW_CONTEXT_OPENGLES3 — WebGL2
+#[cfg(target_os = "emscripten")]
+const HW_VERSION_MAJOR: u32 = 3;
+#[cfg(target_os = "emscripten")]
+const HW_VERSION_MINOR: u32 = 0;
+
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 const HW_CONTEXT: u32 = 5; // RETRO_HW_CONTEXT_OPENGLES_VERSION (GLES 3.1+)
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
@@ -127,11 +134,20 @@ const HW_VERSION_MAJOR: u32 = 3;
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 const HW_VERSION_MINOR: u32 = 2;
 
-#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
+#[cfg(not(any(
+    target_os = "emscripten",
+    all(target_os = "linux", target_arch = "aarch64")
+)))]
 const HW_CONTEXT: u32 = 3; // RETRO_HW_CONTEXT_OPENGL_CORE
-#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
+#[cfg(not(any(
+    target_os = "emscripten",
+    all(target_os = "linux", target_arch = "aarch64")
+)))]
 const HW_VERSION_MAJOR: u32 = 3;
-#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
+#[cfg(not(any(
+    target_os = "emscripten",
+    all(target_os = "linux", target_arch = "aarch64")
+)))]
 const HW_VERSION_MINOR: u32 = 3;
 
 /// O valor que o `retro_video_refresh` recebe quando o quadro saiu no framebuffer do frontend.
@@ -139,7 +155,6 @@ const HW_VERSION_MINOR: u32 = 3;
 /// É o sentinela do `libretro`: passar pixels junto com ele seria mentira, e o RetroArch apresenta
 /// o framebuffer que ele mesmo forneceu.
 const HW_FRAME_BUFFER_VALID: usize = usize::MAX;
-
 
 /// O começo de `retro_hw_render_callback`, na ordem do `libretro.h` vendorizado.
 ///
@@ -183,8 +198,7 @@ static OFERTA_DE_PLACA: std::sync::OnceLock<RetroHwRenderCallback> = std::sync::
 static CONTEXTO_PRONTO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// O contexto de GL montado a partir do que o frontend entregou, quando ele entregou.
-static PLACA: std::sync::Mutex<Option<std::sync::Arc<glow::Context>>> =
-    std::sync::Mutex::new(None);
+static PLACA: std::sync::Mutex<Option<std::sync::Arc<glow::Context>>> = std::sync::Mutex::new(None);
 
 /// O contexto de placa, quando já se desenha nele.
 fn placa() -> Option<std::sync::Arc<glow::Context>> {
@@ -248,7 +262,9 @@ fn liga_a_placa(estado: &mut Core) {
         return;
     };
     let Some(pega_endereco) = oferta.get_proc_address else {
-        aviso("Zeebx: o frontend aceitou render em hardware mas não oferece get_proc_address; seguindo no processador");
+        aviso(
+            "Zeebx: o frontend aceitou render em hardware mas não oferece get_proc_address; seguindo no processador",
+        );
         return;
     };
     let contexto = std::sync::Arc::new(unsafe {
@@ -297,7 +313,9 @@ fn liga_a_placa(estado: &mut Core) {
                 *guarda = None;
             }
             if let Err(tambem) = troca_para(estado, &antes, false) {
-                aviso(&format!("Zeebx: nem no processador deu para reabrir: {tambem}"));
+                aviso(&format!(
+                    "Zeebx: nem no processador deu para reabrir: {tambem}"
+                ));
             }
         }
     }
@@ -358,7 +376,8 @@ const DEVICE_ZPAD: u32 = ((1 + 1) << 8) | DEVICE_JOYPAD;
 const DEVICE_BOOMERANG: u32 = ((2 + 1) << 8) | DEVICE_JOYPAD;
 
 type EnvironmentFn = unsafe extern "C" fn(cmd: u32, data: *mut c_void) -> bool;
-type KeyboardEventFn = unsafe extern "C" fn(down: bool, keycode: u32, character: u32, modifiers: u16);
+type KeyboardEventFn =
+    unsafe extern "C" fn(down: bool, keycode: u32, character: u32, modifiers: u16);
 
 #[repr(C)]
 struct RetroMessage {
@@ -1088,17 +1107,16 @@ unsafe fn carrega(
     session.define_resolucao_interna(1);
     session.define_proporcao(None);
     if !jogos.is_empty() {
-        session.set_installed_applets(
-            jogos
-                .iter()
-                .filter_map(|(classe, caminho)| {
-                    Some((*classe, zeebx::library::id_do_modulo(caminho)?))
-                }),
-        );
+        session.set_installed_applets(jogos.iter().filter_map(|(classe, caminho)| {
+            Some((*classe, zeebx::library::id_do_modulo(caminho)?))
+        }));
         log(&format!(
             "Zeebx: {} jogo(s) instalados a partir de {}",
             jogos.len(),
-            pasta.as_deref().unwrap_or(std::path::Path::new(".")).display()
+            pasta
+                .as_deref()
+                .unwrap_or(std::path::Path::new("."))
+                .display()
         ));
     }
     // **A captura de serial, quando pedida.** É o mesmo instrumento da varredura
@@ -1115,7 +1133,9 @@ unsafe fn carrega(
     if let Ok(caminho) = std::env::var("ZEEBX_CORE_SERIAL") {
         match session.liga_serial(std::path::Path::new(&caminho)) {
             Ok(()) => log(&format!("Zeebx: captura de serial em {caminho}")),
-            Err(erro) => aviso(&format!("Zeebx: não deu para abrir a captura de serial: {erro}")),
+            Err(erro) => aviso(&format!(
+                "Zeebx: não deu para abrir a captura de serial: {erro}"
+            )),
         }
     }
     // A Z-Wheel é o shell: quando ela é o conteúdo, guardar o caminho é o que permite voltar a
@@ -1161,7 +1181,11 @@ fn biblioteca(caminho: &str) -> (Option<PathBuf>, Vec<(u32, PathBuf)>) {
         .map(std::path::Path::to_path_buf);
     let mut jogos: Vec<(u32, PathBuf)> = Vec::new();
     let mut vistas: std::collections::HashSet<u32> = std::collections::HashSet::new();
-    for jogo in pasta.as_deref().map(zeebx::library::scan).unwrap_or_default() {
+    for jogo in pasta
+        .as_deref()
+        .map(zeebx::library::scan)
+        .unwrap_or_default()
+    {
         let Some(classe) = jogo.clsid else {
             continue;
         };
@@ -1176,9 +1200,7 @@ fn biblioteca(caminho: &str) -> (Option<PathBuf>, Vec<(u32, PathBuf)>) {
 fn instalados_da_biblioteca(jogos: &[(u32, PathBuf)]) -> Vec<(u32, String)> {
     jogos
         .iter()
-        .filter_map(|(classe, caminho)| {
-            Some((*classe, zeebx::library::id_do_modulo(caminho)?))
-        })
+        .filter_map(|(classe, caminho)| Some((*classe, zeebx::library::id_do_modulo(caminho)?)))
         .collect()
 }
 
@@ -1205,7 +1227,11 @@ fn prepara_fonte(storage: &StoragePaths, jogos: &[(u32, PathBuf)]) -> Option<Pat
 ///
 /// É o que o console faz quando a Z-Wheel abre um jogo e quando o jogo fecha: o shell continua
 /// sendo o shell. O frontend não participa — para ele, `retro_run` só devolveu outro quadro.
-fn troca_para(estado: &mut Core, caminho: &Path, aberto_pela_z_wheel: bool) -> Result<(), StartError> {
+fn troca_para(
+    estado: &mut Core,
+    caminho: &Path,
+    aberto_pela_z_wheel: bool,
+) -> Result<(), StartError> {
     // **Se já se desenha na placa, a sessão nova também nasce nela** — a Z-Wheel abrindo um jogo,
     // o jogo voltando para ela. Sem isto a primeira troca devolveria o desenho ao processador, e o
     // sintoma seria "o render em hardware funciona até o primeiro jogo".
@@ -1265,11 +1291,20 @@ pub extern "C" fn retro_run() {
         // value RELOGIO in this scope" enquanto o `cargo test` local passa — que foi exatamente o
         // que aconteceu.
         #[cfg(test)]
-        CLASSE_ATUAL.store(estado.session.classe(), std::sync::atomic::Ordering::Relaxed);
+        CLASSE_ATUAL.store(
+            estado.session.classe(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         #[cfg(test)]
-        RELOGIO.store(estado.session.clock_ms(), std::sync::atomic::Ordering::Relaxed);
+        RELOGIO.store(
+            estado.session.clock_ms(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         #[cfg(test)]
-        INSTRUCOES.store(estado.session.instrucoes(), std::sync::atomic::Ordering::Relaxed);
+        INSTRUCOES.store(
+            estado.session.instrucoes(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         // **A placa entra no primeiro quadro.** O contexto de GL só existe depois que o frontend
         // chama o `context_reset`, que acontece depois do `retro_load_game`; aqui é o primeiro
         // lugar em que ele pode estar pronto. Recriar a sessão custa um reinício que ninguém vê:
@@ -1359,8 +1394,7 @@ pub extern "C" fn retro_run() {
             // roda anima (223 imagens distintas) e não pede abertura nenhuma; com ela, a grade
             // abre e o pedido sai. É a diferença entre "o controle chega ao guest" e "o controle
             // chega ao applet do jeito que ele lê".
-            for (avk, apertada) in
-                zeebx::input::teclas_do_controle(&estado.pad_antes[porta], &pad)
+            for (avk, apertada) in zeebx::input::teclas_do_controle(&estado.pad_antes[porta], &pad)
             {
                 estado.session.set_key(avk, apertada);
             }
@@ -1688,7 +1722,6 @@ pub extern "C" fn retro_get_memory_size(_id: u32) -> usize {
     0
 }
 
-
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -1797,7 +1830,9 @@ mod testes {
             // abertura aparece em `ULTIMA_ABERTURA` — o core o registra por instrumento de teste,
             // porque o log dele sai por callback variádico do frontend.
             ULTIMA_ABERTURA.store(0, Ordering::Relaxed);
-            'tentativas: for (direcao, valor) in [("x", 0x7fff), ("x", -0x8000), ("y", 0x7fff), ("y", -0x8000)] {
+            'tentativas: for (direcao, valor) in
+                [("x", 0x7fff), ("x", -0x8000), ("y", 0x7fff), ("y", -0x8000)]
+            {
                 // Os quatro botões de face **e** o Start: a Z-Wheel não usa o mesmo para navegar e
                 // para confirmar, e testar só os de face foi o que deixou o ciclo sem resposta.
                 for botao in [ID_A, ID_B, ID_Y, ID_X, ID_START] {
@@ -1857,7 +1892,10 @@ mod testes {
     fn os_deslocamentos_do_struct_da_placa_batem_com_o_libretro_h() {
         use std::mem::{offset_of, size_of};
         assert_eq!(offset_of!(RetroHwRenderCallback, context_reset), 8);
-        assert_eq!(offset_of!(RetroHwRenderCallback, get_current_framebuffer), 16);
+        assert_eq!(
+            offset_of!(RetroHwRenderCallback, get_current_framebuffer),
+            16
+        );
         assert_eq!(offset_of!(RetroHwRenderCallback, get_proc_address), 24);
         assert_eq!(offset_of!(RetroHwRenderCallback, depth), 32);
         assert_eq!(offset_of!(RetroHwRenderCallback, version_major), 36);
@@ -1976,11 +2014,7 @@ mod testes {
     /// existe mais.
     #[test]
     fn sem_sessao_nao_ha_o_que_salvar() {
-        assert_eq!(
-            retro_serialize_size(),
-            0,
-            "sem sessão, o tamanho é zero"
-        );
+        assert_eq!(retro_serialize_size(), 0, "sem sessão, o tamanho é zero");
         let mut destino = [0u8; 16];
         assert!(
             !retro_serialize(destino.as_mut_ptr() as *mut c_void, destino.len()),
@@ -2087,7 +2121,10 @@ mod testes {
                     .lock()
                     .map(|v| {
                         let inicio = (antes as usize).min(v.len());
-                        v[inicio..].iter().collect::<std::collections::BTreeSet<_>>().len()
+                        v[inicio..]
+                            .iter()
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .len()
                     })
                     .unwrap_or(0);
                 eprintln!("botão {botao}: {distintas} imagem(ns) distinta(s) em 30 quadros");
@@ -2243,7 +2280,10 @@ mod testes {
                     .lock()
                     .map(|v| {
                         let inicio = desde.min(v.len());
-                        v[inicio..].iter().collect::<std::collections::BTreeSet<_>>().len()
+                        v[inicio..]
+                            .iter()
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .len()
                     })
                     .unwrap_or(0)
             };
@@ -2319,7 +2359,10 @@ mod testes {
             // **O pedido de abertura chega, e o core troca de sessão.** Antes da correção das
             // telas intermediárias isto era `0x00000000` e a roda ficava parada; agora é a classe
             // do jogo que a grade tinha em foco — o mesmo `0x0108E356` que a varredura pede.
-            assert_ne!(aberto, 0, "o roteiro não chegou a pedir a abertura de jogo nenhum");
+            assert_ne!(
+                aberto, 0,
+                "o roteiro não chegou a pedir a abertura de jogo nenhum"
+            );
             let mut rodando = CLASSE_ATUAL.load(Ordering::Relaxed);
             for _ in 0..900 {
                 retro_run();
@@ -2415,7 +2458,10 @@ mod testes {
 
             // 1) O tamanho, medido pelo frontend.
             let tamanho = retro_serialize_size();
-            assert!(tamanho > 0, "com sessão montada, o tamanho tem de ser positivo");
+            assert!(
+                tamanho > 0,
+                "com sessão montada, o tamanho tem de ser positivo"
+            );
             eprintln!("save state: {tamanho} bytes");
             let mut primeiro = vec![0u8; tamanho];
             assert!(
@@ -2487,7 +2533,10 @@ mod testes {
             );
             let tamanho_final = retro_serialize_size();
             let mut quarto = vec![0u8; tamanho_final];
-            assert!(retro_serialize(quarto.as_mut_ptr() as *mut c_void, quarto.len()));
+            assert!(retro_serialize(
+                quarto.as_mut_ptr() as *mut c_void,
+                quarto.len()
+            ));
             assert_eq!(
                 quarto, primeiro,
                 "a recusa de um estado corrompido mexeu na máquina"

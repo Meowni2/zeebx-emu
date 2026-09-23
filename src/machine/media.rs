@@ -309,8 +309,9 @@ impl<C: CpuBackend> Machine<C> {
                 match self.vfs.resolve(&nome).and_then(|p| std::fs::read(p).ok()) {
                     Some(bytes) => bytes,
                     None => {
-                        self.bad_pointers
-                            .insert(format!("som pedido por nome, e o arquivo não existe: {nome}"));
+                        self.bad_pointers.insert(format!(
+                            "som pedido por nome, e o arquivo não existe: {nome}"
+                        ));
                         return Ok(Entrega::Nada);
                     }
                 }
@@ -413,7 +414,6 @@ impl<C: CpuBackend> Machine<C> {
             .retain(|chave, _| *chave == nova || em_uso.contains(chave));
     }
 
-
     /// Toca uma partitura com o banco de amostras, quando o aparelho tem um.
     ///
     /// Só tenta quando os bytes começam com `MThd`: reconhecer o formato **antes** de abrir o banco
@@ -456,39 +456,39 @@ impl<C: CpuBackend> Machine<C> {
                         Some(sound)
                     }
                     None => match crate::audio::midi::decode(bytes) {
-                    Some(sound) => {
-                        self.assumptions.insert(concat!(
+                        Some(sound) => {
+                            self.assumptions.insert(concat!(
                             "a música MIDI é sintetizada aqui, com timbre aproximado — ",
                             "o banco de instrumentos do console está no firmware que ainda não lemos"
                         ));
-                        Some(sound)
-                    }
-                    None => {
-                    // Dizer *qual* formato chegou é o que permite saber o que implementar
-                    // depois — e "não é um RIFF/WAVE" não diz. O que diz é a assinatura do
-                    // próprio bloco: é assim que se soube que a trilha do Tekken 2 é MP3 sem
-                    // abrir o jogo, e que a dos ports de arcade é MIDI.
-                    let formato = detect_mime(bytes, "").unwrap_or("formato desconhecido");
-                    // Os primeiros bytes vão no relatório junto do nome do formato: é o que
-                    // **identifica** o que chegou sem abrir o jogo. `FF FB` é quadro MP3, `ftyp`
-                    // é caixa MP4, `OggS` é Ogg — e a diferença entre eles decide o que
-                    // implementar. Sem isto, a linha dizia só "recusado", e a investigação
-                    // seguinte começava do zero, dentro do jogo.
-                    let assinatura: String = bytes
-                        .iter()
-                        .take(16)
-                        .map(|b| format!("{b:02x}"))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                        // **Os dois motivos**, e não só o do WAV: "não é um RIFF/WAVE" é
-                        // verdade e não ajuda — a pergunta é o que o decodificador de música
-                        // recusou. Foi vendo os dois que se descobriu o Ogg do Turma da Mônica.
-                        self.bad_pointers.insert(format!(
+                            Some(sound)
+                        }
+                        None => {
+                            // Dizer *qual* formato chegou é o que permite saber o que implementar
+                            // depois — e "não é um RIFF/WAVE" não diz. O que diz é a assinatura do
+                            // próprio bloco: é assim que se soube que a trilha do Tekken 2 é MP3 sem
+                            // abrir o jogo, e que a dos ports de arcade é MIDI.
+                            let formato = detect_mime(bytes, "").unwrap_or("formato desconhecido");
+                            // Os primeiros bytes vão no relatório junto do nome do formato: é o que
+                            // **identifica** o que chegou sem abrir o jogo. `FF FB` é quadro MP3, `ftyp`
+                            // é caixa MP4, `OggS` é Ogg — e a diferença entre eles decide o que
+                            // implementar. Sem isto, a linha dizia só "recusado", e a investigação
+                            // seguinte começava do zero, dentro do jogo.
+                            let assinatura: String = bytes
+                                .iter()
+                                .take(16)
+                                .map(|b| format!("{b:02x}"))
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            // **Os dois motivos**, e não só o do WAV: "não é um RIFF/WAVE" é
+                            // verdade e não ajuda — a pergunta é o que o decodificador de música
+                            // recusou. Foi vendo os dois que se descobriu o Ogg do Turma da Mônica.
+                            self.bad_pointers.insert(format!(
                             "som recusado ({formato}, {} bytes, {assinatura}): {sem_wav} / {porque}",
                             bytes.len()
                         ));
-                        None
-                    }
+                            None
+                        }
                     },
                 },
             },
@@ -549,8 +549,7 @@ impl<C: CpuBackend> Machine<C> {
         // repete o `Play` a cada quadro. O que ele espera é o `START`, que o passa a "tocando"; a
         // voz segue de onde está. A regra fica restrita ao laço infinito: um efeito tocado de
         // novo por cima de si mesmo é o que o Zeebo F.C. faz, e ele precisa recomeçar.
-        if self.esta_tocando(this) && self.media.get(&this).is_some_and(|state| state.repeat == 0)
-        {
+        if self.esta_tocando(this) && self.media.get(&this).is_some_and(|state| state.repeat == 0) {
             self.notify_media(this, MM_CMD_PLAY, MM_STATUS_START)?;
             return Ok(SUCCESS);
         }
@@ -797,8 +796,8 @@ impl<C: CpuBackend> Machine<C> {
                 continue;
             };
             let por_quadro = u32::from(fluxo.canais) * u32::from(fluxo.bits / 8);
-            let devidos = (now.saturating_sub(fluxo.inicio_us) + 100_000) * u64::from(fluxo.taxa)
-                / 1_000_000;
+            let devidos =
+                (now.saturating_sub(fluxo.inicio_us) + 100_000) * u64::from(fluxo.taxa) / 1_000_000;
             let mut faltam = devidos.saturating_sub(fluxo.quadros_lidos);
             let Ok(vtable) = self.cpu.read_u32(fluxo.fonte) else {
                 continue;
@@ -810,7 +809,8 @@ impl<C: CpuBackend> Machine<C> {
                 if faltam == 0 {
                     break;
                 }
-                let pedido = (faltam * u64::from(por_quadro)).min(u64::from(MAX_LEITURA_PCM)) as u32;
+                let pedido =
+                    (faltam * u64::from(por_quadro)).min(u64::from(MAX_LEITURA_PCM)) as u32;
                 let pedido = pedido - pedido % por_quadro;
                 if pedido == 0 {
                     break;

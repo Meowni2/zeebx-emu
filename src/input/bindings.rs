@@ -186,7 +186,9 @@ impl CalibracaoDeMovimento {
     /// Se a calibração corrige só o que um sensor erra. Uma gravada de lado, de antes desta
     /// verificação existir, não vale.
     pub fn plausivel(&self) -> bool {
-        self.zero_mg.iter().all(|d| d.abs() <= Self::DESVIO_MAXIMO_MG)
+        self.zero_mg
+            .iter()
+            .all(|d| d.abs() <= Self::DESVIO_MAXIMO_MG)
             && (500..=2000).contains(&self.escala_mg)
     }
 
@@ -529,9 +531,11 @@ impl Player {
             .device
             .as_deref()
             .is_some_and(|nome| crate::input::wiimote::Wiimotes::indice_do_nome(nome).is_some());
-        let tem_botao_do_wiimote = self.buttons.values().flatten().any(|source| {
-            matches!(source, Source::Button { name } if name.starts_with("Wii"))
-        });
+        let tem_botao_do_wiimote = self
+            .buttons
+            .values()
+            .flatten()
+            .any(|source| matches!(source, Source::Button { name } if name.starts_with("Wii")));
         if wiimote && !tem_botao_do_wiimote {
             self.acrescenta_botoes_do_wiimote();
         }
@@ -560,7 +564,10 @@ mod tests {
     fn a_calibracao_leva_o_repouso_a_um_g_para_cima() {
         let calibracao = CalibracaoDeMovimento::de_repouso([0.02, -0.05, 1.14]).unwrap();
         let [x, y, z] = calibracao.aplica([0.02, -0.05, 1.14]);
-        assert!(x.abs() < 0.01 && y.abs() < 0.01 && (z - 1.0).abs() < 0.01, "{x} {y} {z}");
+        assert!(
+            x.abs() < 0.01 && y.abs() < 0.01 && (z - 1.0).abs() < 0.01,
+            "{x} {y} {z}"
+        );
     }
 
     /// Calibrado de lado, o desvio seria de 1 g: recusado, e uma gravada assim é ignorada.
@@ -875,7 +882,9 @@ mod tests {
             ..Player::default()
         };
         mapeado.bind("b1", Source::button("WiiB"));
-        let mut controls = Controls { players: vec![mapeado] };
+        let mut controls = Controls {
+            players: vec![mapeado],
+        };
         controls.adopt();
         assert!(!controls.players[0].buttons["up"].contains(&Source::button("WiiUp")));
     }

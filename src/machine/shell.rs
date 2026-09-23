@@ -701,7 +701,10 @@ impl<C: CpuBackend> Machine<C> {
             AEECLSID_TYPEFACE => Interface::Typeface,
             AEECLSID_MD5 => Interface::Hash,
             AEECLSID_CIPHER_FACTORY => Interface::CipherFactory,
-            AEECLSID_MEDIA | AEECLSID_MEDIAMIDI | AEECLSID_MEDIAMP3 | AEECLSID_MEDIAMIDIOUTMSG
+            AEECLSID_MEDIA
+            | AEECLSID_MEDIAMIDI
+            | AEECLSID_MEDIAMP3
+            | AEECLSID_MEDIAMIDIOUTMSG
             | AEECLSID_MEDIAADPCM
             | AEECLSID_MEDIAPCM => Interface::Media,
             _ if AEECLSID_MEDIA_FAMILIA.contains(&clsid) => Interface::Media,

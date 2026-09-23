@@ -75,13 +75,32 @@ pub fn listar(caminho: &Path) -> Option<Vec<(String, bool)>> {
     )
 }
 
+/// Abre o `.7z` para leitura.
+///
+/// No `wasm32` o `open` do crate não existe: foi escondido no pressuposto de que o alvo não tem
+/// arquivo. O Emscripten tem, então a abertura do `File` fica aqui e o `new` faz o resto — é a
+/// mesma função, sem o `cfg`.
+fn abre_leitor(caminho: &Path) -> std::io::Result<sevenz_rust2::ArchiveReader<std::fs::File>> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        sevenz_rust2::ArchiveReader::open(caminho, sevenz_rust2::Password::empty())
+            .map_err(std::io::Error::other)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let arquivo = std::fs::File::open(caminho)?;
+        sevenz_rust2::ArchiveReader::new(arquivo, sevenz_rust2::Password::empty())
+            .map_err(std::io::Error::other)
+    }
+}
+
 /// Lê um arquivo de dentro do `.7z`, com teto de bytes.
 ///
 /// Um bloco sólido obriga a descompactar o que vem antes, então o custo pode passar do tamanho do
 /// arquivo pedido — o teto continua valendo para o que **guardamos**, e a parada é imediata quando
 /// a entrada chega.
 pub fn ler(caminho: &Path, alvo: &str, teto: u64) -> Option<Vec<u8>> {
-    let mut leitor = sevenz_rust2::ArchiveReader::open(caminho, sevenz_rust2::Password::empty()).ok()?;
+    let mut leitor = abre_leitor(caminho).ok()?;
     let mut achado: Option<Vec<u8>> = None;
     let mut falhou = false;
     let _ = leitor.for_each_entries(|entrada, fluxo| {
@@ -99,9 +118,12 @@ pub fn ler(caminho: &Path, alvo: &str, teto: u64) -> Option<Vec<u8>> {
 }
 
 /// Extrai o `.7z` inteiro para `destino`, com os limites do zip.
-pub(crate) fn extrair(caminho: &Path, destino: &Path, limites: ArchiveLimits) -> std::io::Result<()> {
-    let mut leitor = sevenz_rust2::ArchiveReader::open(caminho, sevenz_rust2::Password::empty())
-        .map_err(std::io::Error::other)?;
+pub(crate) fn extrair(
+    caminho: &Path,
+    destino: &Path,
+    limites: ArchiveLimits,
+) -> std::io::Result<()> {
+    let mut leitor = abre_leitor(caminho)?;
     let mut entradas = 0usize;
     let mut total = 0u64;
     let mut falha: Option<std::io::Error> = None;
@@ -164,7 +186,6 @@ fn extrai_uma(
     Ok(())
 }
 
-
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -214,7 +235,10 @@ mod testes {
             ],
         );
 
-        assert_eq!(archive::find_module(&pacote).as_deref(), Some("Jogo/mod/279233/jogo.mod"));
+        assert_eq!(
+            archive::find_module(&pacote).as_deref(),
+            Some("Jogo/mod/279233/jogo.mod")
+        );
         assert_eq!(
             archive::find_manifest(&pacote, "Jogo/mod/279233/jogo.mod").as_deref(),
             Some(&b"manifesto"[..])
@@ -239,8 +263,12 @@ mod testes {
 
         let destino = pasta.join("extraido");
         std::fs::create_dir_all(&destino).unwrap();
-        let erro = extrair(&pacote, &destino, crate::loader::archive::ArchiveLimits::padrao())
-            .expect_err("devia recusar");
+        let erro = extrair(
+            &pacote,
+            &destino,
+            crate::loader::archive::ArchiveLimits::padrao(),
+        )
+        .expect_err("devia recusar");
         assert!(erro.to_string().contains("caminho inseguro"), "{erro}");
         assert!(!pasta.join("fora.txt").exists());
     }

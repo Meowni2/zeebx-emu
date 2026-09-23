@@ -169,20 +169,20 @@ pub fn instala_fonte_do_pacote(pacote: &Path, device: &Path) -> Option<PathBuf> 
         sete_z::ler(pacote, &nome, MAX_MANIFEST_BYTES)?
     } else {
         match pacote.extension().and_then(|e| e.to_str()) {
-        Some("zip") => {
-            let file = std::fs::File::open(pacote).ok()?;
-            let mut archive = zip::ZipArchive::new(file).ok()?;
-            let indice = (0..archive.len()).find(|&i| {
-                archive.by_index(i).is_ok_and(|entrada| {
-                    entrada.name().replace('\\', "/").ends_with("/tectoy.ttf")
-                })
-            })?;
-            let mut entrada = archive.by_index(indice).ok()?;
-            let mut bytes = Vec::new();
-            entrada.read_to_end(&mut bytes).ok()?;
-            bytes
-        }
-        _ => std::fs::read(pacote.parent()?.join("tectoy.ttf")).ok()?,
+            Some("zip") => {
+                let file = std::fs::File::open(pacote).ok()?;
+                let mut archive = zip::ZipArchive::new(file).ok()?;
+                let indice = (0..archive.len()).find(|&i| {
+                    archive.by_index(i).is_ok_and(|entrada| {
+                        entrada.name().replace('\\', "/").ends_with("/tectoy.ttf")
+                    })
+                })?;
+                let mut entrada = archive.by_index(indice).ok()?;
+                let mut bytes = Vec::new();
+                entrada.read_to_end(&mut bytes).ok()?;
+                bytes
+            }
+            _ => std::fs::read(pacote.parent()?.join("tectoy.ttf")).ok()?,
         }
     };
     std::fs::create_dir_all(destino.parent()?).ok()?;
@@ -237,7 +237,8 @@ pub fn find_module(pacote: &Path) -> Option<String> {
 /// renomeado para `.zip` continua sendo um `.7z`.
 fn nomes_do_pacote(pacote: &Path) -> Option<Vec<String>> {
     if sete_z::eh_sete_z(pacote) {
-        return sete_z::listar(pacote).map(|lista| lista.into_iter().map(|(nome, _)| nome).collect());
+        return sete_z::listar(pacote)
+            .map(|lista| lista.into_iter().map(|(nome, _)| nome).collect());
     }
     let arquivo = std::fs::File::open(pacote).ok()?;
     let mut zip = zip::ZipArchive::new(arquivo).ok()?;
@@ -257,10 +258,7 @@ fn nomes_do_pacote(pacote: &Path) -> Option<Vec<String>> {
 ///
 /// Está separado porque a escolha é a mesma para zip e para 7z — o que muda é quem lista os
 /// nomes. Duas cópias desta regra divergiriam no primeiro ajuste.
-fn escolhe_modulo(
-    nomes: Vec<String>,
-    com_applet: impl Fn(&str) -> bool,
-) -> Option<String> {
+fn escolhe_modulo(nomes: Vec<String>, com_applet: impl Fn(&str) -> bool) -> Option<String> {
     let mut candidatos: Vec<(bool, usize, String)> = Vec::new();
     for nome in nomes {
         if Path::new(&nome).extension().and_then(|e| e.to_str()) != Some("mod") {
@@ -274,7 +272,11 @@ fn escolhe_modulo(
     candidatos
         .into_iter()
         .max_by_key(|(console, profundidade, nome)| {
-            (sozinho || com_applet(nome), *console, std::cmp::Reverse(*profundidade))
+            (
+                sozinho || com_applet(nome),
+                *console,
+                std::cmp::Reverse(*profundidade),
+            )
         })
         .map(|(_, _, nome)| nome)
 }
@@ -290,7 +292,13 @@ pub fn find_manifest(pacote: &Path, module: &str) -> Option<Vec<u8>> {
 
     if sete_z::eh_sete_z(pacote) {
         let lista = sete_z::listar(pacote)?;
-        let nome = escolhe_mif(lista.into_iter().filter(|(_, pasta)| !pasta).map(|(nome, _)| nome), id)?;
+        let nome = escolhe_mif(
+            lista
+                .into_iter()
+                .filter(|(_, pasta)| !pasta)
+                .map(|(nome, _)| nome),
+            id,
+        )?;
         return sete_z::ler(pacote, &nome, MAX_MANIFEST_BYTES);
     }
 
@@ -398,41 +406,41 @@ pub fn extract_in(zip: &Path, cache: &Path) -> std::io::Result<PathBuf> {
             std::fs::create_dir_all(&partial)?;
             sete_z::extrair(zip, &partial, ARCHIVE_LIMITS)?;
         } else {
-        let file = std::fs::File::open(zip)?;
-        let mut archive = zip::ZipArchive::new(file).map_err(std::io::Error::other)?;
-        validate_archive(&mut archive, ARCHIVE_LIMITS)?;
-        let mut extracted_bytes = 0u64;
-        for i in 0..archive.len() {
-            let mut entry = archive.by_index(i).map_err(std::io::Error::other)?;
-            let Some(name) = entry.enclosed_name() else {
-                continue;
-            };
-            let out = partial.join(name);
-            if entry.is_dir() {
-                std::fs::create_dir_all(&out)?;
-                continue;
+            let file = std::fs::File::open(zip)?;
+            let mut archive = zip::ZipArchive::new(file).map_err(std::io::Error::other)?;
+            validate_archive(&mut archive, ARCHIVE_LIMITS)?;
+            let mut extracted_bytes = 0u64;
+            for i in 0..archive.len() {
+                let mut entry = archive.by_index(i).map_err(std::io::Error::other)?;
+                let Some(name) = entry.enclosed_name() else {
+                    continue;
+                };
+                let out = partial.join(name);
+                if entry.is_dir() {
+                    std::fs::create_dir_all(&out)?;
+                    continue;
+                }
+                if let Some(dir) = out.parent() {
+                    std::fs::create_dir_all(dir)?;
+                }
+                // Não aloca um Vec do tamanho declarado pelo ZIP. Além da pré-checagem de
+                // metadados, limita o fluxo real: um cabeçalho mentiroso não pode escrever além do
+                // teto durante a descompressão.
+                let remaining = MAX_TOTAL_BYTES
+                    .checked_sub(extracted_bytes)
+                    .ok_or_else(|| std::io::Error::other("o zip descompacta bytes demais"))?;
+                let allowed = MAX_FILE_BYTES.min(remaining);
+                let mut output = std::fs::File::create(&out)?;
+                let written = std::io::copy(&mut entry.by_ref().take(allowed + 1), &mut output)?;
+                if written > allowed {
+                    return Err(std::io::Error::other(
+                        "o zip ultrapassou o limite ao descompactar",
+                    ));
+                }
+                extracted_bytes = extracted_bytes
+                    .checked_add(written)
+                    .ok_or_else(|| std::io::Error::other("o zip tem tamanho inválido"))?;
             }
-            if let Some(dir) = out.parent() {
-                std::fs::create_dir_all(dir)?;
-            }
-            // Não aloca um Vec do tamanho declarado pelo ZIP. Além da pré-checagem de
-            // metadados, limita o fluxo real: um cabeçalho mentiroso não pode escrever além do
-            // teto durante a descompressão.
-            let remaining = MAX_TOTAL_BYTES
-                .checked_sub(extracted_bytes)
-                .ok_or_else(|| std::io::Error::other("o zip descompacta bytes demais"))?;
-            let allowed = MAX_FILE_BYTES.min(remaining);
-            let mut output = std::fs::File::create(&out)?;
-            let written = std::io::copy(&mut entry.by_ref().take(allowed + 1), &mut output)?;
-            if written > allowed {
-                return Err(std::io::Error::other(
-                    "o zip ultrapassou o limite ao descompactar",
-                ));
-            }
-            extracted_bytes = extracted_bytes
-                .checked_add(written)
-                .ok_or_else(|| std::io::Error::other("o zip tem tamanho inválido"))?;
-        }
         }
         if fingerprint(zip)? != source_fingerprint {
             return Err(std::io::Error::other("o pacote mudou durante a extração"));

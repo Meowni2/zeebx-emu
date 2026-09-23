@@ -144,7 +144,10 @@ fn roteiro_de_teclas() -> Vec<(u64, Passo)> {
             // uma camada acima.
             // `e0x7000=0x4ea`: evento de widget, com o número e o `wParam`.
             Some((evt, valor)) if evt.trim().starts_with('e') => {
-                let evt = u32::from_str_radix(evt.trim().trim_start_matches('e').trim_start_matches("0x"), 16);
+                let evt = u32::from_str_radix(
+                    evt.trim().trim_start_matches('e').trim_start_matches("0x"),
+                    16,
+                );
                 let valor = valor.trim().trim_start_matches("0x");
                 match (evt, u16::from_str_radix(valor, 16)) {
                     (Ok(evt), Ok(w)) => Passo::Evento(evt, w),
@@ -623,7 +626,10 @@ impl Pendencias {
             ("APIs atendidas por hipótese", &self.hipoteses),
             ("texto desenhado na tela", &self.desenhados),
             ("alocações recusadas pelo heap", &self.alocacoes),
-            ("o que cada classe de widget recebeu no acessador", &self.seletores),
+            (
+                "o que cada classe de widget recebeu no acessador",
+                &self.seletores,
+            ),
             ("o que o jogo chamou nas classes de sonda", &self.sonda),
             ("texto que não soubemos desenhar", &self.texto),
             ("GL atendido sem fazer nada", &self.gl_ignorado),
@@ -736,7 +742,9 @@ impl Relatorio {
             // linha F.C.: com seis segundos virtuais apareciam com uma e seis cores, e com vinte
             // mostravam 2.410 e 4.133. Sem esta linha, quem lê o relatório acusa o jogo.
             let aviso = match d.cores {
-                0..=2 => " (tela quase uniforme: pode ser carregamento — vale aumentar ZEEBX_ROM_MS)",
+                0..=2 => {
+                    " (tela quase uniforme: pode ser carregamento — vale aumentar ZEEBX_ROM_MS)"
+                }
                 _ => "",
             };
             texto.push_str(&format!(
@@ -808,7 +816,10 @@ impl Relatorio {
             }
         }
         if let Some((endereco, bytes)) = &self.despejo {
-            texto.push_str(&format!("despejo de {endereco:#010x} ({} bytes):\n", bytes.len()));
+            texto.push_str(&format!(
+                "despejo de {endereco:#010x} ({} bytes):\n",
+                bytes.len()
+            ));
             for (linha, pedaco) in bytes.chunks(16).enumerate() {
                 let hexa: Vec<String> = pedaco.iter().map(|b| format!("{b:02x}")).collect();
                 texto.push_str(&format!(
@@ -1266,7 +1277,14 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
 /// caminho até o applet existir: carga do `.mod`, `AEEMod_Load`, `.mif` e `CreateInstance`.
 pub fn abre(arquivo: &Path) -> Result<Duration, String> {
     let comeco = Instant::now();
-    match Session::start_with(arquivo, crate::PORTAS_PADRAO, None, false, None, Default::default()) {
+    match Session::start_with(
+        arquivo,
+        crate::PORTAS_PADRAO,
+        None,
+        false,
+        None,
+        Default::default(),
+    ) {
         Ok(_) => Ok(comeco.elapsed()),
         Err(erro) => Err(erro.to_string()),
     }
@@ -1290,7 +1308,11 @@ mod tests {
         // para ler o arquivo" para ambos. Quem aponta um arquivo existente quer aquele arquivo.
         let partes: Vec<&str> = match PathBuf::from(valor.trim()).exists() {
             true => vec![valor.trim()],
-            false => valor.split(',').map(str::trim).filter(|p| !p.is_empty()).collect(),
+            false => valor
+                .split(',')
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .collect(),
         };
         for parte in partes {
             let caminho = PathBuf::from(parte);
@@ -1331,22 +1353,22 @@ mod tests {
     }
 
     /// A varredura gasta perto de 1 GB extraindo as ROMs para o cache, e sem espaço ela passa a
-/// acusar jogos que estão certos.
-///
-/// A prova roda no começo e custa um instante; a alternativa é descobrir depois de uma hora de
-/// varredura que a segunda metade do placar não valia.
-fn exige_espaco(dirs: &[PathBuf]) {
-    const PROVA: usize = 64 * 1024 * 1024;
-    for dir in dirs {
-        if let Err(erro) = crate::scratch::cabe_escrever(dir, PROVA) {
-            panic!(
-                "sem espaço em disco para a varredura: {erro}. A varredura extrai cada ROM para o                  cache e gasta perto de 1 GB; libere espaço e rode de novo."
-            );
+    /// acusar jogos que estão certos.
+    ///
+    /// A prova roda no começo e custa um instante; a alternativa é descobrir depois de uma hora de
+    /// varredura que a segunda metade do placar não valia.
+    fn exige_espaco(dirs: &[PathBuf]) {
+        const PROVA: usize = 64 * 1024 * 1024;
+        for dir in dirs {
+            if let Err(erro) = crate::scratch::cabe_escrever(dir, PROVA) {
+                panic!(
+                    "sem espaço em disco para a varredura: {erro}. A varredura extrai cada ROM para o                  cache e gasta perto de 1 GB; libere espaço e rode de novo."
+                );
+            }
         }
     }
-}
 
-/// Nome de arquivo para o título de um jogo, sem depender do sistema de arquivos do host.
+    /// Nome de arquivo para o título de um jogo, sem depender do sistema de arquivos do host.
     fn arquivo_do_titulo(titulo: &str) -> String {
         let limpo: String = titulo
             .chars()
@@ -1679,8 +1701,16 @@ fn exige_espaco(dirs: &[PathBuf]) {
             Relatorio::recusado(Path::new("/tmp/x.mod"), &StartError::Unreadable(erro)).categoria
         };
         assert_eq!(caso(28), Categoria::SemEspaco, "ENOSPC no Unix");
-        assert_eq!(caso(112), Categoria::SemEspaco, "ERROR_DISK_FULL no Windows");
-        assert_eq!(caso(2), Categoria::NaoCarrega, "arquivo que falta é outra coisa");
+        assert_eq!(
+            caso(112),
+            Categoria::SemEspaco,
+            "ERROR_DISK_FULL no Windows"
+        );
+        assert_eq!(
+            caso(2),
+            Categoria::NaoCarrega,
+            "arquivo que falta é outra coisa"
+        );
         assert!(!Categoria::SemEspaco.passa());
     }
 
@@ -1892,8 +1922,6 @@ fn exige_espaco(dirs: &[PathBuf]) {
         assert_eq!(pad.eixo_do_console(0), 128, "o passo vazio solta o eixo");
         assert_eq!(pad.buttons, 0, "o passo vazio solta os botões");
     }
-
-
 
     /// **O parser do roteiro entende o evento**, e não só a entrega.
     ///

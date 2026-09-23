@@ -491,60 +491,242 @@ fn timbre(programa: u8) -> Timbre {
     let (forma, ataque, decaimento, sustentacao, liberacao, ganho) = match programa {
         // Piano: todos os harmônicos, ataque seco e cauda longa. O decaimento longo, com
         // sustentação baixa, é o que faz a nota **continuar caindo** em vez de travar.
-        0..=3 => (Forma::Parcial { expoente: 2.00 }, 0.002, 1.60, 0.22, 0.18, 0.9),
+        0..=3 => (
+            Forma::Parcial { expoente: 2.00 },
+            0.002,
+            1.60,
+            0.22,
+            0.18,
+            0.9,
+        ),
         // Piano elétrico e cravo: mais brilhante e mais curto.
-        4..=7 => (Forma::Parcial { expoente: 1.70 }, 0.002, 0.90, 0.20, 0.15, 0.85),
+        4..=7 => (
+            Forma::Parcial { expoente: 1.70 },
+            0.002,
+            0.90,
+            0.20,
+            0.15,
+            0.85,
+        ),
         // Percussão cromática (sino, marimba, xilofone): brilho com cauda média.
-        8..=15 => (Forma::Parcial { expoente: 1.00 }, 0.002, 0.80, 0.15, 0.14, 0.8),
+        8..=15 => (
+            Forma::Parcial { expoente: 1.00 },
+            0.002,
+            0.80,
+            0.15,
+            0.14,
+            0.8,
+        ),
         // Órgão e acordeão: soam enquanto a tecla está apertada.
         16..=20 => (Forma::Quadrada, 0.010, 0.05, 0.90, 0.08, 0.6),
         // Órgão de palheta e gaita: quadrada com corpo em cima.
-        21..=23 => (Forma::Parcial { expoente: 1.20 }, 0.015, 0.08, 0.88, 0.09, 0.55),
+        21..=23 => (
+            Forma::Parcial { expoente: 1.20 },
+            0.015,
+            0.08,
+            0.88,
+            0.09,
+            0.55,
+        ),
         // Violão de nylon e de aço: palheta, decai.
-        24 | 25 => (Forma::Parcial { expoente: 1.80 }, 0.004, 0.90, 0.20, 0.12, 0.75),
+        24 | 25 => (
+            Forma::Parcial { expoente: 1.80 },
+            0.004,
+            0.90,
+            0.20,
+            0.12,
+            0.75,
+        ),
         // Guitarra elétrica limpa e *jazz*: ataque macio, sustenta.
-        26..=28 => (Forma::Parcial { expoente: 1.50 }, 0.008, 0.35, 0.62, 0.14, 0.7),
+        26..=28 => (
+            Forma::Parcial { expoente: 1.50 },
+            0.008,
+            0.35,
+            0.62,
+            0.14,
+            0.7,
+        ),
         // *Overdrive*: sustenta, e é 10,8% do Double Dragon.
-        29 => (Forma::Parcial { expoente: 1.45 }, 0.006, 0.30, 0.76, 0.16, 0.68),
+        29 => (
+            Forma::Parcial { expoente: 1.45 },
+            0.006,
+            0.30,
+            0.76,
+            0.16,
+            0.68,
+        ),
         // Distorcida e harmônicos: mais brilhante que a *overdrive* — medido no soundfont,
         // H2/H1 = 4,6 e centroide de 2195 Hz contra 1379 Hz da 29. Era a **mesma onda**.
-        30..=31 => (Forma::Parcial { expoente: 1.10 }, 0.005, 0.30, 0.78, 0.16, 0.6),
+        30..=31 => (
+            Forma::Parcial { expoente: 1.10 },
+            0.005,
+            0.30,
+            0.78,
+            0.16,
+            0.6,
+        ),
         // Baixo: harmônico par forte (a amostra real tem H2 acima da fundamental) e cauda longa.
-        32..=35 => (Forma::Parcial { expoente: 2.45 }, 0.005, 2.00, 0.30, 0.12, 1.0),
+        32..=35 => (
+            Forma::Parcial { expoente: 2.45 },
+            0.005,
+            2.00,
+            0.30,
+            0.12,
+            1.0,
+        ),
         // Baixo *pick*, *slap* e sintetizado: mais curto e mais brilhante.
-        36..=39 => (Forma::Parcial { expoente: 1.80 }, 0.004, 0.80, 0.32, 0.10, 0.95),
+        36..=39 => (
+            Forma::Parcial { expoente: 1.80 },
+            0.004,
+            0.80,
+            0.32,
+            0.10,
+            0.95,
+        ),
         // Violino, viola e violoncelo: arco, ataque médio, sustenta com ondulação.
-        40..=42 => (Forma::Parcial { expoente: 1.40 }, 0.090, 0.30, 0.80, 0.22, 0.7),
+        40..=42 => (
+            Forma::Parcial { expoente: 1.40 },
+            0.090,
+            0.30,
+            0.80,
+            0.22,
+            0.7,
+        ),
         // Contrabasso dos conjuntos: mais grave e mais escuro.
-        43 => (Forma::Parcial { expoente: 2.20 }, 0.080, 0.40, 0.72, 0.22, 0.85),
+        43 => (
+            Forma::Parcial { expoente: 2.20 },
+            0.080,
+            0.40,
+            0.72,
+            0.22,
+            0.85,
+        ),
         // *Tremolo*, *pizzicato* e harpa: palhetados curtos.
-        44 | 45 | 46 => (Forma::Parcial { expoente: 1.60 }, 0.004, 0.60, 0.25, 0.14, 0.75),
+        44 | 45 | 46 => (
+            Forma::Parcial { expoente: 1.60 },
+            0.004,
+            0.60,
+            0.25,
+            0.14,
+            0.75,
+        ),
         // Tímpano: ruído com cauda, tratado como percussão sem altura definida.
-        47 => (Forma::Parcial { expoente: 1.20 }, 0.003, 0.70, 0.20, 0.20, 0.9),
+        47 => (
+            Forma::Parcial { expoente: 1.20 },
+            0.003,
+            0.70,
+            0.20,
+            0.20,
+            0.9,
+        ),
         // Naipe de cordas: a família mais brilhante do soundfont (H2/H1 = 8,4), ataque lento.
-        48..=55 => (Forma::Parcial { expoente: 1.30 }, 0.075, 0.35, 0.78, 0.28, 0.62),
+        48..=55 => (
+            Forma::Parcial { expoente: 1.30 },
+            0.075,
+            0.35,
+            0.78,
+            0.28,
+            0.62,
+        ),
         // Metais: ricos, com ataque médio e boa sustentação.
-        56..=60 => (Forma::Parcial { expoente: 1.19 }, 0.035, 0.25, 0.78, 0.14, 0.62),
+        56..=60 => (
+            Forma::Parcial { expoente: 1.19 },
+            0.035,
+            0.25,
+            0.78,
+            0.14,
+            0.62,
+        ),
         // Metais abafados e sintetizados: mais escuros.
-        61..=63 => (Forma::Parcial { expoente: 1.19 }, 0.030, 0.30, 0.75, 0.13, 0.62),
+        61..=63 => (
+            Forma::Parcial { expoente: 1.19 },
+            0.030,
+            0.30,
+            0.75,
+            0.13,
+            0.62,
+        ),
         // Palheta (sax, clarinete): quadrada com corpo.
-        64..=71 => (Forma::Parcial { expoente: 1.50 }, 0.025, 0.25, 0.78, 0.12, 0.7),
+        64..=71 => (
+            Forma::Parcial { expoente: 1.50 },
+            0.025,
+            0.25,
+            0.78,
+            0.12,
+            0.7,
+        ),
         // Flauta e sopro: quase senoide, ataque médio.
         72..=79 => (Forma::Senoide, 0.035, 0.20, 0.82, 0.14, 0.8),
         // *Lead*: 80 é quadrada e **81 é dente de serra** — era o defeito mais audível da tabela.
         80 => (Forma::Quadrada, 0.006, 0.20, 0.78, 0.11, 0.6),
-        81 => (Forma::Parcial { expoente: 0.70 }, 0.006, 0.20, 0.78, 0.11, 0.55),
-        82 | 83 => (Forma::Parcial { expoente: 1.80 }, 0.010, 0.25, 0.75, 0.12, 0.7),
-        84..=87 => (Forma::Parcial { expoente: 1.40 }, 0.008, 0.25, 0.76, 0.12, 0.62),
+        81 => (
+            Forma::Parcial { expoente: 0.70 },
+            0.006,
+            0.20,
+            0.78,
+            0.11,
+            0.55,
+        ),
+        82 | 83 => (
+            Forma::Parcial { expoente: 1.80 },
+            0.010,
+            0.25,
+            0.75,
+            0.12,
+            0.7,
+        ),
+        84..=87 => (
+            Forma::Parcial { expoente: 1.40 },
+            0.008,
+            0.25,
+            0.76,
+            0.12,
+            0.62,
+        ),
         // Pad e efeito: entrada e saída longas.
-        88..=95 => (Forma::Parcial { expoente: 1.20 }, 0.150, 0.40, 0.75, 0.40, 0.6),
-        96..=103 => (Forma::Parcial { expoente: 1.60 }, 0.100, 0.40, 0.70, 0.40, 0.6),
+        88..=95 => (
+            Forma::Parcial { expoente: 1.20 },
+            0.150,
+            0.40,
+            0.75,
+            0.40,
+            0.6,
+        ),
+        96..=103 => (
+            Forma::Parcial { expoente: 1.60 },
+            0.100,
+            0.40,
+            0.70,
+            0.40,
+            0.6,
+        ),
         // Étnico: palhetado, como o violão.
-        104..=111 => (Forma::Parcial { expoente: 1.80 }, 0.006, 0.70, 0.25, 0.14, 0.75),
+        104..=111 => (
+            Forma::Parcial { expoente: 1.80 },
+            0.006,
+            0.70,
+            0.25,
+            0.14,
+            0.75,
+        ),
         // Percussivo com altura (sino, tambor afinado): decai rápido.
-        112..=119 => (Forma::Parcial { expoente: 1.00 }, 0.002, 0.40, 0.10, 0.12, 0.7),
+        112..=119 => (
+            Forma::Parcial { expoente: 1.00 },
+            0.002,
+            0.40,
+            0.10,
+            0.12,
+            0.7,
+        ),
         // Efeitos sonoros.
-        _ => (Forma::Parcial { expoente: 1.60 }, 0.005, 0.50, 0.30, 0.15, 0.7),
+        _ => (
+            Forma::Parcial { expoente: 1.60 },
+            0.005,
+            0.50,
+            0.30,
+            0.15,
+            0.7,
+        ),
     };
     Timbre {
         forma,
@@ -861,7 +1043,10 @@ fn toca_voz(voz: &Voz, samples: &mut [f32], tabelas: &[Tabela]) {
             Some(tabela) => tabela.amostra(fase),
             // As formas que não têm onda pré-calculada são as de poucos harmônicos (senoide,
             // quadrada, ruído), e para elas somar por amostra é barato.
-            None => voz.timbre.forma.amostra(fase, harmonicos.max(1), &mut ruido),
+            None => voz
+                .timbre
+                .forma
+                .amostra(fase, harmonicos.max(1), &mut ruido),
         };
         fase = (fase + passo).fract();
         polo[0] += alpha * (crua - polo[0]);

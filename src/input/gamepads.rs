@@ -133,10 +133,15 @@ impl Gamepads {
     /// É o nome **do sistema**, e não o do mapeamento do gilrs: o sensor ganha o nome do
     /// dispositivo com um sufixo ("Pro Controller" e "Pro Controller (IMU)"), e o gilrs chama o
     /// mesmo controle de "Nintendo Switch Pro Controller".
-    pub fn identidade(&self, device: Option<&str>, porta: usize) -> Option<(String, u16, u16, usize)> {
+    pub fn identidade(
+        &self,
+        device: Option<&str>,
+        porta: usize,
+    ) -> Option<(String, u16, u16, usize)> {
         let gilrs = self.gilrs.as_ref()?;
         let pad = self.find(device, porta)?;
-        let chave = |p: &gilrs::Gamepad<'_>| (p.os_name().to_string(), p.vendor_id(), p.product_id());
+        let chave =
+            |p: &gilrs::Gamepad<'_>| (p.os_name().to_string(), p.vendor_id(), p.product_id());
         let (nome, vendor, product) = chave(&pad);
         let ordem = gilrs
             .gamepads()

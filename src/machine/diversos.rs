@@ -63,7 +63,8 @@ impl<C: CpuBackend> Machine<C> {
                     let height = self.cpu.read_u32(source + 12)? as i32;
                     if width > 0 && height > 0 {
                         self.scale_source = Some((width, height));
-                        self.gl.set_surface_esticada(width as usize, height as usize);
+                        self.gl
+                            .set_surface_esticada(width as usize, height as usize);
                     }
                 }
                 self.write_egl_true(4)?
@@ -335,10 +336,21 @@ impl<C: CpuBackend> Machine<C> {
             // desenhar — o Prey Evil a pede para saber que o pacote existe. Os objetos de
             // framebuffer ganham identificadores de mentira e respondem "completo": o alvo aqui é
             // um só, e é o certo.
-            "TexGenf" | "TexGeni" | "TexGenx" | "TexGenfv" | "TexGeniv" | "TexGenxv"
-            | "BlendEquation" | "BlendFuncSeparate" | "BlendEquationSeparate"
-            | "BindRenderbufferOES" | "DeleteFramebuffersOES" | "DeleteRenderbuffersOES"
-            | "FramebufferRenderbufferOES" | "FramebufferTexture2DOES" | "GenerateMipmapOES"
+            "TexGenf"
+            | "TexGeni"
+            | "TexGenx"
+            | "TexGenfv"
+            | "TexGeniv"
+            | "TexGenxv"
+            | "BlendEquation"
+            | "BlendFuncSeparate"
+            | "BlendEquationSeparate"
+            | "BindRenderbufferOES"
+            | "DeleteFramebuffersOES"
+            | "DeleteRenderbuffersOES"
+            | "FramebufferRenderbufferOES"
+            | "FramebufferTexture2DOES"
+            | "GenerateMipmapOES"
             | "RenderbufferStorageOES"
                 if iface == Interface::Gles11ExtPak =>
             {
@@ -364,8 +376,11 @@ impl<C: CpuBackend> Machine<C> {
             }
             // `GL_FRAMEBUFFER_COMPLETE_OES` é 0x8CD5, e é o que um alvo único sempre é.
             "CheckFramebufferStatusOES" if iface == Interface::Gles11ExtPak => 0x8cd5,
-            "GetTexGenfv" | "GetTexGeniv" | "GetTexGenxv"
-            | "GetFramebufferAttachmentParameterivOES" | "GetRenderbufferParameterivOES"
+            "GetTexGenfv"
+            | "GetTexGeniv"
+            | "GetTexGenxv"
+            | "GetFramebufferAttachmentParameterivOES"
+            | "GetRenderbufferParameterivOES"
                 if iface == Interface::Gles11ExtPak =>
             {
                 // Zerar o que se consulta é melhor que deixar lixo na memória do jogo, e é o que
@@ -414,9 +429,17 @@ impl<C: CpuBackend> Machine<C> {
             // eles ainda respondem "consegui" sem desenhar: é o passo que faz o jogo **chegar** ao
             // desenho, e o efeito dele é medido pela contagem de cores do relatório. O retângulo
             // de verdade é o passo seguinte, e a referência para ele é o `gles_draw`.
-            "CurrentPaletteMatrixOES" | "LoadPaletteFromModelViewMatrixOES"
-            | "MatrixIndexPointerOES" | "WeightPointerOES" | "DrawTexsOES" | "DrawTexiOES"
-            | "DrawTexxOES" | "DrawTexsvOES" | "DrawTexivOES" | "DrawTexxvOES" | "DrawTexfOES"
+            "CurrentPaletteMatrixOES"
+            | "LoadPaletteFromModelViewMatrixOES"
+            | "MatrixIndexPointerOES"
+            | "WeightPointerOES"
+            | "DrawTexsOES"
+            | "DrawTexiOES"
+            | "DrawTexxOES"
+            | "DrawTexsvOES"
+            | "DrawTexivOES"
+            | "DrawTexxvOES"
+            | "DrawTexfOES"
             | "DrawTexfvOES"
                 if iface == Interface::Gles11Ext =>
             {
@@ -711,7 +734,11 @@ impl<C: CpuBackend> Machine<C> {
             }
             // void *GetValue(IValueModel *, int *pnLen)
             "GetValue" => {
-                let modelo = self.modelos_de_valor.get(&this).cloned().unwrap_or_default();
+                let modelo = self
+                    .modelos_de_valor
+                    .get(&this)
+                    .cloned()
+                    .unwrap_or_default();
                 if a1 != 0 {
                     self.cpu.write_u32(a1, modelo.tamanho)?;
                 }
@@ -794,9 +821,8 @@ impl<C: CpuBackend> Machine<C> {
             // como no slot 3; a opção fica registrada na hipótese.
             "DefinirModoComOpcao" => {
                 self.modo_do_sistema = self.cpu.read_reg(Reg::R1);
-                self.assumptions.insert(
-                    "o controle de sistema recebeu modo e opção; só o modo é guardado",
-                );
+                self.assumptions
+                    .insert("o controle de sistema recebeu modo e opção; só o modo é guardado");
                 SUCCESS
             }
             _ => SUCCESS,

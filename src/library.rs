@@ -9,10 +9,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::loader::archive;
-use crate::video::icon::{self, Image};
-use crate::loader::miffile::MifFile;
 use crate::config;
+use crate::loader::archive;
+use crate::loader::miffile::MifFile;
+use crate::video::icon::{self, Image};
 
 /// Extensões aceitas para uma capa deixada ao lado do jogo.
 const COVER_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "bmp"];
@@ -73,7 +73,8 @@ pub struct CatalogIndex {
 impl CatalogIndex {
     /// Incorpora a lista de ROMs atual sem mexer nos títulos que vieram da NAND.
     pub fn refresh_roms(&mut self, games: &[Game]) {
-        self.titles.retain(|entry| entry.source != CatalogSource::Rom);
+        self.titles
+            .retain(|entry| entry.source != CatalogSource::Rom);
         self.titles.extend(games.iter().filter_map(|game| {
             Some(CatalogEntry {
                 applet_class: game.clsid?,
@@ -153,7 +154,10 @@ pub fn z_wheel_em(caminho: &Path) -> Option<PathBuf> {
 /// dela, em `Downloads` e na pasta pessoal, em tudo que tenha "wheel" ou "tectoy" no nome.
 /// Olhar só esses nomes evita varrer o disco.
 pub fn detecta_z_wheel(roms: Option<&Path>, jogos: &[Game]) -> Option<PathBuf> {
-    if let Some(jogo) = jogos.iter().find(|jogo| jogo.clsid == Some(crate::session::Z_WHEEL)) {
+    if let Some(jogo) = jogos
+        .iter()
+        .find(|jogo| jogo.clsid == Some(crate::session::Z_WHEEL))
+    {
         return Some(jogo.path.clone());
     }
     let casa = std::env::var_os("HOME")
@@ -171,10 +175,13 @@ pub fn detecta_z_wheel(roms: Option<&Path>, jogos: &[Game]) -> Option<PathBuf> {
             .flatten()
             .map(|entrada| entrada.path())
             .filter(|caminho| {
-                caminho.file_name().and_then(|n| n.to_str()).is_some_and(|nome| {
-                    let nome = nome.to_lowercase();
-                    nome.contains("wheel") || nome.contains("tectoy")
-                })
+                caminho
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|nome| {
+                        let nome = nome.to_lowercase();
+                        nome.contains("wheel") || nome.contains("tectoy")
+                    })
             })
             .collect();
         candidatos.sort();
@@ -306,7 +313,11 @@ pub fn title_for(mod_path: &Path) -> String {
 pub fn sem_impressao_digital(nome: &str) -> String {
     let mut partes: Vec<&str> = nome.split('-').collect();
     for _ in 0..2 {
-        if partes.len() > 1 && partes.last().is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())) {
+        if partes.len() > 1
+            && partes
+                .last()
+                .is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+        {
             partes.pop();
         }
     }

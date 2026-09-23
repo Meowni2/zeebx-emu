@@ -1022,7 +1022,9 @@ fn atoi_de_c(texto: &str) -> i32 {
     let valor = resto
         .bytes()
         .take_while(u8::is_ascii_digit)
-        .fold(0i32, |acc, d| acc.wrapping_mul(10).wrapping_add(i32::from(d - b'0')));
+        .fold(0i32, |acc, d| {
+            acc.wrapping_mul(10).wrapping_add(i32::from(d - b'0'))
+        });
     match negativo {
         true => valor.wrapping_neg(),
         false => valor,
@@ -1049,7 +1051,10 @@ mod testes_do_makepath {
 
     #[test]
     fn junta_com_uma_barra_so() {
-        assert_eq!(junta_caminho("fs:/mod/274755", "tectoy.cfg"), "fs:/mod/274755/tectoy.cfg");
+        assert_eq!(
+            junta_caminho("fs:/mod/274755", "tectoy.cfg"),
+            "fs:/mod/274755/tectoy.cfg"
+        );
         assert_eq!(junta_caminho("fs:/mod/", "a.db"), "fs:/mod/a.db");
         assert_eq!(junta_caminho("", "a.db"), "a.db");
     }

@@ -29,7 +29,9 @@ type ContextoProprio = Contexto;
 #[cfg(not(feature = "gpu"))]
 type ContextoProprio = ();
 use super::gles;
-use super::rasterizer::{GlState, Matrix, QuadroNaPlaca, Rasterizador, TexEnv, UnidadeDeTextura, Vertex};
+use super::rasterizer::{
+    GlState, Matrix, QuadroNaPlaca, Rasterizador, TexEnv, UnidadeDeTextura, Vertex,
+};
 use glow::{self, HasContext};
 use std::collections::HashMap;
 
@@ -272,8 +274,9 @@ impl GpuState {
             #[cfg(not(feature = "gpu"))]
             None => {
                 return Err(
-                    "sem contexto emprestado: esta construção não abre contexto de placa".to_string(),
-                )
+                    "sem contexto emprestado: esta construção não abre contexto de placa"
+                        .to_string(),
+                );
             }
         };
         let (programa, vao, vbo, ponte) = unsafe {
@@ -527,7 +530,18 @@ impl GpuState {
             gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(multi));
             gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(destino.fbo));
             gl.disable(glow::SCISSOR_TEST);
-            gl.blit_framebuffer(0, 0, w, h, 0, 0, w, h, glow::COLOR_BUFFER_BIT, glow::NEAREST);
+            gl.blit_framebuffer(
+                0,
+                0,
+                w,
+                h,
+                0,
+                0,
+                w,
+                h,
+                glow::COLOR_BUFFER_BIT,
+                glow::NEAREST,
+            );
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(destino.fbo));
         }
     }
@@ -696,7 +710,10 @@ impl GpuState {
                 .map(|t| t.objeto)
         });
         let textura1 = match (textura_da_ponte, self.fill.unidade1.ligada) {
-            (false, true) => self.texturas.get(&self.fill.unidade1.textura).map(|t| t.objeto),
+            (false, true) => self
+                .texturas
+                .get(&self.fill.unidade1.textura)
+                .map(|t| t.objeto),
             _ => None,
         };
         let gl = &self.gl;
@@ -706,9 +723,13 @@ impl GpuState {
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
             let passo = (FLOATS_POR_VERTICE * 4) as i32;
             if !self.vao_pronto {
-                for (indice, tamanho, deslocamento) in
-                    [(0u32, 4i32, 0i32), (1, 4, 16), (2, 2, 32), (3, 1, 40), (4, 2, 44)]
-                {
+                for (indice, tamanho, deslocamento) in [
+                    (0u32, 4i32, 0i32),
+                    (1, 4, 16),
+                    (2, 2, 32),
+                    (3, 1, 40),
+                    (4, 2, 44),
+                ] {
                     gl.enable_vertex_attrib_array(indice);
                     gl.vertex_attrib_pointer_f32(
                         indice,
@@ -743,17 +764,41 @@ impl GpuState {
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_2D, textura);
             uniforme_i32(gl, &self.uniformes, self.programa, "amostra", 0);
-            uniforme_i32(gl, &self.uniformes, self.programa, "texturando", i32::from(textura.is_some()));
-            envia_env(gl, &self.uniformes, self.programa, "", &self.fill.env_textura);
+            uniforme_i32(
+                gl,
+                &self.uniformes,
+                self.programa,
+                "texturando",
+                i32::from(textura.is_some()),
+            );
+            envia_env(
+                gl,
+                &self.uniformes,
+                self.programa,
+                "",
+                &self.fill.env_textura,
+            );
             // A unidade 1 só entra com textura de verdade: ligada sem textura carregada, ela
             // passaria o anterior adiante com um texel preto.
             gl.active_texture(glow::TEXTURE1);
             gl.bind_texture(glow::TEXTURE_2D, textura1);
             gl.active_texture(glow::TEXTURE0);
             uniforme_i32(gl, &self.uniformes, self.programa, "amostra1", 1);
-            uniforme_i32(gl, &self.uniformes, self.programa, "texturando1", i32::from(textura1.is_some()));
+            uniforme_i32(
+                gl,
+                &self.uniformes,
+                self.programa,
+                "texturando1",
+                i32::from(textura1.is_some()),
+            );
             if textura1.is_some() {
-                envia_env(gl, &self.uniformes, self.programa, "1", &self.fill.unidade1.env);
+                envia_env(
+                    gl,
+                    &self.uniformes,
+                    self.programa,
+                    "1",
+                    &self.fill.unidade1.env,
+                );
             }
             uniforme_i32(
                 gl,
@@ -765,7 +810,13 @@ impl GpuState {
                     false => 7,
                 },
             );
-            uniforme_f32(gl, &self.uniformes, self.programa, "ref_alfa", self.fill.ref_alfa);
+            uniforme_f32(
+                gl,
+                &self.uniformes,
+                self.programa,
+                "ref_alfa",
+                self.fill.ref_alfa,
+            );
             uniforme_f32(gl, &self.uniformes, self.programa, "virar", virar);
             let neblina = self.fill.neblina;
             uniforme_i32(
@@ -775,7 +826,13 @@ impl GpuState {
                 "com_neblina",
                 i32::from(neblina.ligada && neblina.permitida),
             );
-            uniforme_vec3(gl, &self.uniformes, self.programa, "cor_neblina", neblina.cor);
+            uniforme_vec3(
+                gl,
+                &self.uniformes,
+                self.programa,
+                "cor_neblina",
+                neblina.cor,
+            );
             gl.draw_arrays(modo, primeiro as i32, quantos as i32);
             gl.bind_vertex_array(None);
             gl.use_program(None);
@@ -959,7 +1016,11 @@ impl GpuState {
             };
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, min as i32);
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, t.filtro as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAX_LEVEL, t.maior_nivel as i32);
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MAX_LEVEL,
+                t.maior_nivel as i32,
+            );
             for (eixo, modo) in [
                 (glow::TEXTURE_WRAP_S, t.wrap[0]),
                 (glow::TEXTURE_WRAP_T, t.wrap[1]),
@@ -1059,16 +1120,32 @@ impl Uniformes {
     }
 }
 
-fn uniforme_i32(gl: &glow::Context, u: &Uniformes, programa: glow::Program, nome: &str, valor: i32) {
+fn uniforme_i32(
+    gl: &glow::Context,
+    u: &Uniformes,
+    programa: glow::Program,
+    nome: &str,
+    valor: i32,
+) {
     u.define(gl, programa, nome, [valor as u32, 0, 0, 0], |onde| unsafe {
         gl.uniform_1_i32(Some(onde), valor)
     });
 }
 
-fn uniforme_f32(gl: &glow::Context, u: &Uniformes, programa: glow::Program, nome: &str, valor: f32) {
-    u.define(gl, programa, nome, [valor.to_bits(), 0, 0, 0], |onde| unsafe {
-        gl.uniform_1_f32(Some(onde), valor)
-    });
+fn uniforme_f32(
+    gl: &glow::Context,
+    u: &Uniformes,
+    programa: glow::Program,
+    nome: &str,
+    valor: f32,
+) {
+    u.define(
+        gl,
+        programa,
+        nome,
+        [valor.to_bits(), 0, 0, 0],
+        |onde| unsafe { gl.uniform_1_f32(Some(onde), valor) },
+    );
 }
 
 /// Um uniforme de quatro componentes, para a cor do `GL_TEXTURE_ENV_COLOR`.
@@ -1092,7 +1169,12 @@ fn uniforme_vec3(
     nome: &str,
     valor: [f32; 4],
 ) {
-    let bits = [valor[0].to_bits(), valor[1].to_bits(), valor[2].to_bits(), 0];
+    let bits = [
+        valor[0].to_bits(),
+        valor[1].to_bits(),
+        valor[2].to_bits(),
+        0,
+    ];
     u.define(gl, programa, nome, bits, |onde| unsafe {
         gl.uniform_3_f32(Some(onde), valor[0], valor[1], valor[2])
     });
@@ -1167,11 +1249,35 @@ fn envia_env(
     }
     for lado in 0..2 {
         let nome = ["rgb", "alfa"][lado];
-        uniforme_i32(gl, u, programa, &format!("cmb_{nome}{sufixo}"), codigo_funcao(env.combina[lado]));
-        uniforme_f32(gl, u, programa, &format!("escala_{nome}{sufixo}"), env.escala[lado]);
+        uniforme_i32(
+            gl,
+            u,
+            programa,
+            &format!("cmb_{nome}{sufixo}"),
+            codigo_funcao(env.combina[lado]),
+        );
+        uniforme_f32(
+            gl,
+            u,
+            programa,
+            &format!("escala_{nome}{sufixo}"),
+            env.escala[lado],
+        );
         for i in 0..3 {
-            uniforme_i32(gl, u, programa, &format!("src_{nome}{sufixo}[{i}]"), codigo_fonte(env.fontes[lado][i]));
-            uniforme_i32(gl, u, programa, &format!("op_{nome}{sufixo}[{i}]"), codigo_operando(env.operandos[lado][i]));
+            uniforme_i32(
+                gl,
+                u,
+                programa,
+                &format!("src_{nome}{sufixo}[{i}]"),
+                codigo_fonte(env.fontes[lado][i]),
+            );
+            uniforme_i32(
+                gl,
+                u,
+                programa,
+                &format!("op_{nome}{sufixo}[{i}]"),
+                codigo_operando(env.operandos[lado][i]),
+            );
         }
     }
     uniforme_vec4(gl, u, programa, &format!("cor_env{sufixo}"), env.cor);
@@ -1371,10 +1477,13 @@ void main() {
 
 /// Compila o par de shaders, tentando GLSL 3.30 e caindo para ES 3.00.
 unsafe fn compila(gl: &glow::Context) -> Result<glow::Program, String> {
-    ["#version 330 core\n", "#version 300 es\nprecision highp float;\n"]
-        .into_iter()
-        .find_map(|cabecalho| unsafe { liga_programa(gl, cabecalho) }.ok())
-        .ok_or_else(|| "nenhuma versão de GLSL aceita".to_string())
+    [
+        "#version 330 core\n",
+        "#version 300 es\nprecision highp float;\n",
+    ]
+    .into_iter()
+    .find_map(|cabecalho| unsafe { liga_programa(gl, cabecalho) }.ok())
+    .ok_or_else(|| "nenhuma versão de GLSL aceita".to_string())
 }
 
 unsafe fn liga_programa(gl: &glow::Context, cabecalho: &str) -> Result<glow::Program, String> {
@@ -1420,7 +1529,11 @@ fn expande565(bytes: &[u8], offset: usize) -> [u8; 3] {
     let r = ((pixel >> 11) & 31) as u8;
     let g = ((pixel >> 5) & 63) as u8;
     let b = (pixel & 31) as u8;
-    [(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)]
+    [
+        (r << 3) | (r >> 2),
+        (g << 2) | (g >> 4),
+        (b << 3) | (b >> 2),
+    ]
 }
 
 impl Rasterizador for GpuState {
@@ -2185,7 +2298,9 @@ impl Rasterizador for GpuState {
     fn define_proporcao(&mut self, aspecto: Option<f32>) {
         self.descarrega();
         // Mais estreito que o nativo não abre nada; o teto evita um anexo absurdo.
-        let aspecto = aspecto.filter(|a| a.is_finite()).map(|a| a.clamp(4.0 / 3.0, 3.6));
+        let aspecto = aspecto
+            .filter(|a| a.is_finite())
+            .map(|a| a.clamp(4.0 / 3.0, 3.6));
         if aspecto != self.proporcao {
             self.proporcao = aspecto;
             self.sujo = true;
@@ -2420,7 +2535,8 @@ mod tests {
         let do_software = sw.read_rect(0, 0, largura, altura);
         // A primeira linha do resultado é a de **baixo** da tela, que aqui é azul.
         assert_eq!(
-            do_software[largura + 1][2], 255,
+            do_software[largura + 1][2],
+            255,
             "no software a primeira linha lida devia ser a de baixo, azul"
         );
         assert_eq!(
@@ -2563,9 +2679,14 @@ mod tests {
                 "pixel ({x}, {y}) com escala 2"
             );
         }
-        let quadro = grande.quadro_na_placa().expect("textura grande para a janela");
+        let quadro = grande
+            .quadro_na_placa()
+            .expect("textura grande para a janela");
         assert_eq!(quadro.recorte, [1.0, 1.0]);
-        assert!(nativa.quadro_na_placa().is_none(), "na escala 1 a janela usa a tela de sempre");
+        assert!(
+            nativa.quadro_na_placa().is_none(),
+            "na escala 1 a janela usa a tela de sempre"
+        );
     }
 
     /// Com antialias a borda do triângulo mistura as duas cores, e o miolo fica como estava.
@@ -2593,7 +2714,7 @@ mod tests {
             uv: [0.0, 0.0],
             uv1: [0.0; 2],
             normal: [0.0, 0.0, 1.0],
-                fog: 1.0,
+            fog: 1.0,
         };
         gpu.draw(
             gles::GL_TRIANGLES,
@@ -2608,7 +2729,10 @@ mod tests {
             let (r, _, b) = pixel(&quadro, largura, x, largura - 1 - x);
             r > 0 && b > 0
         });
-        assert!(misturado, "algum pixel da diagonal devia misturar vermelho e azul");
+        assert!(
+            misturado,
+            "algum pixel da diagonal devia misturar vermelho e azul"
+        );
     }
 
     /// A tesoura de um retângulo cai no mesmo lugar do retângulo, com o `y` contado do topo.
@@ -2618,10 +2742,19 @@ mod tests {
     #[test]
     fn a_tesoura_de_um_retangulo_conta_o_y_do_topo() {
         // 42×64 a 21 da esquerda e 42 de baixo, numa tela de 640×480: o topo fica em 374.
-        assert_eq!(tesoura_no_anexo((21, 42, 42, 64), (640, 480), 0), (21, 374, 42, 64));
+        assert_eq!(
+            tesoura_no_anexo((21, 42, 42, 64), (640, 480), 0),
+            (21, 374, 42, 64)
+        );
         // Na proporção larga ele só se desloca; a tela inteira ganha os lados.
-        assert_eq!(tesoura_no_anexo((21, 42, 42, 64), (640, 480), 80), (101, 374, 42, 64));
-        assert_eq!(tesoura_no_anexo((0, 0, 640, 480), (640, 480), 80), (0, 0, 800, 480));
+        assert_eq!(
+            tesoura_no_anexo((21, 42, 42, 64), (640, 480), 80),
+            (101, 374, 42, 64)
+        );
+        assert_eq!(
+            tesoura_no_anexo((0, 0, 640, 480), (640, 480), 80),
+            (0, 0, 800, 480)
+        );
     }
 
     /// Na proporção larga, a tesoura do jogo não pode cortar os lados novos.
@@ -2799,7 +2932,7 @@ mod tests {
                         uv: [0.0, 0.0],
                         uv1: [0.0; 2],
                         normal: [0.0, 0.0, 1.0],
-                fog: 1.0,
+                        fog: 1.0,
                     };
                     // Um triângulo que cobre o centro, nas duas ordens de vértice.
                     let tri = match invertido {
@@ -2868,4 +3001,3 @@ mod tests {
         );
     }
 }
-

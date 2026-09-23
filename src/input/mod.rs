@@ -313,8 +313,9 @@ pub fn avk_de(key: egui::Key) -> Option<u32> {
         ArrowRight => avk::RIGHT,
         Enter | Space => avk::CONFIRMA,
         Backspace | Delete => avk::CLR,
-        Num0 | Num1 | Num2 | Num3 | Num4 | Num5 | Num6 | Num7 | Num8 | Num9 =>
-            avk::ZERO + (key as u32 - Num0 as u32),
+        Num0 | Num1 | Num2 | Num3 | Num4 | Num5 | Num6 | Num7 | Num8 | Num9 => {
+            avk::ZERO + (key as u32 - Num0 as u32)
+        }
         _ => return None,
     })
 }

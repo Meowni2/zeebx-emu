@@ -64,7 +64,9 @@ struct PaginasExecutadas {
 impl PaginasExecutadas {
     fn new() -> Self {
         Self {
-            bits: (0..(1usize << 20).div_ceil(64)).map(|_| Cell::new(0)).collect(),
+            bits: (0..(1usize << 20).div_ceil(64))
+                .map(|_| Cell::new(0))
+                .collect(),
         }
     }
 
@@ -743,9 +745,8 @@ mod tests {
 
     #[test]
     fn codigo_alterado_pelo_host_e_recompilado() {
-        let mut cpu = cpu_with(
-            &[0xe3a0_0001u32.to_le_bytes(), 0xe12f_ff1eu32.to_le_bytes()].concat(),
-        );
+        let mut cpu =
+            cpu_with(&[0xe3a0_0001u32.to_le_bytes(), 0xe12f_ff1eu32.to_le_bytes()].concat());
         cpu.write_reg(Reg::Lr, RETURN_MAGIC);
         assert_eq!(cpu.run(0, 10).unwrap(), StopReason::Returned);
         assert_eq!(cpu.read_reg(Reg::R0), 1);
@@ -772,7 +773,10 @@ impl DynarmicCpu {
     /// As leituras devolvem vazio porque não têm o que devolver; quem pergunta por elas com uma
     /// faixa ou um endereço recebe o erro acima antes.
     fn sem_unicorn(&self) -> CpuError {
-        CpuError("este gancho de depuração precisa do backend unicorn, que não existe neste alvo".to_string())
+        CpuError(
+            "este gancho de depuração precisa do backend unicorn, que não existe neste alvo"
+                .to_string(),
+        )
     }
 
     pub fn trace_code(&mut self, _begin: u32, _end: u32, _limite: usize) -> Result<(), CpuError> {

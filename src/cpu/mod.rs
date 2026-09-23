@@ -251,7 +251,14 @@ impl std::fmt::Display for CpuError {
 
 impl std::error::Error for CpuError {}
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod dynarmic;
+
+/// Interpretador A32/T32. Existe porque o `dynarmic` e o `unicorn` emitem código nativo do
+/// host, e um módulo WebAssembly não executa esse bloco. Entra no `wasm32` e nos testes do
+/// próprio arquivo; o desktop continua no JIT.
+#[cfg(any(test, target_arch = "wasm32"))]
+pub mod interpretador;
 
 /// O backend de CPU do `unicorn` (QEMU/TCG), que **não** existe no Windows ARM64.
 ///
@@ -259,7 +266,10 @@ pub mod dynarmic;
 /// e x64: não há montador para ARM64, então o `unicorn-engine-sys` nem compila naquele alvo. A
 /// ausência é declarada aqui, e não num monte de `cfg` espalhados, porque o resto do código só
 /// precisa saber **qual** backend usar.
-#[cfg(all(feature = "unicorn", not(all(target_os = "windows", target_arch = "aarch64"))))]
+#[cfg(all(
+    feature = "unicorn",
+    not(all(target_os = "windows", target_arch = "aarch64"))
+))]
 pub mod unicorn;
 
 /// O alias que o resto do código usa para pedir "o backend padrão".
@@ -268,13 +278,22 @@ pub mod unicorn;
 /// do BREW mais fiel. No Windows ARM64, onde ele não compila, o padrão passa a ser o `dynarmic`, que
 /// recompila os blocos A32 para o código nativo do host e sustenta o mesmo contrato de
 /// [`CpuBackend`] — inclusive a parada nas faixas não mapeadas.
-#[cfg(all(feature = "unicorn", not(all(target_os = "windows", target_arch = "aarch64"))))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "unicorn",
+    not(all(target_os = "windows", target_arch = "aarch64"))
+))]
 pub type BackendPadrao = unicorn::UnicornCpu;
-#[cfg(any(
-    not(feature = "unicorn"),
-    all(target_os = "windows", target_arch = "aarch64")
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        not(feature = "unicorn"),
+        all(target_os = "windows", target_arch = "aarch64")
+    )
 ))]
 pub type BackendPadrao = dynarmic::DynarmicCpu;
+#[cfg(target_arch = "wasm32")]
+pub type BackendPadrao = interpretador::Interpretador;
 
 // As constantes da faixa de vtables do BREW valem para os dois backends e não podem morar no
 // `unicorn`, que falta no Windows ARM64: o `dynarmic` as usa para parar no mesmo lugar.
@@ -350,4 +369,3 @@ mod tests {
         assert_eq!(latin1_encode(&latin1_decode(&bytes)), bytes);
     }
 }
-

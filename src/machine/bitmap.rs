@@ -319,7 +319,8 @@ impl<C: CpuBackend> Machine<C> {
                 let matriz = self.stack_arg(4)?;
                 let mut campos = [0u8; 8];
                 self.cpu.read_mem(matriz, &mut campos)?;
-                let campo = |i: usize| i16::from_le_bytes([campos[i], campos[i + 1]]) as f32 / 256.0;
+                let campo =
+                    |i: usize| i16::from_le_bytes([campos[i], campos[i + 1]]) as f32 / 256.0;
                 let m = [campo(0), campo(2), campo(4), campo(6)];
                 self.transforma(TransformBlt {
                     destino,
@@ -366,7 +367,12 @@ impl<C: CpuBackend> Machine<C> {
         };
         let (centro_x, centro_y) = (t.x as f32 + meio_w, t.y as f32 + meio_h);
         // A caixa do resultado: os quatro cantos da origem transformados.
-        let cantos = [(-meio_w, -meio_h), (meio_w, -meio_h), (-meio_w, meio_h), (meio_w, meio_h)];
+        let cantos = [
+            (-meio_w, -meio_h),
+            (meio_w, -meio_h),
+            (-meio_w, meio_h),
+            (meio_w, meio_h),
+        ];
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for (u, v) in cantos {
             let (px, py) = (a * u + b * v + centro_x, c * u + d * v + centro_y);
@@ -665,7 +671,11 @@ impl<C: CpuBackend> Machine<C> {
                 SUCCESS
             }
             "GetTransparencyColor" => {
-                let value = self.transparency.get(&this).copied().unwrap_or(TRANSPARENT_KEY);
+                let value = self
+                    .transparency
+                    .get(&this)
+                    .copied()
+                    .unwrap_or(TRANSPARENT_KEY);
                 let out = self.cpu.read_reg(Reg::R1);
                 if out != 0 {
                     self.cpu.write_u32(out, value as u32)?;
@@ -714,9 +724,10 @@ impl<C: CpuBackend> Machine<C> {
         if !cabe {
             // O buffer que não cabe mais volta para a região antes de pedir outro.
             // Só com capacidade registrada o buffer é nosso; sem ela, é do jogo.
-            if let (Some(&antigo), Some(_)) =
-                (self.dib_buffers.get(&bitmap), self.dib_capacity.get(&bitmap))
-            {
+            if let (Some(&antigo), Some(_)) = (
+                self.dib_buffers.get(&bitmap),
+                self.dib_capacity.get(&bitmap),
+            ) {
                 self.solta_superficie(antigo);
             }
             let Some((buffer, capacidade)) = self.reserva_superficie(precisa) else {
@@ -763,7 +774,11 @@ impl<C: CpuBackend> Machine<C> {
         let (cx, cy) = (fb.width(), fb.height());
         let pitch = fb.passo_do_dib() as u32;
         let buffer = self.dib_buffers.get(&bitmap).copied().unwrap_or(0);
-        let transparent = self.transparency.get(&bitmap).copied().unwrap_or(TRANSPARENT_KEY) as u32;
+        let transparent = self
+            .transparency
+            .get(&bitmap)
+            .copied()
+            .unwrap_or(TRANSPARENT_KEY) as u32;
         self.cpu.write_u32(bitmap + 4, 0)?; // pPaletteMap
         self.cpu.write_u32(bitmap + 8, buffer)?; // pBmp
         self.cpu.write_u32(bitmap + 12, 0)?; // pRGB: RGB565 não tem paleta
@@ -821,7 +836,10 @@ impl<C: CpuBackend> Machine<C> {
     /// Reserva um buffer na região de superfícies. Devolve endereço e capacidade.
     pub(super) fn reserva_superficie(&mut self, bytes: u32) -> Option<(u32, u32)> {
         let endereco = self.superficies.alloc(bytes)?;
-        Some((endereco, self.superficies.size_of(endereco).unwrap_or(bytes)))
+        Some((
+            endereco,
+            self.superficies.size_of(endereco).unwrap_or(bytes),
+        ))
     }
 
     /// Copia os pixels do host para o buffer que o jogo enxerga.
@@ -964,7 +982,12 @@ impl<C: CpuBackend> Machine<C> {
                 // desenha cada letra com `AEE_RO_TRANSPARENT` de uma folha de fundo magenta
                 // sem nunca chamar `SetTransparencyColor`; sem o padrão, a folha inteira
                 // aparecia na tela a cada letra.
-                Some(self.transparency.get(&src).copied().unwrap_or(TRANSPARENT_KEY))
+                Some(
+                    self.transparency
+                        .get(&src)
+                        .copied()
+                        .unwrap_or(TRANSPARENT_KEY),
+                )
             } else {
                 None
             };

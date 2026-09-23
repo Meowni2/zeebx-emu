@@ -16,46 +16,46 @@ impl<C: CpuBackend> Machine<C> {
     /// `eglGetColorBufferQUALCOMM`, que o motor atendia sozinha, e a interface
     /// `IEGLGetColorBuffer`, que é por onde o Prey Evil pergunta. Zero continua sendo falha.
     pub(super) fn egl_color_da_tela(&mut self) -> Result<u32, CpuError> {
-            self.sync_egl_color_from_guest()?;
-            let (largura, altura) = match self.egl_surfaces.get(&self.egl_surface) {
-                Some(&(l, a)) => (l as usize, a as usize),
+        self.sync_egl_color_from_guest()?;
+        let (largura, altura) = match self.egl_surfaces.get(&self.egl_surface) {
+            Some(&(l, a)) => (l as usize, a as usize),
+            None => {
+                let alvo = self.screen();
+                (alvo.width() as usize, alvo.height() as usize)
+            }
+        };
+        // O vetor de bytes é o mesmo de uma chamada para a outra: são quatrocentos
+        // kilobytes por leitura, duas leituras por quadro, e alocar isso sessenta vezes
+        // por segundo não paga nada.
+        //
+        // Guardar o quadro convertido para servir a segunda leitura **não** funciona:
+        // medido, zero de mil e duzentas e noventa e oito leituras puderam ser
+        // reaproveitadas, porque o jogo desenha entre uma e outra.
+        let mut bytes = std::mem::take(&mut self.egl_color_bytes);
+        self.gl.frame_rgb565(largura, altura, &mut bytes);
+        if self.egl_color_buffer.1 < bytes.len() {
+            // O buffer que ficou pequeno volta para a região antes de pedir outro.
+            if self.egl_color_buffer.0 != 0 {
+                self.solta_superficie(self.egl_color_buffer.0);
+                self.egl_color_buffer = (0, 0);
+            }
+            match self.reserva_superficie(bytes.len() as u32) {
+                Some((onde, _)) => {
+                    self.egl_color_buffer = (onde, bytes.len());
+                    // A faixa mudou de lugar: o watchpoint acompanha.
+                    self.cpu
+                        .watch_dirty(VIGIA_COLOR_BUFFER, onde, bytes.len() as u32)?;
+                }
                 None => {
-                    let alvo = self.screen();
-                    (alvo.width() as usize, alvo.height() as usize)
-                }
-            };
-            // O vetor de bytes é o mesmo de uma chamada para a outra: são quatrocentos
-            // kilobytes por leitura, duas leituras por quadro, e alocar isso sessenta vezes
-            // por segundo não paga nada.
-            //
-            // Guardar o quadro convertido para servir a segunda leitura **não** funciona:
-            // medido, zero de mil e duzentas e noventa e oito leituras puderam ser
-            // reaproveitadas, porque o jogo desenha entre uma e outra.
-            let mut bytes = std::mem::take(&mut self.egl_color_bytes);
-            self.gl.frame_rgb565(largura, altura, &mut bytes);
-            if self.egl_color_buffer.1 < bytes.len() {
-                // O buffer que ficou pequeno volta para a região antes de pedir outro.
-                if self.egl_color_buffer.0 != 0 {
-                    self.solta_superficie(self.egl_color_buffer.0);
-                    self.egl_color_buffer = (0, 0);
-                }
-                match self.reserva_superficie(bytes.len() as u32) {
-                    Some((onde, _)) => {
-                        self.egl_color_buffer = (onde, bytes.len());
-                        // A faixa mudou de lugar: o watchpoint acompanha.
-                        self.cpu
-                            .watch_dirty(VIGIA_COLOR_BUFFER, onde, bytes.len() as u32)?;
-                    }
-                    None => {
-                        self.egl_color_bytes = bytes;
-                        return Ok(0);
-                    }
+                    self.egl_color_bytes = bytes;
+                    return Ok(0);
                 }
             }
-            self.cpu.write_mem(self.egl_color_buffer.0, &bytes)?;
-            self.egl_color_bytes = bytes;
-            self.egl_color_dimensions = Some((largura, altura));
-            Ok(self.egl_color_buffer.0)
+        }
+        self.cpu.write_mem(self.egl_color_buffer.0, &bytes)?;
+        self.egl_color_bytes = bytes;
+        self.egl_color_dimensions = Some((largura, altura));
+        Ok(self.egl_color_buffer.0)
     }
 
     pub(super) fn write_egl_true(&mut self, slot: usize) -> Result<u32, CpuError> {
@@ -166,14 +166,17 @@ impl<C: CpuBackend> Machine<C> {
                 // procuram na lista; quem o acha pede as funções com o sufixo. O motor QX do
                 // SDK (o Dragon Vs Chicken) pede `glBindBufferARB` e as outras cinco, e com o
                 // ponteiro nulo os personagens, que ele desenha por buffer, não apareciam.
-                let slot = name.starts_with("gl").then(|| {
-                    procura(&name).or_else(|| {
-                        ["ARB", "OES"]
-                            .iter()
-                            .find_map(|sufixo| name.strip_suffix(sufixo))
-                            .and_then(procura)
+                let slot = name
+                    .starts_with("gl")
+                    .then(|| {
+                        procura(&name).or_else(|| {
+                            ["ARB", "OES"]
+                                .iter()
+                                .find_map(|sufixo| name.strip_suffix(sufixo))
+                                .and_then(procura)
+                        })
                     })
-                }).flatten();
+                    .flatten();
                 // Um nome `egl*` procura na tabela **antiga**, a `IEGL` de `AEEGL.h`, e não na
                 // `IEGL11` que o jogo usa pela vtable. Não é escolha de gosto: o que o
                 // `eglGetProcAddress` devolve é uma função C, sem `this` no primeiro argumento,
@@ -337,7 +340,8 @@ impl<C: CpuBackend> Machine<C> {
                     let altura = self.cpu.read_u32(origem + 12)? as i32;
                     if largura > 0 && altura > 0 {
                         self.scale_source = Some((largura, altura));
-                        self.gl.set_surface_esticada(largura as usize, altura as usize);
+                        self.gl
+                            .set_surface_esticada(largura as usize, altura as usize);
                     }
                 }
                 (4, gles::EGL_TRUE)
@@ -531,8 +535,7 @@ impl<C: CpuBackend> Machine<C> {
             }
             AEEIID_EGLOESSWAPINTERVAL => {
                 if self.egl_oes_swap_interval == 0 {
-                    self.egl_oes_swap_interval =
-                        self.new_object(Interface::EglOesSwapInterval)?;
+                    self.egl_oes_swap_interval = self.new_object(Interface::EglOesSwapInterval)?;
                 }
                 self.egl_oes_swap_interval
             }

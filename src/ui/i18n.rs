@@ -220,11 +220,7 @@ mod tests {
             .find(|l| l.code == "pt-BR")
             .unwrap();
         assert_eq!(pt.name, "Português (Brasil)");
-        let es = catalog
-            .languages()
-            .iter()
-            .find(|l| l.code == "es")
-            .unwrap();
+        let es = catalog.languages().iter().find(|l| l.code == "es").unwrap();
         assert_eq!(es.name, "Español");
         let es_mx = catalog
             .languages()

@@ -698,7 +698,10 @@ mod tests {
         let samples = mixer.render(12);
         let left: Vec<f32> = samples.iter().step_by(2).copied().collect();
         assert!(left.iter().any(|sample| *sample > 0.9), "{left:?}");
-        assert!(left.last().copied().unwrap_or(1.0).abs() < 0.001, "{left:?}");
+        assert!(
+            left.last().copied().unwrap_or(1.0).abs() < 0.001,
+            "{left:?}"
+        );
     }
 
     #[test]
@@ -711,7 +714,10 @@ mod tests {
         let samples = mixer.render(48);
         let left: Vec<f32> = samples.iter().step_by(2).copied().collect();
         assert!(left.iter().any(|sample| *sample > 0.9), "{left:?}");
-        assert!(left.last().copied().unwrap_or(1.0).abs() < 0.001, "{left:?}");
+        assert!(
+            left.last().copied().unwrap_or(1.0).abs() < 0.001,
+            "{left:?}"
+        );
     }
 
     #[test]
@@ -787,7 +793,10 @@ mod tests {
         let mut out = [0.0f32; (DESCIDA_FRAMES as usize + 8) * 2];
         mixer.fill(&mut out, 2);
         assert!(out.iter().all(|&s| s == 0.0), "no mudo nada sai");
-        assert!(!mixer.is_playing(1), "o som andou até o fim, inclusive a descida");
+        assert!(
+            !mixer.is_playing(1),
+            "o som andou até o fim, inclusive a descida"
+        );
     }
 }
 
@@ -804,6 +813,9 @@ mod testes_do_relato {
             texto.contains("não tem o sintetizador de banco"),
             "o relato tem de dizer que a build não tem o recurso: {texto}"
         );
-        assert!(texto.contains("soundfonts"), "e onde o arquivo iria: {texto}");
+        assert!(
+            texto.contains("soundfonts"),
+            "e onde o arquivo iria: {texto}"
+        );
     }
 }
