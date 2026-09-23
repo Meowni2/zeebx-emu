@@ -917,6 +917,19 @@ impl Session {
         self.intermediario.is_some()
     }
 
+    /// A parada foi uma **saída normal**, e não uma quebra.
+    ///
+    /// `Outcome::Returned` é o applet que pediu para fechar (`EVT_APP_STOP`) ou que acabou sem
+    /// nada pendente — o mesmo desfecho que a janela lê para voltar à Z-Wheel. Os outros são
+    /// falha de verdade: API que não existe aqui, salto para endereço inválido.
+    ///
+    /// Existe porque o [`stopped_reason`](Self::stopped_reason) devolve só texto, e quem só tem
+    /// o texto não consegue escolher entre "voltei ao menu" e "quebrou" — era o que fazia a saída
+    /// limpa de um jogo aparecer como erro no Android.
+    pub fn saiu_normalmente(&self) -> bool {
+        matches!(self.stopped, Some(Outcome::Returned { .. }))
+    }
+
     /// O motivo da parada, se o jogo parou, em texto que sirva para quem está olhando a tela.
     ///
     /// O `Debug` do desfecho traz endereços crus, e "método não implementado em `0xf0014034`"

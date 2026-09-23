@@ -33,11 +33,19 @@ impl Emulador {
             sessao.set_port_pad(0, self.pad);
             if sessao.step(passou, self.settings.graphics.speed_limit) == Step::Stopped {
                 let motivo = sessao.stopped_reason().unwrap_or_default();
+                let normal = sessao.saiu_normalmente();
                 log::info!("o jogo parou: {motivo}");
-                self.erro = Some(
-                    self.catalogo
-                        .format("play.failed", &[("reason", &motivo)]),
-                );
+                // **Sair do jogo não é falhar.** O applet que pede para fechar termina em
+                // `Outcome::Returned`, e até aqui todo desfecho virava `play.failed`: fechar o
+                // jogo pelo menu dele devolvia à biblioteca com um erro na tela, dizendo que
+                // tinha dado errado o que tinha dado certo. A mensagem fica para o que quebra --
+                // API que não existe, ponteiro vazio.
+                if !normal {
+                    self.erro = Some(
+                        self.catalogo
+                            .format("play.failed", &[("reason", &motivo)]),
+                    );
+                }
                 self.fecha();
                 return;
             }
@@ -264,11 +272,20 @@ impl Emulador {
                 ui.label(aviso);
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    continuar =
-                        ui.add_sized([150.0, 48.0], egui::Button::new(&continuar_rotulo)).clicked();
-                    alterna_pausa =
-                        ui.add_sized([110.0, 48.0], egui::Button::new(&pausa_rotulo)).clicked();
-                    fechar = ui.add_sized([110.0, 48.0], egui::Button::new(&parar_rotulo)).clicked();
+                    let seguir =
+                        ui.add_sized([150.0, 48.0], egui::Button::new(&continuar_rotulo));
+                    let pausa = ui.add_sized([110.0, 48.0], egui::Button::new(&pausa_rotulo));
+                    let parar = ui.add_sized([110.0, 48.0], egui::Button::new(&parar_rotulo));
+                    continuar = seguir.clicked();
+                    alterna_pausa = pausa.clicked();
+                    fechar = parar.clicked();
+                    // **O mesmo primeiro foco das outras telas.** Sem ele esta janela não
+                    // respondia a controle nenhum: o egui move o foco na direção da seta, mas só
+                    // a partir de um que exista. O "continuar" é o que recebe, porque é o que
+                    // quem abriu a janela sem querer vai querer apertar.
+                    if ui.ctx().memory(|m| m.focused()).is_none() {
+                        seguir.request_focus();
+                    }
                 });
                 ui.add_space(4.0);
             });

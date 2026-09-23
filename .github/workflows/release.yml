@@ -24,6 +24,18 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+*"
       - "[0-9]+.[0-9]+.[0-9]+*"
   workflow_dispatch:
+  # Chamado pelo `tag.yml` quando a `master` recebe uma versão nova.
+  #
+  # **Por que chamada e não uma tag empurrada:** uma tag criada com o `GITHUB_TOKEN` não dispara
+  # workflow nenhum -- o GitHub bloqueia isso para não haver recursão. O robô criaria a tag e
+  # ninguém montaria os pacotes. Sendo chamado, tudo acontece na mesma execução, e não é preciso
+  # guardar um token de pessoa como segredo.
+  workflow_call:
+    inputs:
+      versao:
+        description: "A tag da release, já criada pelo chamador (ex.: v0.3.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -77,9 +89,13 @@ jobs:
       # compilado neste job, e testá-lo num job próprio seria pagar a compilação duas vezes.
       - name: Testes
         continue-on-error: true
-        run: cargo test --release --locked -p zeebx -p zeebx-headless
+        run: cargo test --release --locked -p zeebx -p zeebx-classical-standalone -p zeebx-headless
 
+      # **Roda no diretório do frontend, e não na raiz.** O `cargo packager` lê a configuração do
+      # manifesto onde é chamado, e desde a 0.3.0 ela mora no pacote que produz o binário. Os
+      # pacotes continuam saindo em `target/pacotes` da raiz, pelo `out-dir` de lá.
       - name: Pacotes
+        working-directory: frontends/classical-standalone
         env:
           # O AppImage é montado sem FUSE no runner.
           APPIMAGE_EXTRACT_AND_RUN: "1"
@@ -411,18 +427,48 @@ jobs:
   release:
     needs: [standalone, headless, android, core, wasm]
     # Sai com o que deu certo: um sistema que falhou não segura os outros.
-    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') }}
+    #
+    # A tag vem de dois lugares: do `push` de uma tag, e aí é o `github.ref_name`; ou do
+    # `tag.yml`, e aí é o `inputs.versao` -- ali o `ref` é a `master`, e não a tag.
+    if: ${{ !cancelled() && (inputs.versao != '' || startsWith(github.ref, 'refs/tags/')) }}
     runs-on: ubuntu-latest
     steps:
+      # O repositório entra por causa das notas: o corpo da release sai de um arquivo versionado,
+      # e sem `checkout` este job só tem os artefatos baixados.
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: pacotes
           merge-multiple: true
 
+      # **O texto da release é o que vocês escreveram, não a lista de commits.** Cada versão deixa
+      # o seu em `docs/patch-notes/`, em linguagem de quem joga; era isso que ia para a página da
+      # release na mão, e o `generate_release_notes` do GitHub entregava outra coisa -- um resumo
+      # de commits que ninguém quer ler.
+      #
+      # Sem o arquivo, a lista de commits volta a valer: é melhor que uma release muda, e serve de
+      # aviso de que a nota faltou.
+      - name: As notas da versão
+        id: notas
+        shell: bash
+        run: |
+          tag="${{ inputs.versao || github.ref_name }}"
+          for caminho in "docs/patch-notes/$tag.MD" "docs/patch-notes/$tag.md"; do
+            if [ -f "$caminho" ]; then
+              echo "notas em $caminho"
+              echo "caminho=$caminho" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "não há nota para $tag em docs/patch-notes/; a release sai com a lista de commits"
+
       - uses: softprops/action-gh-release@v2
         with:
-          name: ${{ github.ref_name }}
-          tag_name: ${{ github.ref_name }}
+          name: ${{ inputs.versao || github.ref_name }}
+          tag_name: ${{ inputs.versao || github.ref_name }}
           draft: true
-          generate_release_notes: true
+          # Um dos dois, nunca os dois: com o arquivo, ele é o corpo; sem ele, o GitHub gera.
+          body_path: ${{ steps.notas.outputs.caminho }}
+          generate_release_notes: ${{ steps.notas.outputs.caminho == '' }}
           files: pacotes/*

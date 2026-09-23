@@ -1,6 +1,6 @@
 [package]
 name = "zeebx-android"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 license = "GPL-2.0-only"
 description = "O frontend de Android do Zeebx"
@@ -15,7 +15,7 @@ crate-type = ["cdylib"]
 [dependencies]
 # `audio` e nada mais: é o `cpal`, que no Android fala com o Oboe. Sem ele o `set_audio` da
 # sessão não existe e o aparelho fica mudo -- e sem compilar.
-zeebx = { path = "../..", default-features = false, features = ["audio"] }
+zeebx = { path = "../..", default-features = false, features = ["audio", "gl"] }
 
 # **Não há eframe aqui, e isso é a razão de este arquivo existir.** O eframe gira o laço pelo
 # winit, e o winit joga fora todo botão de controle: ele traduz os códigos de tecla do Android

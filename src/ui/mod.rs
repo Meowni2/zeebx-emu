@@ -19,11 +19,13 @@ pub const REPOSITORIO: &str = "https://github.com/ZeebxTeam/zeebx-emu";
 pub const DISCORD: &str = "https://discord.gg/D96HjsKTPa";
 
 pub mod acervo;
-/// O painel de depuração e o pintor de GL são os mesmos no desktop e no Android. Quem monta a
-/// janela é cada frontend; estes dois só desenham.
-#[cfg(any(feature = "desktop", target_os = "android"))]
+// Sem gate, como os irmãos abaixo: o painel só fala com a `session`, o `i18n` e o `settings`,
+// e é o mesmo que o frontend de Android desenha. Não há nada de desktop aqui.
 pub mod depuracao;
-#[cfg(any(feature = "desktop", target_os = "android"))]
+// **O pintor é da feature `gl`, e não do `desktop`.** Ele é o backend de OpenGL do motor: o
+// frontend de Android desenha com ele e não tem eframe nenhum. O `desktop` continua trazendo-o,
+// porque implica `gpu`, que implica `gl`.
+#[cfg(feature = "gl")]
 pub mod gpu;
 pub mod i18n;
 pub mod library;

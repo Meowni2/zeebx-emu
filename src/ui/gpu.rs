@@ -13,6 +13,8 @@
 //! O contexto que o `eframe` cria é **core 3.3** (o glutin resolve "sem perfil, sem versão"
 //! assim), então não há pipeline fixo: mesmo para um quadrado com textura é preciso shader.
 
+// O `egui` vem direto, e **não** pelo `eframe`: o reexport amarrava este módulo ao desktop, e
+// quem desenha aqui é o motor, que não tem janela nenhuma.
 use glow::{self, HasContext};
 
 /// O triângulo que cobre a tela inteira, gerado sem vetor de vértices.

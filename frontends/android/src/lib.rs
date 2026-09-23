@@ -193,7 +193,9 @@ fn gira(app: AndroidApp, emulador: &mut Emulador) {
                 InputStatus::Handled
             }) {}
         }
-        if entrada.voltar {
+        // O "voltar" do Android vale em qualquer tela. O botão 2 do controle vale em todas menos
+        // no jogo, onde ele é do jogador -- ali quem fecha é o "voltar" do aparelho.
+        if entrada.voltar || (entrada.voltar_da_interface && emulador.onde != Onde::Jogo) {
             emulador.voltar();
         }
 
@@ -289,6 +291,12 @@ pub struct Emulador {
     /// repinta mais vezes que o jogo desenha, e sem esta chave cada repintura refaria a
     /// conversão inteira.
     quadro: Option<(u64, u64, bool)>,
+    /// Quem recebe o foco quando a seta sobe da primeira fila da grade.
+    ///
+    /// É um widget do egui, e por isso a barra de cima só é alcançável por foco do egui -- a
+    /// grade tem cursor próprio e os dois não podem andar juntos. A `Id` sai da pintura da
+    /// barra, porque é ela quem cria o botão.
+    foco_da_barra: Option<egui::Id>,
     /// O quadro 2D em RGB565 para o caminho direto pela placa.
     ///
     /// O Android pode repintar a janela várias vezes sem o jogo tocar no framebuffer. Guardar a
@@ -359,6 +367,7 @@ impl Emulador {
             sessao: None,
             textura: None,
             quadro: None,
+            foco_da_barra: None,
             quadro_565: None,
             pad: Pad::default(),
             confirmando: false,

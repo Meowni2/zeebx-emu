@@ -535,7 +535,7 @@ fn main() -> ExitCode {
 /// É o caminho normal de uso; a linha de comando continua existindo para depuração, que é
 /// onde ela é insubstituível — despejar quadros, rastrear chamadas, olhar a memória.
 /// A logo do emulador, para o ícone da janela.
-const LOGO: &[u8] = include_bytes!("../assets/zeebx.png");
+const LOGO: &[u8] = include_bytes!("../../../assets/zeebx.png");
 
 /// O maior lado do ícone. A logo tem mais de mil pixels de lado, e um ícone desse tamanho é
 /// megabytes de textura para desenhar algo que nunca passa de alguns pixels na barra.
@@ -547,12 +547,12 @@ const APP_ID: &str = "zeebx";
 
 /// A logo no tamanho de ícone. `None` se ela não abrir — uma janela sem ícone é melhor que uma
 /// janela que não abre.
-fn window_icon() -> Option<eframe::egui::IconData> {
+fn window_icon() -> Option<zeebx::eframe::egui::IconData> {
     let logo = icon::decode(LOGO)
         .inspect_err(|err| eprintln!("ícone da janela: {err}"))
         .ok()?
         .downscaled(ICON_SIDE);
-    Some(eframe::egui::IconData {
+    Some(zeebx::eframe::egui::IconData {
         width: logo.width as u32,
         height: logo.height as u32,
         rgba: logo.rgba,
@@ -560,7 +560,7 @@ fn window_icon() -> Option<eframe::egui::IconData> {
 }
 
 fn launch() -> ExitCode {
-    let mut viewport = eframe::egui::ViewportBuilder::default()
+    let mut viewport = zeebx::eframe::egui::ViewportBuilder::default()
         .with_inner_size([960.0, 720.0])
         .with_min_inner_size([480.0, 360.0])
         .with_title("Zeebx")
@@ -575,14 +575,14 @@ fn launch() -> ExitCode {
     if let Some(icon) = window_icon() {
         viewport = viewport.with_icon(icon);
     }
-    let options = eframe::NativeOptions {
+    let options = zeebx::eframe::NativeOptions {
         viewport,
         ..Default::default()
     };
-    let app = |context: &eframe::CreationContext<'_>| {
-        Ok(Box::new(ui::App::new(context)) as Box<dyn eframe::App>)
+    let app = |context: &zeebx::eframe::CreationContext<'_>| {
+        Ok(Box::new(ui::App::new(context)) as Box<dyn zeebx::eframe::App>)
     };
-    match eframe::run_native("Zeebx", options, Box::new(app)) {
+    match zeebx::eframe::run_native("Zeebx", options, Box::new(app)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("erro: não deu para abrir a janela: {err}");

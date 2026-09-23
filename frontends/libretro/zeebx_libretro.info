@@ -19,7 +19,7 @@ corename = "Zeebx"
 license = "GPLv2"
 permissions = ""
 # Acompanha a versão do crate. Ver o `version` do `Cargo.toml` da raiz.
-display_version = "0.2.1"
+display_version = "0.3.0"
 categories = "Emulator"
 
 # Hardware Information
@@ -62,4 +62,12 @@ is_experimental = "false"
 # Nenhum: a BIOS do aparelho não é necessária, o motor implementa o BREW.
 firmware_count = 0
 
-description = "Emulador do Zeebo, o console da TecToy movido a Qualcomm BREW 4.0.2. Carrega o jogo em .mod, .zip ou .7z, desenha no processador ou na placa, e traz a Z-Wheel -- o menu do aparelho -- quando a pasta de jogos está montada."
+# As linhas de "Core notes" da página de informação. **O formato não tem campo de endereço** --
+# conferido nos 582 `.info` de uma instalação do RetroArch: nenhum campo de URL, e os 34 que
+# trazem link o põem aqui, no padrão `(!) Homepage: ...`. O `|` separa uma linha da outra.
+#
+# O conteúdo é o mesmo do "Sobre" do desktop e dos ajustes do Android -- repositório e Discord --,
+# mais o que só o usuário do RetroArch precisa saber, porque no core não há tela para dizê-lo.
+notes = "(!) Repositório: https://github.com/ZeebxTeam/zeebx-emu|(!) Discord: https://discord.gg/D96HjsKTPa|(!) A Z-Wheel lista os jogos que estiverem na mesma pasta do que você abriu; sozinho, o menu do console abre vazio|(!) MIDI com banco de amostras: ponha um .sf2 em soundfonts/, na pasta de sistema do frontend; o core escreve o caminho exato no log ao abrir o jogo|(!) Sem contexto de OpenGL o core desenha no processador: nada deixa de funcionar, só fica mais lento"
+
+description = "O emulador definitivo de Zeebo! Movido a Qualcomm BREW 4.0.2, carrega o jogo em .mod, .zip ou .7z, desenha no processador ou na placa, e traz a Z-Wheel -- o menu do aparelho -- quando a pasta de jogos está montada."
