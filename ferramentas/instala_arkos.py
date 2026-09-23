@@ -39,7 +39,13 @@ def backup(path, rootfs):
     if not path.is_file():
         return None
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    out = rootfs / "zeebx-backup" / stamp / path.name
+    try:
+        relativo = path.resolve().relative_to(rootfs.resolve())
+    except ValueError:
+        # EASYROMS é outra partição: preserve pelo menos pasta final + nome, sem tentar escrever
+        # fora da árvore de backup nem colidir com um arquivo homônimo do ROOTFS.
+        relativo = pathlib.Path("external") / path.parent.name / path.name
+    out = rootfs / "zeebx-backup" / stamp / relativo
     out.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(path, out)
     return out
@@ -62,6 +68,7 @@ def main():
     ap.add_argument("--core", type=pathlib.Path, required=True)
     ap.add_argument("--info", type=pathlib.Path, required=True)
     ap.add_argument("--soundfont", type=pathlib.Path)
+    ap.add_argument("--font", type=pathlib.Path, help="tectoy.ttf (opcional; a Z-Wheel também pode instalá-la)")
     ap.add_argument("--rom", type=pathlib.Path, action="append", default=[])
     args = ap.parse_args()
     rootfs, romroot = args.rootfs, args.roms
@@ -69,7 +76,7 @@ def main():
         if not p.exists():
             print(f"não existe: {p}", file=sys.stderr)
             return 2
-    if args.core.stat().st_size < 100_000 or args.core.read_bytes()[:4] != b"\\x7fELF":
+    if args.core.stat().st_size < 100_000 or args.core.read_bytes()[:4] != b"\x7fELF":
         print("--core não parece ELF válido", file=sys.stderr)
         return 2
     core_dst = rootfs / "home/ark/.config/retroarch/cores/zeebx_libretro.so"
@@ -78,8 +85,12 @@ def main():
     user_es = rootfs / "home/ark/.emulationstation/es_systems.cfg"
     if user_es.is_file():
         es_paths.append(user_es)
+    template_es = rootfs / "usr/local/bin/es_systems.cfg"
+    if template_es.is_file():
+        es_paths.append(template_es)
     sf_dst = romroot / "bios/zeebx/aparelho/soundfonts/GeneralUser-GS.sf2"
-    for p in [core_dst, info_dst, *es_paths, sf_dst]:
+    font_dst = romroot / "bios/zeebx/aparelho/shared/fonts/tectoy.ttf"
+    for p in [core_dst, info_dst, *es_paths, sf_dst, font_dst]:
         old = backup(p, rootfs)
         if old:
             print(f"backup: {old}")
@@ -89,6 +100,13 @@ def main():
     shutil.copy2(args.info, info_dst)
     core_dst.chmod(0o755)
     info_dst.chmod(0o644)
+    ark_home = rootfs / "home/ark"
+    if ark_home.exists() and hasattr(shutil, "chown"):
+        try:
+            shutil.chown(core_dst, user=ark_home.stat().st_uid, group=ark_home.stat().st_gid)
+            shutil.chown(info_dst, user=ark_home.stat().st_uid, group=ark_home.stat().st_gid)
+        except (PermissionError, LookupError):
+            pass
     print(f"core: {core_dst} sha256={sha(core_dst)[:16]}...")
     print(f"info: {info_dst}")
     for es in es_paths:
@@ -111,6 +129,15 @@ def main():
         print(f"SoundFont: {sf_dst}")
     elif sf_dst.exists():
         print(f"SoundFont já presente: {sf_dst}")
+    if args.font:
+        if not args.font.is_file():
+            print(f"Fonte não existe: {args.font}", file=sys.stderr)
+            return 2
+        font_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(args.font, font_dst)
+        print(f"Fonte: {font_dst}")
+    elif font_dst.exists():
+        print(f"Fonte já presente: {font_dst}")
     print("Tudo instalado. Sincronize e desmonte as partições antes de remover o cartão.")
     return 0
 

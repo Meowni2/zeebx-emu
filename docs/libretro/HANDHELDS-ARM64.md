@@ -101,12 +101,15 @@ local x86:
 
 ```bash
 python3 ferramentas/instala_core.py --muos /media/$USER/ROOTFS \
+  --roms /media/$USER/ROMS \
   --so zeebx_libretro.so --info zeebx_libretro.info \
-  --banco GeneralUser-GS.sf2
+  --banco GeneralUser-GS.sf2 --font tectoy.ttf \
+  --rom 'Double Dragon (Brazil) (Es,Pt).zip' 
 ```
 
 Para um checkout com build local, `--so`/`--info` podem ser omitidos. O script faz backup datado,
-copia core + `.info`, cria as associações muOS, instala o SoundFont opcional e confere o SHA-256.
+copia core + `.info`, cria as associações muOS, atualiza o nome da pasta quando a partição de
+ROMs está montada, instala ROMs/SoundFont opcionais e confere o SHA-256.
 
 Ele faz o backup do core anterior com data no nome antes de sobrescrever, copia o `.so` e o
 `.info`, cria as associações do sistema, acrescenta a chave nos dois JSON e confere o `sha256` no
@@ -233,6 +236,7 @@ python3 ferramentas/instala_arkos.py \
   --core zeebx_libretro.so \
   --info zeebx_libretro.info \
   --soundfont GeneralUser-GS.sf2 \
+  --font tectoy.ttf \
   --rom 'Double Dragon (Brazil) (Es,Pt).zip'
 ```
 
@@ -242,7 +246,7 @@ Repita `--rom` para cada jogo. O instalador:
 - faz backup datado do core, `.info` e configurações antigas;
 - instala o `.so` 64-bit e o `.info`;
 - cria `EASYROMS/zeebo/` na posição correta (não `EASYROMS/roms/zeebo`);
-- copia ROMs e SoundFont;
+- copia ROMs, SoundFont e a fonte `tectoy.ttf` opcional;
 - insere/atualiza Zeebo no `es_systems.cfg` e valida o XML;
 - não desmonta o cartão, para você conferir o resumo antes de remover.
 

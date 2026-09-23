@@ -59,9 +59,10 @@ def acha_so(release):
 SISTEMA = "Zeebo"
 CHAVE = "zeebo"
 BANCO_RELATIVO = pathlib.Path("emulator/retroarch/system/zeebx/aparelho/soundfonts")
+FONTE_RELATIVA = pathlib.Path("emulator/retroarch/system/zeebx/aparelho/shared/fonts/tectoy.ttf")
 
 
-def instala_no_muos(raiz, origem_so, origem_info, banco):
+def instala_no_muos(raiz, origem_so, origem_info, banco, fonte, roms_raiz, roms):
     """Instala o core, o `.info`, as associações e, se pedido, o banco de amostras."""
     share = raiz / "opt/muos/share"
     if not (share / "core").is_dir():
@@ -125,7 +126,10 @@ def instala_no_muos(raiz, origem_so, origem_info, banco):
         print(f"aviso: {assoc} não existe; rode a tarefa *Refresh Automatic Core Assign* no muOS")
 
     # O nome exibido da pasta. Fica na loja (`MUOS/info/name`), que é onde o resto dos nomes mora.
-    for nome in (raiz / "ROMS/MUOS/info/name/folder.json", raiz / "MUOS/info/name/folder.json"):
+    candidatos_nome = [raiz / "ROMS/MUOS/info/name/folder.json", raiz / "MUOS/info/name/folder.json"]
+    if roms_raiz is not None:
+        candidatos_nome.insert(0, roms_raiz / "MUOS/info/name/folder.json")
+    for nome in candidatos_nome:
         if not nome.is_file():
             continue
         import json
@@ -140,6 +144,19 @@ def instala_no_muos(raiz, origem_so, origem_info, banco):
             print(f"{nome.name}: + \"{CHAVE}\": \"{SISTEMA}\"")
         break
 
+    if roms:
+        if roms_raiz is None:
+            print("--rom exige --roms com a raiz da partição de ROMs", file=sys.stderr)
+            return 1
+        alvo_roms = roms_raiz / "ROMS/Zeebo"
+        alvo_roms.mkdir(parents=True, exist_ok=True)
+        for rom in roms:
+            if not rom.is_file():
+                print(f"a ROM {rom} não existe", file=sys.stderr)
+                return 1
+            shutil.copy2(rom, alvo_roms / rom.name)
+            print(f"ROM:   {alvo_roms / rom.name}")
+
     if banco is not None:
         if not banco.is_file():
             print(f"o banco {banco} não existe", file=sys.stderr)
@@ -149,6 +166,15 @@ def instala_no_muos(raiz, origem_so, origem_info, banco):
         shutil.copy(banco, alvo_banco / banco.name)
         print(f"banco: {alvo_banco / banco.name} ({banco.stat().st_size} bytes)")
         print("       o próprio core diz este caminho no log quando não acha o banco")
+
+    if fonte is not None:
+        if not fonte.is_file():
+            print(f"a fonte {fonte} não existe", file=sys.stderr)
+            return 1
+        alvo_fonte = share / FONTE_RELATIVA
+        alvo_fonte.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(fonte, alvo_fonte)
+        print(f"fonte: {alvo_fonte} ({fonte.stat().st_size} bytes)")
 
     # Conferência final: copiar sem conferir é copiar sem saber.
     import hashlib
@@ -172,6 +198,9 @@ def main():
     ap.add_argument("--banco", type=pathlib.Path, default=None, help=".sf2 do MIDI, com --muos")
     ap.add_argument("--so", type=pathlib.Path, help=".so do pacote; dispensa build local")
     ap.add_argument("--info", type=pathlib.Path, help=".info do pacote; dispensa o arquivo do repo")
+    ap.add_argument("--font", type=pathlib.Path, help="tectoy.ttf, com --muos")
+    ap.add_argument("--roms", type=pathlib.Path, help="raiz montada da partição de ROMs do muOS")
+    ap.add_argument("--rom", type=pathlib.Path, action="append", default=[], help="ROM para ROMS/Zeebo; pode repetir")
     args = ap.parse_args()
 
     origem_so = args.so or acha_so(args.release)
@@ -184,7 +213,7 @@ def main():
         return 1
 
     if args.muos is not None:
-        return instala_no_muos(args.muos, pathlib.Path(origem_so), pathlib.Path(origem_info), args.banco)
+        return instala_no_muos(args.muos, pathlib.Path(origem_so), pathlib.Path(origem_info), args.banco, args.font, args.roms, args.rom)
 
     destino = args.destino or (acha_perfil() / "cores")
     destino.mkdir(parents=True, exist_ok=True)
