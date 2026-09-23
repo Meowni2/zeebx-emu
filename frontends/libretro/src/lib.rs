@@ -120,6 +120,13 @@ const ENV_SET_HW_RENDER: u32 = 14;
 ///
 /// No desktop o valor 1 (`RETRO_HW_CONTEXT_OPENGL`, compatibilidade) não serve: em RetroArch/EGL
 /// ele entregava perfil diferente do que o motor esperava e falhava com `GL: Invalid enum`.
+#[cfg(target_os = "emscripten")]
+const HW_CONTEXT: u32 = 4; // RETRO_HW_CONTEXT_OPENGLES3 — WebGL2
+#[cfg(target_os = "emscripten")]
+const HW_VERSION_MAJOR: u32 = 3;
+#[cfg(target_os = "emscripten")]
+const HW_VERSION_MINOR: u32 = 0;
+
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 const HW_CONTEXT: u32 = 5; // RETRO_HW_CONTEXT_OPENGLES_VERSION (GLES 3.1+)
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
@@ -127,11 +134,20 @@ const HW_VERSION_MAJOR: u32 = 3;
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 const HW_VERSION_MINOR: u32 = 2;
 
-#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
+#[cfg(not(any(
+    target_os = "emscripten",
+    all(target_os = "linux", target_arch = "aarch64")
+)))]
 const HW_CONTEXT: u32 = 3; // RETRO_HW_CONTEXT_OPENGL_CORE
-#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
+#[cfg(not(any(
+    target_os = "emscripten",
+    all(target_os = "linux", target_arch = "aarch64")
+)))]
 const HW_VERSION_MAJOR: u32 = 3;
-#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
+#[cfg(not(any(
+    target_os = "emscripten",
+    all(target_os = "linux", target_arch = "aarch64")
+)))]
 const HW_VERSION_MINOR: u32 = 3;
 
 /// O valor que o `retro_video_refresh` recebe quando o quadro saiu no framebuffer do frontend.

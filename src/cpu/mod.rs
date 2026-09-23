@@ -249,10 +249,20 @@ impl std::fmt::Display for CpuError {
 
 impl std::error::Error for CpuError {}
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod dynarmic;
 
+/// Interpretador A32/T32. Existe porque o `dynarmic` emite código nativo do host, e um módulo
+/// WebAssembly não executa esse bloco. Entra no `wasm32` e nos testes do próprio arquivo; o
+/// desktop continua no JIT.
+#[cfg(any(test, target_arch = "wasm32"))]
+pub mod interpretador;
+
 /// O alias que o resto do código usa para pedir "o backend padrão".
+#[cfg(not(target_arch = "wasm32"))]
 pub type BackendPadrao = dynarmic::DynarmicCpu;
+#[cfg(target_arch = "wasm32")]
+pub type BackendPadrao = interpretador::Interpretador;
 
 // As constantes da faixa de vtables do BREW são parte do contrato entre o backend e o despachante.
 pub use faixas_do_brew::{API_BASE, API_SIZE, RETURN_MAGIC};

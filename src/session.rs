@@ -8,7 +8,13 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use crate::cpu::dynarmic::DynarmicCpu;
+/// No desktop e no core nativo a sessão recompila os blocos. No `wasm32` o JIT não tem
+/// arquitetura de destino — o bloco emitido não roda no navegador — e o interpretador ocupa
+/// o mesmo lugar.
+#[cfg(not(target_arch = "wasm32"))]
+use crate::cpu::dynarmic::DynarmicCpu as CpuDaSessao;
+#[cfg(target_arch = "wasm32")]
+use crate::cpu::interpretador::Interpretador as CpuDaSessao;
 use crate::input::Pad;
 use crate::library;
 use crate::loader;
@@ -101,8 +107,9 @@ pub enum Step {
 pub struct Session {
     /// O mesmo agendador BREW usado pela bancada e pela linha de comando, com o núcleo que
     /// recompila os blocos ARM do módulo. O Kingdom Hearts desenha a intro no seu próprio
-    /// rasterizador ARM; por isso a sessão usa o JIT diretamente.
-    machine: Machine<DynarmicCpu>,
+    /// rasterizador ARM; por isso a sessão usa o JIT diretamente. No `wasm32` esse lugar é o
+    /// interpretador.
+    machine: Machine<CpuDaSessao>,
     /// O applet criado e ainda **não** iniciado, com o ClassID dele.
     ///
     /// O `EVT_APP_START` é despachado na primeira volta do laço, não aqui. Rodá-lo dentro do
@@ -349,7 +356,7 @@ impl Session {
             }
             false => None,
         };
-        let cpu = DynarmicCpu::new().map_err(|e| StartError::NotLoadable(e.to_string()))?;
+        let cpu = CpuDaSessao::new().map_err(|e| StartError::NotLoadable(e.to_string()))?;
         let mut machine = Machine::new_with_storage(cpu, module, root, storage, save_root);
         // A lista precisa existir antes de `run` e `create_applet`: a Z-Wheel a enumera no boot.
         machine.set_installed_applets(instalados.iter().cloned());
@@ -1070,11 +1077,11 @@ impl Session {
     ///
     /// Existe para o perfil de tempo por método: ligar o cronômetro por chamada é coisa que se faz
     /// **antes** do laço, e a varredura precisa fazer isso de fora da sessão.
-    pub(crate) fn machine_mut(&mut self) -> &mut Machine<DynarmicCpu> {
+    pub(crate) fn machine_mut(&mut self) -> &mut Machine<CpuDaSessao> {
         &mut self.machine
     }
 
-    pub(crate) fn machine(&self) -> &Machine<DynarmicCpu> {
+    pub(crate) fn machine(&self) -> &Machine<CpuDaSessao> {
         &self.machine
     }
 
