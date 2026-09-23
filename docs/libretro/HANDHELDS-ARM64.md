@@ -95,11 +95,18 @@ aparece" por `dlopen` recusado.
 
 ### Instalar
 
-Com a partição ROOTFS do cartão do sistema montada, é **um comando**:
+Com a partição ROOTFS do cartão do sistema montada, é **um comando**. Se estiver usando os
+arquivos de um artefato/release, passe `--so` e `--info`; assim o instalador não exige um build
+local x86:
 
 ```bash
-python3 ferramentas/instala_core.py --muos /media/$USER/ROOTFS --banco GeneralUser-GS.sf2
+python3 ferramentas/instala_core.py --muos /media/$USER/ROOTFS \
+  --so zeebx_libretro.so --info zeebx_libretro.info \
+  --banco GeneralUser-GS.sf2
 ```
+
+Para um checkout com build local, `--so`/`--info` podem ser omitidos. O script faz backup datado,
+copia core + `.info`, cria as associações muOS, instala o SoundFont opcional e confere o SHA-256.
 
 Ele faz o backup do core anterior com data no nome antes de sobrescrever, copia o `.so` e o
 `.info`, cria as associações do sistema, acrescenta a chave nos dois JSON e confere o `sha256` no
@@ -205,6 +212,43 @@ SoundFont:  /roms/bios/zeebx/aparelho/soundfonts/GeneralUser-GS.sf2
 
 Na montagem do cartão no Linux, `EASYROMS` é a raiz que aparece como `/roms` no aparelho. Não
 crie `EASYROMS/roms/zeebo`; o caminho correto é diretamente `EASYROMS/zeebo/`.
+
+### Instalação automática (recomendada)
+
+Baixe estes arquivos no mesmo diretório:
+
+```text
+zeebx_libretro.so
+zeebx_libretro.info
+GeneralUser-GS.sf2       (opcional, recomendado para MIDI real)
+Double Dragon ...zip      (ou outras ROMs)
+```
+
+Monte as três partições do cartão e rode o instalador do repositório:
+
+```bash
+python3 ferramentas/instala_arkos.py \
+  --rootfs /media/$USER/root \
+  --roms /media/$USER/EASYROMS \
+  --core zeebx_libretro.so \
+  --info zeebx_libretro.info \
+  --soundfont GeneralUser-GS.sf2 \
+  --rom 'Double Dragon (Brazil) (Es,Pt).zip'
+```
+
+Repita `--rom` para cada jogo. O instalador:
+
+- valida o ELF do core;
+- faz backup datado do core, `.info` e configurações antigas;
+- instala o `.so` 64-bit e o `.info`;
+- cria `EASYROMS/zeebo/` na posição correta (não `EASYROMS/roms/zeebo`);
+- copia ROMs e SoundFont;
+- insere/atualiza Zeebo no `es_systems.cfg` e valida o XML;
+- não desmonta o cartão, para você conferir o resumo antes de remover.
+
+O instalador não depende de build local. Use o `.so`/`.info` do artefato Linux AArch64 da release
+ou Actions. Para ArkOS antigo com glibc 2.30, use o artefato compatível com glibc 2.28; o core
+comum do CI pode exigir `GLIBC_2.34`.
 
 ### Instalação manual
 

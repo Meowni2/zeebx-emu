@@ -15,6 +15,8 @@ E para o **cartão do muOS**, que tem outra arrumação (o lançador chama
 
     python3 ferramentas/instala_core.py --muos /media/$USER/ROOTFS
     python3 ferramentas/instala_core.py --muos /media/$USER/ROOTFS --banco Banco.sf2
+    python3 ferramentas/instala_core.py --muos /media/$USER/ROOTFS \
+      --so zeebx_libretro.so --info zeebx_libretro.info --banco GeneralUser-GS.sf2
 """
 
 import argparse
@@ -59,7 +61,7 @@ CHAVE = "zeebo"
 BANCO_RELATIVO = pathlib.Path("emulator/retroarch/system/zeebx/aparelho/soundfonts")
 
 
-def instala_no_muos(raiz, origem_so, banco):
+def instala_no_muos(raiz, origem_so, origem_info, banco):
     """Instala o core, o `.info`, as associações e, se pedido, o banco de amostras."""
     share = raiz / "opt/muos/share"
     if not (share / "core").is_dir():
@@ -84,7 +86,7 @@ def instala_no_muos(raiz, origem_so, banco):
     alvo_so.chmod(0o755)
     info = share / "emulator/retroarch/info/zeebx_libretro.info"
     info.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(ORIGEM_INFO, info)
+    shutil.copy(origem_info, info)
     print(f"core:  {alvo_so} ({alvo_so.stat().st_size} bytes)")
     print(f"info:  {info}")
 
@@ -168,22 +170,21 @@ def main():
     ap.add_argument("--release", action="store_true", help="prefere target/release")
     ap.add_argument("--muos", type=pathlib.Path, default=None, help="raiz do cartão do muOS montado")
     ap.add_argument("--banco", type=pathlib.Path, default=None, help=".sf2 do MIDI, com --muos")
+    ap.add_argument("--so", type=pathlib.Path, help=".so do pacote; dispensa build local")
+    ap.add_argument("--info", type=pathlib.Path, help=".info do pacote; dispensa o arquivo do repo")
     args = ap.parse_args()
 
-    origem_so = acha_so(args.release)
-    if origem_so is None:
-        print(
-            "não achou o core compilado.\n"
-            "  CARGO_PROFILE_DEV_DEBUG=0 cargo build -p zeebx-libretro",
-            file=sys.stderr,
-        )
+    origem_so = args.so or acha_so(args.release)
+    origem_info = args.info or ORIGEM_INFO
+    if origem_so is None or not pathlib.Path(origem_so).is_file():
+        print("não achou o core compilado; use --so zeebx_libretro.so ou faça um build local", file=sys.stderr)
         return 1
-    if not ORIGEM_INFO.is_file():
-        print(f"não achou {ORIGEM_INFO}", file=sys.stderr)
+    if not pathlib.Path(origem_info).is_file():
+        print(f"não achou {origem_info}", file=sys.stderr)
         return 1
 
     if args.muos is not None:
-        return instala_no_muos(args.muos, origem_so, args.banco)
+        return instala_no_muos(args.muos, pathlib.Path(origem_so), pathlib.Path(origem_info), args.banco)
 
     destino = args.destino or (acha_perfil() / "cores")
     destino.mkdir(parents=True, exist_ok=True)
