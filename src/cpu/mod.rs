@@ -257,21 +257,6 @@ pub type BackendPadrao = dynarmic::DynarmicCpu;
 // As constantes da faixa de vtables do BREW são parte do contrato entre o backend e o despachante.
 pub use faixas_do_brew::{API_BASE, API_SIZE, RETURN_MAGIC};
 
-/// Registro de uma escrita observada por um watchpoint.
-///
-/// Fica aqui porque o diagnóstico da linha de comando mantém o mesmo formato de saída mesmo quando
-/// o backend não coleta acessos detalhados.
-#[derive(Debug, Clone, Copy)]
-pub struct Write {
-    pub addr: u32,
-    pub value: i64,
-    /// PC de origem, ou zero quando quem escreveu foi o próprio emulador (implementação de
-    /// API), que não passa pelos ganchos de escrita do guest.
-    pub pc: u32,
-    /// `lr` no momento da escrita: quando o PC cai numa função utilitária compartilhada — um
-    /// `operator=`, um `memcpy` —, é o `lr` que diz quem pediu.
-    pub lr: u32,
-}
 
 /// As três constantes da faixa reservada às vtables do BREW.
 ///
