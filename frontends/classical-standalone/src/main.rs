@@ -11,6 +11,10 @@ use zeebx::{audio, cpu, input, library, loader, machine, session, ui};
 
 use std::process::ExitCode;
 
+// A interface Qt, em prova de viabilidade: docs/implementacao/21-migracao-para-qt.md.
+#[cfg(feature = "ui-qt")]
+mod qt;
+
 use zeebx::brew::aee;
 use zeebx::cpu::{BackendPadrao, CpuBackend, dynarmic::DynarmicCpu};
 use zeebx::input::bindings;
@@ -506,7 +510,7 @@ fn main() -> ExitCode {
         }
         // A interface Qt, em prova de viabilidade: docs/implementacao/21-migracao-para-qt.md.
         #[cfg(feature = "ui-qt")]
-        Some("qt") if args.len() >= 2 => ui::qt::launch(&args[1], args.iter().any(|a| a == "--placa")),
+        Some("qt") if args.len() >= 2 => qt::launch(&args[1], args.iter().any(|a| a == "--placa")),
         // Sem argumento nenhum, o que se quer é o emulador, não a ajuda.
         None => launch(),
         _ => {
