@@ -2,7 +2,7 @@
 name = "zeebx-libretro"
 version = "0.3.0"
 edition = "2024"
-license = "GPL-2.0-only"
+license = "GPL-2.0-or-later"
 description = "Core Libretro do emulador Zeebx"
 publish = false
 

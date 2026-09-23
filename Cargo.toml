@@ -12,9 +12,10 @@ resolver = "3"
 name = "zeebx"
 version = "0.3.0"
 edition = "2024"
-# GPLv2 porque o unicorn-engine é GPLv2 e vai compilado dentro do binário. Ver LICENSE.
+# O código do Zeebx é GPLv2 ou posterior. Artefatos que linkam o `unicorn-engine` continuam
+# limitados pela GPLv2 desse componente; frontends GPLv3 devem compilar sem a feature `unicorn`.
 authors = ["ZeebxTeam"]
-license = "GPL-2.0-only"
+license = "GPL-2.0-or-later"
 repository = "https://github.com/ZeebxTeam/zeebx-emu"
 description = "O emulador definitivo de Zeebo!"
 
@@ -122,7 +123,7 @@ zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }
 # Action Hero 3D, Need For Speed, zeetris e a Z-Wheel. Um decodificador de Layer III é Huffman,
 # requantização, IMDCT e banco de síntese, e escrever isso sem uma referência para comparar dá
 # som que toca e sai errado. O symphonia é Rust puro (sem build C) e MPL-2.0, que se combina com
-# o GPLv2 daqui. Só o MP3 entra: o resto dos codecs fica fora.
+# a licença GPLv2+ daqui. Só o MP3 entra: o resto dos codecs fica fora.
 # `mp3` é a música da maioria dos jogos; `ogg`/`vorbis` é a de quem entrega Opus/Vorbis —
 # o Turma da Mônica tem **86 sons** em Ogg, e sem a feature o jogo roda em silêncio absoluto
 # (medido: pico 0,000 no relatório da varredura). É o mesmo decodificador, com duas caixas a mais.

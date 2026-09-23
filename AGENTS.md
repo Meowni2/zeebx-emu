@@ -91,9 +91,10 @@ vale disparar aquele workflow antes da tag. Você não consegue dispará-lo.
 - **O `.so` do core e o `zeebx_libretro.info` andam em par.** Um `.info` velho ao lado de um core
   novo faz o scan do RetroArch marcar `??` em tudo. E os campos de capacidade do `.info` têm de
   casar com o que a ABI faz.
-- **A licença é GPL-2.0-only**, porque o `unicorn-engine` é GPLv2 e vai compilado dentro do
-  binário. Isso **exclui** qualquer dependência LGPLv3 ou GPLv3 — Qt 6, por exemplo. Antes de
-  propor uma biblioteca nova, cheque a licença dela.
+- **O código do Zeebx é GPL-2.0-or-later**, mas o `unicorn-engine` é GPLv2 e vai compilado nos
+  builds que habilitam a feature `unicorn`. Isso **exclui** qualquer dependência LGPLv3 ou GPLv3
+  nesses artefatos — Qt 6, por exemplo, precisa de um frontend sem `unicorn`. Antes de propor uma
+  biblioteca nova, cheque a licença dela e as features do binário que vai linká-la.
 - **O `Cargo.lock` é versionado** e o CI usa `--locked`. Membro novo no workspace entra no lock,
   no mesmo commit.
 

@@ -186,7 +186,9 @@ O repositório não distribui jogos. Coloque os seus em `roms/`, que é ignorada
 
 ## Licença
 
-GPL-2.0, o texto completo em [LICENSE](LICENSE).
+GPL-2.0-or-later, o texto completo da GPLv2 em [LICENSE](LICENSE). Builds que linkam
+`unicorn-engine` continuam limitados pela compatibilidade GPLv2 desse componente; frontends GPLv3
+devem compilar o núcleo sem a feature `unicorn`.
 
 
 ## Menções
