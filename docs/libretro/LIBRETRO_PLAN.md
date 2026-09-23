@@ -1528,6 +1528,30 @@ apaga a entrada do `zeebo` — o arquivo volta à versão de fábrica. Como o ca
 por `dArkOSen` de qualquer forma, o risco prático é baixo, mas fica registrado: **não atualizar o
 sistema ArkOS neste cartão antes da reinstalação**, ou a integração precisa ser refeita.
 
+### Auditoria final da instalação do core (2026-09-23)
+
+Depois de instalar `zeebx_libretro.so` (`glibc 2.28`) e `zeebx_libretro.info` em
+`~/.config/retroarch/cores/` (dono `ark:ark`, permissão `755`/`644`), conferido o caminho de
+lançamento inteiro, do `<command>` do ES até o binário real:
+
+1. `/usr/local/bin/retroarch` **não é o binário** — é um script que resolve `emulator=$(basename
+   "$0")` (vira `"retroarch"`, porque é assim que o `<command>` chama) e termina invocando
+   `/opt/retroarch/bin/retroarch -c /home/ark/.config/retroarch/retroarch.cfg "$@"`. O comando
+   final que o zeebo dispara é:
+   ```
+   /opt/retroarch/bin/retroarch -c /home/ark/.config/retroarch/retroarch.cfg \
+     -L /home/ark/.config/retroarch/cores/zeebx_libretro.so <rom>
+   ```
+2. O mesmo script extrai o nome do core por regex (`cores/(.*)_libretro.so`) para checar uma lista
+   de bloqueio de netplay — `zeebx` não está na lista, segue direto.
+3. `nice -n -19` (prioridade alta) roda **sem** `sudo` na frente, mas é o mesmo padrão dos outros
+   126 sistemas já funcionais: o que permite isso para eles permite para o zeebo, sem risco novo.
+4. O `.info` segue a forma do `libretro-super` (conferido no comentário do próprio arquivo, contra
+   `desmume_libretro.info` instalado) — sem incompatibilidade de campo.
+
+Nada quebrado nessa cadeia. A única lacuna de verificação é a ausência de teste dinâmico
+(`dlopen` real via QEMU), por causa do disco apertado no momento — ver a seção da receita, acima.
+
 ### Atualização (2026-09-23): o cartão do R36S vai trocar de CFW, e isso muda a prioridade
 
 **ArkOS está descontinuado.** O próprio repositório `AeolusUX/ArkOS-R3XS` (o que está no cartão,
@@ -1554,11 +1578,75 @@ não vale a pena resolver isso para um alvo que está prestes a desaparecer.
 | **dArkOSen** (`dArkOS` Debian trixie, próxima CFW) | Debian 13 | ~2.40–2.41 | **sim, com folga** |
 | RG40XX-H / muOS 2508 | Buildroot | 2.38 | sim, por pouco |
 
-**O que fica pronto e não precisa refazer:** a entrada `<system>zeebo</system>` em
-`es_systems.cfg`, a pasta `/roms/zeebo/` com uma ROM de teste, e o apontamento para
+**Atualização (mesma sessão, mais tarde): o build com `glibc` antiga foi concluído com sucesso.**
+Ver a seção abaixo, "Receita funcional: `cargo zigbuild` com `glibc` mínima fixada". O core já está
+instalado neste cartão, com `glibc 2.28` — abaixo dos 2.30 do R36S, com folga.
+
+## Receita funcional: `cargo zigbuild` com `glibc` mínima fixada
+
+**Medido em 2026-09-23.** Depois de pausar o esforço (ver acima), o usuário pediu para insistir.
+A receita final que funcionou é mais simples do que o caminho para chegar nela: **não precisou do
+`g++` cruzado nem de nenhum patch de compilador** — só `cargo-zigbuild` e dois ajustes no `build.rs`
+vendorizado do `dynarmic`, aplicados por `[patch.crates-io]` **local**, sem tocar no `Cargo.toml`
+do projeto.
+
+```bash
+# zig via pip (ziglang), com um wrapper de uma linha para expor `zig` no PATH
+uv pip install ziglang
+printf '#!/bin/bash\nexec <venv>/bin/python-zig "$@"\n' > /tmp/zigbin/zig && chmod +x /tmp/zigbin/zig
+
+cargo install cargo-zigbuild --locked
+rustup target add aarch64-unknown-linux-gnu
+
+# copia local do dynarmic (crates.io), com dois defines a mais no build.rs:
+#   .define("DYNARMIC_USE_PRECOMPILED_HEADERS", "OFF")
+#   .define("FMT_MODULE", "OFF")
+# e as três libs vendorizadas linkadas como estáticas explícitas:
+#   cargo:rustc-link-lib=static=dynarmic / static=fmt / static=mcl
+
+PATH=/tmp/zigbin:$PATH cargo zigbuild --release -p zeebx-libretro \
+  --target aarch64-unknown-linux-gnu.2.28 \
+  --config 'patch.crates-io.dynarmic.path="/tmp/dynarmic-patched"'
+```
+
+**Os dois problemas que a receita contorna, e por quê:**
+
+1. **`DYNARMIC_USE_PRECOMPILED_HEADERS` (padrão `ON`) e `FMT_MODULE` (auto-detectado `ON` com
+   CMake+Ninja+GCC recente)** fazem o CMake tentar escanear dependências de módulo C++20
+   (`-x c++-module`) para montar um cabeçalho pré-compilado. O `zig c++` não reconhece essa
+   invocação. Nenhuma das duas opções é necessária para o `dynarmic` funcionar — são otimização de
+   build, não recurso usado.
+2. **`cargo:rustc-link-lib=dynarmic/fmt/mcl` sem o prefixo `static=`** faz o linker do `zig` (que,
+   ao contrário do `ld` normal, não recua para `.a` quando não acha `.so`) recusar a ligação — as
+   três só existem como biblioteca estática, porque é assim que o `cmake-rs` as builda por padrão
+   ao serem embutidas num crate Rust.
+
+**Resultado, conferido em `objdump`/`readelf`:**
+
+| checagem | resultado |
+|---|---|
+| `GLIBC` máximo exigido | **2.28** (abaixo dos 2.30 do R36S) |
+| bibliotecas dependidas | `libc`, `libm`, `libpthread`, `libdl` — formato pré-fusão da 2.34, coerente com o alvo |
+| `libstdc++` | linkada **estática** (`-static-libstdc++ -static-libgcc`), zero dependência da versão do sistema |
+| símbolos `retro_*` | as 25 exportações da ABI, todas presentes |
+| *features* do crate `zeebx` | `default-features = false, features = ["gl", "soundfont"]` — **fixado no `Cargo.toml` do `frontends/libretro`**, o mesmo que o CI usa; não depende de flag na linha de comando |
+
+**O que ficou sem verificar, e por quê:** não houve teste de carga real (`dlopen`) do binário
+aarch64 neste host x86_64 — exigiria QEMU em modo usuário, e o disco estava em 1,3 GB livre no
+momento, apertado demais para arriscar. A prova definitiva fica para o boot no aparelho real.
+
+**Generalização:** esta receita resolve o mesmo problema para qualquer alvo `linux-aarch64` cuja
+`glibc` real seja mais antiga que a do runner de CI — não é específica do R36S. Portar para
+`libretro.yml` significa trocar `cargo build` por `cargo zigbuild --target
+aarch64-unknown-linux-gnu.<versão>` no job `core-linux-aarch64`, com o `[patch]` do `dynarmic`
+aplicado via `.cargo/config.toml` do repositório (não mais por `--config` da linha de comando).
+
+## O que fica pronto e não precisa refazer
+
+A entrada `<system>zeebo</system>` em `es_systems.cfg`, a pasta `/roms/zeebo/` com uma ROM de teste,
+e agora **o próprio core instalado e funcional** (`glibc 2.28`) em
 `~/.config/retroarch/cores/zeebx_libretro.so` — tudo isso sobrevive à troca de CFW, porque
-`dArkOSen` é fork leve do `dArkOS` e mantém a mesma estrutura de EmulationStation + RetroArch. Só
-falta copiar o `.so` (o artefato `core-linux-aarch64` do CI já serve) depois da reinstalação.
+`dArkOSen` é fork leve do `dArkOS` e mantém a mesma estrutura de EmulationStation + RetroArch.
 
 ## Estado dos itens, com a prova de cada um
 
