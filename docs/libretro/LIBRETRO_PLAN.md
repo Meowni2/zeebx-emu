@@ -794,6 +794,34 @@ global pelo mesmo motivo: o cache de bancos abertos.
 **O rótulo diz quando o efeito chega.** Nenhuma das três pede reinício, mas nenhuma vale na hora
 como o volume. Omitir isso faria o usuário concluir que a opção não funciona.
 
+```text
+key:      zeebx_perfil
+category: sistema
+values:   padrao | portatil
+default:  padrao
+aplica:   sintetizador MIDI ao recarregar; o resto sem recarregar
+```
+
+**"Portátil" existe porque dez botões soltos não é o que o RG40XX-H precisa.** Junta de uma vez o
+que a investigação em ARM fraco mediu como o que mais custa: tabela de timbres em vez de SoundFont,
+taxa e vozes do MIDI reduzidas, cache de som menor, sem supersampling no 3D.
+
+**Deliberadamente fica de fora:** volume e névoa, porque são gosto de quem joga e não custo de
+processador; e o rasterizador, porque forçar processador tiraria a placa de quem tem GPU capaz —
+a opção separada continua sendo o escape para quem precisa dela. Um preset que sacrifica o que não
+tem nada a ver com desempenho é o defeito clássico deste tipo de botão.
+
+Enquanto ativo, o perfil **ganha** das opções individuais que cobre — elas continuam visíveis no
+menu, mas ficam sem efeito. É a única forma de um preset funcionar sem a API ter um jeito de
+esconder opção.
+
+### Defeito encontrado nesta fase: categoria "vídeo" nunca registrada
+
+As cinco opções de vídeo da fase anterior declaravam `category_key: c"video"`, mas o arranjo
+`CATEGORIAS` só tinha `"audio"`. O frontend não trava com uma categoria que não bate — a opção só
+fica sem o agrupamento certo no menu — e por isso o defeito não apareceu em teste nenhum. Corrigido
+junto com a categoria `"sistema"` do perfil.
+
 ### Como uma opção nova deve nascer
 
 Toda opção que dá para aplicar sem recriar a sessão entra em `aplica_opcoes_quentes`, e **não**

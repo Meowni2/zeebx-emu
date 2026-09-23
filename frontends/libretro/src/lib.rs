@@ -915,11 +915,25 @@ unsafe fn registra_opcoes_do_core() {
     } && versao >= 2;
 
     if tem_v2 {
-        static CATEGORIAS: [RetroCoreOptionV2Category; 2] = [
+        // **Defeito da fase anterior, corrigido aqui.** Cinco opções de vídeo já declaravam
+        // `category_key: c"video"`, mas este arranjo só tinha a categoria `"audio"` — a de vídeo
+        // nunca foi registrada. O frontend não trava com uma chave que não bate com nenhuma
+        // categoria, mas a opção fica sem o agrupamento certo no menu, e ninguém tinha reparado.
+        static CATEGORIAS: [RetroCoreOptionV2Category; 4] = [
             RetroCoreOptionV2Category {
                 key: c"audio".as_ptr(),
                 desc: c"Áudio".as_ptr(),
                 info: c"Configurações de síntese e saída de som do Zeebx".as_ptr(),
+            },
+            RetroCoreOptionV2Category {
+                key: c"video".as_ptr(),
+                desc: c"Vídeo".as_ptr(),
+                info: c"Configurações de rasterização e imagem do Zeebx".as_ptr(),
+            },
+            RetroCoreOptionV2Category {
+                key: c"sistema".as_ptr(),
+                desc: c"Sistema".as_ptr(),
+                info: c"Perfis e ajustes gerais do Zeebx".as_ptr(),
             },
             RetroCoreOptionV2Category {
                 key: std::ptr::null(),
@@ -1078,7 +1092,20 @@ unsafe fn registra_opcoes_do_core() {
             };
         }
 
-        let definicoes: [RetroCoreOptionV2Definition; 11] = [
+        let mut perfil_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        perfil_values[0] = RetroCoreOptionValue {
+            value: c"padrao".as_ptr(),
+            label: c"Padrão".as_ptr(),
+        };
+        perfil_values[1] = RetroCoreOptionValue {
+            value: c"portatil".as_ptr(),
+            label: c"Portátil (aparelho de mão fraco)".as_ptr(),
+        };
+
+        let definicoes: [RetroCoreOptionV2Definition; 12] = [
             RetroCoreOptionV2Definition {
                 key: c"zeebx_midi_backend".as_ptr(),
                 desc: c"Sintetizador MIDI (reinício)".as_ptr(),
@@ -1098,6 +1125,16 @@ unsafe fn registra_opcoes_do_core() {
                 category_key: c"audio".as_ptr(),
                 values: vol_values,
                 default_value: c"100".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_perfil".as_ptr(),
+                desc: c"Perfil".as_ptr(),
+                desc_categorized: c"Perfil".as_ptr(),
+                info: c"Portátil aplica de uma vez o que o aparelho de mão fraco (RG40XX-H, muOS) precisa: tabela de timbres em vez de SoundFont, taxa e vozes do MIDI reduzidas, cache de som menor e sem supersampling no 3D. Enquanto ativo, ignora as opções individuais que ele cobre (mas não volume, névoa nem rasterizador, que continuam por conta própria). O sintetizador MIDI muda ao recarregar o conteúdo; o resto vale sem recarregar.".as_ptr(),
+                info_categorized: c"Portátil junta os ajustes de desempenho para aparelho de mão fraco. Ignora as opções individuais que cobre.".as_ptr(),
+                category_key: c"sistema".as_ptr(),
+                values: perfil_values,
+                default_value: c"padrao".as_ptr(),
             },
             RetroCoreOptionV2Definition {
                 key: c"zeebx_soundfont_taxa".as_ptr(),
@@ -1203,7 +1240,7 @@ unsafe fn registra_opcoes_do_core() {
             );
         }
     } else {
-        static VARIAVEIS: [RetroVariable; 11] = [
+        static VARIAVEIS: [RetroVariable; 12] = [
             RetroVariable {
                 key: c"zeebx_midi_backend".as_ptr(),
                 value: c"Sintetizador MIDI (reinício); auto|timbres|soundfont".as_ptr(),
@@ -1211,6 +1248,10 @@ unsafe fn registra_opcoes_do_core() {
             RetroVariable {
                 key: c"zeebx_volume".as_ptr(),
                 value: c"Volume; 100|90|80|70|60|50|40|30|20|10|0".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_perfil".as_ptr(),
+                value: c"Perfil; padrao|portatil".as_ptr(),
             },
             RetroVariable {
                 key: c"zeebx_soundfont_taxa".as_ptr(),
@@ -1312,6 +1353,15 @@ fn numero_de_texto(texto: &str, minimo: usize, maximo: usize) -> Option<usize> {
     Some(valor.clamp(minimo, maximo))
 }
 
+/// Se o texto da opção de perfil pede o perfil Portátil.
+///
+/// Extraída porque a checagem acontece em dois lugares — o nascimento da sessão, para o
+/// sintetizador MIDI, e a releitura a quente, para o resto — e as duas tinham a mesma
+/// comparação escrita de novo. Duas cópias divergem com o tempo; uma função não.
+fn perfil_e_portatil(texto: Option<&str>) -> bool {
+    texto.is_some_and(|texto| texto.trim().eq_ignore_ascii_case("portatil"))
+}
+
 /// Lê um interruptor. A convenção de valor é `enabled`/`disabled`, que é a do ecossistema.
 fn ligado_de_texto(texto: &str) -> Option<bool> {
     match texto.trim().to_ascii_lowercase().as_str() {
@@ -1337,42 +1387,73 @@ fn aplica_opcoes_quentes(estado: &mut Core) {
     if let Some(neblina) = unsafe { le_opcao(c"zeebx_neblina") }.as_deref().and_then(ligado_de_texto) {
         estado.session.define_neblina(neblina);
     }
-    if let Some(escala) = unsafe { le_opcao(c"zeebx_resolucao_interna") }
-        .as_deref()
-        .and_then(|texto| numero_de_texto(texto, 1, 8))
-    {
+    // **O perfil "Portátil" ganha das opções individuais que ele cobre, quando ativo.** Volume e
+    // névoa ficam de fora de propósito: são gosto de quem joga, não custo de processador ou
+    // memória, e o perfil é sobre desempenho. O rasterizador também fica de fora — ele só muda ao
+    // recarregar, e forçar processador tiraria a placa de quem tem uma GPU capaz; a opção separada
+    // continua sendo o escape para quem precisa dela.
+    let perfil_portatil = perfil_e_portatil(unsafe { le_opcao(c"zeebx_perfil") }.as_deref());
+
+    let escala = if perfil_portatil {
+        Some(1)
+    } else {
+        unsafe { le_opcao(c"zeebx_resolucao_interna") }
+            .as_deref()
+            .and_then(|texto| numero_de_texto(texto, 1, 8))
+    };
+    if let Some(escala) = escala {
         estado.session.define_resolucao_interna(escala);
     }
+
     // **Áudio e memória valem para o que vier depois.** A música já sintetizada não muda de taxa
     // e o som já guardado não encolhe: estas três valem da próxima música e do próximo descarte em
     // diante, e é por isso que não pedem reinício — mas também por isso o efeito não é imediato
     // como o do volume, e os rótulos dizem isso.
-    if let Some(taxa) = unsafe { le_opcao(c"zeebx_soundfont_taxa") }
-        .as_deref()
-        .and_then(|texto| texto.trim().parse::<u32>().ok())
-    {
+    let taxa = if perfil_portatil {
+        Some(zeebx::audio::midi::RATE)
+    } else {
+        unsafe { le_opcao(c"zeebx_soundfont_taxa") }
+            .as_deref()
+            .and_then(|texto| texto.trim().parse::<u32>().ok())
+    };
+    if let Some(taxa) = taxa {
         zeebx::audio::soundfont::define_taxa(taxa);
     }
-    if let Some(vozes) = unsafe { le_opcao(c"zeebx_midi_vozes") }
-        .as_deref()
-        .and_then(|texto| numero_de_texto(texto, 8, 256))
-    {
+    let vozes = if perfil_portatil {
+        Some(48)
+    } else {
+        unsafe { le_opcao(c"zeebx_midi_vozes") }
+            .as_deref()
+            .and_then(|texto| numero_de_texto(texto, 8, 256))
+    };
+    if let Some(vozes) = vozes {
         zeebx::audio::soundfont::define_vozes(vozes);
     }
-    if let Some(mib) = unsafe { le_opcao(c"zeebx_cache_de_som_mb") }
-        .as_deref()
-        .and_then(|texto| numero_de_texto(texto, 1, 256))
-    {
+    let mib = if perfil_portatil {
+        Some(8)
+    } else {
+        unsafe { le_opcao(c"zeebx_cache_de_som_mb") }
+            .as_deref()
+            .and_then(|texto| numero_de_texto(texto, 1, 256))
+    };
+    if let Some(mib) = mib {
         zeebx::machine::define_teto_do_cache_de_som(mib * 1024 * 1024);
     }
+
     // **As duas melhorias entram na mesma chamada**, porque a API do motor as recebe juntas:
     // aplicar uma sozinha apagaria a outra com o valor de antes.
-    let antialias = unsafe { le_opcao(c"zeebx_antialias") }
-        .as_deref()
-        .and_then(|texto| numero_de_texto(texto, 1, 16));
-    let anisotropico = unsafe { le_opcao(c"zeebx_filtro_anisotropico") }
-        .as_deref()
-        .and_then(|texto| numero_de_texto(texto, 1, 16));
+    let (antialias, anisotropico) = if perfil_portatil {
+        (Some(1), Some(1))
+    } else {
+        (
+            unsafe { le_opcao(c"zeebx_antialias") }
+                .as_deref()
+                .and_then(|texto| numero_de_texto(texto, 1, 16)),
+            unsafe { le_opcao(c"zeebx_filtro_anisotropico") }
+                .as_deref()
+                .and_then(|texto| numero_de_texto(texto, 1, 16)),
+        )
+    };
     if antialias.is_some() || anisotropico.is_some() {
         estado
             .session
@@ -1652,8 +1733,17 @@ unsafe fn carrega(
     // errado".
     log(&zeebx::audio::soundfont::relato(&storage.device));
 
-    let midi_backend = unsafe { le_opcao_midi_backend() };
-    log(&format!("Zeebx: sintetizador MIDI selecionado: {:?}", midi_backend));
+    // **O perfil vem antes das opções que ele substitui.** "Portátil" existe porque dez botões
+    // soltos não é o que um aparelho de mão precisa — é um único ajuste que junta o que a
+    // investigação em ARM fraco (RG40XX-H) mediu como o que mais custa: sintetizador pesado,
+    // banco de amostras em taxa alta, muitas vozes, cache grande, supersampling.
+    let perfil_portatil = perfil_e_portatil(unsafe { le_opcao(c"zeebx_perfil") }.as_deref());
+    let midi_backend = if perfil_portatil {
+        zeebx::audio::MidiBackend::Timbres
+    } else {
+        unsafe { le_opcao_midi_backend() }
+    };
+    log(&format!("Zeebx: sintetizador MIDI selecionado: {:?}{}", midi_backend, if perfil_portatil { " (perfil Portátil)" } else { "" }));
 
     // **Pede o contexto de placa ao frontend, se ele tiver um.** Quem aceita é ele; nós só usamos
     // mais tarde, quando o `context_reset` chegar. Recusar aqui não muda nada: a sessão de
@@ -2467,6 +2557,17 @@ mod testes {
                 None => "nem os quatro botoes nem o manche mudaram a imagem".to_string(),
             }
         );
+    }
+
+    /// O perfil só é Portátil com o texto certo, e tudo o mais — inclusive ausência — é Padrão.
+    #[test]
+    fn so_o_texto_portatil_ativa_o_perfil() {
+        assert!(perfil_e_portatil(Some("portatil")));
+        assert!(perfil_e_portatil(Some(" PORTATIL ")));
+        assert!(!perfil_e_portatil(Some("padrao")));
+        assert!(!perfil_e_portatil(Some("portátil"))); // valor declarado é sem acento
+        assert!(!perfil_e_portatil(None));
+        assert!(!perfil_e_portatil(Some("")));
     }
 
     /// Os interruptores e os números das opções aceitam o que o frontend entrega, e recusam lixo.
