@@ -21,6 +21,21 @@ use zeebx::input::{self, AXIS_CURSO, Pad};
 /// centro, e sem zona morta o personagem anda sozinho.
 const ZONA_MORTA: f32 = 0.12;
 
+/// A partir de onde o manche vale como direção **para a interface**.
+///
+/// Bem acima da [`ZONA_MORTA`] de propósito: ali o que se quer é não deixar o eixo tremer parado,
+/// aqui é não fazer o cursor saltar com um encostão. Quem empurra o manche para escolher um jogo
+/// empurra até o fim.
+const LIMIAR_DA_SETA: f32 = 0.6;
+
+/// As setas do egui na ordem de [`zeebx::input::DPAD`]: cima, baixo, esquerda, direita.
+const SETAS: [egui::Key; 4] = [
+    egui::Key::ArrowUp,
+    egui::Key::ArrowDown,
+    egui::Key::ArrowLeft,
+    egui::Key::ArrowRight,
+];
+
 /// O que o laço colhe de uma rodada de eventos.
 #[derive(Default)]
 pub struct Entrada {
@@ -28,6 +43,20 @@ pub struct Entrada {
     pub eventos: Vec<egui::Event>,
     /// O "voltar" foi apertado nesta rodada.
     pub voltar: bool,
+    /// O botão 2 do controle foi solto nesta rodada: é o "voltar" de quem não tem tecla `Back`.
+    ///
+    /// Separado do [`voltar`](Self::voltar) porque **dentro do jogo ele não vale**: ali o botão 2
+    /// é do jogador, e transformá-lo em "voltar" abriria a pergunta de fechar a cada aperto. Quem
+    /// decide é o laço, que sabe qual tela está no ar.
+    pub voltar_da_interface: bool,
+    /// O estado das quatro direções **como a interface o vê**.
+    ///
+    /// **O direcional chega por duas portas, e há controle que usa as duas.** Uns mandam
+    /// `Keycode::DpadUp`; outros, um par de eixos de chapéu no `MotionEvent`; e o manche é uma
+    /// terceira. Se cada porta empurrasse seu evento, o cursor andaria dois passos por toque num
+    /// controle que fala pelas duas. Todas passam por [`Entrada::direcao`], e só a **mudança** de
+    /// estado vira evento: um passo por toque, venha o toque de onde vier.
+    setas: [bool; 4],
     /// Quantos pixels cabem num ponto do egui.
     pixels_por_ponto: f32,
 }
@@ -44,6 +73,9 @@ impl Entrada {
     pub fn comeca_quadro(&mut self) {
         self.eventos.clear();
         self.voltar = false;
+        self.voltar_da_interface = false;
+        // O `setas` **não** se limpa aqui: ele é o estado das direções, e não um pulso do quadro.
+        // Zerá-lo faria toda rodada emitir a mesma seta de novo, com o direcional parado.
     }
 
     /// Recebe um evento da fila nativa e o distribui: o controle vai para o [`Pad`], o dedo e as
@@ -107,13 +139,29 @@ impl Entrada {
 
         // O mesmo botão também navega a interface: num aparelho de mão a biblioteca é
         // percorrida com o direcional, não com o dedo.
+        // As quatro direções vão pelo funil, que é o que as concilia com o chapéu e o manche.
+        let direcao = match codigo {
+            Keycode::DpadUp => Some(0),
+            Keycode::DpadDown => Some(1),
+            Keycode::DpadLeft => Some(2),
+            Keycode::DpadRight => Some(3),
+            _ => None,
+        };
+        if let Some(indice) = direcao {
+            self.direcao(indice, apertada, tecla.repeat_count() > 0);
+            return;
+        }
+        // **O botão 2 é o "voltar" de quem não tem tecla `Back`.** Ele ia para `Key::Escape`, que
+        // ninguém neste frontend lê -- o único efeito era o egui largar o foco. Agora ele levanta
+        // o pulso, e o laço decide se vale: dentro do jogo o botão 2 é do jogador.
+        if codigo == Keycode::ButtonB {
+            if !apertada {
+                self.voltar_da_interface = true;
+            }
+            return;
+        }
         let navegacao = match codigo {
-            Keycode::DpadUp => Some(egui::Key::ArrowUp),
-            Keycode::DpadDown => Some(egui::Key::ArrowDown),
-            Keycode::DpadLeft => Some(egui::Key::ArrowLeft),
-            Keycode::DpadRight => Some(egui::Key::ArrowRight),
             Keycode::ButtonA | Keycode::DpadCenter | Keycode::Enter => Some(egui::Key::Enter),
-            Keycode::ButtonB => Some(egui::Key::Escape),
             _ => None,
         };
         if let Some(key) = navegacao {
@@ -125,6 +173,24 @@ impl Entrada {
                 modifiers: egui::Modifiers::NONE,
             });
         }
+    }
+
+    /// Uma direção mudou de estado: emite a seta, e só se ela realmente mudou.
+    ///
+    /// É o funil por onde passam a tecla, o chapéu e o manche. A repetição do Android é a única
+    /// exceção que atravessa o estado parado: segurar o direcional tem de continuar andando.
+    fn direcao(&mut self, indice: usize, apertada: bool, repeticao: bool) {
+        if self.setas[indice] == apertada && !repeticao {
+            return;
+        }
+        self.setas[indice] = apertada;
+        self.eventos.push(egui::Event::Key {
+            key: SETAS[indice],
+            physical_key: None,
+            pressed: apertada,
+            repeat: repeticao,
+            modifiers: egui::Modifiers::NONE,
+        });
     }
 
     fn movimento(&mut self, movimento: &android_activity::input::MotionEvent, pad: &mut Pad) {
@@ -166,6 +232,27 @@ impl Entrada {
             pad.press(direita, x > 0.5);
             pad.press(cima, y < -0.5);
             pad.press(baixo, y > 0.5);
+        }
+
+        // **E a interface também anda.** Até aqui o chapéu e o manche viravam botão do console e
+        // nada mais: dentro do jogo o direcional funcionava, e na grade o cursor não saía do
+        // lugar. O jogo lê o `Pad`, a interface lê evento de egui, e só a primeira metade estava
+        // escrita.
+        //
+        // O manche entra junto pelo mesmo caminho: num aparelho de mão ninguém quer descobrir que
+        // a grade só obedece ao direcional.
+        let ex = ponteiro.axis_value(Axis::X);
+        let ey = ponteiro.axis_value(Axis::Y);
+        for (indice, ligada) in [
+            y < -0.5 || ey < -LIMIAR_DA_SETA,
+            y > 0.5 || ey > LIMIAR_DA_SETA,
+            x < -0.5 || ex < -LIMIAR_DA_SETA,
+            x > 0.5 || ex > LIMIAR_DA_SETA,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            self.direcao(indice, ligada, false);
         }
     }
 

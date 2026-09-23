@@ -41,11 +41,14 @@ impl Emulador {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let largura = (ui.available_width() - 24.0) / 2.0;
-                if ui
-                    .add_sized([largura, 56.0], egui::Button::new("Cancelar"))
-                    .clicked()
-                {
+                let cancelar = ui.add_sized([largura, 56.0], egui::Button::new("Cancelar"));
+                if cancelar.clicked() {
                     self.onde = Onde::Ajustes;
+                }
+                // O mesmo dos ajustes: o egui só move um foco que já existe, e do nada quem o
+                // concede é o `Tab`. Sem este primeiro foco o direcional não anda aqui.
+                if ctx.memory(|m| m.focused()).is_none() {
+                    cancelar.request_focus();
                 }
                 let rotulo = match modulos {
                     0 => "Usar esta pasta (vazia)".to_string(),

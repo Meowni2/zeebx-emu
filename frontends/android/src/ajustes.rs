@@ -66,11 +66,18 @@ impl Emulador {
             .resizable(false)
             .show(ctx, |ui| {
                 ui.add_space(10.0);
-                if ui
-                    .add_sized([ui.available_width(), ALVO], egui::Button::new("◀  Voltar"))
-                    .clicked()
-                {
+                let voltar =
+                    ui.add_sized([ui.available_width(), ALVO], egui::Button::new("◀  Voltar"));
+                if voltar.clicked() {
                     self.onde = Onde::Biblioteca;
+                }
+                // **Sem foco não há navegação por setas.** O egui move o foco na direção da seta,
+                // mas só a partir de um foco que já exista -- do nada, quem o concede é o `Tab`,
+                // que nenhum controle produz. Entrando na tela sem foco, o direcional não movia
+                // coisa nenhuma aqui. Damos o primeiro, e daí o egui se vira: seta anda, Enter
+                // aperta.
+                if ctx.memory(|m| m.focused()).is_none() {
+                    voltar.request_focus();
                 }
                 ui.add_space(12.0);
                 for aba in Aba::TODAS {

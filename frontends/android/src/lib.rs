@@ -193,7 +193,9 @@ fn gira(app: AndroidApp, emulador: &mut Emulador) {
                 InputStatus::Handled
             }) {}
         }
-        if entrada.voltar {
+        // O "voltar" do Android vale em qualquer tela. O botão 2 do controle vale em todas menos
+        // no jogo, onde ele é do jogador -- ali quem fecha é o "voltar" do aparelho.
+        if entrada.voltar || (entrada.voltar_da_interface && emulador.onde != Onde::Jogo) {
             emulador.voltar();
         }
 
