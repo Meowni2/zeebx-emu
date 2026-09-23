@@ -12,9 +12,8 @@
 //!
 //! Aqui a partitura é tocada com o banco, e essas três passam a vir do próprio banco.
 //!
-//! **Por que `rustysynth` e não o código do Zeebulator.** O Zeebulator é GPLv3; isso só se combina
-//! com artefatos do Zeebx que possam ser distribuídos como GPLv3, ou seja, sem `unicorn-engine`.
-//! O `rustysynth` é **MIT** e **Rust puro**, então entra no core Libretro sem trazer biblioteca de
+//! **Por que `rustysynth` e não o código do Zeebulator.** Mesmo com a licença compatível, o
+//! `rustysynth` é **MIT** e **Rust puro**, então entra no core Libretro sem trazer biblioteca de
 //! host nenhuma, que é a regra do projeto.
 //!
 //! **Por que o banco não vem embutido.** São 32 MB (medido: GeneralUser GS, 32.319.396 B) e a

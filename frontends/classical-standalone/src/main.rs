@@ -200,8 +200,6 @@ fn main() -> ExitCode {
                 },
             ))
         }
-        // O JIT entra primeiro como bancada, não como backend implícito da interface. Assim a
-        // mesma ROM pode ser comparada com o Unicorn sem esconder uma regressão de compatibilidade.
         // O que o emulador enxerga de controle, para quando a entrada não responde e não dá
         // para saber se o problema é o aparelho, o nome salvo ou o mapeamento.
         Some("controles") => {
@@ -1172,12 +1170,10 @@ fn run(path: &str, options: Options) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Mede uma ROM inteira no Dynarmic, sem janela e sem trocar o backend normal do emulador.
+/// Mede uma ROM inteira no backend padrão, sem janela.
 ///
-/// Esta não é uma segunda implementação do comando `run`: é uma bancada estreita para a
-/// pergunta que motivou o JIT — quantos milissegundos virtuais o ARM recompilado consegue
-/// entregar por segundo de parede? Quando os números e os quadros concordarem com o Unicorn,
-/// o backend poderá subir para a sessão e a interface.
+/// Esta não é uma segunda implementação do comando `run`: é uma bancada estreita para medir
+/// quantos milissegundos virtuais o ARM recompilado consegue entregar por segundo de parede.
 fn bench_dynarmic(
     path: &str,
     seconds: u32,
