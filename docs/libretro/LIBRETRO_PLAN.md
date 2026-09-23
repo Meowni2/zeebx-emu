@@ -1502,6 +1502,32 @@ sistemas cadastrados, nenhum é Zeebo) nem core instalado. Contexto: o cartão s
 outra CFW em breve, então a integração completa (entrada no ES, core, RDB) fica para quando o
 aparelho tiver a CFW definitiva — mas o achado de `glibc` acima vale independente da CFW específica.
 
+### Auditoria da integração no ES (2026-09-23): o que funciona, e um risco real
+
+Depois de inserir `<system>zeebo</system>` em `es_systems.cfg` (mesmo padrão de sistema simples de
+core único, ex. `advision`), copiar uma ROM de teste para `/roms/zeebo/` e apontar o `<command>`
+para `~/.config/retroarch/cores/zeebx_libretro.so`, a auditoria encontrou:
+
+**Sem risco, conferido:**
+- `sudo` sem senha para o usuário `ark` (`ark ALL=NOPASSWD: ALL`, lido com a senha do host) — o
+  padrão `sudo perfmax ...; sudo perfnorm` que todo `<command>` usa funciona igual aos outros 126
+  sistemas já no cartão.
+- O bloco `<system>zeebo</system>` é XML bem formado isoladamente.
+- O `HiddenSystems` (`alg;wolf;easyrpg`) não inclui `zeebo` — aparece no menu normalmente.
+- O "XML quebrado" que uma validação estrita acusa (`2>&1` sem escapar `&`, na entrada `options`
+  já existente) é **defeito original do ArkOS**, não desta mudança — confirmado por md5 idêntico
+  contra um backup nunca tocado (`es_systems.cfg.rk3326`). O EmulationStation deles usa um parser
+  tolerante, e por isso funciona na prática.
+
+**Risco real, não corrigido — é do sistema, não do Zeebx:** existem três backups datados
+(`es_systems.cfg.update04302025.bak`, `.update05152025.bak`, `.update06302025.bak`) e um
+`es_systems.cfg.rk3326` **idêntico byte a byte** (mesmo md5) a `/usr/local/bin/es_systems.cfg`.
+Isso prova que o ArkOS tem um mecanismo de atualização que **substitui o arquivo inteiro** por um
+molde por modelo de aparelho. Rodar `Update.sh` (ou qualquer atualização) antes de trocar de CFW
+apaga a entrada do `zeebo` — o arquivo volta à versão de fábrica. Como o cartão será substituído
+por `dArkOSen` de qualquer forma, o risco prático é baixo, mas fica registrado: **não atualizar o
+sistema ArkOS neste cartão antes da reinstalação**, ou a integração precisa ser refeita.
+
 ### Atualização (2026-09-23): o cartão do R36S vai trocar de CFW, e isso muda a prioridade
 
 **ArkOS está descontinuado.** O próprio repositório `AeolusUX/ArkOS-R3XS` (o que está no cartão,
