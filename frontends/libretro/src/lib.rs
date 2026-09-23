@@ -1640,9 +1640,10 @@ fn aplica_opcoes_quentes(estado: &mut Core) {
             // quinto quadro e pular logo o primeiro é surpresa sem ganho.
             estado.frameskip_contador = 0;
         }
-        if modo == Frameskip::Automatico && !estado.frameskip_callback_pedido {
-            estado.frameskip_callback_pedido = pede_callback_de_audio();
-        } else if modo != Frameskip::Automatico && antes == Frameskip::Automatico {
+        // O registro do Automático acontece no primeiro `retro_run`, porque
+        // SET_MINIMUM_AUDIO_LATENCY só é válido dentro dessa chamada. Aqui, que também roda em
+        // retro_load_game, apenas guardamos a política. Sair de Automático pode limpar na hora.
+        if modo != Frameskip::Automatico && antes == Frameskip::Automatico && estado.frameskip_callback_pedido {
             retira_callback_de_audio();
             estado.frameskip_callback_pedido = false;
         }
@@ -2259,6 +2260,10 @@ pub extern "C" fn retro_run() {
         // **A decisão de pular é por quadro, e vale a cada quadro** — ao contrário do modo, que só
         // muda quando o usuário mexe na opção. Um `Fixo(n)` que só decidisse quando a opção muda
         // pularia (ou não) para sempre a partir da primeira leitura, e não a cada quadro n de n+1.
+        // Dentro de retro_run, como SET_MINIMUM_AUDIO_LATENCY exige.
+        if estado.frameskip == Frameskip::Automatico && !estado.frameskip_callback_pedido {
+            estado.frameskip_callback_pedido = pede_callback_de_audio();
+        }
         if estado.session.leu_pixels() && !estado.frameskip_leitura_pixels_avisada {
             aviso("Zeebx: frameskip de rasterização foi desativado neste jogo porque ele usa glReadPixels");
             estado.frameskip_leitura_pixels_avisada = true;
