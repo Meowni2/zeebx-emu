@@ -5273,6 +5273,7 @@ dependencies = [
 name = "zeebx-libretro"
 version = "0.3.0"
 dependencies = [
+ "cc",
  "glow",
  "zeebx",
 ]
