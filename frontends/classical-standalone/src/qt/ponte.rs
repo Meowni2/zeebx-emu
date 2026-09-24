@@ -1,25 +1,30 @@
-//! Os `QObject`s escritos em Rust, e a cola em C++ que eles chamam.
+//! A tela do jogo, e a cola em C++ que ela chama.
 //!
-//! A tela do jogo, pelo caminho mais simples: o quadro RGB565 da sessão pintado por um
-//! `QQuickPaintedItem`. O jogo em si — abrir, rodar, trocar — mora no [`super::nucleo`]; aqui fica
-//! só o que é da tela. O `QImage::Format_RGB16` **é** RGB565, então a
-//! CPU não converte nada — a mesma regra do egui de subir o quadro só quando a tela mudou vale
-//! aqui.
+//! O quadro vai para o scene graph do Qt Quick pelo `ItemDoQuadro` (`cpp/quadro.h`), que é a base
+//! da `TelaDoJogo`: com o rasterizador na placa, a textura dele entra embrulhada, sem voltar à CPU
+//! e na resolução interna; no resto, a tela RGB565 sobe como imagem — o `QImage::Format_RGB16`
+//! **é** RGB565 — e só quando mudou, a mesma regra do egui. O jogo em si — abrir, rodar, trocar —
+//! mora no [`super::nucleo`].
 
 #[cxx_qt::bridge]
 pub mod qobject {
     unsafe extern "C++" {
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
-        include!("cxx-qt-lib/qpainter.h");
-        type QPainter = cxx_qt_lib::QPainter;
         include!("cxx-qt-lib/qsizef.h");
         type QSizeF = cxx_qt_lib::QSizeF;
+        include!("cxx-qt-lib/qrectf.h");
+        type QRectF = cxx_qt_lib::QRectF;
+        include!("cxx-qt-lib/qimage.h");
+        type QImage = cxx_qt_lib::QImage;
+        include!("cxx-qt-lib/qlist.h");
+        type QList_i32 = cxx_qt_lib::QList<i32>;
     }
 
-    unsafe extern "C++" {
-        include!(<QtQuick/QQuickPaintedItem>);
-        type QQuickPaintedItem;
+    unsafe extern "C++Qt" {
+        include!("quadro.h");
+        #[qobject]
+        type ItemDoQuadro;
     }
 
     // Ver `cpp/gl_qt.h`.
@@ -37,14 +42,16 @@ pub mod qobject {
     unsafe extern "RustQt" {
         #[qobject]
         #[qml_element]
-        #[base = QQuickPaintedItem]
+        #[base = ItemDoQuadro]
         #[qproperty(QString, estado)]
-        #[qproperty(bool, suave)]
+        #[qproperty(QString, parou)]
+        #[qproperty(QString, depuracao)]
+        #[qproperty(QList_i32, linha_do_tempo, cxx_name = "linhaDoTempo")]
+        #[qproperty(QString, aviso_titulo, cxx_name = "avisoTitulo")]
+        #[qproperty(QString, aviso_estado, cxx_name = "avisoEstado")]
+        #[qproperty(bool, aviso_parado, cxx_name = "avisoParado")]
+        #[qproperty(f64, aviso_giro, cxx_name = "avisoGiro")]
         type TelaDoJogo = super::TelaDoJogoRust;
-
-        #[qinvokable]
-        #[cxx_override]
-        unsafe fn paint(self: Pin<&mut Self>, painter: *mut QPainter);
 
         /// Uma volta: entrada, emulação e, se a tela mudou, um quadro novo.
         #[qinvokable]
@@ -70,6 +77,16 @@ pub mod qobject {
         #[qinvokable]
         fn atualiza(self: Pin<&mut Self>);
 
+        /// Como a janela do jogo abre: 0 em janela, 1 maximizada, 2 em tela cheia. Ver
+        /// `graphics.janela_do_jogo`.
+        #[qinvokable]
+        #[cxx_name = "modoDaJanela"]
+        fn modo_da_janela(self: &Self) -> i32;
+
+        /// Um texto do catálogo de idiomas, pela chave.
+        #[qinvokable]
+        fn tr(self: &Self, chave: &QString) -> QString;
+
         /// O jogo saiu sozinho e não há para onde voltar: a janela fecha, como a do egui.
         #[qsignal]
         fn fechou(self: Pin<&mut Self>);
@@ -78,7 +95,25 @@ pub mod qobject {
         fn size(self: &Self) -> QSizeF;
 
         #[inherit]
-        fn update(self: Pin<&mut Self>);
+        #[cxx_name = "mostraTextura"]
+        fn mostra_textura(
+            self: Pin<&mut Self>,
+            textura: u32,
+            recorte_u: f32,
+            recorte_v: f32,
+            destino: QRectF,
+            suave: bool,
+        );
+
+        #[inherit]
+        #[cxx_name = "mostraImagem"]
+        fn mostra_imagem(self: Pin<&mut Self>, imagem: &QImage, destino: QRectF, suave: bool);
+
+        #[inherit]
+        fn posiciona(self: Pin<&mut Self>, destino: QRectF, suave: bool);
+
+        #[inherit]
+        fn esvazia(self: Pin<&mut Self>);
     }
 
     // Sem isto o construtor gerado repassa o pai `QObject*` à base, que quer um `QQuickItem*`.
@@ -88,69 +123,161 @@ pub mod qobject {
 use std::pin::Pin;
 
 use cxx_qt::CxxQtType;
-use cxx_qt_lib::{QImage, QImageFormat, QPainterRenderHint, QRect, QString};
+use cxx_qt_lib::{QImage, QImageFormat, QList, QRectF, QString};
 
 use zeebx::eframe::egui::Key;
+use zeebx::ui::partida::enquadra;
+use zeebx::ui::settings::ModoDaJanela;
 
-use super::nucleo;
+use super::nucleo::{self, Quadro};
 
+#[derive(Default)]
 pub struct TelaDoJogoRust {
     estado: QString,
-    suave: bool,
-    quadro: Option<QImage>,
-    /// A tela que está no [`TelaDoJogoRust::quadro`]: série e escritas. Igual, não há o que subir.
+    parou: QString,
+    /// Os textos do painel de depuração numa linha; vazio com o painel desligado.
+    depuracao: QString,
+    /// A linha do tempo do painel, em pares `velocidade, quadros`, da amostra mais antiga para a
+    /// mais nova.
+    linha_do_tempo: QList<i32>,
+    /// O aviso de calibração do Boomerang: o título vazio esconde o aviso. O giro é em graus,
+    /// que é o que a `rotation` do QML usa.
+    aviso_titulo: QString,
+    aviso_estado: QString,
+    aviso_parado: bool,
+    aviso_giro: f64,
+    /// A tela que foi para o `ItemDoQuadro` como imagem: série e escritas. Igual, não há o que
+    /// subir. `None` quando o que está lá é a textura da placa, ou nada.
     chave: Option<(u64, u64)>,
 }
 
-impl Default for TelaDoJogoRust {
-    fn default() -> Self {
-        Self {
-            estado: QString::default(),
-            suave: nucleo::com(|nucleo| nucleo.settings.graphics.smooth),
-            quadro: None,
-            chave: None,
-        }
+impl cxx_qt::Initialize for qobject::TelaDoJogo {
+    fn initialize(self: Pin<&mut Self>) {}
+}
+
+/// O que a volta manda o `ItemDoQuadro` fazer. Sai do [`nucleo::com`] pronto, porque o item só
+/// pode ser chamado depois: ver a regra no topo do `nucleo.rs`.
+enum Mostra {
+    Textura { textura: u32, recorte: [f32; 2] },
+    Imagem { chave: (u64, u64), imagem: QImage },
+    MesmaImagem,
+    Nada,
+}
+
+/// O modo de uma janela como o QML o lê: 0 em janela, 1 maximizada, 2 em tela cheia.
+pub fn modo(modo: ModoDaJanela) -> i32 {
+    match modo {
+        ModoDaJanela::Janela => 0,
+        ModoDaJanela::Maximizada => 1,
+        ModoDaJanela::TelaCheia => 2,
     }
 }
 
-impl cxx_qt::Initialize for qobject::TelaDoJogo {
-    fn initialize(self: Pin<&mut Self>) {
-        // Trocar a suavização repinta o quadro que já está na tela.
-        self.on_suave_changed(|tela| tela.update()).release();
-    }
+/// O retângulo de tamanho `tamanho`, centrado na área.
+fn centrado(area: [f32; 2], tamanho: [f32; 2]) -> QRectF {
+    QRectF::new(
+        f64::from((area[0] - tamanho[0]) / 2.0),
+        f64::from((area[1] - tamanho[1]) / 2.0),
+        f64::from(tamanho[0]),
+        f64::from(tamanho[1]),
+    )
 }
 
 impl qobject::TelaDoJogo {
     pub fn passo(mut self: Pin<&mut Self>) {
+        let tamanho = self.size();
+        let area = [tamanho.width() as f32, tamanho.height() as f32];
         let chave_atual = self.rust().chave;
-        let (volta, quadro) = nucleo::com(|nucleo| {
-            let volta = nucleo.passo();
-            let quadro = nucleo.tela().and_then(|tela| {
-                let chave = (tela.serie(), tela.escritas());
-                (Some(chave) != chave_atual).then(|| {
-                    let imagem = imagem_rgb565(
-                        &tela.to_rgb565_bytes(),
-                        tela.width() as usize,
-                        tela.height() as usize,
-                    );
-                    (chave, imagem)
-                })
-            });
-            (volta, quadro)
+        let (volta, mostra, destino, suave, depuracao) = nucleo::com(|nucleo| {
+            let volta = nucleo.passo(area);
+            let depuracao = nucleo.depuracao();
+            let graficos = &nucleo.settings.graphics;
+            // O quadro largo experimental tem a proporção dele; o resto é o 4:3 do console.
+            let (mostra, aspecto) = match nucleo.quadro() {
+                Some(Quadro::Placa(quadro)) => (
+                    Mostra::Textura {
+                        textura: quadro.textura.0.get(),
+                        recorte: quadro.recorte,
+                    },
+                    quadro.proporcao,
+                ),
+                Some(Quadro::Tela(tela)) => {
+                    let chave = (tela.serie(), tela.escritas());
+                    let mostra = match Some(chave) == chave_atual {
+                        true => Mostra::MesmaImagem,
+                        false => Mostra::Imagem {
+                            chave,
+                            imagem: imagem_rgb565(
+                                &tela.to_rgb565_bytes(),
+                                tela.width() as usize,
+                                tela.height() as usize,
+                            ),
+                        },
+                    };
+                    (mostra, 4.0 / 3.0)
+                }
+                None => (Mostra::Nada, 4.0 / 3.0),
+            };
+            let enquadrado = enquadra(area, graficos.scaling, graficos.keep_aspect, aspecto);
+            (volta, mostra, centrado(area, enquadrado), graficos.smooth, depuracao)
         });
-        if let Some((chave, imagem)) = quadro {
-            let mut rust = self.as_mut().rust_mut();
-            rust.quadro = Some(imagem);
-            rust.chave = Some(chave);
-            drop(rust);
-            self.as_mut().update();
+        match mostra {
+            Mostra::Textura { textura, recorte } => {
+                self.as_mut().rust_mut().chave = None;
+                self.as_mut().mostra_textura(textura, recorte[0], recorte[1], destino, suave);
+            }
+            Mostra::Imagem { chave, imagem } => {
+                self.as_mut().rust_mut().chave = Some(chave);
+                self.as_mut().mostra_imagem(&imagem, destino, suave);
+            }
+            Mostra::MesmaImagem => self.as_mut().posiciona(destino, suave),
+            Mostra::Nada => {}
         }
         if let Some(estado) = volta.estado.map(|texto| QString::from(&texto)) {
             if self.estado() != &estado {
                 self.as_mut().set_estado(estado);
             }
         }
+        let (textos, historia) = depuracao.unwrap_or_default();
+        let textos = QString::from(&textos.join("   ·   "));
+        if self.depuracao() != &textos {
+            self.as_mut().set_depuracao(textos);
+        }
+        let historia: Vec<i32> = historia
+            .into_iter()
+            .flat_map(|(velocidade, quadros)| [velocidade as i32, quadros as i32])
+            .collect();
+        if Vec::<i32>::from(self.linha_do_tempo()) != historia {
+            self.as_mut().set_linha_do_tempo(QList::from(historia));
+        }
+        let aviso = volta.aviso.unwrap_or(nucleo::AvisoNaTela {
+            titulo: String::new(),
+            estado: String::new(),
+            parado: false,
+            giro: 0.0,
+        });
+        let titulo = QString::from(&aviso.titulo);
+        if self.aviso_titulo() != &titulo {
+            self.as_mut().set_aviso_titulo(titulo);
+        }
+        let estado = QString::from(&aviso.estado);
+        if self.aviso_estado() != &estado {
+            self.as_mut().set_aviso_estado(estado);
+        }
+        if *self.aviso_parado() != aviso.parado {
+            self.as_mut().set_aviso_parado(aviso.parado);
+        }
+        let giro = f64::from(aviso.giro).to_degrees();
+        if *self.aviso_giro() != giro {
+            self.as_mut().set_aviso_giro(giro);
+        }
+        let parou = QString::from(&volta.parou);
+        if self.parou() != &parou {
+            self.as_mut().set_parou(parou);
+        }
         if volta.fechou {
+            self.as_mut().esvazia();
+            self.as_mut().rust_mut().chave = None;
             self.as_mut().fechou();
         }
     }
@@ -167,9 +294,10 @@ impl qobject::TelaDoJogo {
 
     pub fn fecha(mut self: Pin<&mut Self>) {
         nucleo::com(|nucleo| nucleo.fecha());
-        let mut rust = self.as_mut().rust_mut();
-        rust.quadro = None;
-        rust.chave = None;
+        // A textura do jogo que fechou não existe mais: o nó não pode continuar apontando para ela.
+        self.as_mut().esvazia();
+        self.as_mut().rust_mut().chave = None;
+        self.as_mut().set_parou(QString::default());
     }
 
     pub fn pausa(self: Pin<&mut Self>) -> bool {
@@ -184,33 +312,13 @@ impl qobject::TelaDoJogo {
         self.as_mut().set_estado(QString::from(&estado));
     }
 
-    /// O quadro centrado e ampliado para caber, na proporção dele.
-    ///
-    /// # Safety
-    ///
-    /// `painter` vem do Qt, válido durante a chamada.
-    pub unsafe fn paint(self: Pin<&mut Self>, painter: *mut qobject::QPainter) {
-        let Some(painter) = (unsafe { painter.as_mut() }) else {
-            return;
-        };
-        let mut painter = unsafe { Pin::new_unchecked(painter) };
-        let Some(quadro) = self.rust().quadro.as_ref() else {
-            return;
-        };
-        let area = self.size();
-        let (largura, altura) = (quadro.width() as f64, quadro.height() as f64);
-        let escala = (area.width() / largura).min(area.height() / altura);
-        let (w, h) = (largura * escala, altura * escala);
-        let destino = QRect::new(
-            ((area.width() - w) / 2.0) as i32,
-            ((area.height() - h) / 2.0) as i32,
-            w as i32,
-            h as i32,
-        );
-        painter
-            .as_mut()
-            .set_render_hint(QPainterRenderHint::SmoothPixmapTransform, *self.suave());
-        painter.as_mut().draw_image(&destino, quadro);
+    pub fn modo_da_janela(&self) -> i32 {
+        nucleo::com(|nucleo| modo(nucleo.settings.graphics.janela_do_jogo))
+    }
+
+    pub fn tr(&self, chave: &QString) -> QString {
+        let chave = String::from(chave);
+        nucleo::com(|nucleo| QString::from(nucleo.catalogo.get(&chave)))
     }
 }
 
