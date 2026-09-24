@@ -1938,14 +1938,20 @@ fn banco_do_aparelho(
     politica: crate::audio::MidiBackend,
 ) -> Option<std::sync::Arc<crate::audio::soundfont::Banco>> {
     if politica == crate::audio::MidiBackend::Timbres {
-        eprintln!("Zeebx: backend MIDI configurado para 'Tabela de timbres'; ignorando SoundFont");
+        crate::registro!(
+            crate::registro::Nivel::Informacao,
+            "midi",
+            "backend fixado na tabela de timbres; o banco do aparelho é ignorado"
+        );
         return None;
     }
     let caminho = crate::audio::soundfont::primeiro_banco(aparelho)?;
     let banco = crate::audio::soundfont::abre(&caminho);
     if banco.is_none() && politica == crate::audio::MidiBackend::SoundFont {
-        eprintln!(
-            "Zeebx: backend MIDI exige 'SoundFont', mas o arquivo '{}' não pôde ser carregado; recuando para timbres",
+        crate::registro!(
+            crate::registro::Nivel::Aviso,
+            "midi",
+            "o backend pedido é SoundFont, mas {} não abriu; recuando para a tabela de timbres",
             caminho.display()
         );
     }
@@ -2680,9 +2686,23 @@ fn na_placa(
     #[cfg(feature = "gl")]
     {
         match crate::video::gpu::GpuState::novo(largura, altura, contexto) {
-            Ok(gpu) => return Box::new(gpu),
+            Ok(gpu) => {
+                crate::registro!(
+                    crate::registro::Nivel::Informacao,
+                    "gl",
+                    "rasterizador de placa criado em {largura}x{altura}"
+                );
+                return Box::new(gpu);
+            }
+            // **Aviso, e não informação.** Cair para software não é detalhe de configuração: é
+            // o desenho ficando mais lento e diferente, e é a primeira coisa a olhar quando
+            // alguém diz que o portátil está devagar.
             Err(motivo) => {
-                eprintln!("sem rasterizador na placa ({motivo}); seguindo em software");
+                crate::registro!(
+                    crate::registro::Nivel::Aviso,
+                    "gl",
+                    "o rasterizador de placa não subiu ({motivo}); seguindo no processador"
+                );
             }
         }
     }
