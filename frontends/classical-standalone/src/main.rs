@@ -11,7 +11,7 @@ use zeebx::{audio, cpu, input, library, loader, machine, session, ui};
 
 use std::process::ExitCode;
 
-// A interface Qt, em prova de viabilidade: docs/implementacao/21-migracao-para-qt.md.
+// A interface Qt: docs/implementacao/21-migracao-para-qt.md. Compilada, é a interface padrão.
 #[cfg(feature = "ui-qt")]
 mod qt;
 
@@ -484,15 +484,25 @@ fn main() -> ExitCode {
                 perfil, boomerang, portas,
             ))
         }
-        // A interface Qt, em prova de viabilidade: docs/implementacao/21-migracao-para-qt.md.
+        // Compilada com a interface Qt, ela é a padrão; a do egui continua em `zeebx egui` por uma
+        // versão, para quem achar diferença ter como comparar. Sem a feature, nada muda: o CI e a
+        // release seguem com o egui até o Qt ser empacotado e a licença mudar — ver a fase 8 de
+        // docs/implementacao/21-migracao-para-qt.md.
         #[cfg(feature = "ui-qt")]
         Some("qt") => qt::launch(args.get(1).map(String::as_str)),
+        #[cfg(feature = "ui-qt")]
+        Some("egui") if args.len() == 1 => launch(),
         // Sem argumento nenhum, o que se quer é o emulador, não a ajuda.
+        #[cfg(feature = "ui-qt")]
+        None => qt::launch(None),
+        #[cfg(not(feature = "ui-qt"))]
         None => launch(),
         _ => {
             eprintln!("uso: zeebx            abre a interface");
             #[cfg(feature = "ui-qt")]
-            eprintln!("     zeebx qt [arquivo.zip]  a interface Qt, em migração: a biblioteca, ou o jogo direto");
+            eprintln!("     zeebx qt [arquivo.zip]  a interface, na biblioteca ou no jogo direto");
+            #[cfg(feature = "ui-qt")]
+            eprintln!("     zeebx egui       a interface antiga, em egui, até ela sair");
             eprintln!("     zeebx info <arquivo.mod>");
             eprintln!(
                 "     zeebx run <arquivo.mod> [--window] [--seconds=N] [--keys=ms:tecla,...]
