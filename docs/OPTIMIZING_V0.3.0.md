@@ -1001,3 +1001,78 @@ que é medida sem nada dentro do laço.
 - e a regra "meça sempre sem o perfil" pode ser revista: com a amostragem, o perfil é barato. O que
   continua valendo é não misturar os dois instrumentos no mesmo número.
 
+## 24. Readback preguiçoso: o quadro da placa só vai para a CPU quando alguém precisa
+
+Frente 1 das treze, e a primeira de todas as revisões externas. Feita no commit `a5acf46`.
+
+### O que era
+
+`eglSwapBuffers` fazia duas coisas de uma vez, e elas não são a mesma coisa:
+
+1. **pintar a fila de triângulos** — a rasterização do quadro, trabalho que o jogo pediu;
+2. **ler o quadro de volta para a memória da CPU** — `glReadPixels`, conversão para RGB565 e cópia
+   para a tela do console.
+
+A segunda existe para dois consumidores: o **desenho 2D por cima** (HUD pelo `IDisplay`, caixa de
+mensagem, a Z-Wheel compondo) e quem **pede os pixels** (o `glReadPixels` do jogo, a gravação de
+quadro). Um jogo de 3D puro não faz nenhuma das duas — e pagava a leitura em toda troca de buffer.
+Num GPU de tiles, como o Mali dos dois portáteis, isso obriga a GPU a terminar e devolver o quadro.
+
+### O que ficou
+
+`present_gl` agora pinta a fila e marca o quadro como **pendente**; quem precisa dos pixels chama
+`materializa_quadro_gl`, que faz a leitura uma vez só:
+
+| quem | materializa? |
+|---|---|
+| `IDisplay`, `IGraphics`, `IBitmap` (qualquer 2D) | **sim**, antes de escrever — senão o 2D apagaria a cena |
+| `glReadPixels` do jogo | não: ele lê o lado do OpenGL, que já está correto |
+| janela/core apresentando a **textura da placa** | **não** — é o ganho |
+| janela apresentando a **tela da CPU** | sim, antes de converter para bytes |
+| despejo de quadro, `gl_frame`, frontend de fora | sim |
+| `eglGetColorBufferQUALCOMM` | não: lê o lado do OpenGL |
+
+**E só a placa adia.** No rasterizador de processador a "leitura" é uma conversão em memória: não há
+espera a economizar, e o frontend lê a tela todo quadro — adiar ali só criaria a chance de ele
+apresentar um quadro velho. O trait ganhou `quadro_espera_pela_placa` para isso.
+
+### A medida
+
+O teste `os_dois_rasterizadores_desenham_o_mesmo_quadro` roda o mesmo jogo nos dois caminhos e
+compara os 307 200 pixels. Acrescentei a ele a contagem de trocas de buffer contra leituras:
+
+| jogo | trocas de buffer | leituras (processador) | leituras (placa) |
+|---|---:|---:|---:|
+| Crash Bandicoot Nitro Kart 3D | 78 | 78 | **1** |
+| Need for Speed Carbon | 184 | 184 | **1** |
+
+Uma leitura no caminho de placa, e é a do próprio teste ao pedir os pixels no fim. **De 78 e 184
+leituras de quadro para uma.** Os dois jogos desenham tudo pelo OpenGL — inclusive o HUD —, que é o
+caso em que o adiamento rende inteiro.
+
+### O erro que eu cometi no caminho, e como ele apareceu
+
+A primeira versão adiava **nos dois** rasterizadores e não corrigia todos os consumidores. O teste
+de comparação passou com "0 de 307 200 pixels diferentes" — e esse passe era **vazio**: o caminho de
+software nunca mais atualizava a tela, então ele comparava duas telas velhas.
+
+O conserto foi duplo:
+
+- adiar só onde a leitura custa espera de placa (o que também devolve o comportamento antigo ao
+  software, sem tocar nele);
+- **guarda contra passe vazio** no teste: ele agora exige que a tela tenha conteúdo
+  (mais de 1% de pixels acesos) antes de comparar. Um teste que compara duas telas apagadas não
+  guarda coisa alguma, e foi preciso um jogo de 3D de verdade para o defeito aparecer.
+
+### Achado colateral: o teste já falhava no Need for Speed, e ninguém sabia
+
+Com NFS, os dois rasterizadores divergem de verdade — 11,54% dos pixels acima de dois passos de
+canal, pior caso 88 passos —, e o teste **falha**. Verifiquei com A/B: os números são **idênticos**
+com e sem esta mudança, então a divergência é anterior e não tem relação com o readback.
+
+Ela não aparecia porque a suíte roda sem ROM: sem `ZEEBX_TESTE_ROM` o teste se declara dispensado.
+No Crash, o mesmo teste dá 0,00% acima de dois passos — a mesma imagem, com o arredondamento
+conhecido dos dois conversores. **O NFS é o único dos três com divergência real**, e isso casa com
+o que a issue #36 relata sobre ele. Fica registrado como frente própria: ou o rasterizador de placa
+está desenhando diferente, ou o de software está.
+
