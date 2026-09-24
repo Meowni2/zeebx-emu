@@ -3417,9 +3417,38 @@ mod testes {
             retro_init();
             retro_set_controller_port_device(0, DEVICE_JOYPAD);
             assert!(retro_load_game(&info), "o core recusou {caminho}");
+            // **O ritmo, medido.** Este laço é o único lugar em que o nosso freio de velocidade age
+            // sozinho: não há frontend esperando retraço nem áudio. O que se quer saber é se o
+            // `sleep` do `run_frame` entrega 1× (tempo virtual igual ao real) e **quanto ele
+            // irregulariza** — freio que acerta a média e treme a cada quadro é judder.
+            //
+            // Ver `Session::run_frame` e a frente 10 de `docs/OPTIMIZING_V0.3.0.md`.
+            let real_antes = std::time::Instant::now();
+            let relogio_antes = RELOGIO.load(Ordering::Relaxed);
+            let mut por_quadro = Vec::with_capacity(quadros_pedidos as usize);
             for _ in 0..quadros_pedidos {
+                let t = std::time::Instant::now();
                 retro_run();
+                por_quadro.push(t.elapsed());
             }
+            let real = real_antes.elapsed();
+            let avancou = RELOGIO.load(Ordering::Relaxed).wrapping_sub(relogio_antes);
+            por_quadro.sort();
+            let mediana = por_quadro.get(por_quadro.len() / 2).copied().unwrap_or_default();
+            let p95 = por_quadro
+                .get(por_quadro.len() * 95 / 100)
+                .copied()
+                .unwrap_or_default();
+            let pior = por_quadro.last().copied().unwrap_or_default();
+            eprintln!(
+                "ritmo: {} quadro(s) — virtual {avancou} ms em real {:.0} ms ({:.0}% da velocidade),                  por quadro: mediana {:.2} ms, p95 {:.2} ms, pior {:.2} ms",
+                quadros_pedidos,
+                real.as_secs_f64() * 1000.0,
+                f64::from(avancou) / (real.as_secs_f64() * 1000.0) * 100.0,
+                mediana.as_secs_f64() * 1000.0,
+                p95.as_secs_f64() * 1000.0,
+                pior.as_secs_f64() * 1000.0
+            );
             // **Dirige a Z-Wheel.** A pergunta desta parte é prática: com que botão o jogador
             // confirma a escolha, e o pedido de abertura chega ao core? Cada botão do RetroPad é
             // segurado por vinte quadros e solto por dez, e o teste para no primeiro que o shell
