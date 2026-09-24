@@ -724,3 +724,123 @@ novo não depende dele — as linhas do núcleo saem com o nível certo.
 - os subsistemas instrumentados nesta primeira passada são sessão, loader, CPU, áudio e MIDI. O
   rasterizador, a rede e o armazenamento ainda não têm linha própria.
 
+## 21. Fechamento da revisão dos emuladores: os adendos
+
+As seções 17 e 19 trazem os **cinco relatórios principais**. Esta seção fecha o que ficou de fora:
+**doze adendos e correções** que chegaram depois, e que em vários casos **mudam a conclusão** do
+relatório principal. Sem eles a revisão fica pela metade — foi assim que ela ficou até agora.
+
+### Correções que mudam a conclusão
+
+1. **Não construir fastmem novo, e nem priorizá-lo.** O `src/cpu/dynarmic.rs` já entrega ao
+   Dynarmic uma tabela direta de 2²⁰ ponteiros de página, bitmap de páginas executadas e
+   invalidação por faixa. O segundo adendo é explícito: a tabela atual **já captura o ganho
+   principal**, e o que resta é **SMC adaptativo** — página que mistura código e dados sai da
+   tabela e passa a ir por callback em toda leitura e escrita. Se algum dia for para valer, a
+   rota é a API do próprio Dynarmic (`Config::fastmem`), nunca um manipulador de sinal nosso:
+   o handler não pode alocar, travar nem entrar em `RefCell`.
+2. **Não criar thread só de apresentação.** O DuckStation **removeu** a apresentação dedicada em
+   `1c1b82ed` com a justificativa "Worse frame pacing" e unificou render e present na mesma
+   thread. Se o Zeebx paralelizar, é **uma** thread dona de contexto, desenho e apresentação, com
+   backpressure de 0 ou 1 quadro no começo.
+3. **O batching de baixo risco que falta é o de faixas adjacentes.** O Flycast une *strips*
+   vizinhas de estado equivalente (`PolyParam::equivalentIgnoreCullDirection`,
+   `makePrimRestartIndex` com índice de reinício `~0` e correção de winding) e ainda emite um
+   draw por grupo — não há multidraw. Ordenar globalmente por estado quebra blending,
+   translucência e multipasse. O nosso lote hoje fecha por mudança de `Estado`, que é a mesma
+   família de chave; o que não temos é o *restart de primitiva* para juntar o que é adjacente.
+4. **SIMD do Flycast tem pouca transferibilidade.** O ramo NEON do parser de TA cai em quatro
+   `u64` no build ARM64, e `FIPR`/`FTRV` em NEON está **comentado no próprio código por
+   precisão**. O único uso real é `shop_frswap`, com `Ld4/St4`. Confirmado: SIMD dos cores
+   externos **não** justifica prioridade; continua valendo só como padrão de trabalho
+   (escalar-oráculo, kernel por hotspot medido).
+5. **O nosso `sleep` no `retro_run` é o desvio.** O `pl_frame_limit` do PCSX-ReARMed, no caminho
+   Libretro, **só marca a fronteira**: entrega exatamente um quadro e não dorme, porque o relógio
+   de parede é do frontend. O Zeebx dorme (`src/session.rs`), o que soma o nosso freio ao do
+   frontend. Não é bug de correção, é risco de double-throttle e de judder — e virou item próprio
+   na lista de pendências.
+6. **`GL_ARM_shader_framebuffer_fetch` está detectado e inativo** nos cores (o próprio código
+   força `ext_fetch = false`). Não contar como ganho que já existe.
+7. **O cache binário de shader está desligado justamente no GLES** (`EnableShadersStorage` vive
+   sob `#if !defined(HAVE_OPENGLES)`), então o engasgo de compilação continua lá nos cores. Para
+   nós isto é **inócuo**: o motor tem **um** shader e o compila uma vez.
+
+### Confirmações no nosso código
+
+- **A guarda do lote existe.** O adendo avisou que o Mupen junta 256 vértices e 1024 índices sem
+  guarda aparente. Conferido: o nosso fecha o lote por teto (`VERTICES_NO_LOTE`, 16 384 vértices)
+  antes de inserir. Não há o defeito.
+- **O consumo parcial do áudio é tratado.** O PCSX ignora o retorno parcial do
+  `audio_batch_cb`; o nosso guarda o que sobrou em `audio_pendente` e entrega na chamada seguinte.
+- **A latência de áudio é constante, não derivada.** O PCSX recalcula a latência mínima só quando
+  muda o tipo de frameskip, e ela pode ficar obsoleta ao mudar intervalo ou NTSC/PAL. O nosso
+  pede 96 ms uma vez, e a constante não depende da política de quadro — sem o defeito de valor
+  velho, mas com a mesma fragilidade se um dia ela virar função da política.
+
+### Riscos que só valem se mexermos nessas frentes
+
+- **GLSM do `libretro-common`**: ~64 MiB de BSS com índice direto por (programa, location) e
+  estouro acima de 1024. Não copiar; cache de uniforme, se houver, com mapa esparso e bit de
+  validade.
+- **`AHardwareBuffer` do Mupen**: cria com `CPU_READ_OFTEN|GPU_SAMPLED_IMAGE`, usa como alvo de
+  desenho **sem** `GPU_COLOR_OUTPUT` e ignora o retorno de `allocate()`. Se um dia formos por
+  `EGLImage`, pedir `GPU_COLOR_OUTPUT`, validar a alocação e cair para PBO em qualquer falha.
+- **Threaded wrapper do GLideN64**: cresce de 10 MiB até 200 MiB. Ganho opcional de driver com
+  custo de RAM e latência; não é o padrão para portátil.
+- **`N64DepthCompare` "compatível"**: `glMemoryBarrier` mais um desenho por triângulo. É correção
+  com custo extremo em GPU de tiles — serve de aviso contra soluções "por triângulo" no Mali.
+- **W^X e flush de I-cache em lotes** (`start_tcache_write`/`do_clear_cache`) só importam quando o
+  JIT for nosso; hoje é do Dynarmic.
+
+### Achados Mali que ainda não usamos
+
+- **Testar `glBlitFramebuffer` em execução.** O Flycast não confia no anúncio do driver: faz um
+  teste de verdade e, quando ele mente, desenha um quadrilátero. O Zeebx assume que o blit
+  funciona — e o usa no `resolve` de MSAA e na leitura do quadro grande.
+- **Descartar profundidade e estêncil depois do último passe.** O GLES do Flycast **não** chama
+  `glInvalidateFramebuffer` nem `glDiscardFramebufferEXT`: isso seria experimento **novo** nosso,
+  não receita copiada. Em GPU de tiles é onde pode render.
+- **`DEPTH24_STENCIL8` no Mali** — o Flycast troca o formato por causa de quirk; nós já usamos
+  esse formato, então é confirmação, não pendência.
+- **Modelo de memória de tile no Vulkan**: `eTransientAttachment`, `LAZILY_ALLOCATED`, storeOp
+  `eDontCare` e dependências `eByRegion`. É referência para quando houver Vulkan, não para hoje.
+- **Não portar o "tile renderer" do Dreamcast**: o Flycast não reexecuta tile a tile — converte o
+  recorte em `scissor` e teste de shader. Seria reescrita enorme.
+- **`SwapIntervalDetector`**: mede o intervalo de vblank com média móvel e força intervalo 1
+  quando a taxa é instável, para não cair em 30 FPS acidental. É ideia aproveitável no nosso
+  limitador e na decisão de frameskip.
+- **O frameskip do Flycast separa "CPU lenta" de "fila de GPU cheia".** O nosso só reage ao aviso
+  de áudio do frontend; telemetria de GPU permitiria a segunda decisão.
+
+### O que não se aplica
+
+- O caminho `ARMv5_ONLY` dos dynarecs (immediates, pools, sem `IDIV`, VFP condicional) é modelo de
+  restrição de ARM11/v6. O nosso **guest** é ARM e o **host** é ARM64; o JIT não é nosso.
+- Lightrec é LGPL-2.1+ e o GNU Lightning do `rsp_jit` é LGPL-3.0+: importar elevaria o conjunto de
+  licenças do projeto, que é `GPL-2.0-or-later`.
+
+### Licenças, fechadas
+
+| fonte | licença | uso |
+|---|---|---|
+| PCSX-ReARMed, Flycast | GPL-2.0-or-later nos arquivos citados | compatível com o nosso; com avisos preservados |
+| Mupen64Plus-Next, parallel-n64 | agregado: GPL-2.0 (núcleo), LGPLv3 (gles2n64), MIT/LGPLv3 (rsp) | conferir por arquivo antes de qualquer cópia |
+| DuckStation | **CC-BY-NC-ND-4.0** | **nenhum código**; só fatos e ideias, com implementação independente |
+| dependências vendorizadas (VIXL, Swappy, GNU Lightning) | próprias | algumas elevam o conjunto |
+
+**Nenhuma linha de código destes emuladores foi copiada.** O que entrou no projeto foram fatos,
+nomes de função para conferência e as decisões de engenharia listadas acima.
+
+### A ordem revisada
+
+| muda | frente | por quê |
+|---|---|---|
+| sobe | cache de estado GL | ganho de baixo risco, apontado por duas revisões |
+| sobe | juntar lotes adjacentes com restart | batching que ainda não temos, e de baixo risco |
+| sobe | testar blit e descarte no driver real | sem isso, MSAA e leitura podem estar mentindo |
+| sobe | SMC medido | é o que resta de real na frente de memória |
+| entra | PDCA do `sleep` no `retro_run` | desvio do contrato Libretro, medido contra o PCSX |
+| desce | fastmem novo | o Dynarmic já entrega |
+| desce | SIMD dos cores | pouca transferibilidade confirmada |
+| desce | thread de apresentação | o DuckStation removeu por piorar o pacing |
+
