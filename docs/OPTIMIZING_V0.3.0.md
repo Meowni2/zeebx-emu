@@ -564,3 +564,25 @@ Prioridade resultante: lazy readback/zero-copy, shadow-state/uniform cache, PBO 
 readback inevitável, e depois NEON nos kernels medidos. Vulkan/ParaLLEl-RDP e o dynarec MIPS ficam
 fora do escopo.
 
+## 18. Auditoria posterior: correções e rodada de 63 ROMs
+
+A revisão dos patches encontrou três limites que a primeira implementação não registrou:
+
+1. `GuestMemory::fill` podia alterar a primeira região e falhar na segunda antes da invalidação
+   JIT. Agora o intervalo inteiro é validado antes de qualquer escrita, com teste de atomicidade.
+2. `GL_DEPTH_CLAMP` deixou de ser ligado no GLES em `aplica`, mas ainda era desligado em
+   `devolve_o_contexto`, produzindo o mesmo `GL_INVALID_ENUM`. Os dois lados estão guardados.
+3. No FBO Libretro externo, o desenho ia para o framebuffer do frontend, mas `liga_para_leitura`
+   ligava o FBO interno. `glReadPixels` e composição CPU podiam ler quadro velho. Em 1x sem MSAA,
+   a leitura agora usa o mesmo FBO externo que recebeu o desenho.
+
+Supersampling, MSAA e proporção larga junto do FBO externo ainda precisam de composição explícita
+no FBO do frontend; não estão declarados resolvidos por esta correção.
+
+A rodada longa terminou: 63 ROMs reconhecidas, 60 s virtuais, perfil ligado, 1.504 s reais. Casos
+mais lentos entre os que avançaram: Action Hero 91%, Quake 93%, Ultimate Chess 114%, NFS Carbon
+123%; o perfil encarece fortemente o relógio, portanto esses percentuais não são FPS de uso normal.
+Seis casos pedem triagem: Bejeweled, Kingdom Hearts homebrew, Pac-Mania (22% e teto de 240 s),
+Prey Evil, Ridge Racer e Opera Mini. Eles não devem ser chamados de regressão sem comparação com
+a linha de base e roteiro equivalentes.
+

@@ -913,10 +913,17 @@ impl GpuState {
     /// em bytes para jogar quase tudo fora.
     fn liga_para_leitura(&mut self) {
         self.destino();
-        self.resolve();
+        // O framebuffer do frontend não passa pelo nosso resolve. No caminho interno, resolve
+        // MSAA antes de ler.
+        if self.fbo_externo.is_none() {
+            self.resolve();
+        }
         let extra = self.quadro.as_ref().map_or(0, |d| d.extra) as i32;
         if self.escala <= 1 && extra == 0 {
-            let fbo = self.quadro.as_ref().map(|d| d.fbo);
+            let fbo = match self.fbo_externo {
+                Some(_) => self.alvo_do_desenho(),
+                None => self.quadro.as_ref().map(|d| d.fbo),
+            };
             unsafe { self.gl.bind_framebuffer(glow::FRAMEBUFFER, fbo) };
             return;
         }
@@ -1045,7 +1052,9 @@ impl GpuState {
             gl.disable(glow::DEPTH_TEST);
             gl.disable(glow::CULL_FACE);
             gl.disable(glow::STENCIL_TEST);
-            gl.disable(glow::DEPTH_CLAMP);
+            if !gl.version().is_embedded {
+                gl.disable(glow::DEPTH_CLAMP);
+            }
             gl.disable(glow::BLEND);
             gl.depth_mask(true);
             gl.depth_range_f32(0.0, 1.0);

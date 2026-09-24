@@ -163,27 +163,42 @@ impl GuestMemory {
     }
 
     /// Preenche diretamente as regiões, sem criar um buffer intermediário.
+    ///
+    /// Valida o intervalo inteiro antes de tocar nos bytes. Assim uma falha na segunda região
+    /// não deixa a primeira alterada sem o chamador invalidar o cache JIT correspondente.
     pub fn fill(&mut self, addr: u32, value: u8, len: u32) -> Result<(), MemError> {
-        let mut onde = addr;
-        let mut restante = len as usize;
-        while restante > 0 {
-            let region = self
-                .region_for_mut(onde, 1)
-                .ok_or(MemError::Unmapped {
-                    addr: onde,
-                    len: restante as u32,
-                })?;
+        let inicio = u64::from(addr);
+        let fim = inicio + u64::from(len);
+        if fim > u64::from(u32::MAX) + 1 {
+            return Err(MemError::Unmapped { addr, len });
+        }
+
+        let mut cursor = inicio;
+        while cursor < fim {
+            let onde = cursor as u32;
+            let restante = fim - cursor;
+            let region = self.region_for(onde, 1).ok_or(MemError::Unmapped {
+                addr: onde,
+                len: restante.min(u64::from(u32::MAX)) as u32,
+            })?;
             if !region.writable {
                 return Err(MemError::ReadOnly {
                     addr: onde,
                     region: region.name,
                 });
             }
-            let inicio = (onde - region.base) as usize;
-            let passo = restante.min(region.bytes.len() - inicio);
-            region.bytes[inicio..inicio + passo].fill(value);
-            onde = onde.wrapping_add(passo as u32);
-            restante -= passo;
+            let fim_da_regiao = u64::from(region.base) + region.bytes.len() as u64;
+            cursor = fim.min(fim_da_regiao);
+        }
+
+        cursor = inicio;
+        while cursor < fim {
+            let onde = cursor as u32;
+            let region = self.region_for_mut(onde, 1).expect("intervalo já validado");
+            let inicio_na_regiao = (onde - region.base) as usize;
+            let passo = ((fim - cursor) as usize).min(region.bytes.len() - inicio_na_regiao);
+            region.bytes[inicio_na_regiao..inicio_na_regiao + passo].fill(value);
+            cursor += passo as u64;
         }
         Ok(())
     }
@@ -272,5 +287,20 @@ mod tests {
                 region: "rom"
             })
         );
+    }
+
+    #[test]
+    fn fill_que_falha_na_segunda_regiao_nao_altera_a_primeira() {
+        let mut m = GuestMemory::new();
+        m.map("w", 0x2000, vec![0xaa; 4], true).unwrap();
+        m.map("ro", 0x2004, vec![0xbb; 4], false).unwrap();
+        assert_eq!(
+            m.fill(0x2002, 0, 4),
+            Err(MemError::ReadOnly {
+                addr: 0x2004,
+                region: "ro"
+            })
+        );
+        assert_eq!(m.read(0x2000, 4).unwrap(), &[0xaa; 4]);
     }
 }
