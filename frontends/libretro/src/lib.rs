@@ -1881,8 +1881,12 @@ fn aplica_opcoes_quentes(estado: &mut Core) {
     // **Um número só, dois mecanismos.** Abaixo de 1x quem reduz é o rasterizador de
     // processador (superfície menor, ampliada na apresentação); acima de 1x quem amplia é o de
     // placa (supersampling). O valor é entregue aos dois, e cada um usa o que lhe cabe.
+    // **O perfil Portátil traz a redução de fábrica.** Num aparelho fraco o preenchimento é o
+    // que domina, e desenhar em 320×240 mediu 22% menos tempo real (ver
+    // `docs/OPTIMIZING_V0.3.0.md`, seção 28). Quem não gostar da imagem mais quadrada escolhe a
+    // opção à mão — o perfil é sobre desempenho, e este é o item de desempenho que faltava nele.
     let texto_escala = match perfil_portatil {
-        true => None,
+        true => Some("0.5".to_string()),
         false => unsafe { le_opcao(c"zeebx_resolucao_interna") },
     };
     match texto_escala.as_deref().map(str::trim) {
