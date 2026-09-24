@@ -61,7 +61,7 @@ jobs:
             sistema: macos-15-intel
             formatos: dmg
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -167,7 +167,7 @@ jobs:
           - nome: macos-x86_64
             sistema: macos-15-intel
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -237,7 +237,7 @@ jobs:
           - abi: arm64-v8a
             alvo: aarch64-linux-android
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -324,7 +324,7 @@ jobs:
             biblioteca: target/release/libzeebx_libretro.dylib
             arquivo: zeebx_libretro.dylib
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -412,7 +412,7 @@ jobs:
     name: core-wasm
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -455,7 +455,7 @@ jobs:
     steps:
       # O repositório entra por causa das notas: o corpo da release sai de um arquivo versionado,
       # e sem `checkout` este job só tem os artefatos baixados.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/download-artifact@v4
         with:
