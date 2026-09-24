@@ -30,7 +30,7 @@ cxx-qt-lib = { version = "0.10", optional = true, features = ["qt_gui", "qt_qml"
 glow = { version = "0.16", optional = true }
 
 [features]
-ui-qt = ["dep:cxx", "dep:cxx-qt", "dep:cxx-qt-lib", "dep:cxx-qt-build", "dep:glow"]
+ui-qt = ["dep:cxx", "dep:cxx-qt", "dep:cxx-qt-lib", "dep:cxx-qt-build", "dep:qt-build-utils", "dep:glow"]
 
 # **Os instaladores vivem aqui, e não na raiz.** O `cargo packager` lê o manifesto do pacote que
 # produz o binário, e desde a 0.3.0 quem produz o `zeebx` é este crate. Os caminhos de ícone
@@ -86,3 +86,6 @@ minimum-system-version = "11.0"
 [build-dependencies]
 winresource = "0.1"
 cxx-qt-build = { version = "0.10", optional = true }
+# Só pelo `QResourceFile`, que dá apelido a um arquivo dos recursos do QML e que o cxx-qt-build não
+# reexporta: a imagem do Boomerang mora em `assets/`, dois níveis acima deste pacote.
+qt-build-utils = { version = "0.10", optional = true }

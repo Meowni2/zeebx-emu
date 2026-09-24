@@ -5546,6 +5546,7 @@ dependencies = [
  "cxx-qt-build",
  "cxx-qt-lib",
  "glow",
+ "qt-build-utils",
  "winresource",
  "zeebx",
 ]
