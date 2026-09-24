@@ -449,6 +449,10 @@ mod tests {
         let _sozinho = sozinho();
         limpa();
         zera_descartes();
+        // **O nível tem de ser fixado aqui.** Sem isto a prova dependia do que a anterior deixou:
+        // escrita em `Informacao` com o nível em `Aviso` não entra no anel, e não há descarte
+        // nenhum para contar. Passou até a ordem das provas mudar.
+        define_nivel(Nivel::Depuracao);
         for i in 0..(CAPACIDADE + 5) {
             escreve(Nivel::Informacao, "teste-do-teto", &format!("linha {i}"));
         }

@@ -379,6 +379,32 @@ const ENV_SET_CORE_OPTIONS_V2: u32 = 67;
 /// É o mecanismo do próprio Libretro para frameskip automático — não é invenção nossa: o parágrafo
 /// da própria `libretro.h` diz "se `underrun_likely`, o core deveria tentar pular quadro".
 const ENV_SET_AUDIO_BUFFER_STATUS_CALLBACK: u32 = 62;
+/// `RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER`: o frontend **empresta** um buffer para o
+/// core desenhar o quadro.
+///
+/// Sem ele, o core monta o quadro num vetor próprio e o frontend copia — uma cópia de 600 KB por
+/// quadro, que num aparelho fraco é trabalho de verdade. Com ele, o core escreve onde o quadro vai
+/// ficar, e o ponteiro emprestado é o que se entrega ao `retro_video_refresh`.
+///
+/// **O ponteiro vale só dentro desta chamada de `retro_run`** — a própria `libretro.h` avisa —, e
+/// é por isso que o pedido e o uso ficam no mesmo lugar, sem guardar nada entre quadros.
+const ENV_GET_CURRENT_SOFTWARE_FRAMEBUFFER: u32 = 40 | 0x1_0000;
+
+/// O buffer que o frontend empresta. A ordem e os tipos são os do `libretro.h`.
+#[repr(C)]
+struct RetroFramebuffer {
+    /// Preenchido pelo frontend; o core pede com nulo.
+    data: *mut c_void,
+    /// O core pede o tamanho que quer; o frontend pode devolver outro.
+    width: u32,
+    height: u32,
+    /// Distância em bytes entre o começo de duas linhas, posto pelo frontend.
+    pitch: usize,
+    /// O formato dos pixels, posto pelo frontend — **pode ser diferente do negociado**, e é por
+    /// isso que ele é conferido antes de escrever.
+    format: u32,
+}
+
 /// `RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY`: pede mais folga no buffer de áudio do frontend.
 ///
 /// A própria documentação do callback acima recomenda isto: sem folga, o aviso de estouro chega
@@ -768,6 +794,57 @@ fn log_com_nivel(nivel: u32, mensagem: &str) {
             unsafe { escreve(nivel, c"%s".as_ptr(), texto.as_ptr()) };
         }
     }
+}
+
+/// Pede ao frontend o buffer em que o quadro deve ser desenhado.
+///
+/// Devolve `None` quando ele não oferece, quando o buffer não serve (formato diferente de RGB565,
+/// ou tamanho diferente do pedido) ou quando o ponteiro vem nulo. **Toda recusa cai no caminho de
+/// sempre** — o vetor próprio do core —, porque um frontend que não empresta buffer não pode
+/// deixar o core sem imagem.
+///
+/// Ver [`ENV_GET_CURRENT_SOFTWARE_FRAMEBUFFER`].
+fn pede_o_buffer_do_frontend(largura: u32, altura: u32) -> Option<(*mut u8, usize)> {
+    let mut pedido = RetroFramebuffer {
+        data: std::ptr::null_mut(),
+        width: largura,
+        height: altura,
+        pitch: 0,
+        format: PIXEL_FORMAT_RGB565,
+    };
+    let alvo = &mut pedido as *mut RetroFramebuffer as *mut c_void;
+    if !unsafe { environ(ENV_GET_CURRENT_SOFTWARE_FRAMEBUFFER, alvo) } {
+        return None;
+    }
+    // O frontend **pode** devolver outro formato — a `libretro.h` diz que sim, para conversão.
+    // Escrever RGB565 num buffer XRGB8888 daria uma imagem plausível e falsa, então aqui se recusa.
+    if pedido.data.is_null()
+        || pedido.format != PIXEL_FORMAT_RGB565
+        || pedido.width != largura
+        || pedido.height != altura
+    {
+        return None;
+    }
+    Some((pedido.data.cast::<u8>(), pedido.pitch))
+}
+
+/// Escreve o quadro no buffer que o frontend emprestou, respeitando o passo de linha dele.
+///
+/// # Safety
+///
+/// O ponteiro e o passo vêm de [`pede_o_buffer_do_frontend`], que só os devolve quando o frontend
+/// aceitou o pedido — e a `libretro.h` garante que o buffer vale até o fim desta chamada de
+/// `retro_run`, que é onde isto roda.
+fn escreve_o_quadro(tela: &zeebx::video::display::Framebuffer, dados: *mut u8, passo: usize) {
+    let (largura, altura) = (tela.width() as usize, tela.height() as usize);
+    let passo = passo.max(largura * 2);
+    let bytes = passo.saturating_mul(altura);
+    if bytes == 0 {
+        return;
+    }
+    // SAFETY: o frontend prometeu um buffer com `passo * altura` bytes utilizáveis nesta chamada.
+    let destino = unsafe { std::slice::from_raw_parts_mut(dados, bytes) };
+    tela.write_rgb565_with_pitch(destino, passo);
 }
 
 /// O nível do `libretro.h` que corresponde ao nível do núcleo.
@@ -2407,7 +2484,7 @@ pub extern "C" fn retro_run() {
     // Os buffers saem do estado antes das chamadas ao frontend: nenhum cadeado do core fica preso
     // enquanto o frontend executa, e é isso que impede um aviso dele — "disco cheio, quer salvar?"
     // — de travar o emulador.
-    let (frame, audio, largura, altura, duplicado) = {
+    let (frame, audio, largura, altura, duplicado, emprestado) = {
         let Ok(mut guard) = core().lock() else {
             return;
         };
@@ -2642,12 +2719,24 @@ pub extern "C" fn retro_run() {
         // 30 FPS é cadência de apresentação, não só otimização 3D: no quadro oculto preservamos
         // os bytes anteriores. Se o frontend aceita dupe, entregaremos ponteiro nulo; se não
         // aceita, entregaremos os mesmos bytes de novo — nos dois casos a imagem é realmente 30.
+        // **O buffer emprestado, quando o frontend o oferece.** Só no caminho de software: com o
+        // desenho na placa quem apresenta é o FBO, e não há quadro na CPU para escrever.
+        let emprestado = match na_placa {
+            true => None,
+            false => pede_o_buffer_do_frontend(largura, altura),
+        };
         let duplicado = if na_placa {
             false
         } else if estado.limite_fps_duplica {
             estado.aceita_dupe
         } else {
-            tela.write_rgb565_into(&mut quadro);
+            match &emprestado {
+                // Escreve onde o quadro vai ficar: sem vetor intermediário e sem cópia.
+                Some((dados, passo)) => escreve_o_quadro(tela, *dados, *passo),
+                None => {
+                    tela.write_rgb565_into(&mut quadro);
+                }
+            }
             let assinatura = tela.signature();
             let igual = estado.aceita_dupe && estado.ultima_assinatura == Some(assinatura);
             estado.ultima_assinatura = Some(assinatura);
@@ -2667,7 +2756,7 @@ pub extern "C" fn retro_run() {
         for amostra in estado.mixer.render(devidas) {
             som.push((amostra.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16);
         }
-        (quadro, som, largura, altura, duplicado)
+        (quadro, som, largura, altura, duplicado, emprestado)
     };
     let frente = callbacks();
     if let Some(video) = frente.video {
@@ -2678,7 +2767,12 @@ pub extern "C" fn retro_run() {
             (true, _) => (HW_FRAME_BUFFER_VALID as *const c_void, ()),
             // Quadro nulo avisa "repete o anterior", que é o que a ABI oferece para tela parada.
             (false, true) => (std::ptr::null(), ()),
-            (false, false) => (frame.as_ptr() as *const c_void, ()),
+            // **O ponteiro emprestado é o que se entrega**, e não o nosso: a `libretro.h` exige
+            // que seja ele, sem deslocamento.
+            (false, false) => match &emprestado {
+                Some((dados, _)) => (*dados as *const c_void, ()),
+                None => (frame.as_ptr() as *const c_void, ()),
+            },
         };
         // SAFETY: o buffer vive durante a chamada; no quadro repetido o frontend reusa o último.
         unsafe {
@@ -3219,8 +3313,43 @@ mod testes {
     ///
     /// O que não temos responde `false` — é o que o RetroArch faz com o que não conhece, e é
     /// assim que o caminho de recusa do core também fica exercitado.
+    /// O buffer que o frontend falso empresta ao core no `GET_CURRENT_SOFTWARE_FRAMEBUFFER`.
+    ///
+    /// Estático porque o ponteiro tem de continuar válido durante toda a chamada de `retro_run`
+    /// em que foi entregue — a `libretro.h` só garante isso.
+    static BUFFER_EMPRESTADO: Mutex<Option<Vec<u8>>> = Mutex::new(None);
+
+    /// O passo que o frontend falso usa: a largura em bytes **mais uma folga**.
+    ///
+    /// A folga é de propósito. Com `pitch == largura * 2` o core poderia escrever o quadro inteiro
+    /// de uma vez e acertar por sorte; com folga, quem não respeitar o passo escreve a imagem
+    /// torta — e é isso que a prova precisa pegar.
+    const FOLGA_DO_PASSO: usize = 64;
+
     unsafe extern "C" fn ambiente(cmd: u32, dados: *mut c_void) -> bool {
         match cmd {
+            // **O frontend empresta o buffer.** Ver [`ENV_GET_CURRENT_SOFTWARE_FRAMEBUFFER`].
+            ENV_GET_CURRENT_SOFTWARE_FRAMEBUFFER => {
+                if dados.is_null() {
+                    return false;
+                }
+                let pedido = dados as *mut RetroFramebuffer;
+                let (largura, altura) = unsafe { ((*pedido).width, (*pedido).height) };
+                let passo = largura as usize * 2 + FOLGA_DO_PASSO;
+                let Ok(mut guarda) = BUFFER_EMPRESTADO.lock() else {
+                    return false;
+                };
+                *guarda = Some(vec![0u8; passo * altura as usize]);
+                let Some(buffer) = guarda.as_mut() else {
+                    return false;
+                };
+                unsafe {
+                    (*pedido).data = buffer.as_mut_ptr() as *mut c_void;
+                    (*pedido).pitch = passo;
+                    (*pedido).format = PIXEL_FORMAT_RGB565;
+                }
+                true
+            }
             // Aceita RGB565 e recusa o resto: é o formato que o console entrega, e recusar os
             // outros faz o core seguir pelo caminho que ele usa no RetroArch.
             ENV_SET_PIXEL_FORMAT => {
@@ -3430,6 +3559,19 @@ mod testes {
                 let t = std::time::Instant::now();
                 retro_run();
                 por_quadro.push(t.elapsed());
+            }
+            // **O quadro foi para o buffer do frontend.** Se o core tivesse escrito no vetor dele,
+            // o buffer emprestado ficaria zerado; se tivesse ignorado o passo, as linhas estariam
+            // deslocadas. As duas coisas aparecem aqui.
+            {
+                let guarda = BUFFER_EMPRESTADO.lock().expect("o buffer do teste");
+                let buffer = guarda.as_ref().expect("o frontend emprestou o buffer");
+                let acesos = buffer.iter().filter(|b| **b != 0).count();
+                assert!(
+                    acesos > buffer.len() / 100,
+                    "o buffer emprestado ficou apagado ({acesos} de {} byte(s)): o core não desenhou nele",
+                    buffer.len()
+                );
             }
             let real = real_antes.elapsed();
             let avancou = RELOGIO.load(Ordering::Relaxed).wrapping_sub(relogio_antes);
