@@ -26,13 +26,35 @@ RA=$(command -v retroarch || true)
 [ -n "$RA" ] || RA=$(ls /usr/local/bin/retroarch /usr/bin/retroarch 2>/dev/null | head -1)
 [ -n "$RA" ] || { fala "RETROARCH: nao achei o executavel"; exit 1; }
 
+# **O muOS precisa de um preparo que o lancador dele faz e nao repassa.** O
+# `/opt/muos/script/launch/lr-general.sh` monta o ambiente de SDL e o `HOME` antes de chamar o
+# RetroArch, e **nao repassa argumento nenhum** -- sem isso, `--max-frames` nao chega la. Entao o
+# script faz o mesmo preparo e chama o binario direto.
+if [ -f /opt/muos/script/var/func.sh ]; then
+    set +u
+    . /opt/muos/script/var/func.sh 2>/dev/null || true
+    command -v SETUP_SDL_ENVIRONMENT >/dev/null 2>&1 && SETUP_SDL_ENVIRONMENT >/dev/null 2>&1
+    novo_home=$(GET_VAR "device" "board/home" 2>/dev/null || true)
+    [ -n "${novo_home:-}" ] && HOME="$novo_home" && export HOME
+    set -u
+fi
+
 # O `HOME` do contexto nao e confiavel (o EmulationStation pode rodar como root), entao os
-# caminhos do ArkOS e do muOS entram na lista.
-CFG=""
+# caminhos do ArkOS e do muOS entram na lista -- incluindo o do muOS, que e um symlink para
+# `/opt/muos/share/info/config`, onde o muOS guarda as opcoes de cada core.
+# **Todos** os diretorios plausiveis, e nao so o primeiro: o ArkOS guarda as opcoes num arquivo
+# global e o muOS por core, em pastas diferentes, e o script nao tem como saber qual dos dois vale
+# sem tentar. Escrever em todos e o que faz o teste valer nos dois aparelhos; se nenhum aceitar, o
+# resumo avisa em vez de sair um resultado que nao compara nada.
+DIRS=""
 for c in "$HOME/.config/retroarch" "$HOME/RetroArch" /home/ark/.config/retroarch \
-         /opt/muos/share/emulator/retroarch; do
-    [ -d "$c" ] && CFG="$c" && break
+         /opt/muos/share/info/config /opt/muos/share/emulator/retroarch; do
+    [ -d "$c" ] || continue
+    r=$(readlink -f "$c" 2>/dev/null || echo "$c")
+    case " $DIRS " in *" $r "*) ;; *) DIRS="$DIRS $r" ;; esac
 done
+CFG=$(echo "$DIRS" | awk '{print $1}')
+[ -n "$CFG" ] || CFG="$HOME/.config/retroarch"
 
 CORE=""
 for c in "$AQUI/zeebx_libretro.so" "$CFG/cores/zeebx_libretro.so" \
@@ -63,22 +85,26 @@ fi
 # `retroarch-core-options.cfg`; o `.opt` por core so vale com a opcao desligada. Escrever nos dois
 # e o que faz o teste valer nos dois arranjos -- e, se so um valesse, as rodadas sairiam todas
 # iguais e a comparacao nao diria nada.
-OPC_GLOBAL="$CFG/retroarch-core-options.cfg"
-OPC_CORE="$CFG/config/Zeebx/Zeebx.opt"
 ANTES="$SAIDA/opcoes-antes"
 NOVAS="$SAIDA/zeebx-da-rodada.cfg"
 
 salva_opcoes() {
-    mkdir -p "$ANTES" "$(dirname "$OPC_CORE")"
-    [ -f "$OPC_GLOBAL" ] && cp "$OPC_GLOBAL" "$ANTES/retroarch-core-options.cfg"
-    [ -f "$OPC_CORE" ] && cp "$OPC_CORE" "$ANTES/Zeebx.opt"
+    mkdir -p "$ANTES"
+    n=0
+    for d in $DIRS; do
+        n=$((n + 1))
+        [ -f "$d/retroarch-core-options.cfg" ] && cp "$d/retroarch-core-options.cfg" "$ANTES/global-$n.cfg"
+        [ -f "$d/config/Zeebx/Zeebx.opt" ] && cp "$d/config/Zeebx/Zeebx.opt" "$ANTES/core-$n.opt"
+    done
     return 0
 }
 devolve_opcoes() {
-    if [ -f "$ANTES/retroarch-core-options.cfg" ]; then
-        cp "$ANTES/retroarch-core-options.cfg" "$OPC_GLOBAL"
-    fi
-    if [ -f "$ANTES/Zeebx.opt" ]; then cp "$ANTES/Zeebx.opt" "$OPC_CORE"; else rm -f "$OPC_CORE"; fi
+    n=0
+    for d in $DIRS; do
+        n=$((n + 1))
+        [ -f "$ANTES/global-$n.cfg" ] && cp "$ANTES/global-$n.cfg" "$d/retroarch-core-options.cfg"
+        if [ -f "$ANTES/core-$n.opt" ]; then cp "$ANTES/core-$n.opt" "$d/config/Zeebx/Zeebx.opt"; fi
+    done
     return 0
 }
 
@@ -108,16 +134,23 @@ opcoes() {
     poe zeebx_frameskip "$pulo"
     poe zeebx_limite_fps "$fps"
     poe zeebx_log "$nivel"
-    # O arquivo global guarda as opcoes de TODOS os cores: tira so as linhas do Zeebx e devolve as
-    # novas, para nao apagar a configuracao dos outros emuladores.
-    if [ -f "$OPC_GLOBAL" ]; then
-        { grep -v '^zeebx_' "$OPC_GLOBAL" 2>/dev/null; cat "$NOVAS"; } > "$SAIDA/global.tmp"
-        cp "$SAIDA/global.tmp" "$OPC_GLOBAL"
-        rm -f "$SAIDA/global.tmp"
-    else
-        cp "$NOVAS" "$OPC_GLOBAL"
+    # Em cada diretorio encontrado: o global (preservando as opcoes dos outros cores, que o
+    # arquivo guarda todas) e o `.opt` do Zeebx.
+    escreveu=0
+    for d in $DIRS; do
+        g="$d/retroarch-core-options.cfg"
+        if [ -f "$g" ]; then
+            { grep -v '^zeebx_' "$g" 2>/dev/null; cat "$NOVAS"; } > "$SAIDA/global.tmp"
+            cp "$SAIDA/global.tmp" "$g" 2>/dev/null && escreveu=1
+            rm -f "$SAIDA/global.tmp"
+        fi
+        mkdir -p "$d/config/Zeebx" 2>/dev/null
+        cp "$NOVAS" "$d/config/Zeebx/Zeebx.opt" 2>/dev/null && escreveu=1
+    done
+    if [ "$escreveu" = 0 ]; then
+        fala "ATENCAO: nao deu para escrever as opcoes em nenhum destino ($DIRS)."
+        fala "         Sem isso, todas as rodadas correm no ajuste de fabrica e o teste nao compara nada."
     fi
-    cp "$NOVAS" "$OPC_CORE"
 }
 
 # ------------------------------------------------------------------ o que o nucleo disse
@@ -180,7 +213,12 @@ fala "----------------------------------------"
     echo "df:"; df -h "$SAIDA" 2>/dev/null | tail -2
     echo "== retroarch =="; "$RA" --version 2>&1 | head -3
     echo "== core =="; ls -la "$CORE"; sha256sum "$CORE" 2>/dev/null
-    echo "== opcoes antes =="; grep '^zeebx_' "$OPC_GLOBAL" 2>/dev/null || cat "$OPC_CORE" 2>/dev/null
+    echo "== opcoes antes =="
+    for d in $DIRS; do
+        echo "-- $d"
+        grep '^zeebx_' "$d/retroarch-core-options.cfg" 2>/dev/null
+        cat "$d/config/Zeebx/Zeebx.opt" 2>/dev/null
+    done
     echo "== gpu =="; cat /sys/class/drm/card*/device/uevent 2>/dev/null | head -6
     dmesg 2>/dev/null | grep -iE 'mali|panfrost|drm' | tail -6
 } > "$SAIDA/00-aparelho.txt" 2>&1
