@@ -22,6 +22,12 @@
 # `win64_msvc2022_64`, e o defeito do `__yield` é só do ARM. Quando o `aqtinstall` entender o
 # formato novo, o Windows volta para o 6.11.
 #
+# **As versões são exatas, e não `6.11.*`.** O curinga pega o patch do dia em que ele sai, e o Qt
+# publica os pacotes antes dos checksums: o 6.11.3 apareceu em 24/09/2026 com os `.7z` no ar e
+# todos os `.sha256` em 404, conferido no `download.qt.io`. O `aqtinstall` baixa o checksum antes
+# do pacote, e o Linux e o macOS falharam no passo do Qt sem mudar uma linha do projeto. Subir de
+# versão passa a ser uma mudança deste arquivo, feita quando o patch novo estiver completo.
+#
 # Fica de fora o Windows ARM64: o `install-qt-action` não tem ali o mesmo pacote de desktop que tem
 # no x64, e a pergunta da fase 0 é se a ponte compila com MSVC e com o clang da Apple, não em
 # quantas arquiteturas.
@@ -49,21 +55,21 @@ jobs:
           - nome: linux-x86_64
             sistema: ubuntu-24.04
             binario: target/release/zeebx
-            qt: "6.11.*"
+            qt: "6.11.2"
           - nome: windows-x86_64
             sistema: windows-latest
             binario: target/release/zeebx.exe
-            qt: "6.10.*"
+            qt: "6.10.3"
           - nome: macos-x86_64
             sistema: macos-15-intel
             binario: target/release/zeebx
-            qt: "6.11.*"
+            qt: "6.11.2"
           - nome: macos-arm64
             sistema: macos-latest
             binario: target/release/zeebx
-            qt: "6.11.*"
+            qt: "6.11.2"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
