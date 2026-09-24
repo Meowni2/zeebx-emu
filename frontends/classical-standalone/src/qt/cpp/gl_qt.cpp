@@ -25,6 +25,12 @@ void prepara_gl()
     if (!qEnvironmentVariableIsSet("QSG_RENDER_LOOP")) {
         qputenv("QSG_RENDER_LOOP", "basic");
     }
+    // O estilo dos controles do Qt Quick: o Fusion segue a paleta do sistema em todos eles. O
+    // Basic, que é o padrão, pinta os campos e os textos com a paleta dele, e num tema escuro o
+    // texto solto saía escuro sobre o fundo escuro da janela.
+    if (!qEnvironmentVariableIsSet("QT_QUICK_CONTROLS_STYLE")) {
+        qputenv("QT_QUICK_CONTROLS_STYLE", "Fusion");
+    }
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     // No macOS o padrão é Metal e no Windows é D3D; o rasterizador é GL.
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
