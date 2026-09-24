@@ -88,6 +88,13 @@ struct Voice {
     remaining: Option<u32>,
     paused: bool,
     done: bool,
+    /// Quadros de **fonte** que a voz já consumiu, somados desde o começo.
+    ///
+    /// É a medida honesta de quanto a voz tocou: a `position` dá a volta quando o som repete, e um
+    /// contador de quadros de placa mentiria sobre a duração. Serve para responder "essa voz tocou
+    /// tudo o que o jogo mandou?" — a pergunta que separa um defeito do mixer de um defeito do que
+    /// vem depois dele.
+    tocados: f64,
     /// Quadros que faltam para a voz sumir, quando o som chegou ao fim.
     ///
     /// **Uma voz que some de uma vez estala.** O som acaba, o nível pode estar em 0,947 — foi o
@@ -130,6 +137,7 @@ impl Voice {
     /// Avança um quadro da placa, tratando o fim do som e a repetição.
     fn advance(&mut self) {
         self.position += self.step;
+        self.tocados += self.step;
         if (self.position as usize) < self.sound.frames() {
             return;
         }
@@ -157,7 +165,27 @@ impl Voice {
     fn passo(&mut self) {
         match self.descida {
             0 => self.advance(),
-            1 => self.done = true,
+            1 => {
+                self.done = true;
+                // **Uma voz que morre antes do fim do som é um corte**, e é o sintoma exato que se
+                // procura: a fala que para no meio. O aviso sai só quando a voz não era de repetir
+                // e a diferença passa de um quadro — no caso normal ela morre no fim e bate no
+                // total. Um som de laço nunca "termina", então ali não há o que avisar.
+                let (tocados, total) = (
+                    self.tocados / f64::from(self.sound.rate.max(1)),
+                    self.sound.frames() as f64 / f64::from(self.sound.rate.max(1)),
+                );
+                if self.remaining.is_some() && tocados + 0.02 < total {
+                    crate::registro!(
+                        crate::registro::Nivel::Aviso,
+                        "mixer",
+                        "corte: a voz de {:.2}s parou depois de {:.2}s, faltando {:.2}s",
+                        total,
+                        tocados,
+                        total - tocados
+                    );
+                }
+            }
             restante => self.descida = restante - 1,
         }
     }
@@ -280,9 +308,26 @@ impl Mixer {
             return;
         };
         let step = f64::from(sound.rate) / f64::from(state.rate.max(1));
+        // **Uma voz trocada enquanto tocava é um corte.** O objeto `IMedia` de um jogo costuma ser
+        // reaproveitado para o som seguinte, e aí a troca é o que o aparelho faria; mas se o
+        // volume é zero o som inteiro teria passado despercebido, e é isso que este aviso separa.
+        let antes = state.voices.get(&id);
+        if let Some(voz) = antes.filter(|voz| !voz.done && !voz.paused) {
+            crate::registro!(
+                crate::registro::Nivel::Informacao,
+                "mixer",
+                "a voz do objeto {:#x} foi trocada com {:.2}s tocados de {:.2}s (voz nova: {:.2}s, volume {:.2})",
+                id,
+                voz.tocados / f64::from(state.rate.max(1)),
+                voz.sound.frames() as f64 / f64::from(voz.sound.rate.max(1)),
+                sound.frames() as f64 / f64::from(sound.rate.max(1)),
+                volume
+            );
+        }
         state.voices.insert(
             id,
             Voice {
+                tocados: 0.0,
                 descida: 0,
                 sound,
                 position: 0.0,
@@ -631,6 +676,44 @@ mod tests {
     /// Um mixer sem placa, para testar a mistura sem depender de áudio no host.
     fn mixer(rate: u32) -> Mixer {
         Mixer::new(rate, 1.0, false)
+    }
+
+    /// **A voz tem de durar o som, e não metade dele.**
+    ///
+    /// Esta é a conta mais fácil de errar de todo o áudio, e o erro tem um sintoma exato: um som
+    /// mono consumido como se fosse estéreo anda duas vezes mais rápido pelo arquivo e acaba na
+    /// metade do tempo — para quem ouve, "a fala cortou". O `zeebo-lle` mediu a mesma armadilha no
+    /// lado de lá (razão `canais × taxa / 2 × taxa do aparelho`), e a Turma da Mônica tem vozes
+    /// mono de 3,77 s: com o fator errado elas viram 0,94 s, que é o "corta em ~1 s" relatado.
+    ///
+    /// O teste fixa a duração para mono **e** para estéreo, para que a diferença entre os dois
+    /// caminhos deixe de ser escrevível.
+    #[test]
+    fn a_voz_toca_a_duracao_do_som_e_nao_metade_dela() {
+        for canais in [1u16, 2] {
+            let quadros = 8_000usize;
+            let samples: Vec<f32> = (0..quadros * usize::from(canais))
+                .map(|i| ((i % 97) as f32 / 97.0) * 0.5)
+                .collect();
+            let som = Arc::new(Sound {
+                samples,
+                rate: 8_000,
+                channels: canais,
+            });
+            let mixer = mixer(8_000);
+            mixer.play(7, som, 1.0, 1);
+            let mut total = 0usize;
+            // O teto evita um laço infinito se a voz nunca terminar; o valor esperado é bem menor.
+            while mixer.is_playing(7) && total < 40_000 {
+                let _ = mixer.render(1_000);
+                total += 1_000;
+            }
+            let esperado = quadros + DESCIDA_FRAMES as usize;
+            assert!(
+                total.abs_diff(esperado) <= 1_000,
+                "canais {canais}: tocou {total} quadros, esperado {esperado} (som de {quadros})"
+            );
+        }
     }
 
     #[test]

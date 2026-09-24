@@ -252,19 +252,37 @@ impl<C: CpuBackend> Machine<C> {
                     let dur_s = som.samples.len() as f64
                         / f64::from(som.channels.max(1))
                         / f64::from(som.rate.max(1));
+                    // **Som de laço não tem fim, e por isso não tem "quanto falta".** O
+                    // `ends_us` dele é `u64::MAX`, e subtrair o relógio dava um número de doze
+                    // dígitos que parecia defeito nosso nas medições. A frase certa é a que se
+                    // pode ler.
+                    let em_laco = self
+                        .media
+                        .get(&this)
+                        .is_some_and(|estado| estado.ends_us == u64::MAX);
                     let previsto = self
                         .media
                         .get(&this)
                         .map(|estado| estado.ends_us.saturating_sub(self.now_us()) as f64 / 1e6)
                         .unwrap_or(0.0);
-                    crate::registro!(
-                        crate::registro::Nivel::Informacao,
-                        "midia",
-                        "Stop {}: o jogo parou um som de {:.2}s com {:.2}s ainda por tocar",
-                        this,
-                        dur_s,
-                        previsto.max(0.0)
-                    );
+                    if em_laco {
+                        crate::registro!(
+                            crate::registro::Nivel::Informacao,
+                            "midia",
+                            "Stop {}: o jogo parou um som de {:.2}s que tocava em laço",
+                            this,
+                            dur_s
+                        );
+                    } else {
+                        crate::registro!(
+                            crate::registro::Nivel::Informacao,
+                            "midia",
+                            "Stop {}: o jogo parou um som de {:.2}s com {:.2}s ainda por tocar",
+                            this,
+                            dur_s,
+                            previsto.max(0.0)
+                        );
+                    }
                 }
                 if let Some(fluxo) = self.fluxos_pcm.get_mut(&this) {
                     fluxo.tocando = false;

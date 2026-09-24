@@ -1514,6 +1514,18 @@ fn sessao_sem_janela(
         let pico = gravado.iter().fold(0.0f32, |m, s| m.max(s.abs()));
         println!("áudio:     {caminho} (pico {pico:.3})");
     }
+    // **O registro do núcleo, com o som junto.** Esta função é a única que grava o áudio misturado
+    // em WAV, então é aqui que os dois se encontram: o WAV diz *o que* tocou, o registro diz *por
+    // quê* -- o som entregue e a duração decodificada, o fluxo que o jogo para de alimentar, e quem
+    // calou cada som. Separá-los foi o que me fez perseguir uma voz cortada sem saber se ela tinha
+    // sido cortada.
+    let registro = zeebx::registro::drena();
+    if !registro.is_empty() {
+        println!("registro:");
+        for linha in registro {
+            println!("  [{}] {}: {}", linha.nivel.etiqueta(), linha.alvo, linha.texto);
+        }
+    }
     if let Some((desde, inicio, instrucoes_antes)) = perfil_ligado_em {
         let real = inicio.elapsed();
         let virtual_ms = session.clock_ms().saturating_sub(desde);
