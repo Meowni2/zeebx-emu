@@ -1669,3 +1669,38 @@ Não está suspenso por o emulador ser não-determinístico — ele não é. Est
 variável**: rodar o corpus com o cache num estado só. Com isso, a comparação volta a poder ser
 cobrada, e as diferenças que sobrarem serão regressões de verdade.
 
+### A hipótese do manifesto foi testada — e rejeitada
+
+O `.zeebx-pacote` era o suspeito número um: um arquivo nosso na pasta que o guest enxerga como raiz,
+sem filtro na enumeração de diretório. Foi escondido do guest (`machine/file.rs` passa a filtrá-lo) e
+o experimento do cache foi repetido:
+
+| rodada | cache | instruções |
+|---|---|---:|
+| frio | recém-extraído | **760 921** |
+| quente 1 | reaproveitado | 760 815 |
+| quente 2 | reaproveitado | 760 815 |
+
+**A diferença continua a mesma — 106 instruções, 54 linhas.** O manifesto não é a causa.
+
+O filtro **fica**, porque é correção devida por outro motivo: o jogo não pode ver na própria pasta um
+arquivo que o console não tem. Mas ele não explica o que esta seção investiga.
+
+### O novo suspeito, e o que o sustenta
+
+**Leitura preguiçosa a partir do pacote.** Há dois caminhos possíveis para o guest ler um arquivo: da
+árvore extraída (cache quente) ou direto do `.zip`, pela rota do `IUnzipAStream` — o próprio acervo
+tem essa rota, e há código que extrai **só o arquivo pedido** em vez do pacote inteiro. Se o guest
+recebe um fluxo de tipo diferente conforme o cache esteja frio ou quente, o caminho que o jogo toma
+muda — e é exatamente isso que 106 instruções e uma `CreateInstance` a mais parecem ser.
+
+O caminho para fechar: abrir o mesmo jogo com `ZEEBX_ROM_TRACO=1` nos dois estados de cache e
+comparar o rastreio das primeiras chamadas — o ponto em que os dois se separam nomeia o mecanismo.
+
+### O critério, revisado de novo
+
+A parte que **depende de conserto no procedimento** continua valendo e já está no
+`docs/implementacao/11-compatibilidade.md`: aquecer o cache antes de comparar. A parte que depende de
+conserto no **código** continua aberta, e agora com um suspeito de outra natureza — não um arquivo
+visível, mas um **caminho de leitura diferente**.
+

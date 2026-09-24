@@ -558,6 +558,11 @@ impl<C: CpuBackend> Machine<C> {
                 entries
                     .flatten()
                     .filter(|entry| entry.path().is_dir() == want_dirs)
+                    // **O manifesto do pacote não é do jogo.** Ele é um arquivo *nosso*, escrito na
+                    // pasta que o guest enxerga como raiz, e um jogo que enumere a própria pasta
+                    // não pode ver nele um arquivo que o console não tem. Ver
+                    // [`crate::loader::archive::MANIFESTO`].
+                    .filter(|entry| entry.file_name() != crate::loader::archive::MANIFESTO)
                     .filter_map(|entry| entry.file_name().into_string().ok()),
             );
         }
