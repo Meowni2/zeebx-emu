@@ -1535,6 +1535,34 @@ fn sessao_sem_janela(
     println!("tempo:     {} ms virtuais", session.clock_ms());
     let (heap, objetos) = session.memory();
     println!("heap:      {heap} bytes em uso, {objetos} objetos vivos");
+    // **Quanto sobra não diz como sobra.** Um heap com 30 MB livres em 400 buracos não entrega uma
+    // alocação de 2 MB, e o jogo relata isso como falta de memória: as duas linhas abaixo são o que
+    // separa "encheu" de "se despedaçou" no relatório.
+    let retrato = session.heap_retrato();
+    println!(
+        "           {} buraco(s), maior livre {} de {} livres ({}% do livre preso em buracos), {} blocos vivos de {}",
+        retrato.buracos,
+        retrato.maior_buraco,
+        retrato.livre,
+        u64::from(retrato.perdido_em_buracos()) * 100 / u64::from(retrato.livre.max(1)),
+        retrato.vivos,
+        retrato.teto,
+    );
+    let (recusas, checagens) = session.heap_recusas();
+    if let Some((tamanho, lr)) = recusas.first() {
+        println!(
+            "recusado:  {} pedido(s) de malloc sem lugar; o primeiro: {} bytes, pedido em {lr:#010x}",
+            recusas.len(),
+            tamanho
+        );
+    }
+    if let Some((tamanho, lr)) = checagens.first() {
+        println!(
+            "recusado:  {} pergunta(s) de memória disponível respondidas com \"não cabe\"; a primeira: {} bytes em {lr:#010x}",
+            checagens.len(),
+            tamanho
+        );
+    }
     if let (Some((caminho, _)), false) = (&gravacao, gravado.is_empty()) {
         std::fs::write(caminho, audio::to_wav(&gravado, RECORD_RATE))?;
         let pico = gravado.iter().fold(0.0f32, |m, s| m.max(s.abs()));
