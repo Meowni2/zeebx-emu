@@ -30,6 +30,8 @@ ApplicationWindow {
 
     width: 960
     height: 720
+    minimumWidth: 480
+    minimumHeight: 360
     title: "Zeebx"
 
     // Fechar a biblioteca encerra tudo, com ou sem jogo aberto — como no egui.
@@ -160,6 +162,14 @@ ApplicationWindow {
                     principal.vista.comando(codigo)
             }
         }
+    }
+
+    // F11, ou Alt+Enter, põe e tira a biblioteca da tela cheia, como no egui. O Alt+Enter só vale
+    // com o Alt: o Enter sozinho é botão do controle no teclado.
+    Shortcut {
+        sequences: ["F11", "Alt+Return", "Alt+Enter"]
+        onActivated: principal.visibility = principal.visibility === Window.FullScreen
+                     ? Window.Windowed : Window.FullScreen
     }
 
     // Ctrl+F leva à busca, de qualquer lugar da janela.
