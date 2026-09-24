@@ -30,7 +30,7 @@ use zeebx::ui::navegacao::{self, Comando, Navegacao};
 use zeebx::video::icon::{self, Image};
 use zeebx::ui::entrada::EntradaDoDesktop;
 use zeebx::ui::i18n::{self, Catalog};
-use zeebx::ui::partida::{Abertura, Partida, Saida};
+use zeebx::ui::partida::{self, Abertura, Partida, Relatorio, Saida};
 use zeebx::ui::settings::{self, Proporcao, Settings};
 use zeebx::video::rasterizer::QuadroNaPlaca;
 use zeebx::video::display::Framebuffer;
@@ -134,6 +134,13 @@ pub struct Nucleo {
     /// A procura por versão nova em andamento, e o que ela respondeu.
     procura_de_atualizacao: Option<Receiver<atualizacao::Resposta>>,
     pub atualizacao: Option<atualizacao::Resposta>,
+    /// Uma versão nova chegou e o aviso dela ainda não foi dispensado.
+    aviso_de_atualizacao: bool,
+    /// O relatório da execução, gravado sozinho. Ver [`Relatorio`].
+    relatorio: Relatorio,
+    /// A janela de log foi fechada nesta execução. Zera ao abrir outro jogo: fechar dispensa o log
+    /// **desta** execução, e não a preferência.
+    pub log_dispensado: bool,
     calibracao: Calibracao,
     /// As teclas apertadas na janela do jogo, como `egui::Key`. Ver
     /// [`zeebx::ui::entrada::tecla_apertada`].
@@ -175,10 +182,18 @@ impl Nucleo {
             presenca: discord::Acompanha::default(),
             procura_de_atualizacao: None,
             atualizacao: None,
+            aviso_de_atualizacao: false,
+            relatorio: Relatorio::default(),
+            log_dispensado: false,
             calibracao: Calibracao::default(),
             teclas: HashSet::new(),
         };
         nucleo.procura_de_novo();
+        // Na abertura, a pergunta ao GitHub, como no egui: a resposta chega pelo relógio da
+        // biblioteca, e o aviso espera o de abertura sair da frente.
+        if nucleo.settings.atualizacoes.ao_abrir {
+            nucleo.procura_atualizacao();
+        }
         nucleo
     }
 
@@ -228,6 +243,7 @@ impl Nucleo {
         if let Some(canal) = &self.procura_de_atualizacao {
             match canal.try_recv() {
                 Ok(resposta) => {
+                    self.aviso_de_atualizacao = matches!(resposta, atualizacao::Resposta::Nova(_));
                     self.atualizacao = Some(resposta);
                     self.procura_de_atualizacao = None;
                 }
@@ -235,6 +251,43 @@ impl Nucleo {
                 Err(TryRecvError::Disconnected) => self.procura_de_atualizacao = None,
             }
         }
+    }
+
+    /// O aviso de abertura ainda não foi dispensado nesta versão. Uma versão nova mostra de novo.
+    pub fn aviso_de_abertura_pendente(&self) -> bool {
+        self.settings.aviso_dispensado_na_versao.as_deref() != Some(atualizacao::VERSAO_ATUAL)
+    }
+
+    /// O aviso de abertura saiu da frente. `de_vez` é o "não mostrar de novo": guarda a versão.
+    pub fn dispensa_aviso_de_abertura(&mut self, de_vez: bool) {
+        if de_vez {
+            self.settings.aviso_dispensado_na_versao = Some(atualizacao::VERSAO_ATUAL.to_owned());
+            if let Err(erro) = self.settings.save() {
+                eprintln!("não deu para guardar as configurações: {erro}");
+            }
+        }
+    }
+
+    /// A versão nova a avisar, e a página dela, se há um aviso pendente.
+    pub fn aviso_de_atualizacao(&self) -> Option<&atualizacao::Lancamento> {
+        match (&self.atualizacao, self.aviso_de_atualizacao) {
+            (Some(atualizacao::Resposta::Nova(lancamento)), true) => Some(lancamento),
+            _ => None,
+        }
+    }
+
+    pub fn dispensa_aviso_de_atualizacao(&mut self) {
+        self.aviso_de_atualizacao = false;
+    }
+
+    /// O que o jogo aberto escreveu, e as queixas do emulador sobre ele.
+    pub fn log(&self) -> Vec<String> {
+        self.partida.as_ref().map(|p| p.sessao().log()).unwrap_or_default()
+    }
+
+    /// Onde o relatório desta execução é gravado sozinho.
+    pub fn caminho_do_relatorio(&self) -> Option<PathBuf> {
+        self.partida.as_ref().map(Partida::caminho_do_relatorio)
     }
 
     /// Pergunta ao GitHub se há versão nova. A resposta chega pelo [`Nucleo::a_cada_quadro`].
@@ -456,9 +509,18 @@ impl Nucleo {
         if let Some(partida) = self.partida.as_mut() {
             partida.esquece_entrada();
         }
+        // A serial é ligada junto com o começo, e não depois: o construtor do applet roda dentro
+        // da abertura, e o que ele faz ao nascer precisa estar na captura.
+        let serial = self
+            .settings
+            .debug
+            .log
+            .then(|| partida::caminho_da_serial(&library::title_for(caminho)));
+        self.relatorio.esquece();
+        self.log_dispensado = false;
         let abertura = Abertura {
             settings: &self.settings,
-            serial: None,
+            serial: serial.as_deref(),
             gl: self.gl.clone(),
             instalados: self
                 .jogos
@@ -589,6 +651,9 @@ impl Nucleo {
                 };
             }
         };
+        if let Some(partida) = &self.partida {
+            self.relatorio.grava(partida);
+        }
         let mut volta = Volta::default();
         if let Some(caminho) = proximo {
             volta.estado = Some(match self.abre(&caminho) {
