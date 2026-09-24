@@ -242,6 +242,30 @@ impl<C: CpuBackend> Machine<C> {
             // trata os dois status do mesmo jeito.
             (Interface::Media, "Stop") => {
                 let tocando = self.esta_tocando(this);
+                // **Quem cala a fala.** O #43 mostrava a voz morrendo em um segundo; depois da
+                // correção do `data` ela é decodificada inteira (dez segundos), então quem a
+                // encerra é a reprodução. Esta linha diz de quem foi a ordem: do jogo, por `Stop`,
+                // ou nossa, por fim de som — e quantos segundos de fato tocaram.
+                if tocando
+                    && let Some(som) = self.media_sound(this)?
+                {
+                    let dur_s = som.samples.len() as f64
+                        / f64::from(som.channels.max(1))
+                        / f64::from(som.rate.max(1));
+                    let previsto = self
+                        .media
+                        .get(&this)
+                        .map(|estado| estado.ends_us.saturating_sub(self.now_us()) as f64 / 1e6)
+                        .unwrap_or(0.0);
+                    crate::registro!(
+                        crate::registro::Nivel::Informacao,
+                        "midia",
+                        "Stop {}: o jogo parou um som de {:.2}s com {:.2}s ainda por tocar",
+                        this,
+                        dur_s,
+                        previsto.max(0.0)
+                    );
+                }
                 if let Some(fluxo) = self.fluxos_pcm.get_mut(&this) {
                     fluxo.tocando = false;
                 }
@@ -426,13 +450,36 @@ impl<C: CpuBackend> Machine<C> {
             crate::registro!(
                 crate::registro::Nivel::Informacao,
                 "midia",
-                "som: {} bytes, assinatura {:?}, decodificado em {}",
+                "som: {} bytes, assinatura {:?}, RIFF diz {} e data diz {}, decodificado em {}",
                 bytes.len(),
                 String::from_utf8_lossy(&bytes[..bytes.len().min(4)]),
+                // **Os dois tamanhos que o parser tem de escolher entre si.** Um jogo escreve no
+                // `data` o buffer inteiro e no `RIFF` a verdade; a Turma da Mônica parece fazer o
+                // inverso, com o `RIFF` trazendo só o que já foi preenchido. Sem estes dois
+                // números lado a lado, a escolha do parser é indistinguível do defeito.
+                if bytes.len() >= 8 {
+                    u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize + 8
+                } else {
+                    0
+                },
+                if bytes.len() >= 44 {
+                    (0..bytes.len().saturating_sub(8))
+                        .find(|&i| &bytes[i..i + 4] == b"data")
+                        .and_then(|i| bytes.get(i + 4..i + 8))
+                        .map(|t| u32::from_le_bytes([t[0], t[1], t[2], t[3]]) as usize)
+                        .unwrap_or(0)
+                } else {
+                    0
+                },
                 match &carga.som {
+                    // **Divide pelos canais, senão o estéreo sai dobrado.** As amostras vêm
+                    // entrelaçadas: um mp3 de dois canais tem o dobro de amostras do que de
+                    // quadros. Sem esta divisão, `menu_music.mp3` (15,67 s) aparecia com 31,19 s.
                     Some(som) => format!(
                         "{:.2}s a {} Hz, {} canal(is)",
-                        som.samples.len() as f64 / som.rate.max(1) as f64,
+                        som.samples.len() as f64
+                            / f64::from(som.channels.max(1))
+                            / f64::from(som.rate.max(1)),
                         som.rate,
                         som.channels
                     ),
@@ -652,8 +699,51 @@ impl<C: CpuBackend> Machine<C> {
         self.inicia_reproducao(this, true)
     }
 
+    /// Relê o buffer **se o que decodificamos ficou pequeno demais para o tamanho que veio**.
+    ///
+    /// > **Não resolveu, e está medido.** A releitura roda, e o mesmo som continua decodificando
+    /// > 0,64 s: o corte não é a leitura do buffer, é o **cabeçalho do próprio WAV**, que declara
+    /// > menos do que o som tem. Fica aqui porque é inofensiva (buffer igual não decodifica de
+    /// > novo) e porque descreve a suspeita descartada, mas quem for atrás do defeito começa em
+    /// > [`crate::audio::wav::parse`], na escolha entre o tamanho do `RIFF` e o do bloco `data`.
+    ///
+    /// O compromisso de [`Machine::resolve_midia`] — ler na volta seguinte do laço — não cobre o
+    /// caso da Turma da Mônica: ela enche o buffer aos poucos, em leituras de sete quilobytes, e a
+    /// volta seguinte pega **0,64 s de um som de dez segundos**: a fala morre aí. Medido com o
+    /// instrumento de mídia, 882.000 bytes de RIFF decodificados em 0,64 s, dezenove vezes.
+    ///
+    /// A releitura só acontece neste caso, e é o que a torna segura: quando o som decodificado
+    /// **não** é muito menor que o buffer, nada é relido — é o que preserva o jogo do comentário
+    /// lá de cima, que reusa o mesmo buffer de rascunho e veria o som errado. E a releitura passa
+    /// pelo mesmo cache por conteúdo: buffer igual não decodifica de novo.
+    fn rele_o_som_incompleto(&mut self, this: u32) -> Result<(), CpuError> {
+        let Some(state) = self.media.get(&this) else {
+            return Ok(());
+        };
+        let (onde, tamanho) = state.buffer;
+        if onde == 0 || tamanho == 0 {
+            return Ok(());
+        }
+        let decodificado = match self.media_sound(this)? {
+            Some(som) => som.samples.len() * 2 * usize::from(som.channels.max(1)),
+            None => return Ok(()),
+        };
+        // Um quarto do buffer já denuncia a leitura parcial, e fica longe do caso em que o som
+        // ocupa o buffer inteiro com um cabeçalho.
+        if decodificado * 4 > tamanho as usize {
+            return Ok(());
+        }
+        let bytes = self.read_bytes(onde, tamanho)?;
+        let carga = self.guarda_som(bytes);
+        if let Some(state) = self.media.get_mut(&this) {
+            state.carga = carga;
+        }
+        Ok(())
+    }
+
     /// Começa a tocar o som já lido de um objeto.
     fn inicia_reproducao(&mut self, this: u32, avisa: bool) -> Result<u32, CpuError> {
+        self.rele_o_som_incompleto(this)?;
         // **Um `Play` sobre um som que ainda toca não avisa.** Avisar `DONE` aqui fazia um ciclo
         // nos jogos que tocam de novo dentro do tratador do aviso: o novo `Play` caía sobre o som
         // que acabara de começar, gerava outro aviso, e o som reiniciava a cada quadro — o áudio
