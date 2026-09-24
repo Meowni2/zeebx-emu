@@ -18,7 +18,7 @@ marcada aqui como feita.
 | 6 — janelas auxiliares | feita: saves, log da execução, aviso de abertura e aviso de versão nova |
 | 7 — conferência | feita: as chaves de texto das duas interfaces comparadas, teste de que toda chave usada existe, e o que faltava no Qt (ícone, `app_id`, tamanhos mínimos, tela cheia na biblioteca) |
 | 8 — corte do eframe | primeira etapa feita: compilado com `ui-qt`, o Qt é a interface padrão, e o egui fica em `zeebx egui`. O corte espera uma release com o Qt, que espera a fase 9 e a troca da licença |
-| 9 | não começada |
+| 9 — build e empacotamento | feita no `qt.yml`: AppImage, NSIS e `.dmg` com o Qt 6.11 embutido, e o `.deb` com o Qt do sistema, saindo como artefatos da execução. O `release.yml` os adota quando a licença mudar |
 
 ## Onde o egui está de verdade
 
@@ -471,7 +471,8 @@ ensinar o CI a instalar e empacotar o Qt. E a interface Qt não vai para uma rel
 `LICENSE`, o `Cargo.toml` e o `AGENTS.md` passarem de GPL-2.0-only para GPLv3 (ver *Licença*).
 Então a ordem que sobra é:
 
-1. a fase 9: o Qt no `ci.yml` e no `release.yml`, com o empacotamento de cada sistema;
+1. a fase 9: o empacotamento de cada sistema — feita no `qt.yml`; o `release.yml` o adota no passo
+   seguinte;
 2. a licença trocada, e a feature ligada por padrão;
 3. uma release com o Qt padrão e o `zeebx egui` ainda lá;
 4. na seguinte, o corte: saem o `eframe`, o `ui::App`, o `zeebx egui` e os caminhos `cfg` da
@@ -483,6 +484,58 @@ Então a ordem que sobra é:
 O CI instala o Qt nos três sistemas. O `cargo packager` não implanta Qt: cada sistema ganha o
 passo dele (`linuxdeploy-plugin-qt`, `windeployqt`, `macdeployqt`), e o `.deb` passa a depender
 de `libqt6gui6`, `libqt6qml6`, `libqt6quick6` e dos módulos QML usados.
+
+**Feita no `qt.yml`, e não no `release.yml`.** A interface Qt não vai para uma release antes de a
+licença mudar (fase 8); até lá, os instaladores saem como artefatos da execução do `qt.yml`, para
+baixar e testar. A configuração deles é `frontends/classical-standalone/empacotamento-qt.toml`,
+separada do `[package.metadata.packager]` do `Cargo.toml`, que continua sendo o da release com o
+egui. Quando a licença mudar, ela vira a de lá e os passos passam para o `release.yml`.
+
+- **Com `--config`, o `cargo packager` não lê o `Cargo.toml`.** A versão entra numa cópia do
+  arquivo (`@VERSAO@`), feita pelo workflow, e o arquivo não se chama `packager.toml` porque esse
+  nome o `cargo packager` procura sozinho, e a release o pegaria. O `name` vai preenchido por um
+  defeito do 0.11.8: sem ele, o `cargo packager` entra no caminho do *arquivo* como se fosse uma
+  pasta e para com "Not a directory".
+- **O AppImage**, montado no Ubuntu 22.04 como o da release, leva o Qt 6.11.2 pelo
+  `linuxdeploy-plugin-qt`. O Wayland não vem sozinho: é preciso pedir o plugin de plataforma
+  (`libqwayland.so`, um só a partir do Qt 6.10) e o módulo `waylandcompositor`, sem o qual a
+  integração gráfica (`wayland-graphics-integration-client`) fica de fora e a janela não tem GL no
+  Wayland — conferido desmontando o AppImage. O ALSA e o `libgpg-error` ficam de fora de
+  propósito, pela lista de exclusão do AppImage: todo desktop os tem. Conferido num Ubuntu 22.04,
+  num 24.04 e num Debian 13 limpos, numa tela virtual, com um jogo aberto. Montado no Arch, o
+  `linuxdeploy` não serve de prova: o `strip` embutido não conhece as bibliotecas de lá, e o Qt de
+  lá traz plugins de imagem do KDE com dependências que o do `aqtinstall` não tem.
+- **O `.deb` usa o Qt do sistema**, como o plano previa, e por isso é compilado contra ele, num job
+  à parte no Ubuntu 24.04: um binário do Qt 6.11 não roda num Qt mais velho, e o 24.04 traz o 6.4.
+  Isso deixa o Ubuntu 22.04 de fora do `.deb` com Qt (o Qt dele é o 6.2), mas não do AppImage. As
+  dependências são as bibliotecas que o binário linka, conferidas com `ldd` e `dpkg -S`, o plugin
+  de plataforma, o `qt6-wayland` e os módulos QML que os `import` pedem. O `gui`, o `network` e o
+  `opengl` vão com os dois nomes: o Ubuntu 24.04 os chama com `t64`, e o Debian 13 sem. O job
+  instala o `.deb` num Ubuntu 24.04 e num Debian 13 limpos, com o `apt` resolvendo tudo, e o abre
+  numa tela virtual.
+- **O Windows**: o `windeployqt` junta o Qt numa pasta, e a configuração manda o NSIS instalá-la ao
+  lado do `zeebx.exe`, com as subpastas.
+- **O macOS**: o `cargo packager` monta o `.app`, o `macdeployqt` põe o Qt dentro, a assinatura
+  ad-hoc é refeita — no ARM, um binário alterado sem assinatura válida é morto ao abrir — e o
+  `hdiutil` faz o `.dmg`.
+- **O que o Windows e o macOS ainda não tiveram:** uma execução. Os passos não rodam fora dos
+  runners deles, e o primeiro `qt.yml` com eles é a prova.
+
+**Três coisas que o empacotamento achou fora dele:**
+
+- **O ALSA do `.deb` do egui, que já sai na release**, instalava uma imitação num sistema mínimo.
+  A dependência era `libasound2 | libasound2t64`, e no Ubuntu 24.04 o `libasound2` é cumprido pelo
+  `liboss4-salsa-asound2`, um ALSA de mentira sobre o OSS4: o `apt` ficava com ele, e o binário
+  parava ao abrir com "undefined symbol: snd_pcm_status_get_trigger_htstamp". Com o
+  `libasound2t64` primeiro, o `apt` escolhe o de verdade. Corrigido nos dois `.deb`.
+- **O `zeebx qt <jogo>` no Qt 6.4 não mostrava a janela do jogo.** Ela era aberta de dentro do
+  `onCompleted` da principal, e o 6.4 a deixava sem mapear; o 6.11 mostrava. Agora é aberta
+  depois da montagem, com `Qt.callLater`. Aberto pela biblioteca, os dois já funcionavam.
+- **O atalho de busca** usava `sequence: StandardKey.Find`, e onde o sistema dá mais de uma tecla
+  ao "procurar" o Qt 6.11 liga só a primeira e avisa. Passou a `sequences`.
+
+O Qt do Ubuntu foi compilado com o linker `gold`, e o cxx-qt repassa o `-fuse-ld=gold` ao link: o
+`rustc` avisa que o `gold` está obsoleto. É só o aviso — o binário liga e roda.
 
 ## Riscos, do maior para o menor
 
