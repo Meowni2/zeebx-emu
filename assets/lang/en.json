@@ -160,6 +160,7 @@
   "play.frames": "{frames} frames",
   "play.loading": "Loading {title}…",
   "play.pause": "Pause",
+  "play.paused": "Paused",
   "play.resume": "Resume",
   "play.speed": "{percent}% speed",
   "play.state.confirm": "Confirm",

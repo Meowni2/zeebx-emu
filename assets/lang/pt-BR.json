@@ -160,6 +160,7 @@
   "play.frames": "{frames} quadros",
   "play.loading": "Carregando {title}…",
   "play.pause": "Pausar",
+  "play.paused": "Pausado",
   "play.resume": "Continuar",
   "play.speed": "{percent}% da velocidade",
   "play.state.confirm": "Confirmar",
