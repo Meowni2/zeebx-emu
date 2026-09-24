@@ -1,7 +1,7 @@
 //! A interface em Qt Quick, em migração. Ver `docs/implementacao/21-migracao-para-qt.md`.
 //!
-//! `zeebx qt` abre a biblioteca; `zeebx qt <jogo>` abre direto o jogo. Não substitui nada ainda:
-//! a interface padrão continua sendo a do egui.
+//! Compilada (feature `ui-qt`), é a interface padrão: `zeebx` e `zeebx qt` abrem a biblioteca, e
+//! `zeebx qt <jogo>` abre direto o jogo. A do egui fica em `zeebx egui` até sair.
 
 mod auxiliares;
 mod biblioteca;
