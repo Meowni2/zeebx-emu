@@ -5,9 +5,9 @@ import QtQuick.Window
 
 import zeebx
 
-// A janela principal: a biblioteca, em grade ou no slider. O jogo abre na janela dele, como no
-// egui. As configurações e os saves são das fases 5 e 6 de
-// `docs/implementacao/21-migracao-para-qt.md`.
+// A janela principal: a biblioteca, em grade ou no slider. O jogo, as configurações, os saves e o
+// log abrem cada um na sua janela, como no egui; os avisos de abertura e de versão nova são
+// diálogos por cima da biblioteca. Ver `docs/implementacao/21-migracao-para-qt.md`.
 // É uma `ApplicationWindow`, e não uma `Window`, para o fundo e os textos soltos usarem a mesma
 // paleta dos botões e campos: com a cor da janela tirada do sistema e a dos controles do estilo,
 // o texto saía escuro sobre fundo escuro num tema escuro.
@@ -37,6 +37,8 @@ ApplicationWindow {
 
     Component.onCompleted: {
         aplicaModo()
+        if (avisos.deAbertura())
+            boasVindas.open()
         if (jogoInicial !== "")
             mostra(biblioteca.abreCaminho(jogoInicial))
     }
@@ -85,8 +87,14 @@ ApplicationWindow {
         id: biblioteca
     }
 
+    // **O jogo não é filho da principal.** Uma janela declarada dentro de outra ganha ela como
+    // `transientParent`, e o gerenciador de janelas mantém a filha sempre acima do pai: clicar na
+    // principal durante o jogo, para mexer em alguma coisa, não a trazia para a frente. No egui
+    // as duas também são independentes.
     Jogo {
         id: jogo
+
+        transientParent: null
     }
 
     JanelaDeConfiguracoes {
@@ -97,11 +105,34 @@ ApplicationWindow {
         visible: false
     }
 
+    JanelaDeSaves {
+        id: saves
+
+        visible: false
+    }
+
+    // O log acompanha o jogo, com a opção ligada. Liga-se e desliga-se no meio do jogo, pelas
+    // configurações, como no egui. É filho da janela do jogo, e não da principal: fica sempre por
+    // cima dele, e não atrás.
+    JanelaDeLog {
+        id: janelaDeLog
+
+        transientParent: jogo
+
+        pedida: principal.depende([configuracoes.cfg.versao, janelaDeLog.dispensas],
+                                  jogo.visible && janelaDeLog.log.ativo())
+    }
+
+    Avisos {
+        id: avisos
+    }
+
     // **Com outra janela por cima, a biblioteca não escuta o controle nem o teclado** — nem se a
     // principal voltar a ter o foco. Mapeando o controle nas configurações, o botão apertado
     // abriria um jogo sem querer. O mouse continua valendo, como no egui. Toda janela que abrir
     // por cima da principal entra aqui.
-    readonly property bool sobreposta: jogo.visible || configuracoes.visible
+    readonly property bool sobreposta: jogo.visible || configuracoes.visible || saves.visible
+                                       || boasVindas.visible || novaVersao.visible
 
     // O controle não gera evento no Qt, como não gerava no egui: enquanto a biblioteca está à
     // vista, ele é lido aqui. Sem o foco, ou com outra janela por cima, o controle não é dela — e
@@ -112,6 +143,15 @@ ApplicationWindow {
         repeat: true
         running: true
         onTriggered: {
+            // A resposta da procura por versão nova é lida pelos `comandos`: o aviso dela vem
+            // depois do de abertura, nunca junto.
+            if (!boasVindas.visible && !novaVersao.visible) {
+                const texto = avisos.deAtualizacao()
+                if (texto !== "") {
+                    novaVersao.texto = texto
+                    novaVersao.open()
+                }
+            }
             const escutando = principal.active && !principal.sobreposta
             for (const codigo of biblioteca.comandos(escutando)) {
                 if (codigo === 5)
@@ -188,12 +228,13 @@ ApplicationWindow {
             }
 
             Button {
+                text: tr("nav.saves")
+                onClicked: saves.abre()
+            }
+
+            Button {
                 text: tr("nav.settings")
-                onClicked: {
-                    configuracoes.show()
-                    configuracoes.raise()
-                    configuracoes.requestActivate()
-                }
+                onClicked: configuracoes.abre(-1)
             }
 
             // O Zeeboids só deixa sincronizar uma vez por dia, e a trava é dele: guarda a data no
@@ -296,5 +337,89 @@ ApplicationWindow {
             biblioteca: biblioteca
             onAbre: (linha) => principal.mostra(biblioteca.abre(linha))
         }
+    }
+
+    // O aviso de abertura: o emulador ainda em desenvolvimento, e o controle a configurar antes
+    // de jogar. A caixa marcada guarda a versão, e a próxima versão mostra o aviso de novo.
+    Dialog {
+        id: boasVindas
+
+        anchors.centerIn: parent
+        width: Math.min(460, principal.width - 32)
+        modal: true
+        title: principal.tr("welcome.title")
+
+        ColumnLayout {
+            width: parent.width
+            spacing: 8
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: principal.tr("welcome.development")
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: principal.tr("welcome.controls")
+            }
+            CheckBox {
+                id: naoMostrar
+
+                Layout.topMargin: 4
+                text: principal.tr("welcome.dont_show")
+            }
+        }
+
+        footer: DialogButtonBox {
+            Button {
+                text: principal.tr("welcome.controls.open")
+                onClicked: {
+                    boasVindas.close()
+                    configuracoes.abre(1)
+                }
+            }
+            Button {
+                text: principal.tr("welcome.dismiss")
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+        }
+
+        // Fechado por qualquer caminho — um dos botões ou o Esc —, o aviso sai da frente.
+        onClosed: avisos.dispensaAbertura(naoMostrar.checked)
+    }
+
+    // O aviso de versão nova, se a procura ao abrir achou uma.
+    Dialog {
+        id: novaVersao
+
+        property string texto: ""
+
+        anchors.centerIn: parent
+        width: Math.min(460, principal.width - 32)
+        modal: true
+        title: principal.tr("update.title")
+
+        Label {
+            width: parent.width
+            wrapMode: Text.Wrap
+            text: novaVersao.texto
+        }
+
+        footer: DialogButtonBox {
+            Button {
+                text: principal.tr("update.download")
+                onClicked: {
+                    Qt.openUrlExternally(avisos.paginaDaAtualizacao())
+                    novaVersao.close()
+                }
+            }
+            Button {
+                text: principal.tr("update.later")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+        }
+
+        onClosed: avisos.dispensaAtualizacao()
     }
 }
