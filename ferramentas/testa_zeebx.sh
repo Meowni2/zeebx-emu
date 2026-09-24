@@ -63,10 +63,21 @@ for c in "$AQUI/zeebx_libretro.so" "$CFG/cores/zeebx_libretro.so" \
 done
 [ -n "$CORE" ] || { fala "CORE: nao achei o zeebx_libretro.so"; exit 1; }
 
+# No muOS os jogos vao no **cartao de ROMs** (SD2), e o sistema de conteudo e um unionfs: o que
+# vale e `/mnt/union/ROMS`, que junta USB, SDCARD e o cartao do sistema nessa ordem. Procurar pelo
+# union antes dos caminhos crus e o que faz achar os jogos nos dois arranjos -- um cartao so ou
+# dois.
 if [ -z "$ROMDIR" ]; then
-    for d in /roms/zeebo /roms/Zeebo /roms/ROMS/Zeebo /mnt/mmc/ROMS/Zeebo "$HOME/roms/zeebo"; do
+    for d in /roms/zeebo /roms/Zeebo /roms/ROMS/Zeebo \
+             /mnt/union/ROMS/Zeebo /mnt/union/ROMS/zeebo \
+             /mnt/sdcard/ROMS/Zeebo /mnt/mmc/ROMS/Zeebo "$HOME/roms/zeebo"; do
         [ -d "$d" ] && ROMDIR="$d" && break
     done
+fi
+# Ultimo recurso: procurar uma pasta Zeebo em qualquer cartao montado. Melhor achar do que dizer
+# que nao ha jogo com a pasta ali do lado.
+if [ -z "$ROMDIR" ]; then
+    ROMDIR=$(ls -d /mnt/*/ROMS/Zeebo /mnt/*/ROMS/zeebo /mnt/*/Zeebo 2>/dev/null | head -1)
 fi
 [ -n "$ROMDIR" ] || { fala "ROMS: nao achei a pasta; passe como segundo argumento"; exit 1; }
 
