@@ -246,6 +246,13 @@ losango como 1 embaixo, 2 à direita, 3 à esquerda e 4 no topo. Agora a tabela 
 só** (`BOTOES_DO_RETROPAD`: quem lê e quem rotula bebem da mesma), a arte segue a numeração do
 aparelho, e um teste prende as duas coisas — descritores e leitura não podem mais discordar.
 
+**Quem já tinha mapeamento salvo também é alcançado.** O `settings.json` manda mais que o padrão, e
+um mapeamento antigo continuaria entregando leste no `b2` — o defeito inteiro. O
+`Player::migrate_action_buttons` troca os quatro botões de ação pelos novos **quando eles ainda são
+exatamente os antigos**; quem mexeu em qualquer um deles fica com o que escreveu, que é a mesma
+regra da migração da convenção dos eixos. No RetroArch não há migração a fazer: o mapeamento padrão
+de lá é por botão físico, e a correção vale assim que o núcleo novo entra.
+
 ## Mapeamento configurável
 
 `input/bindings.rs`. O mapeamento é guardado **por nome** — o nome da tecla, o do botão do controle do

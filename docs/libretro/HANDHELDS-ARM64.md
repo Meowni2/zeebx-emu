@@ -52,6 +52,27 @@ Duas coisas que **não** são esse defeito, para não se perder tempo com elas:
   com a borda do polígono mais suave (medido no Rally Master Pro: 15.920 cores distintas em 1x e
   86.935 em 2x, com a mesma captura de 1280x960). Quem só quer preencher a tela deixa em 1x.
 
+## O que cada botão do controle faz no Zeebx
+
+O losango do controle do Zeebo **não** é numerado na ordem em que os olhos leem: **1 fica embaixo, 2
+à esquerda, 3 no topo e 4 à direita**. O mapeamento para o RetroPad guarda a **posição da mão**, e
+não o número:
+
+| aparelho | onde fica | RetroPad |
+|---|---|---|
+| Botão 1 | embaixo | `B` |
+| Botão 2 | esquerda | `Y` |
+| Botão 3 | topo | `X` |
+| Botão 4 | direita | `A` |
+| HOME | no meio | `Select` |
+| ZL / ZR | ombros | `L` / `R` |
+| direcional | cruz | `D-Pad` |
+| dois manches | — | analógicos esquerdo e direito |
+
+A tela de controles do RetroArch mostra esses nomes com a posição junto — *"Botão 1 (embaixo)"* —,
+então dá para conferir sem decorar. Se preferir outra ordem, o remapeamento é do próprio RetroArch
+(Settings → Input), e o mesmo vale para o aplicativo, que tem tela de controles.
+
 ## Instalação
 
 1. Baixe o artefato **Linux AArch64** da release/Actions.

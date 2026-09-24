@@ -269,16 +269,15 @@ impl Default for Player {
 impl Player {
     /// O mapeamento típico de um controle moderno, para quem liga um e quer jogar.
     pub fn with_gamepad(device: String) -> Self {
-        let pad: [(&str, &str); 9] = [
-            // **A posição da mão, e não o rótulo do botão.** No aparelho o 1 fica embaixo, o 2 à
-            // esquerda, o 3 no topo e o 4 à direita (imagens oficiais do controle); no controle
-            // moderno, `South` é o de baixo, `West` o da esquerda, `North` o de cima e `East` o da
-            // direita. Cada botão do Zeebo cai no botão do host que está **no mesmo lugar** — era
-            // o que o issue #41 pedia, e o que faz a mão não reaprender nada ao trocar de controle.
-            ("b1", "South"),
-            ("b2", "West"),
-            ("b3", "North"),
-            ("b4", "East"),
+        // **A posição da mão, e não o rótulo do botão.** No aparelho o 1 fica embaixo, o 2 à
+        // esquerda, o 3 no topo e o 4 à direita (imagens oficiais do controle); no controle
+        // moderno, `South` é o de baixo, `West` o da esquerda, `North` o de cima e `East` o da
+        // direita. Cada botão do Zeebo cai no botão do host que está **no mesmo lugar** — era o
+        // que o issue #41 pedia, e o que faz a mão não reaprender nada ao trocar de controle.
+        //
+        // Os quatro saem de [`Self::botoes_de_acao_por_posicao`], que é **a mesma tabela da
+        // migração**: duas listas paralelas foi exatamente o que divergiu no issue #41.
+        let pad: [(&str, &str); 5] = [
             ("zl", "LeftTrigger"),
             ("zr", "RightTrigger"),
             // O controle do Zeebo não tem Start; o HOME ocupa o lugar dele.
@@ -293,6 +292,13 @@ impl Player {
             ("right", "DPadRight"),
         ];
         let mut player = Self::default();
+        for (button, source) in Self::botoes_de_acao_por_posicao() {
+            player
+                .buttons
+                .entry(button.to_string())
+                .or_default()
+                .push(source);
+        }
         for (button, source) in pad.iter().chain(dpad.iter()) {
             player
                 .buttons
@@ -388,6 +394,48 @@ impl Player {
     /// com o arquivo assim — o padrão mudar de volta não conserta um mapa já gravado. Como o
     /// mapa daquela versão é reconhecível (é o padrão de hoje com `y` e `rz` retos), dá para
     /// desfazê-lo sem tocar em quem mexeu no mapeamento à mão.
+    /// Os quatro botões de ação do controle do host, como estavam **antes** do remapeamento por
+    /// posição (issue #41): leste no `b2`, oeste no `b3` e norte no `b4`.
+    fn botoes_de_acao_antigos() -> [(&'static str, Source); 4] {
+        [
+            ("b1", Source::button("South")),
+            ("b2", Source::button("East")),
+            ("b3", Source::button("West")),
+            ("b4", Source::button("North")),
+        ]
+    }
+
+    /// Os mesmos quatro, casando por **posição**: embaixo, esquerda, topo e direita.
+    fn botoes_de_acao_por_posicao() -> [(&'static str, Source); 4] {
+        [
+            ("b1", Source::button("South")),
+            ("b2", Source::button("West")),
+            ("b3", Source::button("North")),
+            ("b4", Source::button("East")),
+        ]
+    }
+
+    /// **O remapeamento por posição alcança quem já tinha o mapeamento salvo.**
+    ///
+    /// Sem isto, só quem apagasse o `settings.json` veria a correção: o que está salvo manda mais
+    /// que o padrão novo, e o mapeamento antigo continuaria entregando leste no `b2` — que é
+    /// exatamente o defeito do issue #41.
+    ///
+    /// A troca só acontece quando os quatro ainda são **exatamente** os antigos: quem mexeu em
+    /// qualquer um deles fica com o que escreveu. É a mesma regra do [`Self::migrate_axis_convention`].
+    fn migrate_action_buttons(&mut self) {
+        let antigos = Self::botoes_de_acao_antigos();
+        let intocado = antigos
+            .iter()
+            .all(|(nome, fonte)| self.sources(nome) == [fonte.clone()]);
+        if !intocado {
+            return;
+        }
+        for (nome, fonte) in Self::botoes_de_acao_por_posicao() {
+            self.buttons.insert(nome.to_string(), vec![fonte]);
+        }
+    }
+
     fn migrate_axis_convention(&mut self) {
         let mut reto = Self::default_axes();
         reto.get_mut("y").unwrap().invert = false;
@@ -519,6 +567,7 @@ impl Controls {
         for player in &mut self.players {
             player.adopt_axes();
             player.migrate_axis_convention();
+            player.migrate_action_buttons();
             player.migra_aparelho_do_controle();
             player.migra_botoes_do_wiimote();
         }
@@ -700,6 +749,41 @@ mod tests {
         );
         assert_eq!(pad.axes[0], input::AXIS_CURSO / 2);
         assert_eq!(pad.axes[1], 0);
+    }
+
+    /// **O mapeamento salvo de quem já jogava segue a correção do #41** — e só ele: um mapeamento
+    /// mexido à mão fica como está.
+    #[test]
+    fn o_mapeamento_salvo_dos_botoes_de_acao_e_remepeado_para_a_posicao() {
+        // O que estava salvo: os quatro antigos, intocados.
+        let mut antigo = Player::with_gamepad("Controle".into());
+        antigo.buttons.insert("b1".into(), vec![Source::button("South")]);
+        antigo.buttons.insert("b2".into(), vec![Source::button("East")]);
+        antigo.buttons.insert("b3".into(), vec![Source::button("West")]);
+        antigo.buttons.insert("b4".into(), vec![Source::button("North")]);
+        antigo.migrate_action_buttons();
+        assert_eq!(antigo.sources("b2"), [Source::button("West")], "leste deixa de ser o b2");
+        assert_eq!(antigo.sources("b3"), [Source::button("North")]);
+        assert_eq!(antigo.sources("b4"), [Source::button("East")]);
+        assert_eq!(antigo.sources("b1"), [Source::button("South")]);
+
+        // Quem mexeu num deles fica com o que escreveu: nada é trocado por baixo.
+        let mut mexido = Player::with_gamepad("Controle".into());
+        mexido.bind("b2", Source::button("North"));
+        let antes = mexido.buttons.clone();
+        mexido.migrate_action_buttons();
+        assert_eq!(
+            mexido.buttons, antes,
+            "um mapeamento mexido à mão não pode ser trocado por baixo"
+        );
+
+        // E o mapeamento que já nasce certo não é mexido duas vezes. O teclado continua junto das
+        // origens do controle, então o que se cobra é a origem do botão, e não a lista inteira.
+        let mut novo = Player::with_gamepad("Controle".into());
+        novo.migrate_action_buttons();
+        assert!(novo.sources("b2").contains(&Source::button("West")));
+        assert!(!novo.sources("b2").contains(&Source::button("East")));
+        assert!(novo.sources("b4").contains(&Source::button("East")));
     }
 
     /// O pedido do issue #39, do lado do standalone: é o ajuste que o usuário liga na tela.
