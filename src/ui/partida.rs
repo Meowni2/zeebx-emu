@@ -6,13 +6,60 @@
 //! deve fazer em seguida. Ler o teclado, achar um jogo na biblioteca e desenhar ficam com ela.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::input::{self, Pad, PORTAS};
 use crate::session::{FATIA_MAXIMA, Session, StartError, Z_WHEEL};
 use crate::ui::settings::{Scaling, Settings};
+
+/// De quanto em quanto tempo o relatório é regravado. Dois segundos é frequente o bastante para
+/// acompanhar uma execução e raro o bastante para não pesar.
+const INTERVALO_DO_RELATORIO: Duration = Duration::from_secs(2);
+
+/// Onde a captura de serial de um jogo é gravada, ao lado do relatório. `titulo` é o da
+/// biblioteca, [`crate::library::title_for`].
+pub fn caminho_da_serial(titulo: &str) -> PathBuf {
+    let nome = match titulo.is_empty() {
+        true => "zeebx.serial.log".to_string(),
+        false => format!("{titulo}.serial.log"),
+    };
+    crate::config::config_dir().join("relatorios").join(nome)
+}
+
+/// O relatório de uma execução, gravado sozinho num lugar fixo.
+///
+/// Sem isto o único jeito de ver o relatório de um jogo que **não termina** — e a Z-Wheel não
+/// termina, ela repete a abertura — é abrir a janela de log e exportar à mão. E um diálogo de
+/// exportar é coisa que se esquece de confirmar: foram três idas e vindas analisando um relatório
+/// velho porque o arquivo nunca tinha sido regravado. Um caminho previsível e sempre atual vale mais
+/// do que um que o usuário escolhe.
+#[derive(Default)]
+pub struct Relatorio {
+    gravado: Option<Instant>,
+}
+
+impl Relatorio {
+    /// Um jogo novo abriu: o próximo pedido grava na hora.
+    pub fn esquece(&mut self) {
+        self.gravado = None;
+    }
+
+    /// Grava o relatório da partida, no máximo uma vez a cada dois segundos.
+    pub fn grava(&mut self, partida: &Partida) {
+        let agora = Instant::now();
+        if self.gravado.is_some_and(|antes| agora - antes < INTERVALO_DO_RELATORIO) {
+            return;
+        }
+        self.gravado = Some(agora);
+        let destino = partida.caminho_do_relatorio();
+        if let Some(pai) = destino.parent() {
+            let _ = std::fs::create_dir_all(pai);
+        }
+        let _ = std::fs::write(&destino, partida.sessao.log().join("\n") + "\n");
+    }
+}
 
 /// O que a janela faz depois de uma volta. Ver [`Partida::saida`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,6 +157,15 @@ impl Partida {
             pausada: false,
             aberta_pela_z_wheel: false,
         })
+    }
+
+    /// Onde o relatório desta execução é gravado sozinho. Ver [`Relatorio`].
+    pub fn caminho_do_relatorio(&self) -> PathBuf {
+        let nome = match self.sessao.title() {
+            titulo if !titulo.is_empty() => format!("{titulo}.log"),
+            _ => "zeebx.log".to_string(),
+        };
+        crate::config::config_dir().join("relatorios").join(nome)
     }
 
     pub fn sessao(&self) -> &Session {
