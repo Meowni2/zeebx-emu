@@ -2374,6 +2374,14 @@ pub struct Machine<C: CpuBackend> {
     api_time: HashMap<(u32, u32), (u64, u64)>,
     /// Quantas chamadas de API já passaram por aqui, para escolher as que serão cronometradas.
     api_calls: u64,
+    /// Quantas vezes um jogo leu a posição e achou algum eixo **fora do centro**.
+    ///
+    /// A contagem de `GetPositionState` não diz o que o jogo leu: há port de arcade que consulta o
+    /// eixo todo quadro (2.300 vezes em quarenta segundos) e nunca o canal de botão, e ler o eixo
+    /// centrado é o que ele faz em 100% do tempo sem apertar nada. Este contador é o que separa
+    /// "o jogo lê o eixo" de "o eixo **chegou** ao jogo", e é o que dá para medir sem olhar a tela
+    /// — o espelho do direcional depende dele.
+    eixos_deslocados: u64,
     /// Custo de uma leitura do relógio nesta máquina, para descontá-lo do perfil de custo.
     clock_ns: u64,
     profiling_api: bool,
@@ -3003,6 +3011,7 @@ impl<C: CpuBackend> Machine<C> {
             image_bitmaps: HashMap::new(),
             api_time: HashMap::new(),
             api_calls: 0,
+            eixos_deslocados: 0,
             clock_ns: 0,
             profiling_api: false,
             image_notify: HashMap::new(),

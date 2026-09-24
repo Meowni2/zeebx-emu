@@ -1144,6 +1144,8 @@ fn bench_dynarmic(
     };
     let mut fotos: std::collections::VecDeque<u32> = std::collections::VecDeque::new();
     let mut numero_da_foto = 0;
+    // Ver o comentário do mesmo interruptor no laço: é o `zeebx_dpad_to_analog_p1` do núcleo.
+    let dpad_nos_eixos = std::env::args().any(|arg| arg == "--dpad-nos-eixos");
     while machine.clock_ms() < until && !machine.is_idle() {
         while pendentes
             .front()
@@ -1167,6 +1169,12 @@ fn bench_dynarmic(
                 };
                 std::fs::write(nome, machine.screen().to_bmp())?;
             }
+        }
+        // `--dpad-nos-eixos` é o mesmo que a opção do núcleo faz a cada quadro, para medir o issue
+        // #39 sem janela. **Antes** do roteiro, de propósito: um passo de eixo do roteiro é um
+        // manche de verdade, e quem tem a última palavra é ele — ver o espelho no `Player::pad`.
+        if dpad_nos_eixos {
+            pad.espelha_o_direcional_nos_eixos();
         }
         keys.apply(machine.clock_ms(), &mut pad);
         machine.set_pad(pad);
@@ -1226,6 +1234,13 @@ fn bench_dynarmic(
         for (name, count) in entrada {
             println!("  {count:>4}x {name}");
         }
+    }
+    // A contagem de chamadas diz que o jogo **pergunta**; esta diz que a resposta **chegou**. Sem
+    // ela, um port de arcade que consulta o eixo todo quadro parece igual com o direcional solto e
+    // apertado — e é o número que prova o espelho do direcional (issue #39).
+    let deslocados = machine.leituras_com_eixo_deslocado();
+    if deslocados > 0 {
+        println!("eixo:      {deslocados} leitura(s) com eixo fora do centro");
     }
     if let Some(path) = dump {
         std::fs::write(path, machine.screen().to_bmp())?;
@@ -1310,6 +1325,7 @@ fn sessao_sem_janela(
     let mut gravado_ms = 0u64;
     let mut fotos: std::collections::VecDeque<u32> = instantes.iter().copied().collect();
     let mut numero = 0;
+    let dpad_nos_eixos = std::env::args().any(|arg| arg == "--dpad-nos-eixos");
     while session.clock_ms() < fim {
         if let (Some(desde), None) = (perfil, perfil_ligado_em) {
             if session.clock_ms() >= desde {
@@ -1323,6 +1339,11 @@ fn sessao_sem_janela(
         }
         let antes = pad;
         if !reaberta {
+            // O mesmo interruptor do `bench`, e pelo mesmo motivo: medir o issue #39 na sessão
+            // sem janela. Antes do roteiro, para o passo de eixo do roteiro vencer.
+            if dpad_nos_eixos {
+                pad.espelha_o_direcional_nos_eixos();
+            }
             keys.apply(session.clock_ms(), &mut pad);
         } else {
             pad = input::Pad::default();

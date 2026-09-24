@@ -241,6 +241,11 @@ impl<C: CpuBackend> Machine<C> {
     }
 
     /// Quantas vezes cada método foi chamado, em ordem — o backlog de APIs, medido.
+    /// Quantas leituras de posição acharam algum eixo fora do centro. Ver o campo.
+    pub fn leituras_com_eixo_deslocado(&self) -> u64 {
+        self.eixos_deslocados
+    }
+
     pub fn call_log(&self) -> Vec<(String, u64)> {
         self.calls
             .iter()

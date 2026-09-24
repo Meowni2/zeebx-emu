@@ -171,6 +171,12 @@ impl<C: CpuBackend> Machine<C> {
             "GetPositionState" => {
                 let pad = self.pads[self.porta_do(this)];
                 let axes = [0, 1, 2, 3].map(|i| pad.eixo_do_console(i));
+                // Um jogo que consulta o eixo todo quadro lê o centro quase sempre. O contador
+                // separa "lê o eixo" de "o eixo chegou deslocado", que é o que o espelho do
+                // direcional muda — e o que dá para medir sem olhar a tela.
+                if axes.iter().any(|&valor| valor != input::AXIS_CENTRO) {
+                    self.eixos_deslocados += 1;
+                }
                 self.write_position_info(a1, &axes)?;
                 SUCCESS
             }
