@@ -31,6 +31,20 @@ pub enum SensorDaPorta {
 }
 
 impl SensorDaPorta {
+    /// O que dizer sobre o sensor, na tela de controles e no aviso de calibração.
+    pub fn descreve(&self, catalogo: &crate::ui::i18n::Catalog) -> String {
+        let (chave, nome) = match self {
+            Self::Wiimote(w) if w.com_acelerometro => ("controls.boomerang.sensor", "Wii Remote"),
+            Self::Wiimote(_) => ("controls.boomerang.sensor_waiting", "Wii Remote"),
+            Self::Controle(s) if s.sem_permissao => ("controls.boomerang.sensor_denied", s.nome.as_str()),
+            Self::Controle(s) if s.com_leitura => ("controls.boomerang.sensor", s.nome.as_str()),
+            Self::Controle(s) => ("controls.boomerang.sensor_waiting", s.nome.as_str()),
+            Self::SemSensor(nome) => ("controls.boomerang.no_sensor", nome.as_str()),
+            Self::Nenhum => ("controls.boomerang.no_device", ""),
+        };
+        catalogo.get(chave).replace("{nome}", nome)
+    }
+
     /// A aceleração medida, quando o sensor já mandou alguma.
     pub fn aceleracao(&self) -> Option<[f32; 3]> {
         match self {
