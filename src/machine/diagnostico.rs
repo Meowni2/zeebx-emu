@@ -2,6 +2,13 @@
 
 use super::*;
 
+/// Quantos ponteiros ou pedidos estranhos do jogo o diagnóstico guarda antes de parar.
+///
+/// Ver [`Machine::anota_ponto_ruim`]: o texto vem do jogo, então o tamanho da lista não pode
+/// depender do que ele pedir. 512 linhas são mais do que qualquer relatório já precisou, e o
+/// excedente é descartado com aviso.
+const TETO_DE_PONTEIROS_RUINS: usize = 512;
+
 /// Quantas linhas diferentes do log do jogo ficam guardadas. Ver [`Machine::record_debug`].
 const MAX_LINHAS_DO_JOGO: usize = 2000;
 
@@ -80,7 +87,27 @@ impl<C: CpuBackend> Machine<C> {
 
     /// Chamadas que receberam ponteiro inválido do guest.
     pub fn bad_pointers(&self) -> Vec<String> {
-        self.bad_pointers.iter().cloned().collect()
+        let linhas: Vec<String> = self.bad_pointers.iter().cloned().collect();
+        // O relatório diz que a lista está cheia, em vez de parecer completa quando não está.
+        if self.bad_pointers.len() >= TETO_DE_PONTEIROS_RUINS {
+            let mut com_aviso = linhas;
+            com_aviso.push(format!(
+                "(lista no teto de {TETO_DE_PONTEIROS_RUINS}; o resto não foi guardado)"
+            ));
+            return com_aviso;
+        }
+        linhas
+    }
+
+    /// Registra um ponteiro ou pedido estranho do jogo, **com teto**.
+    ///
+    /// **O texto é escolhido pelo jogo**: o nome do arquivo pedido e o endereço entram na linha.
+    /// Sem teto, esta lista cresce com o que o jogo quiser pedir — e ela existe para o relatório,
+    /// não para virar memória. No teto, o excedente é descartado, e o relatório avisa.
+    pub(super) fn anota_ponto_ruim(&mut self, texto: String) {
+        if self.bad_pointers.len() < TETO_DE_PONTEIROS_RUINS {
+            self.bad_pointers.insert(texto);
+        }
     }
 
     /// Liga a medição de tempo por método de API. Ver [`Machine::api_profile`].

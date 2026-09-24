@@ -145,8 +145,11 @@ impl<C: CpuBackend> Machine<C> {
                 };
                 // `data` nulo é pedido legítimo: reserva o tamanho e deixa o conteúdo por
                 // definir. O `glBufferSubData` vem depois preencher.
+                // O tamanho é do jogo: `glBufferData(alvo, 0x7fffffff, NULL, uso)` pede 2 GiB
+                // numa linha que cabe no guest, e o `vec!` correspondente aborta o processo. O
+                // teto é o mesmo das leituras, e pelo mesmo motivo.
                 let conteudo = if dados == 0 {
-                    vec![0u8; tamanho as usize]
+                    vec![0u8; self.tamanho_do_guest(tamanho as usize)?]
                 } else {
                     self.read_bytes(dados, tamanho)?
                 };
@@ -636,7 +639,7 @@ impl<C: CpuBackend> Machine<C> {
             let bytes = self.read_bytes(pixels, size)?;
             let Some(decoded) = paltex::decode(&bytes, width as usize, height as usize, palette)
             else {
-                self.bad_pointers.insert(format!(
+                self.anota_ponto_ruim(format!(
                     "textura paletizada {format:#x} sem paleta completa"
                 ));
                 return Ok(());
@@ -652,8 +655,7 @@ impl<C: CpuBackend> Machine<C> {
             gles::GL_ATC_RGB_AMD => false,
             gles::GL_ATC_RGBA_EXPLICIT_ALPHA_AMD => true,
             _ => {
-                self.bad_pointers
-                    .insert(format!("textura comprimida no formato {format:#x}"));
+                self.anota_ponto_ruim(format!("textura comprimida no formato {format:#x}"));
                 return Ok(());
             }
         };
@@ -719,7 +721,7 @@ impl<C: CpuBackend> Machine<C> {
                 })
                 .collect(),
             _ => {
-                self.bad_pointers.insert(format!(
+                self.anota_ponto_ruim(format!(
                     "ReadPixels no formato {format:#x}/{kind:#x}, que não sabemos escrever"
                 ));
                 return Ok(());
@@ -780,7 +782,7 @@ impl<C: CpuBackend> Machine<C> {
 
         let name = self.gl.bound_texture();
         if let Err(Some((tw, th))) = self.gl.sub_image(name, x, y, width, height, &novos) {
-            self.bad_pointers.insert(format!(
+            self.anota_ponto_ruim(format!(
                 "TexSubImage2D de {width}x{height} em ({x},{y}) não cabe numa textura {tw}x{th}"
             ));
         }

@@ -1376,32 +1376,30 @@ fn tira_de_quadros(gif: &crate::video::gif::Gif) -> DecodedImage {
 /// justamente no caso cru, que não tem cabeçalho nenhum.
 fn inflate(compressed: &[u8]) -> Option<Vec<u8>> {
     use std::io::Read;
-    let raw = || {
+    // **Com teto, e um de cada vez.** Sem teto, um bloco de poucos KiB que descomprime para
+    // gigabytes — a amplificação do deflate não tem limite por construção — enche a memória do
+    // host; e tentar gzip, zlib e cru **juntos** materializava três saídas antes de escolher uma.
+    // O `take` corta o decodificador ao teto mais um byte: se a saída passar disso, é bomba, não
+    // dado, e o pedido é recusado em vez de derrubar o processo.
+    let teto = u64::from(TETO_DO_INFLATE);
+    let mut le = |fonte: &[u8], qual: u8| -> Option<Vec<u8>> {
         let mut out = Vec::new();
-        flate2::read::DeflateDecoder::new(compressed)
-            .read_to_end(&mut out)
-            .ok()
-            .map(|_| out)
+        let mut leitor: Box<dyn Read> = match qual {
+            0 => Box::new(flate2::read::GzDecoder::new(fonte)),
+            1 => Box::new(flate2::read::ZlibDecoder::new(fonte)),
+            _ => Box::new(flate2::read::DeflateDecoder::new(fonte)),
+        };
+        let lidos = leitor.by_ref().take(teto + 1).read_to_end(&mut out).ok()?;
+        (lidos > 0 && lidos as u64 <= teto).then_some(out)
     };
-    let gzip = || {
-        let mut out = Vec::new();
-        flate2::read::GzDecoder::new(compressed)
-            .read_to_end(&mut out)
-            .ok()
-            .map(|_| out)
-    };
-    let zlib = || {
-        let mut out = Vec::new();
-        flate2::read::ZlibDecoder::new(compressed)
-            .read_to_end(&mut out)
-            .ok()
-            .map(|_| out)
-    };
-    [gzip(), zlib(), raw()]
-        .into_iter()
-        .flatten()
-        .find(|out| !out.is_empty())
+    (0..3).find_map(|qual| le(compressed, qual))
 }
+
+/// O teto de uma descompressão, em bytes.
+///
+/// Ver [`inflate`]: a saída de um bloco deflate pode ser ordens de grandeza maior que a entrada, e
+/// o teto é a memória do guest — nada maior que ela pode ser entregue ao jogo de qualquer forma.
+const TETO_DO_INFLATE: u32 = 128 * 1024 * 1024;
 
 /// Decodifica uma imagem para RGB565, qualquer que seja o formato dela.
 ///
@@ -3453,8 +3451,7 @@ impl<C: CpuBackend> Machine<C> {
             Ok(Some(value)) => value,
             Ok(None) => return Ok(None),
             Err(err) => {
-                self.bad_pointers
-                    .insert(format!("{} ({err})", aee::describe(addr)));
+                self.anota_ponto_ruim(format!("{} ({err})", aee::describe(addr)));
                 EBADPARM
             }
         };

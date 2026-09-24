@@ -2,6 +2,15 @@
 
 use super::*;
 
+/// O maior pedido de bytes que pode vir do guest sem virar uma alocação desproporcional do host.
+///
+/// **O tamanho é do jogo, e o alocador é nosso.** `IFILE_Read(pBuffer, 0x7fffffff)` é uma linha que
+/// cabe no guest e pediria 2 GiB aqui; o `vec![0u8; n]` correspondente não devolve erro — ele
+/// aborta o processo. O teto é 128 MiB: oito vezes a maior leitura legítima já medida (o pacote de
+/// 16 MB do Iron Sight, lido em pedaços grandes) e o dobro do heap do jogo. Nada maior que isso
+/// pode ser entregue ao guest de qualquer forma.
+const TETO_DA_LEITURA: u32 = 128 * 1024 * 1024;
+
 impl<C: CpuBackend> Machine<C> {
     /// `qsort` da stdlib do BREW, com a comparação feita pelo jogo.
     ///
@@ -928,8 +937,21 @@ impl<C: CpuBackend> Machine<C> {
         cformat::format(fmt, &mut source)
     }
 
+    /// **Um tamanho que veio do guest, conferido antes de virar alocação.**
+    ///
+    /// Ver [`TETO_DA_LEITURA`]: o pedido é argumento do jogo, e um argumento inválido tem de virar
+    /// erro de API, não a morte do emulador.
+    pub(super) fn tamanho_do_guest(&self, len: usize) -> Result<usize, CpuError> {
+        if len > TETO_DA_LEITURA as usize {
+            return Err(CpuError(format!(
+                "o guest pediu {len} bytes, acima do teto de {TETO_DA_LEITURA}"
+            )));
+        }
+        Ok(len)
+    }
+
     pub(super) fn read_bytes(&self, addr: u32, len: u32) -> Result<Vec<u8>, CpuError> {
-        let mut buf = vec![0u8; len as usize];
+        let mut buf = vec![0u8; self.tamanho_do_guest(len as usize)?];
         if len > 0 {
             self.cpu.read_mem(addr, &mut buf)?;
         }

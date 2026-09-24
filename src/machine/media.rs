@@ -387,7 +387,7 @@ impl<C: CpuBackend> Machine<C> {
                 }
             }
             _ => {
-                self.bad_pointers.insert(format!(
+                self.anota_ponto_ruim(format!(
                     "uma mídia foi entregue como {class:#010x}, e só sabemos ler memória e arquivo"
                 ));
                 return Ok(Entrega::Nada);
@@ -627,7 +627,7 @@ impl<C: CpuBackend> Machine<C> {
                         // **Os dois motivos**, e não só o do WAV: "não é um RIFF/WAVE" é
                         // verdade e não ajuda — a pergunta é o que o decodificador de música
                         // recusou. Foi vendo os dois que se descobriu o Ogg do Turma da Mônica.
-                        self.bad_pointers.insert(format!(
+                        self.anota_ponto_ruim(format!(
                             "som recusado ({formato}, {} bytes, {assinatura}): {sem_wav} / {porque}",
                             bytes.len()
                         ));
@@ -895,8 +895,7 @@ impl<C: CpuBackend> Machine<C> {
         let bruto = self.cpu.read_u32(pointer + 20)? & 0xff != 0;
         let spec = self.cpu.read_u32(pointer + 24)?;
         if fonte == 0 || spec == 0 || !bruto {
-            self.bad_pointers
-                .insert("um som veio de um ISource sem ser PCM cru, e só sabemos tocar PCM".into());
+            self.anota_ponto_ruim("um som veio de um ISource sem ser PCM cru, e só sabemos tocar PCM".into());
             return Ok(false);
         }
         let mut bytes = [0u8; 24];
@@ -907,7 +906,7 @@ impl<C: CpuBackend> Machine<C> {
         let bits = u16_em(16);
         let sem_sinal = bytes[18] != 0;
         if canais == 0 || taxa == 0 || !matches!(bits, 8 | 16) {
-            self.bad_pointers.insert(format!(
+            self.anota_ponto_ruim(format!(
                 "PCM de {canais} canal(is), {taxa} Hz e {bits} bits, que não sabemos tocar"
             ));
             return Ok(false);
