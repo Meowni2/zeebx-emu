@@ -120,7 +120,7 @@
   "graphics.scaling": "Scaling",
   "graphics.scaling.fit": "Fit the window",
   "graphics.scaling.integer": "Whole pixels",
-  "graphics.scaling.integer.hint": "Never blurs, but leaves borders when the window does not fit a whole multiple.",
+  "graphics.scaling.integer.hint": "Never blurs, but leaves borders when the window does not fit a whole multiple — on a 1080p screen, 640x480 only fits at 2x (1280x960).",
   "graphics.scaling.stretch": "Fill the window",
   "graphics.smooth": "Smooth the image",
   "graphics.speed_limit": "Hold the console's speed",

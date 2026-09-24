@@ -1539,7 +1539,7 @@ unsafe fn registra_opcoes_do_core() {
                 key: c"zeebx_resolucao_interna".as_ptr(),
                 desc: c"Resolução interna do 3D".as_ptr(),
                 desc_categorized: c"Resolução interna".as_ptr(),
-                info: c"A resolução em que o 3D é desenhado, por lado. O quadro entregue ao frontend continua 640x480, e shader e proporção não mudam. Abaixo de 1x (0.5x, 0.25x) o desenho sai menor e é ampliado na apresentação: alivia o processador, e é o que serve a aparelho fraco — a imagem fica mais quadrada. Acima de 1x é supersampling: suaviza a borda do polígono, custa memória e preenchimento, e só vale com o rasterizador de placa. Vale na hora.".as_ptr(),
+                info: c"A resolução em que o 3D é desenhado, por lado. O quadro entregue ao frontend continua 640x480, e shader e proporção não mudam. Abaixo de 1x (0.5x, 0.25x) o desenho sai menor e é ampliado na apresentação: alivia o processador, e é o que serve a aparelho fraco — a imagem fica mais quadrada. Acima de 1x é supersampling: suaviza a borda do polígono, custa memória e preenchimento, e só vale com o rasterizador de placa. **Esta opção não muda o tamanho da imagem na tela**: o console entrega 640x480 e quem amplia é o frontend — com a escala inteira ligada no RetroArch (Integer Scale) ela só é apresentada em múltiplos de 640x480, o que numa tela 1080p dá 1280x960 com tarja. Para ocupar a tela, desligue a escala inteira lá. Vale na hora.".as_ptr(),
                 info_categorized: c"Abaixo de 1x alivia o processador; acima de 1x é supersampling e só vale na placa. O perfil Portátil fixa isto em 0,5x e ganha desta opção.".as_ptr(),
                 category_key: c"video".as_ptr(),
                 values: escala_values,

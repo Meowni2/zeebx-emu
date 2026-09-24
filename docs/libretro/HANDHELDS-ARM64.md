@@ -34,6 +34,24 @@ pedir 3.2 fazia um Panfrost 3.1 perfeitamente suficiente recusar o contexto e ma
 para o processador. Em desktop continua pedindo OpenGL Core 3.3, pois o contexto é diferente. Os
 dois caminhos usam o mesmo FBO do frontend.
 
+## A imagem não preenche a tela: é a escala inteira do frontend
+
+O console entrega **640x480**, e quem amplia é o frontend — nenhum ajuste do core muda esse
+tamanho. Com a **escala inteira** ligada (`Settings > Video > Scaling > Integer Scale`, ou
+`video_scale_integer = "true"` no `retroarch.cfg`), o RetroArch só apresenta a imagem em
+**múltiplos** de 640x480: numa tela 1080p isso é 2x, ou seja **1280x960 com tarja em volta**.
+
+Desligue a escala inteira para a imagem ocupar a tela. Se a janela ainda passar da tela, olhe
+`video_scale`, que é o fator dela: 3x de 640x480 dá 1920x1440, que não cabe em 1080p.
+
+Duas coisas que **não** são esse defeito, para não se perder tempo com elas:
+
+- A imagem é **4:3**, então em tela 16:9 sobra tarja lateral de qualquer maneira. É a proporção, e
+  quem quiser esticar mexe no `Aspect Ratio` do RetroArch.
+- `zeebx_resolucao_interna` **não muda o tamanho da imagem**. Ela é superamostragem: o mesmo quadro,
+  com a borda do polígono mais suave (medido no Rally Master Pro: 15.920 cores distintas em 1x e
+  86.935 em 2x, com a mesma captura de 1280x960). Quem só quer preencher a tela deixa em 1x.
+
 ## Instalação
 
 1. Baixe o artefato **Linux AArch64** da release/Actions.

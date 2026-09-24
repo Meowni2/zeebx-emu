@@ -120,7 +120,7 @@
   "graphics.scaling": "Escalado",
   "graphics.scaling.fit": "Caber en la ventana",
   "graphics.scaling.integer": "Píxeles enteros",
-  "graphics.scaling.integer.hint": "Nunca desenfoca, pero deja bordes cuando la ventana no cabe un múltiplo exacto.",
+  "graphics.scaling.integer.hint": "Nunca desenfoca, pero deja bordes cuando la ventana no cabe un múltiplo exacto — en un monitor 1080p, 640x480 solo cabe a 2x (1280x960).",
   "graphics.scaling.stretch": "Llenar la ventana",
   "graphics.smooth": "Suavizar la imagen",
   "graphics.speed_limit": "Mantener la velocidad de la consola",

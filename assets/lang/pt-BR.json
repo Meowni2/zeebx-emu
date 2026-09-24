@@ -120,7 +120,7 @@
   "graphics.scaling": "Ampliação",
   "graphics.scaling.fit": "Caber na janela",
   "graphics.scaling.integer": "Pixel inteiro",
-  "graphics.scaling.integer.hint": "Nunca borra, mas sobra borda quando a janela não é múltiplo exato.",
+  "graphics.scaling.integer.hint": "Nunca borra, mas sobra borda quando a janela não é múltiplo exato — num monitor 1080p, 640x480 só cabe em 2x (1280x960).",
   "graphics.scaling.stretch": "Preencher a janela",
   "graphics.smooth": "Suavizar a imagem",
   "graphics.speed_limit": "Segurar na velocidade do console",
