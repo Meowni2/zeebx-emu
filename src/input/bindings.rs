@@ -415,24 +415,44 @@ impl Player {
         ]
     }
 
+    /// As origens de **botão** de um nome — sem as de teclado e sem as de eixo.
+    ///
+    /// É o que a migração dos botões de ação precisa olhar: quem tem controle carrega junto as
+    /// teclas do teclado, porque o [`Self::with_gamepad`] **soma** ao [`Self::default`].
+    fn origens_de_botao(&self, nome: &str) -> Vec<Source> {
+        self.sources(nome)
+            .iter()
+            .filter(|origem| matches!(origem, Source::Button { .. }))
+            .cloned()
+            .collect()
+    }
+
     /// **O remapeamento por posição alcança quem já tinha o mapeamento salvo.**
     ///
     /// Sem isto, só quem apagasse o `settings.json` veria a correção: o que está salvo manda mais
     /// que o padrão novo, e o mapeamento antigo continuaria entregando leste no `b2` — que é
     /// exatamente o defeito do issue #41.
     ///
+    /// **A comparação é só entre origens de botão, e não da lista inteira.** O que um jogador com
+    /// controle tem salvo é `b2 = [Space, X, East]`: as teclas do teclado mais o botão do
+    /// controle. Comparar a lista inteira nunca casaria com o que está salvo, e a migração nunca
+    /// aconteceria — que foi o defeito da primeira versão desta função.
+    ///
     /// A troca só acontece quando os quatro ainda são **exatamente** os antigos: quem mexeu em
-    /// qualquer um deles fica com o que escreveu. É a mesma regra do [`Self::migrate_axis_convention`].
+    /// qualquer um deles fica com o que escreveu. É a mesma regra do
+    /// [`Self::migrate_axis_convention`], e as teclas do teclado ficam onde estão.
     fn migrate_action_buttons(&mut self) {
         let antigos = Self::botoes_de_acao_antigos();
         let intocado = antigos
             .iter()
-            .all(|(nome, fonte)| self.sources(nome) == [fonte.clone()]);
+            .all(|(nome, fonte)| self.origens_de_botao(nome) == [fonte.clone()]);
         if !intocado {
             return;
         }
         for (nome, fonte) in Self::botoes_de_acao_por_posicao() {
-            self.buttons.insert(nome.to_string(), vec![fonte]);
+            let origens = self.buttons.entry(nome.to_string()).or_default();
+            origens.retain(|origem| !matches!(origem, Source::Button { .. }));
+            origens.push(fonte);
         }
     }
 
@@ -755,17 +775,27 @@ mod tests {
     /// mexido à mão fica como está.
     #[test]
     fn o_mapeamento_salvo_dos_botoes_de_acao_e_remepeado_para_a_posicao() {
-        // O que estava salvo: os quatro antigos, intocados.
+        // **O estado salvo de verdade**, e não um inventado: quem tem controle carrega as teclas do
+        // teclado junto (o `with_gamepad` soma ao `default`), então o arquivo diz
+        // `b2 = [Space, X, East]`. A primeira versão desta migração comparava a lista inteira e por
+        // isso nunca casaria — nunca migraria ninguém.
         let mut antigo = Player::with_gamepad("Controle".into());
-        antigo.buttons.insert("b1".into(), vec![Source::button("South")]);
-        antigo.buttons.insert("b2".into(), vec![Source::button("East")]);
-        antigo.buttons.insert("b3".into(), vec![Source::button("West")]);
-        antigo.buttons.insert("b4".into(), vec![Source::button("North")]);
+        for (nome, fonte) in Player::botoes_de_acao_antigos() {
+            let origens = antigo.buttons.entry(nome.to_string()).or_default();
+            origens.retain(|origem| !matches!(origem, Source::Button { .. }));
+            origens.push(fonte);
+        }
+        assert_eq!(antigo.origens_de_botao("b2"), [Source::button("East")], "o ponto de partida");
+
         antigo.migrate_action_buttons();
-        assert_eq!(antigo.sources("b2"), [Source::button("West")], "leste deixa de ser o b2");
-        assert_eq!(antigo.sources("b3"), [Source::button("North")]);
-        assert_eq!(antigo.sources("b4"), [Source::button("East")]);
-        assert_eq!(antigo.sources("b1"), [Source::button("South")]);
+        assert_eq!(antigo.origens_de_botao("b2"), [Source::button("West")], "leste sai do b2");
+        assert_eq!(antigo.origens_de_botao("b3"), [Source::button("North")]);
+        assert_eq!(antigo.origens_de_botao("b4"), [Source::button("East")]);
+        assert_eq!(antigo.origens_de_botao("b1"), [Source::button("South")]);
+        assert!(
+            antigo.sources("b2").contains(&Source::key("Space")),
+            "as teclas do teclado não podem sumir na migração"
+        );
 
         // Quem mexeu num deles fica com o que escreveu: nada é trocado por baixo.
         let mut mexido = Player::with_gamepad("Controle".into());
@@ -785,6 +815,7 @@ mod tests {
         assert!(!novo.sources("b2").contains(&Source::button("East")));
         assert!(novo.sources("b4").contains(&Source::button("East")));
     }
+
 
     /// O pedido do issue #39, do lado do standalone: é o ajuste que o usuário liga na tela.
     #[test]
