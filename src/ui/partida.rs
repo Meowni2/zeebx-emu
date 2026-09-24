@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use crate::input::{self, Pad, PORTAS};
 use crate::session::{FATIA_MAXIMA, Session, StartError, Z_WHEEL};
-use crate::ui::settings::Settings;
+use crate::ui::settings::{Scaling, Settings};
 
 /// O que a janela faz depois de uma volta. Ver [`Partida::saida`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -219,5 +219,69 @@ impl Partida {
             true => Saida::ReabreZWheel,
             false => Saida::Fecha,
         }
+    }
+}
+
+/// A altura da tela do console, em pixels. A largura sai da proporção: 640 no 4:3.
+const ALTURA_DA_TELA: f32 = 480.0;
+
+/// O tamanho em que o quadro é desenhado dentro de `area`, que é o espaço livre da janela.
+///
+/// `aspecto` é largura sobre altura da imagem: 4:3 no nativo, mais larga no 16:9 experimental.
+/// Separado das janelas porque é a única parte com regra de verdade, e a única que dá para
+/// conferir sem abrir uma — e é a mesma no egui e no Qt.
+pub fn enquadra(area: [f32; 2], escala: Scaling, manter_proporcao: bool, aspecto: f32) -> [f32; 2] {
+    let nativo = [ALTURA_DA_TELA * aspecto, ALTURA_DA_TELA];
+    if area[0] <= 0.0 || area[1] <= 0.0 {
+        return nativo;
+    }
+    let vezes = |fator: f32| [nativo[0] * fator, nativo[1] * fator];
+    let cabe = (area[0] / nativo[0]).min(area[1] / nativo[1]);
+    match (escala, manter_proporcao) {
+        (Scaling::Stretch, false) => area,
+        (Scaling::Stretch, true) | (Scaling::Fit, _) => vezes(cabe),
+        // Nunca some: abaixo de uma vez o tamanho original, encolhe proporcional em vez de não
+        // caber, porque uma janela pequena não pode esconder o jogo.
+        (Scaling::Integer, _) => match cabe >= 1.0 {
+            true => vezes(cabe.floor()),
+            false => vezes(cabe),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_ampliacao_inteira_so_usa_multiplos_exatos() {
+        // Numa janela de 1500x1100 cabem duas vezes a tela de 640x480, e não duas e pouco.
+        let tamanho = enquadra([1500.0, 1100.0], Scaling::Integer, true, 4.0 / 3.0);
+        assert_eq!(tamanho, [1280.0, 960.0]);
+    }
+
+    #[test]
+    fn a_ampliacao_inteira_encolhe_quando_nao_cabe_uma_vez() {
+        // Uma janela menor que a tela não pode esconder o jogo, então ali ela encolhe.
+        let tamanho = enquadra([320.0, 240.0], Scaling::Integer, true, 4.0 / 3.0);
+        assert_eq!(tamanho, [320.0, 240.0]);
+    }
+
+    #[test]
+    fn caber_na_janela_mantem_a_proporcao() {
+        // Janela larga demais: sobra borda dos lados, não estica.
+        let tamanho = enquadra([1920.0, 480.0], Scaling::Fit, true, 4.0 / 3.0);
+        assert_eq!(tamanho, [640.0, 480.0]);
+    }
+
+    #[test]
+    fn preencher_so_deforma_quando_a_proporcao_e_dispensada() {
+        let area = [1000.0, 500.0];
+        assert_eq!(enquadra(area, Scaling::Stretch, false, 4.0 / 3.0), area);
+        // Com a proporção mantida, "preencher" vira "caber".
+        assert_eq!(
+            enquadra(area, Scaling::Stretch, true, 4.0 / 3.0),
+            enquadra(area, Scaling::Fit, true, 4.0 / 3.0)
+        );
     }
 }
