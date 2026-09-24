@@ -653,3 +653,74 @@ O DuckStation atual usa **CC-BY-NC-ND-4.0**: não se copia nem porta código par
 Dele entram somente fatos e ideias, com implementação independente. Nenhum código destes três foi
 copiado nesta rodada.
 
+## 20. Instrumentação: o registro do núcleo em cinco níveis
+
+O plano desta rodada começava por "medir antes de otimizar", e o primeiro obstáculo era que o
+núcleo **não tinha canal de diagnóstico**: o desktop escrevia por `eprintln!` espalhado, o jogo
+tinha um log próprio à parte, o core Libretro tinha um `log()` com o nível fixo, e a varredura
+imprimia no relatório dela. Não havia como pedir "o nível de depuração do subsistema de CPU".
+
+Agora há. `src/registro.rs` dá cinco níveis — `Depuracao` (o "verbose/debug"), `Informacao`,
+`Aviso`, `Erro`, `Fatal` — com alvo (o subsistema) e um anel de 300 linhas que o frontend drena.
+
+### Decisões que valem registrar
+
+- **O padrão é `Aviso`, e o filtro custa uma leitura atômica.** Quem não mexe em nada continua
+  com o silêncio de antes. A macro testa o nível **antes** de montar o texto: uma mensagem de
+  depuração filtrada não paga nem o `format!`.
+- **O núcleo guarda, o frontend entrega.** O log do frontend é callback variádico do C; chamá-lo
+  do fundo de um desenho seria atravessar código do frontend no meio de um estado nosso. O anel
+  é o que separa as duas coisas — o despejo acontece no `retro_run`.
+- **"Desligado" não é "não entendi".** O primeiro desenho devolvia o mesmo `None` para os dois, e
+  um `ZEEBX_LOG=banana` desligaria o registro em silêncio. Hoje há um `Ajuste` que distingue, e o
+  token inválido **avisa**.
+- **Um vocabulário só** para a opção do core, o `config.ini`, o `settings.json` e a variável de
+  ambiente. Quatro tabelas divergiriam; uma função de conversão não.
+- **Precedência:** a variável de ambiente vale como ponto de partida e a opção explícita ganha
+  dela, nos três frontends.
+
+### Onde liga
+
+| Frontend | Onde |
+|---|---|
+| Core Libretro | opção `zeebx_log` (categoria Sistema), vale na hora |
+| Headless | `[system] log = warn` no `config.ini` |
+| Desktop | `debug.nivel_de_log` no `settings.json` |
+| Qualquer um | variável `ZEEBX_LOG` |
+
+### O que já se vê
+
+Prova real, Double Dragon, 60 quadros, `ZEEBX_LOG=debug`:
+
+```text
+DEBUG session: conteúdo ...Double Dragon (Brazil) (Es,Pt).zip resolvido para .../ddragonz.mod
+DEBUG session: 462748 bytes lidos; analisando o módulo
+DEBUG cpu: tabela de páginas: 20082 de 1048576 com acesso direto (9 region(oes))
+INFO session: abriu Double Dragon (Brazil) (Es,Pt).zip (classe 0x0102f789) com o rasterizador de processador e 0 applet(s) instalado(s)
+INFO midi: tabela de timbres: 15051 bytes de SMF -> 47.6s de áudio sintetizados em 187.6ms
+```
+
+Os dois números que interessam ao plano:
+
+- **20 082 páginas de 1 048 576 com acesso direto.** A tabela do Dynarmic cobre 1,9% do espaço de
+  endereços, que é o esperado — só as regiões mapeadas —, mas é o primeiro número que diz quanto
+  do acesso do guest passa direto e quanto passa pelo Rust. Serve de linha de base para discutir
+  SMC e páginas quentes.
+- **187 ms para sintetizar 47,6 s de música.** Confirma, no caminho de uso, o que a medição de
+  bancada dizia: o custo do MIDI é de carga, e é ele que explica a primeira música lenta no
+  portátil, não o mixer.
+
+### Achado colateral
+
+O `log()` do core Libretro manda tudo com o nível `3` (`RETRO_LOG_ERROR`), inclusive as mensagens
+informativas como "desenhando na placa". É anterior a esta rodada e **não foi mudado**: mexer
+nisso altera o que aparece no log de quem filtra por gravidade, e é decisão à parte. O caminho
+novo não depende dele — as linhas do núcleo saem com o nível certo.
+
+### Pendências
+
+- o Android ainda usa o `log` do Rust por conta própria e não drena o registro;
+- a varredura não drena (o relatório dela já carrega o log do jogo);
+- os subsistemas instrumentados nesta primeira passada são sessão, loader, CPU, áudio e MIDI. O
+  rasterizador, a rede e o armazenamento ainda não têm linha própria.
+
