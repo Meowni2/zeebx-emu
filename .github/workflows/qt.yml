@@ -29,8 +29,8 @@
 # versão passa a ser uma mudança deste arquivo, feita quando o patch novo estiver completo.
 #
 # **Os instaladores saem como artefatos da execução, e não numa release** (fase 9 do plano). A
-# release continua com a interface do egui até a licença passar para GPLv3; até lá, os instaladores
-# do Qt se baixam na página da execução, para testar. A configuração deles é
+# release continua com a interface do egui até a feature `ui-qt` ser ligada por padrão; até lá, os
+# instaladores do Qt se baixam na página da execução, para testar. A configuração deles é
 # `frontends/classical-standalone/empacotamento-qt.toml`. O AppImage, o NSIS e o `.dmg` levam o
 # próprio Qt; o `.deb` usa o do sistema, e por isso tem um job à parte, compilado contra o Qt do
 # Ubuntu 24.04.
