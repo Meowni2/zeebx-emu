@@ -138,11 +138,28 @@ pub fn candidatos(aparelho: &Path) -> Vec<PathBuf> {
     if let Some(caminho) = std::env::var_os("ZEEBX_SOUNDFONT") {
         saida.push(PathBuf::from(caminho));
     }
-    for base in [
+    saida.extend(candidatos_em(&pastas_padrao(aparelho)));
+    saida
+}
+
+/// As pastas onde o banco é procurado, na ordem: a do aparelho, que o frontend controla, e a do
+/// perfil do desktop.
+///
+/// Separada de [`candidatos`] para os testes poderem afirmar sem depender do perfil de quem roda.
+/// **Um `.sf2` no `~/.config/zeebx` — que é onde o LEIAME manda pôr — deixava a bateria vermelha**,
+/// porque duas provas perguntavam "não há banco nenhum" com o disco do desenvolvedor cheio.
+pub fn pastas_padrao(aparelho: &Path) -> Vec<PathBuf> {
+    vec![
         aparelho.join("soundfonts"),
         crate::config::config_dir().join("aparelho").join("soundfonts"),
-    ] {
-        for nome in bancos_em(&base) {
+    ]
+}
+
+/// Os bancos das pastas dadas, em ordem. Sem o perfil e sem o `ZEEBX_SOUNDFONT`.
+pub fn candidatos_em(pastas: &[PathBuf]) -> Vec<PathBuf> {
+    let mut saida = Vec::new();
+    for base in pastas {
+        for nome in bancos_em(base) {
             saida.push(nome);
         }
     }
@@ -172,7 +189,12 @@ fn bancos_em(base: &Path) -> Vec<PathBuf> {
 
 /// O primeiro banco que existir de verdade, entre os candidatos.
 pub fn primeiro_banco(aparelho: &Path) -> Option<PathBuf> {
-    candidatos(aparelho).into_iter().find(|c| c.is_file())
+    primeiro_banco_em(&pastas_padrao(aparelho))
+}
+
+/// O primeiro banco de verdade **só** nas pastas dadas: a busca sem o perfil de quem roda.
+pub fn primeiro_banco_em(pastas: &[PathBuf]) -> Option<PathBuf> {
+    candidatos_em(pastas).into_iter().find(|c| c.is_file())
 }
 
 /// Um banco carregado.
@@ -340,7 +362,15 @@ fn limita(amostras: &mut [f32]) -> f32 {
 /// alternativa — inventar mais um diretório de busca — troca um aviso claro por um palpite, e
 /// palpite em caminho de arquivo é o defeito que se paga com "não funciona e não diz por quê".
 pub fn relato(aparelho: &Path) -> String {
-    match primeiro_banco(aparelho) {
+    relato_de(aparelho, primeiro_banco(aparelho))
+}
+
+/// O mesmo relato, com o banco já resolvido.
+///
+/// O `Option` entra por parâmetro para a prova do lado "sem banco" não depender do perfil de quem
+/// roda — ver [`pastas_padrao`].
+fn relato_de(aparelho: &Path, banco: Option<PathBuf>) -> String {
+    match banco {
         Some(caminho) => format!(
             "Zeebx: banco de amostras do MIDI em {}; a trilha toca com as amostras",
             caminho.display()
@@ -622,7 +652,9 @@ mod tests {
         let caminho = std::env::temp_dir().join("zeebx-banco-que-nao-existe.sf2");
         let _ = std::fs::remove_file(&caminho);
         assert!(abre(&caminho).is_none());
-        assert!(primeiro_banco(&std::env::temp_dir().join("zeebx-sem-pasta")) .is_none());
+        // Pelas pastas dadas, e não pelo perfil: com um banco em `~/.config/zeebx` esta afirmação
+        // caía — e é para lá que o LEIAME manda copiar o `.sf2`.
+        assert!(primeiro_banco_em(&[std::env::temp_dir().join("zeebx-sem-pasta")]).is_none());
     }
 
 
@@ -635,7 +667,7 @@ mod tests {
     fn o_relato_diz_onde_por_o_banco() {
         let aparelho = std::env::temp_dir().join("zeebx-aparelho-sem-banco");
         let _ = std::fs::remove_dir_all(&aparelho);
-        let texto = relato(&aparelho);
+        let texto = relato_de(&aparelho, None);
         assert!(
             texto.contains("soundfonts"),
             "o relato tem de dizer a pasta: {texto}"
