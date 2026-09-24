@@ -17,8 +17,8 @@ marcada aqui como feita.
 | 5 — configurações | feita: as seis abas, o desenho do controle com clique pela silhueta, captura, eixos, Boomerang, Discord e atualizações |
 | 6 — janelas auxiliares | feita: saves, log da execução, aviso de abertura e aviso de versão nova |
 | 7 — conferência | feita: as chaves de texto das duas interfaces comparadas, teste de que toda chave usada existe, e o que faltava no Qt (ícone, `app_id`, tamanhos mínimos, tela cheia na biblioteca) |
-| 8 — corte do eframe | primeira etapa feita: compilado com `ui-qt`, o Qt é a interface padrão, e o egui fica em `zeebx egui`. O corte espera uma release com o Qt, que espera a fase 9 e a troca da licença |
-| 9 — build e empacotamento | feita no `qt.yml`: AppImage, NSIS e `.dmg` com o Qt 6.11 embutido, e o `.deb` com o Qt do sistema, saindo como artefatos da execução. O `release.yml` os adota quando a licença mudar |
+| 8 — corte do eframe | primeira etapa feita: compilado com `ui-qt`, o Qt é a interface padrão, e o egui fica em `zeebx egui`. A licença já não prende (`GPL-2.0-or-later`); o corte espera uma release com o Qt |
+| 9 — build e empacotamento | feita no `qt.yml`: AppImage, NSIS e `.dmg` com o Qt 6.11 embutido, e o `.deb` com o Qt do sistema, saindo como artefatos da execução. Falta o `release.yml` adotá-los |
 
 ## Onde o egui está de verdade
 
@@ -91,12 +91,13 @@ uma CPU a 100% à toa.
 
 ### Licença
 
-O projeto sai do `GPL-2.0-only`. A dependência que prendia a licença na versão 2 foi retirada, e o
-mantenedor decidiu passar a GPLv3 — é o que libera a migração. Até essa troca chegar ao `LICENSE`,
-ao `Cargo.toml` e ao [`AGENTS.md`](../../AGENTS.md), que ainda diz que o `GPL-2.0-only` "exclui Qt
-6", a interface Qt não vai para uma release.
+O projeto saiu do `GPL-2.0-only` para o **`GPL-2.0-or-later`**. A dependência que prendia a
+licença na versão 2, o unicorn, foi retirada, e o backend de CPU padrão é o Dynarmic; o
+`Cargo.toml` de cada pacote e o [`AGENTS.md`](../../AGENTS.md) já dizem isso. O `LICENSE` continua
+sendo o texto da GPLv2, que é o que o "ou posterior" pede.
 
-Com GPLv3 a questão acaba para os módulos em uso: `QtCore`, `QtGui`, `QtQuick`, `QtQml` e
+O "ou posterior" é o que libera a migração: o binário que linka o Qt é distribuído, como um todo,
+sob a GPLv3, que o código do Zeebx permite. E com GPLv3 a questão acaba para os módulos em uso: `QtCore`, `QtGui`, `QtQuick`, `QtQml` e
 `QtNetwork` declaram, no Qt 6.11 instalado,
 
 ```text
@@ -468,12 +469,13 @@ independente desta. O [10](10-interface.md), o diagrama de camadas do
 **A feature continua desligada por padrão, de propósito.** O `ci.yml` e o `release.yml` compilam
 o standalone sem Qt e não o instalam; ligá-la por padrão os deixaria vermelhos antes de a fase 9
 ensinar o CI a instalar e empacotar o Qt. E a interface Qt não vai para uma release antes de o
-`LICENSE`, o `Cargo.toml` e o `AGENTS.md` passarem de GPL-2.0-only para GPLv3 (ver *Licença*).
+`LICENSE`, o `Cargo.toml` e o `AGENTS.md` saírem do GPL-2.0-only (ver *Licença*) — o que já
+aconteceu: a licença é `GPL-2.0-or-later`.
 Então a ordem que sobra é:
 
 1. a fase 9: o empacotamento de cada sistema — feita no `qt.yml`; o `release.yml` o adota no passo
    seguinte;
-2. a licença trocada, e a feature ligada por padrão;
+2. a licença trocada — feito, `GPL-2.0-or-later` —, e a feature ligada por padrão;
 3. uma release com o Qt padrão e o `zeebx egui` ainda lá;
 4. na seguinte, o corte: saem o `eframe`, o `ui::App`, o `zeebx egui` e os caminhos `cfg` da
    feature, e são reescritos o [10](10-interface.md), o `ARCHITECTURE.md` e os comentários do
@@ -486,10 +488,11 @@ passo dele (`linuxdeploy-plugin-qt`, `windeployqt`, `macdeployqt`), e o `.deb` p
 de `libqt6gui6`, `libqt6qml6`, `libqt6quick6` e dos módulos QML usados.
 
 **Feita no `qt.yml`, e não no `release.yml`.** A interface Qt não vai para uma release antes de a
-licença mudar (fase 8); até lá, os instaladores saem como artefatos da execução do `qt.yml`, para
+licença mudar (fase 8) — e ela já mudou; enquanto o `release.yml` não os adota, os instaladores
+saem como artefatos da execução do `qt.yml`, para
 baixar e testar. A configuração deles é `frontends/classical-standalone/empacotamento-qt.toml`,
 separada do `[package.metadata.packager]` do `Cargo.toml`, que continua sendo o da release com o
-egui. Quando a licença mudar, ela vira a de lá e os passos passam para o `release.yml`.
+egui. Com a feature ligada por padrão, ela vira a de lá e os passos passam para o `release.yml`.
 
 - **Com `--config`, o `cargo packager` não lê o `Cargo.toml`.** A versão entra numa cópia do
   arquivo (`@VERSAO@`), feita pelo workflow, e o arquivo não se chama `packager.toml` porque esse
