@@ -13,16 +13,19 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Instant;
 
 use zeebx::eframe::egui::Key;
 use zeebx::input;
+use zeebx::input::padview::PadArt;
 use zeebx::library::{self, Game};
 use zeebx::session::Z_WHEEL;
 use zeebx::input::bindings::Aparelho;
 use zeebx::ui::calibracao::{Calibracao, Situacao};
 use zeebx::ui::acervo::{self, Acervo, Ficha};
 use zeebx::ui::depuracao;
+use zeebx::ui::{atualizacao, discord};
 use zeebx::ui::navegacao::{self, Comando, Navegacao};
 use zeebx::video::icon::{self, Image};
 use zeebx::ui::entrada::EntradaDoDesktop;
@@ -96,7 +99,10 @@ pub enum Quadro<'a> {
 pub struct Nucleo {
     pub settings: Settings,
     pub catalogo: Catalog,
-    entrada: EntradaDoDesktop,
+    pub entrada: EntradaDoDesktop,
+    /// O desenho do controle, com a silhueta de cada botão. Vazio se o desenho não abrir: a tela
+    /// de controles continua servindo pela lista.
+    pub arte: Option<PadArt>,
     partida: Option<Partida>,
     /// O contexto que o rasterizador na placa recebe emprestado. Criado na primeira abertura, e não
     /// no arranque: precisa do `QGuiApplication` de pé. Com ele, tudo que toca a sessão — o passo,
@@ -123,6 +129,11 @@ pub struct Nucleo {
     /// pergunta a cada linha que aparece. Refeito a cada varredura.
     capas_ao_lado: HashMap<usize, bool>,
     navegacao: Navegacao,
+    /// A presença no Discord, acompanhando o que a interface mostra.
+    pub presenca: discord::Acompanha,
+    /// A procura por versão nova em andamento, e o que ela respondeu.
+    procura_de_atualizacao: Option<Receiver<atualizacao::Resposta>>,
+    pub atualizacao: Option<atualizacao::Resposta>,
     calibracao: Calibracao,
     /// As teclas apertadas na janela do jogo, como `egui::Key`. Ver
     /// [`zeebx::ui::entrada::tecla_apertada`].
@@ -146,6 +157,9 @@ impl Nucleo {
             settings,
             catalogo,
             entrada: EntradaDoDesktop::inicia(),
+            arte: PadArt::builtin()
+                .inspect_err(|erro| eprintln!("desenho do controle: {erro:?}"))
+                .ok(),
             partida: None,
             gl: None,
             placa: None,
@@ -158,6 +172,9 @@ impl Nucleo {
             geracao: 0,
             capas_ao_lado: HashMap::new(),
             navegacao: Navegacao::default(),
+            presenca: discord::Acompanha::default(),
+            procura_de_atualizacao: None,
+            atualizacao: None,
             calibracao: Calibracao::default(),
             teclas: HashSet::new(),
         };
@@ -176,11 +193,67 @@ impl Nucleo {
         if let Err(erro) = library::sync_catalog(&self.jogos) {
             eprintln!("catálogo de jogos: {erro}");
         }
+        self.capas_ao_lado.clear();
+        self.atualiza_z_wheel();
+    }
+
+    /// Resolve de onde abrir a Z-Wheel e relê o acervo dela, sem varrer a pasta de novo. É o que
+    /// mudar a Z-Wheel nas configurações faz: a capa e o nome de cada jogo podem mudar junto.
+    pub fn atualiza_z_wheel(&mut self) {
         self.z_wheel = library::z_wheel_de(self.settings.z_wheel_path.as_deref(), &self.jogos);
         self.acervo = self.z_wheel.as_deref().and_then(Acervo::carrega);
         self.geracao = self.geracao.wrapping_add(1);
-        self.capas_ao_lado.clear();
         self.refaz_lista();
+    }
+
+    /// Troca o idioma da interface. Os nomes oficiais da Z-Wheel são por idioma, então a lista é
+    /// refeita junto. Devolve se o idioma existe.
+    pub fn muda_idioma(&mut self, codigo: &str) -> bool {
+        if !self.catalogo.select(codigo) {
+            return false;
+        }
+        self.settings.language = Some(codigo.to_string());
+        self.refaz_lista();
+        true
+    }
+
+    /// O que a interface faz a cada leitura, com ou sem jogo: diz ao Discord o que está
+    /// acontecendo e recolhe a resposta da procura por versão nova.
+    pub fn a_cada_quadro(&mut self) {
+        let classe = self.partida.as_ref().map(|partida| partida.sessao().classe());
+        let titulo = self.titulo();
+        let discord = &self.settings.discord;
+        self.presenca
+            .atualiza(discord.ativo, &self.catalogo, classe, titulo, &discord.capas_url);
+        if let Some(canal) = &self.procura_de_atualizacao {
+            match canal.try_recv() {
+                Ok(resposta) => {
+                    self.atualizacao = Some(resposta);
+                    self.procura_de_atualizacao = None;
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => self.procura_de_atualizacao = None,
+            }
+        }
+    }
+
+    /// Pergunta ao GitHub se há versão nova. A resposta chega pelo [`Nucleo::a_cada_quadro`].
+    pub fn procura_atualizacao(&mut self) {
+        self.atualizacao = None;
+        self.procura_de_atualizacao = Some(atualizacao::procura());
+    }
+
+    pub fn procurando_atualizacao(&self) -> bool {
+        self.procura_de_atualizacao.is_some()
+    }
+
+    /// Mexe na sessão do jogo aberto, com o contexto de GL corrente: a resolução interna, a
+    /// proporção e as melhorias refazem o destino na placa, e isso é GL.
+    pub fn na_sessao(&mut self, f: impl FnOnce(&mut zeebx::session::Session)) {
+        let com_placa = self.gl.is_some();
+        if let Some(partida) = self.partida.as_mut() {
+            no_contexto(com_placa, || f(partida.sessao_mut()));
+        }
     }
 
     /// A busca mudou.
@@ -189,7 +262,8 @@ impl Nucleo {
         self.refaz_lista();
     }
 
-    fn refaz_lista(&mut self) {
+    /// Refaz a lista sem varrer a pasta: a busca, o idioma ou a Z-Wheel mudaram.
+    pub fn refaz_lista(&mut self) {
         let idioma = self.catalogo.current().to_string();
         let acervo = self.acervo.as_ref();
         let mut lista: Vec<(String, usize)> = (0..self.jogos.len())
@@ -243,6 +317,51 @@ impl Nucleo {
             "logo" => self.acervo.as_ref()?.ficha(chave as u32)?.logo.as_ref(),
             "classificacao" => self.acervo.as_ref()?.ficha(chave as u32)?.classificacao.as_ref(),
             _ => None,
+        }
+    }
+
+    /// O desenho do controle para o QML: `controle/base`, ou `controle/parte/<índice>/<rrggbbaa>`
+    /// — a silhueta de um botão já na cor pedida. A silhueta só guarda a opacidade; a cor é a que
+    /// a tela escolhe na hora (aceso, sob o cursor, esperando a captura), como no egui.
+    pub fn imagem_do_controle(&self, endereco: &str) -> Option<Image> {
+        let arte = self.arte.as_ref()?;
+        let mut partes = endereco.split('/').skip(1);
+        match partes.next()? {
+            "base" => Some(Image {
+                width: arte.width,
+                height: arte.height,
+                rgba: arte.base.clone(),
+            }),
+            "parte" => {
+                let parte = arte.parts().get(partes.next()?.parse::<usize>().ok()?)?;
+                let cor = u32::from_str_radix(partes.next()?, 16).ok()?.to_be_bytes();
+                let mut rgba = Vec::with_capacity(parte.alpha.len() * 4);
+                for alfa in &parte.alpha {
+                    let alfa = (u32::from(*alfa) * u32::from(cor[3]) / 255) as u8;
+                    rgba.extend_from_slice(&[cor[0], cor[1], cor[2], alfa]);
+                }
+                Some(Image {
+                    width: parte.width,
+                    height: parte.height,
+                    rgba,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// As portas mudaram nas configurações: com um jogo aberto, vale na hora, como no egui.
+    /// Guardar e só aplicar na próxima partida seria a configuração parecer que não pegou.
+    pub fn portas_mudaram(&mut self) {
+        let portas = std::array::from_fn(|porta| {
+            self.settings
+                .controls
+                .player(porta)
+                .filter(|jogador| jogador.ligada)
+                .map(|jogador| jogador.aparelho)
+        });
+        if let Some(partida) = self.partida.as_mut() {
+            partida.sessao_mut().set_portas(portas);
         }
     }
 
