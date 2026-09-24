@@ -4,6 +4,7 @@
 //! a interface padrão continua sendo a do egui.
 
 mod biblioteca;
+mod configuracoes;
 mod nucleo;
 mod ponte;
 
