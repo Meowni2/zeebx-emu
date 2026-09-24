@@ -484,9 +484,9 @@ fn main() -> ExitCode {
                 perfil, boomerang, portas,
             ))
         }
-        // Compilada com a interface Qt, ela é a padrão; a do egui continua em `zeebx egui` por uma
-        // versão, para quem achar diferença ter como comparar. Sem a feature, nada muda: o CI e a
-        // release seguem com o egui até a feature ser ligada por padrão — ver a fase 8 de
+        // A interface Qt é a padrão (a feature `ui-qt` vem ligada); a do egui continua em
+        // `zeebx egui` por uma versão, para quem achar diferença ter como comparar. Compilado com
+        // `--no-default-features`, sem o Qt, o `zeebx` abre a do egui — ver a fase 8 de
         // docs/implementacao/21-migracao-para-qt.md.
         #[cfg(feature = "ui-qt")]
         Some("qt") => qt::launch(args.get(1).map(String::as_str)),
