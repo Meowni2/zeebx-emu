@@ -15,7 +15,8 @@ marcada aqui como feita.
 | 3 — janela do jogo | feita: textura da placa sem cópia, enquadramento, faixas de parada e de depuração, aviso de calibração, título e modo da janela |
 | 4 — biblioteca | feita: grade e slider, capas e nomes do acervo, busca, navegação pelo controle |
 | 5 — configurações | feita: as seis abas, o desenho do controle com clique pela silhueta, captura, eixos, Boomerang, Discord e atualizações |
-| 6 a 9 | não começadas |
+| 6 — janelas auxiliares | feita: saves, log da execução, aviso de abertura e aviso de versão nova |
+| 7 a 9 | não começadas |
 
 ## Onde o egui está de verdade
 
@@ -358,7 +359,7 @@ Uma janela do sistema (`JanelaDeConfiguracoes.qml`), com as seis abas do egui. O
 - **Com as configurações abertas, a biblioteca não escuta o controle nem o teclado** — nem se a
   principal voltar a ter o foco. Mapeando o controle, o botão apertado abria um jogo sem querer. A
   regra é uma só, `Principal.sobreposta`, verdadeira com qualquer janela por cima (a do jogo, a de
-  configurações, e as da fase 6 quando entrarem); o mouse continua valendo, como no egui. Ao voltar
+  configurações, a de saves e os dois avisos); o mouse continua valendo, como no egui. Ao voltar
   a escutar, o que já estava apertado não conta: a navegação fica silenciada enquanto não escuta.
   Conferido no binário, abrindo as configurações e devolvendo o foco à principal.
 - **Os botões da aba não pegam o foco.** Com ele, capturar o espaço clicaria o "atribuir" de novo e
@@ -377,8 +378,41 @@ manches. **Não conferido:** a calibração e a liberação dos sensores de pont
 
 ### 6 — Janelas auxiliares
 
-Saves, log, aviso de abertura e atualização. A thread da atualização devolve o resultado por
-`qt_thread().queue(...)`, sem polling.
+Os `QObject`s ficam em `src/qt/auxiliares.rs` — `Saves`, `Avisos` e `Log` —, e a regra de cada
+um, no núcleo, para as duas interfaces usarem a mesma:
+
+- **O que era do `App` foi para o núcleo.** `saves::todos` refaz os manifestos dos caches antigos e
+  lista os saves dos jogos e os do aparelho; `partida::Relatorio` grava o relatório da execução a
+  cada dois segundos, e `partida::caminho_da_serial` diz onde vai a captura da serial.
+- **Saves** (`JanelaDeSaves.qml`) é uma janela do sistema, com as duas seções do egui — os jogos, e
+  o aparelho com a dica de que é de todos. A lista toca o disco: é relida ao abrir e depois de cada
+  exclusão, e a `versao` do `Saves` refaz a janela. A exclusão pede confirmação num diálogo modal, e
+  o recado do que aconteceu fica no alto.
+- **Log** (`JanelaDeLog.qml`) acompanha o jogo: aparece com ele aberto e o `debug.log` ligado, e
+  ligar a opção no meio do jogo a abre. Fechar dispensa o log **desta** execução, e não a
+  preferência. As linhas são relidas a cada 250 ms, só quando mudam, e a lista fica presa no fim;
+  quem sobe para ler a solta, e só o usuário muda isso. A primeira leitura acontece antes de a
+  janela aparecer, sem altura para ir ao fim, e por isso a ida ao fim se repete depois do layout. A
+  barra tem o exportar, pelo `rfd`, e o caminho do relatório à vista.
+- **Quem fica por cima de quem.** No QML, uma janela declarada dentro de outra ganha ela como
+  `transientParent`, e o gerenciador de janelas mantém a filha sempre acima do pai. A do jogo era
+  filha da principal, e clicar na principal durante o jogo não a trazia para a frente; agora não tem
+  pai, como no egui. A do log é filha da do jogo, e fica por cima dele. Ela aparece junto com o
+  jogo, e não depois: o jogo pede o foco por último e fica com o teclado — mostrado depois, o log
+  ficava com o foco, e o KDE no Wayland recusava devolvê-lo ao jogo.
+- **Os avisos** são diálogos modais por cima da biblioteca. O de abertura aparece enquanto a versão
+  não foi dispensada; "Configurar controle" abre as configurações na aba de controles. O de versão
+  nova vem depois dele, nunca junto, e "Baixar" abre a página no navegador.
+- **A resposta da procura por versão nova é lida pelo relógio da biblioteca**, e não devolvida por
+  `qt_thread().queue(...)`, como este plano previa. O relógio de 33 ms já existe para o controle, e
+  a leitura é um `try_recv`; um sinal vindo de outra thread não economizaria nada.
+
+Conferido na tela, por captura dos diálogos e das janelas numa cópia da configuração, com saves
+falsos: as duas seções, a confirmação, a exclusão tirando o save do disco e da lista, os dois
+avisos, e as configurações abrindo em Controles. O log conferido com o Alien Breaker Deluxe aberto:
+as linhas, a lista presa no fim, o relatório e a serial gravados, e a janela sumindo ao fechar com
+o jogo ainda aberto. **Não conferidos:** o exportar, que abre o diálogo do sistema, e o aviso de
+versão nova vindo de uma procura de verdade.
 
 ### 7 — Conferência
 
