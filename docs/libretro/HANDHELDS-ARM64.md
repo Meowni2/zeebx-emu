@@ -356,6 +356,28 @@ supersampling. Volume e névoa continuam independentes. Se o jogo ficar instáve
 imagem, use `zeebx_frameskip = "desligado"`; jogos que usam `glReadPixels` desligam frameskip
 sozinhos depois da primeira leitura.
 
+### O relógio do aparelho mente, e isso engana quem lê log
+
+Em 2026-09-24 o R36S estava com o relógio em **2025-11-07**: os logs da sessão nasceram com essa
+data, e quem procurasse "o log de hoje" não achava nada. Os nomes e as datas dos arquivos são do
+relógio do aparelho, **não** do computador que copiou os arquivos — então, ao investigar uma sessão,
+procure por **ordem de modificação** e leia o conteúdo, nunca pela data do nome.
+
+Vale a mesma cautela com os drivers: os dois aparelhos são Mali-G31, mas **não são o mesmo driver**.
+Medido nos logs dos aparelhos:
+
+| aparelho | driver | GLES |
+|---|---|---|
+| R36S (ArkOS) | libMali **r13p0** | 3.2 |
+| RG40XX-H (muOS) | libMali **r20p0** | 3.2 |
+
+O mesmo código pode se comportar diferente nos dois, e um número de um não vale para o outro. A
+linha que diz qual está em uso é a primeira do log do núcleo:
+
+```text
+Zeebx: GL real vendor=ARM; renderer=Mali-G31; version=OpenGL ES 3.2 v1.r13p0-…
+```
+
 ### Logs e diagnóstico
 
 Ative temporariamente no arquivo:
