@@ -1145,11 +1145,16 @@ unsafe fn registra_opcoes_do_core() {
             value: std::ptr::null(),
             label: std::ptr::null(),
         }; 128];
-        const ESCALAS: [(&CStr, &CStr); 4] = [
-            (c"1", c"1x — sem supersampling (padrão)"),
-            (c"2", c"2x — desenha em 1280×960"),
-            (c"3", c"3x — desenha em 1920×1440"),
-            (c"4", c"4x — desenha em 2560×1920"),
+        // **Os dois sentidos, e é importante dizer qual vale onde.** Abaixo de 1x o desenho é
+        // menor e quem amplia é a apresentação: só o rasterizador de processador faz isso, e é
+        // onde o preenchimento custa CPU. Acima de 1x é supersampling, que só a placa faz.
+        const ESCALAS: [(&CStr, &CStr); 6] = [
+            (c"1", c"1x — nativo, sem supersampling (padrão)"),
+            (c"0.5", c"0.5x — metade (320×240), só no processador"),
+            (c"0.25", c"0.25x — um quarto (160×120), só no processador"),
+            (c"2", c"2x — desenha em 1280×960 (só na placa)"),
+            (c"3", c"3x — desenha em 1920×1440 (só na placa)"),
+            (c"4", c"4x — desenha em 2560×1920 (só na placa)"),
         ];
         for (i, (valor, rotulo)) in ESCALAS.iter().enumerate() {
             escala_values[i] = RetroCoreOptionValue {
@@ -1372,8 +1377,8 @@ unsafe fn registra_opcoes_do_core() {
                 key: c"zeebx_resolucao_interna".as_ptr(),
                 desc: c"Resolução interna do 3D".as_ptr(),
                 desc_categorized: c"Resolução interna".as_ptr(),
-                info: c"Desenha o 3D numa resolução maior e reduz de volta para os 640x480 do console, o que suaviza a borda do polígono (supersampling). O quadro entregue ao frontend continua 640x480: shader e proporção nao mudam. Só tem efeito com o rasterizador de placa, e custa memória e preenchimento.".as_ptr(),
-                info_categorized: c"Desenha o 3D maior e reduz para 640x480, suavizando a borda. Só na placa.".as_ptr(),
+                info: c"A resolução em que o 3D é desenhado, por lado. O quadro entregue ao frontend continua 640x480, e shader e proporção não mudam. Abaixo de 1x (0.5x, 0.25x) o desenho sai menor e é ampliado na apresentação: alivia o processador, e é o que serve a aparelho fraco — a imagem fica mais quadrada. Acima de 1x é supersampling: suaviza a borda do polígono, custa memória e preenchimento, e só vale com o rasterizador de placa. Vale na hora.".as_ptr(),
+                info_categorized: c"Abaixo de 1x alivia o processador (imagem mais quadrada); acima de 1x suaviza a borda e só vale na placa. Vale na hora.".as_ptr(),
                 category_key: c"video".as_ptr(),
                 values: escala_values,
                 default_value: c"1".as_ptr(),
@@ -1493,7 +1498,7 @@ unsafe fn registra_opcoes_do_core() {
             },
             RetroVariable {
                 key: c"zeebx_resolucao_interna".as_ptr(),
-                value: c"Resolução interna do 3D; 1|2|3|4".as_ptr(),
+                value: c"Resolução interna do 3D; 1|0.5|0.25|2|3|4".as_ptr(),
             },
             RetroVariable {
                 key: c"zeebx_antialias".as_ptr(),
@@ -1796,15 +1801,28 @@ fn aplica_opcoes_quentes(estado: &mut Core) {
     // continua sendo o escape para quem precisa dela.
     let perfil_portatil = perfil_e_portatil(unsafe { le_opcao(c"zeebx_perfil") }.as_deref());
 
-    let escala = if perfil_portatil {
-        Some(1)
-    } else {
-        unsafe { le_opcao(c"zeebx_resolucao_interna") }
-            .as_deref()
-            .and_then(|texto| numero_de_texto(texto, 1, 8))
+    // **Um número só, dois mecanismos.** Abaixo de 1x quem reduz é o rasterizador de
+    // processador (superfície menor, ampliada na apresentação); acima de 1x quem amplia é o de
+    // placa (supersampling). O valor é entregue aos dois, e cada um usa o que lhe cabe.
+    let texto_escala = match perfil_portatil {
+        true => None,
+        false => unsafe { le_opcao(c"zeebx_resolucao_interna") },
     };
-    if let Some(escala) = escala {
-        estado.session.define_resolucao_interna(escala);
+    match texto_escala.as_deref().map(str::trim) {
+        Some("0.5") | Some("0,5") => {
+            estado.session.define_reducao(2);
+            estado.session.define_resolucao_interna(1);
+        }
+        Some("0.25") | Some("0,25") => {
+            estado.session.define_reducao(4);
+            estado.session.define_resolucao_interna(1);
+        }
+        outro => {
+            estado.session.define_reducao(1);
+            if let Some(escala) = outro.and_then(|texto| numero_de_texto(texto, 1, 8)) {
+                estado.session.define_resolucao_interna(escala);
+            }
+        }
     }
 
     // **Áudio e memória valem para o que vier depois.** A música já sintetizada não muda de taxa

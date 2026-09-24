@@ -1059,6 +1059,13 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     // **O áudio é medido, não ouvido.** Sem placa, o mixer entrega as amostras do relógio virtual —
     // a mesma cadência que o frontend Libretro usa —, e a conta do estalo sai daí.
     let mixer = session.grava_audio(TAXA_DE_AMOSTRAGEM);
+    // **A redução da resolução interna, para medir o que ela rende.** Só o rasterizador de
+    // processador a usa; ver [`crate::video::rasterizer::GlState::define_reducao`].
+    if let Ok(valor) = std::env::var("ZEEBX_ROM_REDUCAO")
+        && let Ok(n) = valor.trim().parse::<usize>()
+    {
+        session.define_reducao(n);
+    }
     // Perfil de custo: opt-in, porque o cronômetro por chamada encarece a própria execução.
     let perfilando = std::env::var("ZEEBX_ROM_PERFIL").is_ok();
     if perfilando {

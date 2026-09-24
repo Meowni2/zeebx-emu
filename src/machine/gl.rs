@@ -1142,6 +1142,12 @@ impl<C: CpuBackend> Machine<C> {
         self.gl.desenha_no_fbo(fbo);
     }
 
+    /// Reduz a resolução interna do 3D no rasterizador de processador. Ver
+    /// [`Rasterizador::define_reducao`].
+    pub fn define_reducao(&mut self, reducao: usize) {
+        self.gl.define_reducao(reducao);
+    }
+
     /// A proporção experimental do 3D. Ver [`Rasterizador::define_proporcao`].
     pub fn define_proporcao(&mut self, aspecto: Option<f32>) {
         self.gl.define_proporcao(aspecto);

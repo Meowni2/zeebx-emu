@@ -749,6 +749,12 @@ pub trait Rasterizador {
 
     /// Se trazer o quadro para a memória da CPU custa uma **espera pela placa**.
     ///
+    /// Reduz a resolução interna do 3D, desenhando numa superfície menor e ampliando na
+    /// apresentação. **Só o rasterizador de processador faz isto**: ver
+    /// [`GlState::define_reducao`]. Na placa não há o que fazer — ali o preenchimento a 640×480
+    /// não satura a GPU, e reduzir só estragaria a imagem.
+    fn define_reducao(&mut self, _reducao: usize) {}
+
     /// Chamadas de estado enviadas à placa e quantas o espelho poupou. Zero no software.
     ///
     /// Existe para o ganho do espelho ser **verificável**: sem os dois números não há como dizer
@@ -818,6 +824,10 @@ pub struct QuadroNaPlaca {
 }
 
 impl Rasterizador for GlState {
+    fn define_reducao(&mut self, reducao: usize) {
+        GlState::define_reducao(self, reducao)
+    }
+
     fn grava_estado(&self, destino: &mut crate::save_state::Secoes) {
         crate::save_state::Guardavel::grava(self, destino);
     }
@@ -1044,6 +1054,10 @@ pub struct GlState {
     /// e virava um rastro esticado ao lado do modelo.
     pub(crate) stencil: Vec<u8>,
 
+    /// A redução da resolução interna do 3D: 1 é nativo, 2 é metade, 4 é um quarto. Ver
+    /// [`GlState::define_reducao`].
+    reducao: usize,
+
     pub(crate) matrix_mode: u32,
     pub(crate) modelview: Vec<Matrix>,
     pub(crate) projection: Vec<Matrix>,
@@ -1182,6 +1196,7 @@ impl GlState {
             tesoura: None,
             tesoura_crua: (0, 0, width as i32, height as i32),
             tesoura_ligada: false,
+            reducao: 1,
             surface: None,
             esticada: false,
             clear_color: [0.0, 0.0, 0.0, 1.0],
@@ -1267,6 +1282,18 @@ impl GlState {
 
     /// O retângulo do `glScissor`. Guardado cru e convertido para o topo quando vale.
     pub fn set_scissor(&mut self, x: i32, y: i32, width: i32, height: i32) {
+        // A tesoura chega em pixels do console, como a viewport, e vale na mesma superfície.
+        let (x, y, width, height) = if self.reducao == 1 {
+            (x, y, width, height)
+        } else {
+            let n = self.reducao as i32;
+            (
+                self.na_reducao(x),
+                self.na_reducao(y),
+                (width / n).max(0),
+                (height / n).max(0),
+            )
+        };
         self.tesoura_crua = (x, y, width, height);
         self.atualiza_tesoura();
     }
@@ -1289,7 +1316,69 @@ impl GlState {
         };
     }
 
+    /// A redução da resolução interna do 3D: 1 é nativo, 2 é metade, 4 é um quarto.
+    ///
+    /// **Só o rasterizador de processador reduz.** Aqui o preenchimento custa CPU e escala com a
+    /// área do quadro: desenhar 320×240 é um quarto do trabalho de 640×480. A apresentação
+    /// continua em 640×480 — [`GlState::frame_rgb565`] já sabe reamostrar de uma superfície menor,
+    /// que é o caminho do `EGL_QUALCOMM_surface_scale`.
+    ///
+    /// Na placa quem reduz é outro mecanismo, e um fator abaixo de 1 ali não faria sentido: o
+    /// Mali não está saturado a 640×480.
+    pub fn define_reducao(&mut self, reducao: usize) {
+        // A fila foi montada no tamanho antigo; ela vira pixel antes da troca.
+        self.flush();
+        let nova = match reducao {
+            0 | 1 => 1,
+            n => n.min(4),
+        };
+        if nova == self.reducao {
+            return;
+        }
+        self.reducao = nova;
+        // A superfície é redescoberta a partir das viewports que vierem, e as coordenadas que já
+        // estão guardadas são do tamanho antigo: esquecê-las é mais seguro que reinterpretá-las.
+        self.surface = None;
+        self.viewport = (0, 0, self.width as i32, self.height as i32);
+        self.tesoura_crua = (0, 0, self.width as i32, self.height as i32);
+        self.atualiza_tesoura();
+        crate::registro!(
+            crate::registro::Nivel::Informacao,
+            "gl",
+            "resolução interna do 3D reduzida a 1/{nova} do quadro ({}x{})",
+            self.width / nova,
+            self.height / nova
+        );
+    }
+
+    /// A redução em vigor. Ver [`GlState::define_reducao`].
+    pub fn reducao(&self) -> usize {
+        self.reducao
+    }
+
+    /// Converte uma coordenada do console para a superfície reduzida.
+    fn na_reducao(&self, valor: i32) -> i32 {
+        match self.reducao {
+            1 => valor,
+            n => valor.div_euclid(n as i32),
+        }
+    }
+
     pub fn set_viewport(&mut self, x: i32, y: i32, width: i32, height: i32) {
+        // **A viewport é a entrada de tudo.** O jogo diz o retângulo em pixels do console, e é
+        // por ele que o vértice vira pixel; reduzindo aqui, o desenho inteiro cai na superfície
+        // reduzida — e a superfície deduzida logo abaixo sai reduzida junto, sem mais nada.
+        let (x, y, width, height) = if self.reducao == 1 {
+            (x, y, width, height)
+        } else {
+            let n = self.reducao as i32;
+            (
+                self.na_reducao(x),
+                self.na_reducao(y),
+                (width / n).max(1),
+                (height / n).max(1),
+            )
+        };
         self.viewport = (x, y, width, height);
         // O jogo desenha numa superfície que pode ser menor que a tela e é ampliada na
         // apresentação — no console isso é a extensão `EGL_QUALCOMM_surface_scale`. Ele nunca
@@ -1370,10 +1459,15 @@ impl GlState {
         self.flush();
         let (sw, sh) = self.surface();
         let mut saida = vec![[0, 0, 0, 255]; width * height];
+        // **O pedido vem em pixels do console e a superfície pode estar reduzida.** Cada pixel
+        // daqui vale `reducao` pixels lá, então o retângulo é mapeado e o resultado é replicado:
+        // quem chamou escreve `width * height` pixels na memória do jogo, e devolver menos
+        // deixaria o resto da faixa com o que estava lá.
+        let n = self.reducao as i32;
         for linha in 0..height {
             for coluna in 0..width {
-                let fx = x + coluna as i32;
-                let fy = y + linha as i32;
+                let fx = self.na_reducao(x + coluna as i32);
+                let fy = self.na_reducao(y + linha as i32);
                 if fx < 0 || fy < 0 || fx as usize >= sw || fy as usize >= sh {
                     continue;
                 }
@@ -1382,6 +1476,10 @@ impl GlState {
                 saida[linha * width + coluna] = self.color[origem];
             }
         }
+        // O `n` só é diferente de 1 quando há redução, e aí o laço acima já amostrou a superfície
+        // menor: nada mais a fazer. O `_` existe para o compilador não acusar a variável quando a
+        // redução é 1 — a conta de replicação é a própria amostragem por divisão.
+        let _ = n;
         saida
     }
 

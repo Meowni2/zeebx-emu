@@ -1198,6 +1198,12 @@ impl Session {
         self.machine.define_resolucao_interna(escala);
     }
 
+    /// Reduz a resolução interna do 3D no rasterizador de **processador**, desenhando numa
+    /// superfície menor e ampliando na apresentação. Ver [`Rasterizador::define_reducao`].
+    pub fn define_reducao(&mut self, reducao: usize) {
+        self.machine.define_reducao(reducao);
+    }
+
     /// A proporção experimental do 3D, largura sobre altura; `None` é o 4:3 do console.
     /// Faz o desenho sair no framebuffer do frontend, quando ele entrega um.
     ///
