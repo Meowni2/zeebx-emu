@@ -571,6 +571,15 @@ impl CpuBackend for DynarmicCpu {
         Ok(())
     }
 
+    fn fill_mem(&mut self, addr: u32, valor: u8, len: u32) -> Result<(), CpuError> {
+        self.memoria
+            .borrow_mut()
+            .fill(addr, valor, len)
+            .map_err(|e| CpuError(e.to_string()))?;
+        self.invalida_codigo_escrito(addr, len);
+        Ok(())
+    }
+
     fn run(&mut self, pc: u32, max_instructions: u64) -> Result<StopReason, CpuError> {
         let jit = self.jit_mut()?;
         // **O bit 0 do endereço é o modo, não parte do endereço.** O despachante retoma no `lr`

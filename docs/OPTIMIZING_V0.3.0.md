@@ -414,3 +414,35 @@ prometeu grande ganho. A próxima confirmação deve ser no rasterizador de plac
 em jogos diferentes. O gargalo dominante continua sendo `flush`/preenchimento, não este loop
 isolado.
 
+## 15. PDCA 3 — `memset` direto na memória guest (aceito)
+
+### Plan
+
+O Rolimã já tinha mostrado `memset` como 31% do tempo perfilado. O caminho anterior preenchia
+um buffer de pilha de 4 KiB e chamava `write_mem` para cada bloco. Isso repetia borrow, validação
+e invalidação de código.
+
+### Do
+
+`GuestMemory::fill` agora preenche diretamente as fatias das regiões, e `DynarmicCpu::fill_mem`
+usa esse caminho. A invalidação de código ainda acontece uma vez no intervalo inteiro. Regiões
+somente-leitura e endereços não mapeados continuam falhando; testes foram adicionados.
+
+### Check
+
+A/B sequencial no Ryzen 7 5700U, Rolimã, sem perfil, 15.048 ms virtuais:
+
+| rodada | baseline | `GuestMemory::fill` |
+|---:|---:|---:|
+| 1 | 3,7 s / 408% | 2,8 s / 534% |
+| 2 | 3,2 s / 469% | 3,0 s / 495% |
+| média | **3,45 s / 439%** | **2,9 s / 515%** |
+
+Ganho médio de aproximadamente **16% no relógio**. A variação da bancada é grande, mas as duas
+rodadas apontam na mesma direção e o primeiro ganho foi de 24%.
+
+### Act
+
+Patch mantido. O caminho foi coberto pelos testes de memória e pela suíte release do núcleo.
+Ainda falta medir NFS, Quake e os 66 jogos para saber quanto o ganho aparece fora do Rolimã.
+

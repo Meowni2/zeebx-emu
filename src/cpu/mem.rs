@@ -162,6 +162,32 @@ impl GuestMemory {
         Ok(())
     }
 
+    /// Preenche diretamente as regiões, sem criar um buffer intermediário.
+    pub fn fill(&mut self, addr: u32, value: u8, len: u32) -> Result<(), MemError> {
+        let mut onde = addr;
+        let mut restante = len as usize;
+        while restante > 0 {
+            let region = self
+                .region_for_mut(onde, 1)
+                .ok_or(MemError::Unmapped {
+                    addr: onde,
+                    len: restante as u32,
+                })?;
+            if !region.writable {
+                return Err(MemError::ReadOnly {
+                    addr: onde,
+                    region: region.name,
+                });
+            }
+            let inicio = (onde - region.base) as usize;
+            let passo = restante.min(region.bytes.len() - inicio);
+            region.bytes[inicio..inicio + passo].fill(value);
+            onde = onde.wrapping_add(passo as u32);
+            restante -= passo;
+        }
+        Ok(())
+    }
+
     pub fn read_u32(&self, addr: u32) -> Result<u32, MemError> {
         let b = self.read(addr, 4)?;
         Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
@@ -222,6 +248,25 @@ mod tests {
         let mut m = mem();
         assert_eq!(
             m.write_u32(0, 1),
+            Err(MemError::ReadOnly {
+                addr: 0,
+                region: "rom"
+            })
+        );
+    }
+
+    #[test]
+    fn fill_preenche_ram_sem_buffer_intermediario() {
+        let mut m = mem();
+        m.fill(0x1000_0010, 0x5a, 0x20).unwrap();
+        assert_eq!(m.read(0x1000_0010, 0x20).unwrap(), &[0x5a; 0x20]);
+    }
+
+    #[test]
+    fn fill_respeita_regiao_somente_leitura() {
+        let mut m = mem();
+        assert_eq!(
+            m.fill(0, 0, 4),
             Err(MemError::ReadOnly {
                 addr: 0,
                 region: "rom"
