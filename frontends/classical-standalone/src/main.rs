@@ -486,7 +486,7 @@ fn main() -> ExitCode {
         }
         // Compilada com a interface Qt, ela é a padrão; a do egui continua em `zeebx egui` por uma
         // versão, para quem achar diferença ter como comparar. Sem a feature, nada muda: o CI e a
-        // release seguem com o egui até o Qt ser empacotado e a licença mudar — ver a fase 8 de
+        // release seguem com o egui até a feature ser ligada por padrão — ver a fase 8 de
         // docs/implementacao/21-migracao-para-qt.md.
         #[cfg(feature = "ui-qt")]
         Some("qt") => qt::launch(args.get(1).map(String::as_str)),
