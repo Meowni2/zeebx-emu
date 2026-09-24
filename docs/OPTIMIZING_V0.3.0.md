@@ -924,3 +924,80 @@ sendo três chamadas, o custo fixo é pago três vezes por lote.
 - o mesmo relatório no Pac-Mania, que é o caso de 48 milhões de chamadas: se a partilha dele for
   ainda maior, ele deixa de ser "o jogo lento" e passa a ser a medida do custo fixo.
 
+## 23. O perfil de API media o próprio relógio
+
+**Esta é a correção mais importante da rodada, e ela invalida leituras anteriores deste próprio
+documento.**
+
+### O que estava errado
+
+O perfil de API cronometra cada chamada com um par `Instant::now()`/`elapsed()`. Em Linux isso
+costuma ser o caminho rápido do `vDSO` — dezenas de nanossegundos —, e foi por isso que a medida
+pareceu aceitável por tanto tempo.
+
+**Nesta máquina não é.** Medido, com prova no teste `quanto_custa_o_relogio`:
+
+```text
+relógio: 1318 ns por leitura, 2634 ns por par (now+elapsed); mapa por (interface, slot): 15 ns
+```
+
+**1 318 nanossegundos por leitura de relógio** — é chamada de sistema, não `vDSO`. E o perfil lê o
+relógio **duas vezes por chamada**. Logo todo método que aparecia custando em torno de 1,4 µs
+custava, de fato, **zero**: o número era o instrumento.
+
+Foi assim que o `GetClipRect` do Pac-Mania apareceu com 45 s para 32 milhões de chamadas (1,39 µs
+cada) e virou "o hotspot mais claro da árvore". Não era. O `VertexPointer`, o `TexCoordPointer` e o
+`strcmp` do Quake estavam na mesma lista, todos com ~1,5 µs de "corpo".
+
+### As duas correções
+
+1. **Amostragem:** o relógio é lido em uma chamada a cada 64, e a média é multiplicada pela
+   contagem. A contagem de chamadas continua exata; só o tempo é estimado.
+2. **Desconto do instrumento:** na abertura do perfil, o custo de uma leitura de relógio é medido
+   nesta máquina (4 096 leituras) e subtraído da média antes de estimar. Um método mais barato que
+   o instrumento fica em zero, que é a resposta certa.
+
+Com as duas, o perfil deixou de encarecer a execução: **8,9 s contra 8,7 s** do mesmo Quake, dentro
+do ruído — antes, custava 42%.
+
+### O quadro verdadeiro (Quake, 15 s virtuais, software)
+
+```text
+onde o tempo foi (5463 ms em chamadas de API):
+     4951.8 ms   90.6%  IEGL11::SwapBuffers
+      183.6 ms    3.4%  IGLES11::Clear
+      125.1 ms    2.3%  IGLES11::DrawElements
+      108.8 ms    2.0%  IGLES11::DrawArrays
+       47.0 ms    0.9%  AEEHelpers::malloc
+```
+
+E os três que dominavam a lista antiga **sumiram**: `TexCoordPointer`, `VertexPointer` e `strcmp`
+não têm corpo medível.
+
+### O que isso diz, e o que não diz
+
+**Diz:** o custo real está em **um método**, o `SwapBuffers`, e ele é o caminho de apresentação —
+`flush` da fila de triângulos, leitura do quadro pela CPU e conversão para RGB565. Isto confirma,
+com o instrumento consertado, o que a primeira leitura já suspeitava por outro caminho: no
+caminho de software, quem domina é a rasterização, não o despacho de método.
+
+**Diz também:** o custo dos três métodos de geometria **não é o corpo, é a fronteira**. Eles somam
+845 mil das 1,32 milhão de entradas no JIT do Quake, a ~2,6 µs cada. Ou seja, o trio custa o preço
+do trampolim, não o preço do que faz — o que reafirma a partilha da seção 22 e explica por que os
+dois instrumentos discordavam.
+
+**Não diz:** que estes valores absolutos se somem. Os baldes se sobrepõem — há método de API que
+reentra no JIT por dentro —, então a soma (5,46 s) chega a passar do tempo fora do JIT (3,4 s).
+**Vale a ordem, não o valor absoluto.** Para valor absoluto, o que se usa é a partilha da seção 22,
+que é medida sem nada dentro do laço.
+
+### Consequências para o plano
+
+- o `SwapBuffers` (apresentação: `flush` + leitura + conversão) passa a ser **o** alvo do caminho
+  de software, e é onde o readback preguiçoso e a escala interna atacam;
+- o trio de geometria **não** pede otimização de corpo: pede fronteira mais barata;
+- o Pac-Mania sai da lista de hotspots de método e volta a ser o que é: um jogo com 48 milhões de
+  chamadas, ou seja, **48 milhões de fronteiras**;
+- e a regra "meça sempre sem o perfil" pode ser revista: com a amostragem, o perfil é barato. O que
+  continua valendo é não misturar os dois instrumentos no mesmo número.
+
