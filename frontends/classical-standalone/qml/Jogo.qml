@@ -8,6 +8,17 @@ import zeebx
 Window {
     id: janela
 
+    // Devolve `valor`, e faz a ligação que chama isto depender das `versoes`.
+    //
+    // **As versões vão como argumento, e não numa expressão solta.** O QML é compilado
+    // antecipadamente (qmlcachegen), e o compilador descarta uma leitura cujo valor não é usado:
+    // `(cfg.versao, cfg.aparelho())` perdia a leitura da versão, a ligação deixava de depender
+    // dela, e trocar o aparelho de Boomerang para Z-Pad não trocava a tela. Interpretado, como no
+    // qmltestrunner, funcionava — por isso os testes não pegaram.
+    function depende(versoes, valor) {
+        return valor
+    }
+
     width: 960
     height: 760
     visible: false
@@ -28,6 +39,11 @@ Window {
             showNormal()
         raise()
         requestActivate()
+    }
+
+    // Os textos se refazem sozinhos quando o idioma muda: a ligação que chama isto lê a versão.
+    function tr(chave) {
+        return depende([Idioma.versao], Idioma.texto(chave))
     }
 
     function alternaTelaCheia() {
@@ -80,7 +96,7 @@ Window {
         color: "white"
         style: Text.Outline
         font.pixelSize: 32
-        text: tela.tr("play.paused")
+        text: janela.tr("play.paused")
     }
 
     // O aviso de calibração do Boomerang, no canto de baixo: o modelo inclina como o controle, e o
@@ -236,7 +252,7 @@ Window {
 
             Text {
                 color: "#9a9a9a"
-                text: tela.tr("play.stop.hint")
+                text: janela.tr("play.stop.hint")
             }
         }
     }
