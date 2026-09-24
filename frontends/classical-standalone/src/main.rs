@@ -1211,6 +1211,22 @@ fn bench_dynarmic(
             println!("  {count:>4}x {name}");
         }
     }
+    // As chamadas de entrada dizem se o jogo chega a consultar o controle e por qual canal: o de
+    // eventos de botão (`GetNextButtonEvent`) ou o de posição (`GetPositionState`). É a pergunta
+    // que decide se espelhar o direcional nos eixos muda alguma coisa para este jogo.
+    let entrada: Vec<_> = machine
+        .call_log()
+        .into_iter()
+        .filter(|(name, _)| {
+            name.contains("Position") || name.contains("Button") || name.contains("HID")
+        })
+        .collect();
+    if !entrada.is_empty() {
+        println!("entrada:");
+        for (name, count) in entrada {
+            println!("  {count:>4}x {name}");
+        }
+    }
     if let Some(path) = dump {
         std::fs::write(path, machine.screen().to_bmp())?;
         println!("quadro:    {path}");
