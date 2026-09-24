@@ -27,6 +27,7 @@
 //! | `ZEEBX_ROM_TETO` | teto de tempo **real** por jogo, em segundos (padrão 90) |
 //! | `ZEEBX_ROM_SAIDA` | diretório onde gravar o relatório completo de cada jogo |
 //! | `ZEEBX_ROM_BASE` | diretório da linha de base; o que não existe é gravado, o que existe é cobrado |
+//! | `ZEEBX_ROM_REDUCAO` | fator da resolução interna do 3D no rasterizador de software: 1 (padrão), 2 ou 4 |
 //!
 //! O `--release` não é enfeite: em depuração o núcleo emulado roda uma ordem de grandeza mais
 //! devagar, e o teto de tempo real classificaria jogo bom como "lento demais".

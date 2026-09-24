@@ -1344,11 +1344,14 @@ impl GlState {
             return;
         }
         self.reducao = nova;
-        // A superfície é redescoberta a partir das viewports que vierem, e as coordenadas que já
-        // estão guardadas são do tamanho antigo: esquecê-las é mais seguro que reinterpretá-las.
+        // **A viewport inicial também é reduzida.** Ela é o que a superfície deduz quando o jogo
+        // nunca chama `glViewport` — e há jogo assim: a Z-Wheel não o chama nenhuma vez em treze
+        // segundos, medido. Reiniciá-la no tamanho do quadro deixaria a redução sem efeito
+        // justamente em quem depende dela.
+        let (largura, altura) = (self.width / nova, self.height / nova);
         self.surface = None;
-        self.viewport = (0, 0, self.width as i32, self.height as i32);
-        self.tesoura_crua = (0, 0, self.width as i32, self.height as i32);
+        self.viewport = (0, 0, largura as i32, altura as i32);
+        self.tesoura_crua = (0, 0, largura as i32, altura as i32);
         self.atualiza_tesoura();
         crate::registro!(
             crate::registro::Nivel::Informacao,
@@ -1451,7 +1454,12 @@ impl GlState {
     /// Sports Peteca, que desenha em coordenadas de tela e nunca mexe na viewport, saía
     /// inteiramente branco.
     pub fn surface(&self) -> (usize, usize) {
-        let (width, height) = self.surface.unwrap_or((self.width, self.height));
+        // **O padrão também é reduzido.** Sem isto, um jogo que nunca chama `glViewport` desenharia
+        // na área reduzida e a apresentação copiaria o quadro inteiro — a imagem sairia num canto,
+        // em vez de ampliada. É o caso da Z-Wheel, que não chama `glViewport` nenhuma vez em treze
+        // segundos.
+        let padrao = (self.width / self.reducao, self.height / self.reducao);
+        let (width, height) = self.surface.unwrap_or(padrao);
         (width.clamp(1, self.width), height.clamp(1, self.height))
     }
 
@@ -3190,6 +3198,45 @@ fn unpack(color: [u8; 4]) -> [f32; 4] {
 
 #[cfg(test)]
 mod tests {
+
+    /// **A redução da resolução interna**, e o caso que a teria deixado sem efeito.
+    ///
+    /// Há jogo que nunca chama `glViewport` — a Z-Wheel não o chama nenhuma vez em treze segundos,
+    /// medido —, e para ele a superfície sai da viewport **inicial**. Se ela fosse reiniciada no
+    /// tamanho do quadro, a redução não valeria justamente em quem depende dela.
+    #[test]
+    fn a_reducao_alcanca_quem_nunca_chama_viewport() {
+        let mut state = GlState::new(640, 480);
+
+        // Sem redução, a superfície inicial é o quadro inteiro.
+        assert_eq!(state.surface(), (640, 480));
+
+        state.define_reducao(2);
+        assert_eq!(
+            state.surface(),
+            (320, 240),
+            "a viewport inicial tem de sair reduzida"
+        );
+
+        // E o jogo que **declara** a viewport do console, como o comum, também é dividido.
+        state.set_viewport(0, 0, 640, 480);
+        assert_eq!(state.surface(), (320, 240));
+
+        // A tesoura passa pela mesma conta.
+        state.set_scissor(0, 0, 640, 480);
+        state.set_scissor_test(true);
+        let (_, _, largura, altura) = state.tesoura.unwrap_or((0, 0, 0, 0));
+        assert_eq!((largura, altura), (320, 240));
+
+        // O quadro entregue continua sendo o do console: quem amplia é a apresentação.
+        let mut bytes = Vec::new();
+        state.frame_rgb565(640, 480, &mut bytes);
+        assert_eq!(bytes.len(), 640 * 480 * 2, "o quadro sai em 640x480");
+
+        // E voltar a 1x devolve o tamanho do console — a opção é reversível.
+        state.define_reducao(1);
+        assert_eq!(state.surface(), (640, 480));
+    }
 
     #[test]
     fn escrita_no_buffer_egl_preserva_desenhos_e_profundidade() {

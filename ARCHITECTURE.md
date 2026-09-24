@@ -150,6 +150,14 @@ permitiu provar que a paralelização do rasterizador e o despejo por quadro nã
 921.600 bytes comparados e zero diferenças. Um backend de GPU real custaria essa garantia, e é
 uma das razões de ele não estar na frente da fila.
 
+**Uma ressalva, medida em 2026-09-24: a reprodução exige o mesmo estado de cache de extração.**
+Três execuções com a extração já no cache dão **760 815 instruções, dígito por dígito**; a mesma
+ROM com o cache recém-extraído dá **760 921**, com uma `CreateInstance` a mais e o heap deslocado 64
+bytes. O emulador é determinístico — o que muda é o que o guest observa do host, e a causa ainda
+não está fechada: a hipótese do manifesto `.zeebx-pacote` foi testada e **rejeitada**. Ver
+[`docs/OPTIMIZING_V0.3.0.md`](docs/OPTIMIZING_V0.3.0.md), seções 32 e 33. Quem for comparar duas
+execuções precisa aquecer o cache antes, ou vai medir isto em vez do que queria.
+
 O relógio é do guest, não do host. O tempo que o jogo mede vem das instruções executadas, e o
 tempo ocioso é adiantado em vez de gasto. Sem isso um jogo que espera em laço gasta a espera de
 verdade; com isso, `--seconds=N` significa a mesma coisa em qualquer máquina.
