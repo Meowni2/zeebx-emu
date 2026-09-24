@@ -61,6 +61,12 @@ pub mod qobject {
         #[cxx_name = "temZWheel"]
         fn tem_z_wheel(self: &Biblioteca) -> bool;
 
+        /// Como a janela principal abre: 0 em janela, 1 maximizada, 2 em tela cheia. Ver
+        /// `graphics.janela`.
+        #[qinvokable]
+        #[cxx_name = "modoDaJanela"]
+        fn modo_da_janela(self: &Biblioteca) -> i32;
+
         /// A pasta de ROMs configurada, para dizer de onde a lista veio.
         #[qinvokable]
         fn pasta(self: &Biblioteca) -> QString;
@@ -147,6 +153,10 @@ impl qobject::Biblioteca {
 
     pub fn tem_z_wheel(&self) -> bool {
         nucleo::com(|nucleo| nucleo.z_wheel.is_some())
+    }
+
+    pub fn modo_da_janela(&self) -> i32 {
+        nucleo::com(|nucleo| super::ponte::modo(nucleo.settings.graphics.janela))
     }
 
     pub fn pasta(&self) -> QString {
