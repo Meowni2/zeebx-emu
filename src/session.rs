@@ -1060,6 +1060,11 @@ impl Session {
         )
     }
 
+    /// Chamadas de estado enviadas à placa e quantas o espelho poupou.
+    pub fn estado_enviado_e_poupado(&self) -> (u64, u64) {
+        self.machine.estado_enviado_e_poupado()
+    }
+
     /// A tela, como está agora.
     pub fn screen(&self) -> &Framebuffer {
         self.intermediario
@@ -1703,8 +1708,10 @@ fn os_dois_rasterizadores_desenham_o_mesmo_quadro() {
         // entre duas telas velhas: passaria sem comparar imagem nenhuma.
         session.materializa_quadro_gl();
         let (trocas, leituras) = session.leituras_do_quadro_gl();
+        let (enviadas, poupadas) = session.estado_enviado_e_poupado();
         eprintln!(
-            "  {}: {trocas} troca(s) de buffer, {leituras} leitura(s) do quadro para a CPU",
+            "  {}: {trocas} troca(s) de buffer, {leituras} leitura(s) do quadro para a CPU, \
+{enviadas} estado(s) enviado(s) e {poupadas} poupado(s) pelo espelho",
             match placa {
                 true => "placa",
                 false => "processador",

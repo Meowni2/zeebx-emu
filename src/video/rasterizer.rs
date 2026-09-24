@@ -749,6 +749,14 @@ pub trait Rasterizador {
 
     /// Se trazer o quadro para a memória da CPU custa uma **espera pela placa**.
     ///
+    /// Chamadas de estado enviadas à placa e quantas o espelho poupou. Zero no software.
+    ///
+    /// Existe para o ganho do espelho ser **verificável**: sem os dois números não há como dizer
+    /// se ele está poupando chamadas ou só repetindo o que já estava lá.
+    fn estado_enviado_e_poupado(&self) -> (u64, u64) {
+        (0, 0)
+    }
+
     /// Verdadeiro no rasterizador de placa: ler o quadro de volta obriga a GPU a terminar e
     /// devolver os pixels, e num GPU de tiles isso é parada. Falso no de processador, onde a
     /// "leitura" é uma conversão em memória — ali adiar não economiza nada e ainda arrisca o

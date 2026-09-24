@@ -1058,6 +1058,12 @@ impl<C: CpuBackend> Machine<C> {
         }
     }
 
+    /// Chamadas de estado enviadas à placa e quantas o espelho poupou. Ver
+    /// [`crate::video::gpu::Espelho`].
+    pub fn estado_enviado_e_poupado(&self) -> (u64, u64) {
+        self.gl.estado_enviado_e_poupado()
+    }
+
     /// Quantas vezes o quadro da placa foi trazido para a tela da CPU nesta sessão.
     ///
     /// Comparado com [`Machine::gl_swaps`] diz o quanto o adiamento rendeu: cada troca de buffer

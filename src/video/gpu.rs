@@ -256,6 +256,85 @@ fn blit_serve(gl: &glow::Context) -> bool {
     .unwrap_or(false)
 }
 
+/// O que já está na placa, para não reenviar o que não mudou.
+///
+/// **Todo campo começa em `None`, e `None` quer dizer "não se sabe".** É o que torna a
+/// invalidação trivial: esquecer o espelho é voltar ao valor padrão, e daí tudo é reenviado uma
+/// vez — o que [`GpuState::esquece_o_espelho`] faz quando outra pessoa mexe no contexto.
+///
+/// São dezoito chamadas de GL por lote em [`GpuState::aplica`], e quase sempre são as mesmas
+/// dezoito do lote anterior: o mesmo programa, a mesma névoa, a mesma tesoura. Um jogo que desenha
+/// centenas de vezes por quadro paga isso centenas de vezes.
+#[derive(Clone, Copy, PartialEq)]
+struct Espelho {
+    viewport: Option<(i32, i32, i32, i32)>,
+    tesoura: Option<(i32, i32, i32, i32)>,
+    tesoura_ligada: Option<bool>,
+    abraco_de_profundidade: Option<bool>,
+    teste_de_profundidade: Option<bool>,
+    func_profundidade: Option<u32>,
+    mascara_profundidade: Option<bool>,
+    faixa_profundidade: Option<(f32, f32)>,
+    mistura: Option<bool>,
+    func_mistura: Option<(u32, u32)>,
+    mascara_cor: Option<[bool; 4]>,
+    descarte: Option<bool>,
+    modo_descarte: Option<u32>,
+    face_frontal: Option<u32>,
+    teste_de_estencil: Option<bool>,
+    func_estencil: Option<(u32, i32, u32)>,
+    mascara_estencil: Option<u32>,
+    ops_estencil: Option<[u32; 3]>,
+}
+
+impl Default for Espelho {
+    /// Tudo desconhecido: é o estado "acabei de receber o contexto de outro".
+    fn default() -> Self {
+        Self {
+            viewport: None,
+            tesoura: None,
+            tesoura_ligada: None,
+            abraco_de_profundidade: None,
+            teste_de_profundidade: None,
+            func_profundidade: None,
+            mascara_profundidade: None,
+            faixa_profundidade: None,
+            mistura: None,
+            func_mistura: None,
+            mascara_cor: None,
+            descarte: None,
+            modo_descarte: None,
+            face_frontal: None,
+            teste_de_estencil: None,
+            func_estencil: None,
+            mascara_estencil: None,
+            ops_estencil: None,
+        }
+    }
+}
+
+impl Espelho {
+    /// Marca o valor como enviado e diz se ele **mudou** — isto é, se a chamada é necessária.
+    ///
+    /// Conta os dois lados de propósito: sem os números não há como saber se o espelho está
+    /// poupando chamadas ou apenas repetindo o que já estava lá.
+    fn mudou<T: PartialEq + Copy>(
+        slot: &mut Option<T>,
+        novo: T,
+        enviados: &mut u64,
+        poupados: &mut u64,
+    ) -> bool {
+        if *slot == Some(novo) {
+            *poupados += 1;
+            false
+        } else {
+            *slot = Some(novo);
+            *enviados += 1;
+            true
+        }
+    }
+}
+
 pub struct GpuState {
     /// A contabilidade de estado e a etapa de vértice, compartilhadas com o software.
     estado: GlState,
@@ -331,6 +410,11 @@ pub struct GpuState {
     /// `Some(0)` é o framebuffer padrão do frontend — o que o `glow` escreve `None` no `bind`.
     /// Ver [`Rasterizador::desenha_no_fbo`].
     fbo_externo: Option<u32>,
+    /// O que já está na placa. Ver [`Espelho`].
+    espelho: std::cell::Cell<Espelho>,
+    /// Chamadas de estado enviadas e poupadas pelo espelho, para conferência.
+    envios_de_estado: std::cell::Cell<u64>,
+    poupancas_de_estado: std::cell::Cell<u64>,
 }
 
 struct Destino {
@@ -445,6 +529,9 @@ impl GpuState {
             proporcao: None,
             em_perspectiva: false,
             fbo_externo: None,
+            espelho: std::cell::Cell::new(Espelho::default()),
+            envios_de_estado: std::cell::Cell::new(0),
+            poupancas_de_estado: std::cell::Cell::new(0),
             reduzido: None,
             amostras: 1,
             anisotropia: 1.0,
@@ -610,6 +697,9 @@ impl GpuState {
             gl.color_mask(true, true, true, true);
             gl.depth_mask(true);
             gl.stencil_mask(u32::MAX);
+            // **Um destino novo mexe no estado por fora do `aplica`.** Daqui em diante o espelho
+            // não sabe o que está na placa, e prefere reenviar tudo a mentir.
+            self.esquece_o_espelho();
             gl.clear_color(0.0, 0.0, 0.0, 1.0);
             gl.clear_depth_f32(1.0);
             gl.clear_stencil(0);
@@ -655,6 +745,7 @@ impl GpuState {
             gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(multi));
             gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(destino.fbo));
             gl.disable(glow::SCISSOR_TEST);
+            self.esquece_a_tesoura();
             gl.blit_framebuffer(0, 0, w, h, 0, 0, w, h, glow::COLOR_BUFFER_BIT, glow::NEAREST);
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(destino.fbo));
         }
@@ -828,6 +919,35 @@ impl GpuState {
         self.sujo = true;
     }
 
+    /// Esquece tudo o que o espelho sabia: a próxima [`GpuState::aplica`] reenvia o estado
+    /// inteiro.
+    ///
+    /// Chamado quando **outra pessoa** mexe no contexto — o `egui`, o frontend — ou quando o
+    /// próprio rasterizador o mexe fora do `aplica` (o `destino` novo, o `resolve`, a leitura do
+    /// quadro). Sem isto o espelho mentiria, e mentir aqui é desenho errado.
+    fn esquece_o_espelho(&self) {
+        self.espelho.set(Espelho::default());
+    }
+
+    /// Só a parte da tesoura: o `glScissor` e o `GL_SCISSOR_TEST`.
+    ///
+    /// É o que basta nos pontos que desligam a tesoura para um blit — ver os comentários em
+    /// `resolve`, `liga_para_leitura` e `clear`.
+    fn esquece_a_tesoura(&self) {
+        let mut m = self.espelho.get();
+        m.tesoura = None;
+        m.tesoura_ligada = None;
+        self.espelho.set(m);
+    }
+
+    /// Quantas chamadas de estado o espelho enviou e quantas poupou.
+    pub fn estado_enviado_e_poupado(&self) -> (u64, u64) {
+        (
+            self.envios_de_estado.get(),
+            self.poupancas_de_estado.get(),
+        )
+    }
+
     fn aplica(&mut self) {
         let (x, y, w, h) = self.viewport_do_topo();
         let extra = self.quadro.as_ref().map_or(0, |d| d.extra) as i32;
@@ -847,50 +967,133 @@ impl GpuState {
         let (x, w) = para_o_anexo(x, w);
         let gl = &self.gl;
         let e = &self.fill;
+        // **Tudo o que segue passa pelo espelho.** São dezoito chamadas por lote, quase sempre
+        // com os mesmos valores do lote anterior.
+        let mut m = self.espelho.get();
+        let mut e_n = 0u64;
+        let mut p_n = 0u64;
         unsafe {
             // A viewport vem em pixels do console; o anexo é `escala` vezes maior.
             let n = self.escala as i32;
-            gl.viewport(x * n, y * n, w.max(0) * n, h.max(0) * n);
+            let viewport = (x * n, y * n, w.max(0) * n, h.max(0) * n);
+            if Espelho::mudou(&mut m.viewport, viewport, &mut e_n, &mut p_n) {
+                gl.viewport(viewport.0, viewport.1, viewport.2, viewport.3);
+            }
             // **O rasterizador de software só recorta no plano próximo.** O OpenGL recorta nos
             // seis planos do frustum, e o plano distante fazia superfícies inteiras desaparecerem
             // — na Z-Wheel era uma faixa do fundo, entre a linha do horizonte e o chão. Preso em
             // vez de recortado, o comportamento volta a ser o do software.
             //
             // É core no OpenGL desktop, mas não existe no GLES. Emitir o enum inválido em todo
-            // lote custa validação no driver Mali e deixa `GL_INVALID_ENUM` pendente.
-            if !gl.version().is_embedded {
+            // lote custa validação no driver Mali e deixa `GL_INVALID_ENUM` pendente — e é por
+            // isso que ele tem um valor próprio aqui, em vez de ir direto para a chamada.
+            let embutido = gl.version().is_embedded;
+            if !embutido
+                && Espelho::mudou(&mut m.abraco_de_profundidade, true, &mut e_n, &mut p_n)
+            {
                 gl.enable(glow::DEPTH_CLAMP);
             }
             // O `glScissor` do jogo vem em pixels do console, com o `y` de baixo para cima —
             // a mesma convenção da viewport —, e o anexo é `escala` vezes maior. Ver
             // [`tesoura_no_anexo`].
-            liga(gl, glow::SCISSOR_TEST, e.tesoura_ligada);
+            if Espelho::mudou(&mut m.tesoura_ligada, e.tesoura_ligada, &mut e_n, &mut p_n) {
+                liga(gl, glow::SCISSOR_TEST, e.tesoura_ligada);
+            }
             if e.tesoura_ligada {
                 let (sx, sy, sw, sh) = tesoura_no_anexo(e.tesoura, self.estado.surface(), extra);
-                gl.scissor(sx * n, sy * n, sw.max(0) * n, sh.max(0) * n);
+                let tesoura = (sx * n, sy * n, sw.max(0) * n, sh.max(0) * n);
+                if Espelho::mudou(&mut m.tesoura, tesoura, &mut e_n, &mut p_n) {
+                    gl.scissor(tesoura.0, tesoura.1, tesoura.2, tesoura.3);
+                }
             }
-            liga(gl, glow::DEPTH_TEST, e.teste_profundidade);
-            gl.depth_func(e.func_profundidade);
-            gl.depth_mask(e.mascara_profundidade);
-            gl.depth_range_f32(e.faixa_profundidade.0, e.faixa_profundidade.1);
-            liga(gl, glow::BLEND, e.mistura);
-            gl.blend_func(e.mistura_src, e.mistura_dst);
-            let [r, g, b, a] = e.mascara_cor;
-            gl.color_mask(r, g, b, a);
-            liga(gl, glow::CULL_FACE, e.descarte);
-            gl.cull_face(e.modo_descarte);
+            if Espelho::mudou(
+                &mut m.teste_de_profundidade,
+                e.teste_profundidade,
+                &mut e_n,
+                &mut p_n,
+            ) {
+                liga(gl, glow::DEPTH_TEST, e.teste_profundidade);
+            }
+            if Espelho::mudou(
+                &mut m.func_profundidade,
+                e.func_profundidade,
+                &mut e_n,
+                &mut p_n,
+            ) {
+                gl.depth_func(e.func_profundidade);
+            }
+            if Espelho::mudou(
+                &mut m.mascara_profundidade,
+                e.mascara_profundidade,
+                &mut e_n,
+                &mut p_n,
+            ) {
+                gl.depth_mask(e.mascara_profundidade);
+            }
+            if Espelho::mudou(
+                &mut m.faixa_profundidade,
+                e.faixa_profundidade,
+                &mut e_n,
+                &mut p_n,
+            ) {
+                gl.depth_range_f32(e.faixa_profundidade.0, e.faixa_profundidade.1);
+            }
+            if Espelho::mudou(&mut m.mistura, e.mistura, &mut e_n, &mut p_n) {
+                liga(gl, glow::BLEND, e.mistura);
+            }
+            let func_mistura = (e.mistura_src, e.mistura_dst);
+            if Espelho::mudou(&mut m.func_mistura, func_mistura, &mut e_n, &mut p_n) {
+                gl.blend_func(func_mistura.0, func_mistura.1);
+            }
+            if Espelho::mudou(&mut m.mascara_cor, e.mascara_cor, &mut e_n, &mut p_n) {
+                let [r, g, b, a] = e.mascara_cor;
+                gl.color_mask(r, g, b, a);
+            }
+            if Espelho::mudou(&mut m.descarte, e.descarte, &mut e_n, &mut p_n) {
+                liga(gl, glow::CULL_FACE, e.descarte);
+            }
+            if Espelho::mudou(&mut m.modo_descarte, e.modo_descarte, &mut e_n, &mut p_n) {
+                gl.cull_face(e.modo_descarte);
+            }
             // A linha 0 do framebuffer é tratada como o topo da imagem, e o Y é virado no shader
             // de vértice. Isso inverte a orientação vista pelo descarte de face, então a face
             // frontal é trocada aqui para compensar — sem isto o descarte come o lado errado.
-            gl.front_face(match e.face_frontal {
+            let face = match e.face_frontal {
                 gles::GL_CCW => glow::CW,
                 _ => glow::CCW,
-            });
-            liga(gl, glow::STENCIL_TEST, e.teste_stencil);
-            gl.stencil_func(e.func_stencil, e.ref_stencil, e.mascara_valor_stencil);
-            gl.stencil_mask(e.mascara_escrita_stencil);
-            gl.stencil_op(e.op_stencil[0], e.op_stencil[1], e.op_stencil[2]);
+            };
+            if Espelho::mudou(&mut m.face_frontal, face, &mut e_n, &mut p_n) {
+                gl.front_face(face);
+            }
+            if Espelho::mudou(
+                &mut m.teste_de_estencil,
+                e.teste_stencil,
+                &mut e_n,
+                &mut p_n,
+            ) {
+                liga(gl, glow::STENCIL_TEST, e.teste_stencil);
+            }
+            let func_estencil = (e.func_stencil, e.ref_stencil, e.mascara_valor_stencil);
+            if Espelho::mudou(&mut m.func_estencil, func_estencil, &mut e_n, &mut p_n) {
+                gl.stencil_func(func_estencil.0, func_estencil.1, func_estencil.2);
+            }
+            if Espelho::mudou(
+                &mut m.mascara_estencil,
+                e.mascara_escrita_stencil,
+                &mut e_n,
+                &mut p_n,
+            ) {
+                gl.stencil_mask(e.mascara_escrita_stencil);
+            }
+            if Espelho::mudou(&mut m.ops_estencil, e.op_stencil, &mut e_n, &mut p_n) {
+                gl.stencil_op(e.op_stencil[0], e.op_stencil[1], e.op_stencil[2]);
+            }
         }
+        self.espelho.set(m);
+        self.envios_de_estado
+            .set(self.envios_de_estado.get() + e_n);
+        self.poupancas_de_estado
+            .set(self.poupancas_de_estado.get() + p_n);
     }
 
     /// Manda o lote de vértices já transformados para a placa.
@@ -1092,6 +1295,7 @@ impl GpuState {
             gl.bind_framebuffer(glow::READ_FRAMEBUFFER, origem);
             gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, destino);
             gl.disable(glow::SCISSOR_TEST);
+            self.esquece_a_tesoura();
             // Na proporção larga, o jogo lê só o centro: é ali que está a imagem de 640×480 que
             // ele desenhou, e os lados são nossos.
             gl.blit_framebuffer(
@@ -1186,6 +1390,28 @@ impl GpuState {
             gl.stencil_mask(u32::MAX);
             gl.color_mask(true, true, true, true);
         }
+        // **Aqui o contexto vai para outra pessoa — e o espelho aprende o que ficou.**
+        //
+        // Esquecer tudo seria mais seguro e não pouparia nada: esta função roda a cada lote, e
+        // um espelho zerado a cada lote responde "mudou" dezoito vezes sempre. Medido: zero
+        // chamadas poupadas. O que se faz é registrar o estado **conhecido** que ela deixa, que é
+        // o que o próximo `aplica` vai comparar — e as chaves que não estão aqui continuam
+        // desconhecidas, porque o outro pode ter mexido nelas.
+        let mut m = self.espelho.get();
+        m.tesoura = None;
+        m.tesoura_ligada = Some(false);
+        m.teste_de_profundidade = Some(false);
+        m.mistura = Some(false);
+        m.descarte = Some(false);
+        m.teste_de_estencil = Some(false);
+        m.mascara_profundidade = Some(true);
+        m.faixa_profundidade = Some((0.0, 1.0));
+        m.mascara_estencil = Some(u32::MAX);
+        m.mascara_cor = Some([true, true, true, true]);
+        if !self.gl.version().is_embedded {
+            m.abraco_de_profundidade = Some(false);
+        }
+        self.espelho.set(m);
     }
 
     /// Reaplica os parâmetros de uma textura, rebaixando o filtro quando falta a cadeia.
@@ -1803,6 +2029,7 @@ impl Rasterizador for GpuState {
                 // O recorte do `glScissor` fica de fora: o rasterizador de software não o tem, e
                 // divergir aqui tornaria a comparação entre os dois inútil.
                 gl.disable(glow::SCISSOR_TEST);
+                self.esquece_a_tesoura();
                 gl.clear(bits);
             }
         }
@@ -2241,6 +2468,10 @@ impl Rasterizador for GpuState {
 
     fn quadro_espera_pela_placa(&self) -> bool {
         true
+    }
+
+    fn estado_enviado_e_poupado(&self) -> (u64, u64) {
+        GpuState::estado_enviado_e_poupado(self)
     }
 
     fn frame_rgb565(&mut self, width: usize, height: usize, out: &mut Vec<u8>) {
