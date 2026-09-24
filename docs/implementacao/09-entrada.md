@@ -222,6 +222,30 @@ e seguiam; com o UID certo eles passaram a tratá-lo, e ficaram em `GetNextConne
 `GetDeviceInfo` para sempre, sem armar timer nem desenhar. A sessão então terminava sozinha, por
 falta do que fazer, e o jogo "não abria". Fila vazia é `EFAILED`, como no `GetNextButtonEvent`.
 
+## A numeração dos botões é a do aparelho
+
+O losango do controle **não** é numerado na ordem em que os olhos leem: **1 fica embaixo, 2 à
+esquerda, 3 no topo e 4 à direita** (conferido nas imagens oficiais do controle). O mapeamento para
+o RetroPad preserva a **posição da mão**, e não o número:
+
+| aparelho | onde fica | RetroPad |
+|---|---|---|
+| Botão 1 | embaixo | `B` |
+| Botão 2 | esquerda | `Y` |
+| Botão 3 | topo | `X` |
+| Botão 4 | direita | `A` |
+| HOME | no meio | `Select`; no standalone, o `Start` do host também cai nele |
+| ZL / ZR | ombros | `L` / `R` |
+| direcional | cruz | `D-Pad` |
+| dois manches | — | analógicos esquerdo e direito |
+
+**Isto já esteve errado de duas maneiras ao mesmo tempo** (issue #41): a tela de mapeamento do
+núcleo rotulava `B` como Botão 1 enquanto a leitura entregava `B` como Botão 2 — duas listas
+paralelas que divergiram em silêncio —, e o mapa da arte em `assets/controller-map.svg` numerava o
+losango como 1 embaixo, 2 à direita, 3 à esquerda e 4 no topo. Agora a tabela do núcleo é **uma
+só** (`BOTOES_DO_RETROPAD`: quem lê e quem rotula bebem da mesma), a arte segue a numeração do
+aparelho, e um teste prende as duas coisas — descritores e leitura não podem mais discordar.
+
 ## Mapeamento configurável
 
 `input/bindings.rs`. O mapeamento é guardado **por nome** — o nome da tecla, o do botão do controle do

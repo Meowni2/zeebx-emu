@@ -949,6 +949,33 @@ fn chave_do_espelho(porta: u32) -> Option<&'static CStr> {
     }
 }
 
+/// O que cada botão do RetroPad vira no console, e como ele se chama na tela de mapeamento.
+///
+/// **Uma tabela só para as duas coisas, de propósito.** O `le_pad` lê por ela e o
+/// [`registra_botoes`] rotula por ela. Quando eram duas listas paralelas, elas divergiram em
+/// silêncio: o rótulo dizia "B = Botão 1" e a leitura entregava B como Botão 2 — a tela de
+/// mapeamento do frontend ensinava a apertar o botão errado (issue #41). Com uma tabela só, essa
+/// divergência é impossível de escrever.
+///
+/// **O nome de cada botão do console carrega a posição no aparelho, e não a ordem dos números:**
+/// o `b1` fica **embaixo**, o `b2` à **esquerda**, o `b3` no **topo** e o `b4` à **direita**
+/// (conferido nas imagens oficiais). Por isso o Botão 1 cai no `B` do RetroPad, que é o de baixo, e
+/// não no `A`, que é o da direita. Ver `docs/implementacao/09-entrada.md`.
+const BOTOES_DO_RETROPAD: [(u32, &str, &str); 12] = [
+    (ID_UP, "up", "Direcional cima"),
+    (ID_DOWN, "down", "Direcional baixo"),
+    (ID_LEFT, "left", "Direcional esquerda"),
+    (ID_RIGHT, "right", "Direcional direita"),
+    (ID_B, "b1", "Botão 1 (embaixo)"),
+    (ID_Y, "b2", "Botão 2 (esquerda)"),
+    (ID_X, "b3", "Botão 3 (topo)"),
+    (ID_A, "b4", "Botão 4 (direita)"),
+    (ID_L, "zl", "ZL"),
+    (ID_R, "zr", "ZR"),
+    (ID_START, "start", "Start"),
+    (ID_SELECT, "back", "HOME/Voltar"),
+];
+
 /// Lê o RetroPad e monta o estado que o console enxerga.
 ///
 /// Com `bitmasks`, os doze botões vêm numa palavra só — uma chamada ao frontend por quadro em vez
@@ -973,21 +1000,8 @@ fn le_pad(porta: u32, bitmasks: bool) -> Pad {
         }
     };
     let mut pad = Pad::default();
-    let mapa = [
-        (ID_UP, "up"),
-        (ID_DOWN, "down"),
-        (ID_LEFT, "left"),
-        (ID_RIGHT, "right"),
-        (ID_Y, "b1"),
-        (ID_B, "b2"),
-        (ID_X, "b3"),
-        (ID_A, "b4"),
-        (ID_L, "zl"),
-        (ID_R, "zr"),
-        (ID_START, "start"),
-        (ID_SELECT, "back"),
-    ];
-    for (id, nome) in mapa {
+    // A leitura e o rótulo saem da **mesma** tabela: ver [`BOTOES_DO_RETROPAD`].
+    for (id, nome, _) in BOTOES_DO_RETROPAD {
         if botao(id) {
             if let Some(indice) = Pad::button_by_name(nome) {
                 pad.press(indice, true);
@@ -1087,22 +1101,7 @@ unsafe fn registra_controladores() {
 /// Rotula os botões para a tela de configuração do frontend.
 unsafe fn registra_botoes() {
     let mut descritores: Vec<RetroInputDescriptor> = Vec::new();
-    let rotulos = [
-        (ID_UP, "Direcional cima"),
-        (ID_DOWN, "Direcional baixo"),
-        (ID_LEFT, "Direcional esquerda"),
-        (ID_RIGHT, "Direcional direita"),
-        // O rótulo vai no `id` que o core realmente lê, senão a tela de mapeamento do frontend
-        // ensina o jogador a apertar o botão errado.
-        (ID_B, "Botão 1"),
-        (ID_Y, "Botão 2"),
-        (ID_X, "Botão 3"),
-        (ID_A, "Botão 4"),
-        (ID_L, "ZL"),
-        (ID_R, "ZR"),
-        (ID_START, "HOME/Start"),
-        (ID_SELECT, "Voltar"),
-    ];
+    let rotulos = BOTOES_DO_RETROPAD.map(|(id, _, rotulo)| (id, rotulo));
     for porta in 0..2u32 {
         for (id, texto) in rotulos {
             descritores.push(RetroInputDescriptor {
@@ -3565,6 +3564,35 @@ mod testes {
         // tem a medida dele (pico, rms, salto), e o core tem esta — se o lote chega ao frontend.
         AMOSTRAS.fetch_add(quadros as u32, Ordering::Relaxed);
         quadros
+    }
+
+    /// **A posição de cada botão, presa por teste.** Era o que faltava no issue #41: o rótulo da
+    /// tela de mapeamento e a tabela de leitura eram duas listas paralelas, e divergiram em
+    /// silêncio — o rótulo dizia "B = Botão 1" e a leitura entregava B como Botão 2. Agora a
+    /// tabela é uma só, e este teste prende a numeração física do aparelho: quem trocar o `b1` de
+    /// lugar cai aqui, e não no colo do jogador.
+    #[test]
+    fn os_botoes_de_acao_seguem_a_numeracao_do_aparelho() {
+        // No aparelho: 1 embaixo, 2 à esquerda, 3 no topo, 4 à direita. No RetroPad: `B` embaixo,
+        // `Y` à esquerda, `X` no topo, `A` à direita — a posição da mão é a mesma nos dois.
+        let acao = &BOTOES_DO_RETROPAD[4..8];
+        assert_eq!(
+            acao.iter().map(|(_, nome, _)| *nome).collect::<Vec<_>>(),
+            ["b1", "b2", "b3", "b4"]
+        );
+        assert_eq!(
+            acao.iter().map(|(id, _, _)| *id).collect::<Vec<_>>(),
+            [ID_B, ID_Y, ID_X, ID_A]
+        );
+
+        // E todo nome da tabela existe na lista do console: um erro de digitação aqui deixaria o
+        // botão mudo, sem erro em lugar nenhum.
+        for (_, nome, _) in BOTOES_DO_RETROPAD {
+            assert!(
+                zeebx::input::BUTTON_NAMES.contains(&nome),
+                "{nome} não é botão do console"
+            );
+        }
     }
 
     /// **O caminho inteiro do núcleo, na ordem em que ele acontece.** O direcional espelhado

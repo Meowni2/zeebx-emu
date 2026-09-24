@@ -270,10 +270,15 @@ impl Player {
     /// O mapeamento típico de um controle moderno, para quem liga um e quer jogar.
     pub fn with_gamepad(device: String) -> Self {
         let pad: [(&str, &str); 9] = [
+            // **A posição da mão, e não o rótulo do botão.** No aparelho o 1 fica embaixo, o 2 à
+            // esquerda, o 3 no topo e o 4 à direita (imagens oficiais do controle); no controle
+            // moderno, `South` é o de baixo, `West` o da esquerda, `North` o de cima e `East` o da
+            // direita. Cada botão do Zeebo cai no botão do host que está **no mesmo lugar** — era
+            // o que o issue #41 pedia, e o que faz a mão não reaprender nada ao trocar de controle.
             ("b1", "South"),
-            ("b2", "East"),
-            ("b3", "West"),
-            ("b4", "North"),
+            ("b2", "West"),
+            ("b3", "North"),
+            ("b4", "East"),
             ("zl", "LeftTrigger"),
             ("zr", "RightTrigger"),
             // O controle do Zeebo não tem Start; o HOME ocupa o lugar dele.
