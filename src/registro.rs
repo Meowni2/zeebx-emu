@@ -1,0 +1,379 @@
+//! O registro de mensagens do núcleo, em cinco níveis.
+//!
+//! **Por que existe.** O núcleo não tinha canal nenhum: o diagnóstico saía por `eprintln!` na
+//! interface, e o jogo tinha o seu próprio log à parte. Quando o mesmo problema aparecia no
+//! core Libretro, no Android ou na varredura, não havia como dizer "quero ver o nível de aviso
+//! deste subsistema" — cada frontend imprimia o que dava, no formato que dava.
+//!
+//! Aqui a mensagem nasce no núcleo, com **nível** e **alvo** (o subsistema), e o frontend
+//! decide para onde ela vai: `eprintln!` no desktop, `retro_log` no Libretro, `logcat` no
+//! Android, a linha de base da varredura nos testes.
+//!
+//! **O filtro custa uma leitura atômica.** Quem chama usa a macro [`registro!`], que testa o
+//! nível antes de montar o texto: um jogo que emite mil mensagens de depuração por quadro não
+//! paga por elas quando o nível é `Aviso` — que é o padrão.
+//!
+//! **O coletor é um anel, e o anel avisa quando transborda.** Guardar tudo o que um jogo
+//! depurado diz encheria a memória; guardar sem avisar esconderia justamente o trecho que
+//! faltou. A contagem de descartes aparece no relatório.
+
+use std::collections::VecDeque;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+
+/// Quanto cabe no anel antes de o registro começar a descartar o mais antigo.
+///
+/// Trezentas linhas cobrem com folga o arranque de um applet e uma troca de cena. É o mesmo
+/// espírito do teto do log do jogo ([`crate::machine`]), e o motivo é o mesmo: o relatório é
+/// para ser lido, não armazenado.
+const CAPACIDADE: usize = 300;
+
+/// Os cinco níveis, do mais falador para o mais grave.
+///
+/// São os cinco que o `RETRO_LOG_LEVEL` do Libretro e o `log` do Rust esperam, e por isso a
+/// ordem aqui é a mesma de lá: comparar níveis é comparar o número.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Nivel {
+    /// O caminho de cada decisão. É o "verbose" e o "debug" do costume, juntos.
+    Depuracao = 0,
+    /// O que aconteceu e vale saber: abriu o jogo, escolheu o rasterizador, podou o cache.
+    Informacao = 1,
+    /// O que saiu do previsto mas não impede nada.
+    Aviso = 2,
+    /// O que falhou numa operação e foi tratado.
+    Erro = 3,
+    /// O que impede continuar.
+    Fatal = 4,
+}
+
+impl Nivel {
+    /// Todos, na ordem em que se apresentam numa lista de opções.
+    pub const TODOS: [Nivel; 5] = [
+        Nivel::Depuracao,
+        Nivel::Informacao,
+        Nivel::Aviso,
+        Nivel::Erro,
+        Nivel::Fatal,
+    ];
+
+    /// O nome curto, em maiúsculas, como sai no log do frontend.
+    pub fn etiqueta(self) -> &'static str {
+        match self {
+            Nivel::Depuracao => "DEBUG",
+            Nivel::Informacao => "INFO",
+            Nivel::Aviso => "WARN",
+            Nivel::Erro => "ERROR",
+            Nivel::Fatal => "FATAL",
+        }
+    }
+
+    /// O nível a partir do texto de uma opção, em português ou no nome do `log` do Rust.
+    ///
+    /// Aceita os dois vocabulários de propósito: o usuário do core Libretro escreve
+    /// `depuracao`, e quem lê o `ZEEBX_LOG` de um script costuma escrever `debug`.
+    pub fn de_texto(texto: &str) -> Option<Self> {
+        match texto.trim().to_ascii_lowercase().as_str() {
+            "depuracao" | "depuração" | "debug" | "verbose" => Some(Nivel::Depuracao),
+            "informacao" | "informação" | "info" => Some(Nivel::Informacao),
+            "aviso" | "warn" | "warning" => Some(Nivel::Aviso),
+            "erro" | "error" => Some(Nivel::Erro),
+            "fatal" | "critical" | "critico" | "crítico" => Some(Nivel::Fatal),
+            _ => None,
+        }
+    }
+
+    /// Se este nível passa pelo filtro de `ativo`.
+    ///
+    /// Função pura de propósito: é a regra que mais erra quando se escreve à mão, e assim ela
+    /// tem teste sem tocar no global.
+    pub fn passa(self, ativo: Nivel) -> bool {
+        self >= ativo
+    }
+}
+
+/// O que a opção pediu: um teto de gravidade, ou nada.
+///
+/// **Existe porque "desligado" e "não entendi" não são a mesma coisa.** Devolver `None` para os
+/// dois faria um `ZEEBX_LOG=banana` desligar o registro em silêncio, que é o pior desfecho
+/// possível para uma opção de depuração: quem escreveu errado precisa saber.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ajuste {
+    /// Não registrar nada.
+    Desligado,
+    /// Registrar deste nível para cima.
+    Ate(Nivel),
+}
+
+impl Ajuste {
+    /// O ajuste a partir do texto de uma opção. `None` é "não é token nenhum".
+    pub fn de_texto(texto: &str) -> Option<Self> {
+        match texto.trim().to_ascii_lowercase().as_str() {
+            "desligado" | "off" | "nenhum" => Some(Ajuste::Desligado),
+            outro => Nivel::de_texto(outro).map(Ajuste::Ate),
+        }
+    }
+
+    /// Aplica o ajuste ao registro global.
+    pub fn aplica(self) {
+        match self {
+            Ajuste::Desligado => desliga(),
+            Ajuste::Ate(nivel) => define_nivel(nivel),
+        }
+    }
+}
+
+/// Até que nível o registro está ligado. O padrão é [`Nivel::Aviso`].
+///
+/// `Aviso` e não `Depuracao` porque instrumentar não pode custar caro a quem não pediu: quem
+/// não mexe em nada continua com o silêncio de antes, e só vê o que já via.
+static ATIVO: AtomicU8 = AtomicU8::new(Nivel::Aviso as u8);
+
+/// Uma linha guardada, à espera de quem a vá mostrar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Linha {
+    /// A gravidade.
+    pub nivel: Nivel,
+    /// O subsistema que escreveu — `"cpu"`, `"gl"`, `"midi"`, `"loader"`.
+    pub alvo: String,
+    /// O texto, já montado.
+    pub texto: String,
+}
+
+/// O anel. Um só para todo o núcleo, porque é um só o log que interessa ler.
+static LINHAS: Mutex<VecDeque<Linha>> = Mutex::new(VecDeque::new());
+
+/// Quantas linhas foram descartadas por o anel estar cheio. Nunca zera sozinho: quem lê é que
+/// zera, com [`zera_descartes`], para não se perder a conta entre duas leituras.
+static DESCARTES: AtomicU64 = AtomicU64::new(0);
+
+/// Se o registro está desligado por completo.
+static DESLIGADO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Passa a registrar a partir de `nivel`, inclusive.
+pub fn define_nivel(nivel: Nivel) {
+    DESLIGADO.store(false, Ordering::Relaxed);
+    ATIVO.store(nivel as u8, Ordering::Relaxed);
+}
+
+/// Desliga o registro por completo, seja qual for o nível.
+pub fn desliga() {
+    DESLIGADO.store(true, Ordering::Relaxed);
+}
+
+/// O nível ativo agora.
+pub fn nivel() -> Nivel {
+    match ATIVO.load(Ordering::Relaxed) {
+        0 => Nivel::Depuracao,
+        1 => Nivel::Informacao,
+        2 => Nivel::Aviso,
+        3 => Nivel::Erro,
+        _ => Nivel::Fatal,
+    }
+}
+
+/// Se uma mensagem deste nível seria registrada.
+///
+/// É o teste barato que a macro [`registro!`] faz antes de montar o texto — e é o único custo
+/// de uma mensagem filtrada.
+pub fn ligado(nivel_da_mensagem: Nivel) -> bool {
+    !DESLIGADO.load(Ordering::Relaxed) && nivel_da_mensagem.passa(nivel())
+}
+
+/// Põe uma linha no anel.
+///
+/// Não escreve em lugar nenhum: quem mostra é o frontend, chamando [`drena`] num ponto seguro
+/// — no Libretro, dentro do `retro_run`, porque o log do frontend não pode ser chamado de
+/// qualquer lugar.
+pub fn escreve(nivel: Nivel, alvo: &str, texto: &str) {
+    if !ligado(nivel) {
+        return;
+    }
+    let linha = Linha {
+        nivel,
+        alvo: alvo.to_string(),
+        texto: texto.to_string(),
+    };
+    // Um cadeado envenenado aqui não é motivo para derrubar o emulador: o log é instrumento, e
+    // instrumento que falha cala a boca em vez de matar o jogo.
+    let Ok(mut linhas) = LINHAS.lock() else {
+        return;
+    };
+    if linhas.len() >= CAPACIDADE {
+        linhas.pop_front();
+        DESCARTES.fetch_add(1, Ordering::Relaxed);
+    }
+    linhas.push_back(linha);
+}
+
+/// Tira tudo o que está no anel, na ordem em que foi escrito.
+pub fn drena() -> Vec<Linha> {
+    match LINHAS.lock() {
+        Ok(mut linhas) => linhas.drain(..).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Quantas linhas foram descartadas desde o último [`zera_descartes`].
+pub fn descartes() -> u64 {
+    DESCARTES.load(Ordering::Relaxed)
+}
+
+/// Zera a contagem de descartes.
+pub fn zera_descartes() {
+    DESCARTES.store(0, Ordering::Relaxed);
+}
+
+/// Esvazia o anel e a contagem de descartes.
+pub fn limpa() {
+    if let Ok(mut linhas) = LINHAS.lock() {
+        linhas.clear();
+    }
+    zera_descartes();
+}
+
+/// Lê o nível de `ZEEBX_LOG` e o aplica, quando a variável existe.
+///
+/// Vale para todo frontend de uma vez — headless, varredura, desktop — sem depender de opção
+/// de interface, que é o que serve a quem está depurando na linha de comando.
+pub fn le_do_ambiente() {
+    let Ok(valor) = std::env::var("ZEEBX_LOG") else {
+        return;
+    };
+    match Ajuste::de_texto(&valor) {
+        Some(ajuste) => ajuste.aplica(),
+        None => escreve(
+            Nivel::Aviso,
+            "registro",
+            &format!("ZEEBX_LOG=`{valor}` não é um nível; seguindo no padrão"),
+        ),
+    }
+}
+
+/// Registra uma mensagem, se o nível passar pelo filtro.
+///
+/// O `if` fica do lado de fora do `format!` de propósito: uma mensagem de depuração filtrada
+/// não deve custar nem a montagem do texto.
+#[macro_export]
+macro_rules! registro {
+    ($nivel:expr, $alvo:expr, $($arg:tt)*) => {
+        if $crate::registro::ligado($nivel) {
+            $crate::registro::escreve($nivel, $alvo, &format!($($arg)*));
+        }
+    };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn o_texto_da_opcao_vira_o_nivel_certo() {
+        assert_eq!(Nivel::de_texto("depuracao"), Some(Nivel::Depuracao));
+        assert_eq!(Nivel::de_texto("DEBUG"), Some(Nivel::Depuracao));
+        assert_eq!(Nivel::de_texto("verbose"), Some(Nivel::Depuracao));
+        assert_eq!(Nivel::de_texto("info"), Some(Nivel::Informacao));
+        assert_eq!(Nivel::de_texto(" warning "), Some(Nivel::Aviso));
+        assert_eq!(Nivel::de_texto("erro"), Some(Nivel::Erro));
+        assert_eq!(Nivel::de_texto("critical"), Some(Nivel::Fatal));
+        assert_eq!(Nivel::de_texto("banana"), None);
+        // Desligado não é nível: quem trata os dois iguais desliga o log por engano.
+        assert_eq!(Nivel::de_texto("desligado"), None);
+    }
+
+    /// "Desligado" e "não entendi" têm de ser distinguíveis, senão um erro de escrita desliga o
+    /// registro sem avisar.
+    #[test]
+    fn desligado_e_texto_invalido_nao_se_confundem() {
+        assert_eq!(Ajuste::de_texto("desligado"), Some(Ajuste::Desligado));
+        assert_eq!(Ajuste::de_texto("off"), Some(Ajuste::Desligado));
+        assert_eq!(Ajuste::de_texto("banana"), None);
+        assert_eq!(Ajuste::de_texto("aviso"), Some(Ajuste::Ate(Nivel::Aviso)));
+    }
+
+    #[test]
+    fn o_ajuste_liga_e_desliga_o_registro() {
+        Ajuste::Ate(Nivel::Erro).aplica();
+        assert_eq!(nivel(), Nivel::Erro);
+        assert!(ligado(Nivel::Erro));
+        assert!(!ligado(Nivel::Aviso));
+
+        Ajuste::Desligado.aplica();
+        assert!(!ligado(Nivel::Fatal), "desligado não registra nem o fatal");
+
+        define_nivel(Nivel::Aviso);
+    }
+
+    /// O filtro é a regra que mais erra à mão: o nível ativo e o nível da mensagem são a mesma
+    /// escala, e passar significa "é igual ou mais grave".
+    #[test]
+    fn o_filtro_deixa_passar_do_nivel_ativo_para_cima() {
+        let aviso = Nivel::Aviso;
+        assert!(!Nivel::Depuracao.passa(aviso), "depuração é mais falante");
+        assert!(!Nivel::Informacao.passa(aviso));
+        assert!(Nivel::Aviso.passa(aviso), "o próprio nível passa");
+        assert!(Nivel::Erro.passa(aviso));
+        assert!(Nivel::Fatal.passa(aviso));
+
+        let tudo = Nivel::Depuracao;
+        assert!(Nivel::TODOS.iter().all(|n| n.passa(tudo)));
+    }
+
+    #[test]
+    fn a_etiqueta_e_a_do_log_do_rust() {
+        assert_eq!(Nivel::Depuracao.etiqueta(), "DEBUG");
+        assert_eq!(Nivel::Informacao.etiqueta(), "INFO");
+        assert_eq!(Nivel::Aviso.etiqueta(), "WARN");
+        assert_eq!(Nivel::Erro.etiqueta(), "ERROR");
+        assert_eq!(Nivel::Fatal.etiqueta(), "FATAL");
+    }
+
+    /// O anel guarda na ordem e o `drena` esvazia. Não usa `limpa` no começo para não apagar o
+    /// que outra prova esteja olhando: procura as suas próprias linhas.
+    #[test]
+    fn o_anel_guarda_na_ordem_e_o_drena_esvazia() {
+        define_nivel(Nivel::Depuracao);
+        escreve(Nivel::Informacao, "teste-do-anel", "primeira");
+        escreve(Nivel::Erro, "teste-do-anel", "segunda");
+
+        let minhas: Vec<Linha> = drena()
+            .into_iter()
+            .filter(|l| l.alvo == "teste-do-anel")
+            .collect();
+        assert_eq!(minhas.len(), 2);
+        assert_eq!(minhas[0].texto, "primeira");
+        assert_eq!(minhas[1].texto, "segunda");
+        assert_eq!(minhas[1].nivel, Nivel::Erro);
+
+        // Depois de drenar, o que estava lá não volta.
+        let outra_vez: Vec<Linha> = drena()
+            .into_iter()
+            .filter(|l| l.alvo == "teste-do-anel")
+            .collect();
+        assert!(outra_vez.is_empty());
+    }
+
+    /// O anel tem teto e conta o que descartou: transbordar em silêncio esconderia justamente
+    /// o trecho que faltou.
+    #[test]
+    fn o_anel_transborda_e_conta_os_descartes() {
+        define_nivel(Nivel::Depuracao);
+        zera_descartes();
+        for i in 0..(CAPACIDADE + 20) {
+            escreve(Nivel::Informacao, "teste-do-teto", &format!("linha {i}"));
+        }
+        assert!(descartes() >= 20, "os descartes têm de aparecer");
+    }
+
+    /// A mensagem filtrada não entra no anel: é o que sustenta o argumento de custo.
+    #[test]
+    fn mensagem_abaixo_do_nivel_nao_entra_no_anel() {
+        define_nivel(Nivel::Fatal);
+        assert!(!ligado(Nivel::Informacao));
+        escreve(Nivel::Informacao, "teste-filtrado", "não devia entrar");
+        let achou = drena().iter().any(|l| l.alvo == "teste-filtrado");
+        assert!(!achou, "o filtro tem de valer antes de guardar");
+
+        define_nivel(Nivel::Depuracao);
+        assert!(ligado(Nivel::Informacao));
+    }
+}
