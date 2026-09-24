@@ -46,6 +46,16 @@ ApplicationWindow {
         cfg.define(chave, valor)
     }
 
+    // Mostra a janela na aba pedida: 1 é a dos controles, que o aviso de abertura manda
+    // configurar antes de jogar; -1 fica na que estava.
+    function abre(aba) {
+        if (aba >= 0)
+            abas.currentIndex = aba
+        show()
+        raise()
+        requestActivate()
+    }
+
     // A procura por versão nova e o Discord respondem de outra thread: o estado deles é relido
     // de tempos em tempos enquanto a janela está aberta.
     property int tique: 0
