@@ -20,7 +20,7 @@ Cargo.toml          a biblioteca `zeebx` — o emulador inteiro, sem interface
 src/                BREW, CPU, vídeo, áudio, carregador, sessão, save state
 src/ui/             telas e estado compartilhados entre frontends (ver o aviso abaixo)
 frontends/
-  classical-standalone/   o binário `zeebx`: janela do egui e linha de comando
+  classical-standalone/   o binário `zeebx`: janela Qt (a do egui em `zeebx egui`) e linha de comando
   headless/               sem interface, configurado por `config.ini`
   libretro/               o core do RetroArch
   android/                o aplicativo, sem uma linha de Java
@@ -53,6 +53,11 @@ na tag.
 
 ## Compilar e provar
 
+O standalone pede o **Qt 6** (6.4 ou mais novo): a feature `ui-qt` vem ligada, e o build acha o Qt
+pelo `qmake6`, pelo `qmake` ou pelo `QMAKE`. `python3 ferramentas/prepara_build.py` diz o que falta.
+A interface Qt e a migração estão em
+[`docs/implementacao/21-migracao-para-qt.md`](docs/implementacao/21-migracao-para-qt.md).
+
 ```bash
 cargo build --release --locked -p zeebx-classical-standalone   # o binário `zeebx`
 cargo test  --release --locked -p zeebx -p zeebx-classical-standalone
@@ -80,8 +85,9 @@ export JAVA_HOME="$HOME/Android/jdk"
 **A tag é o único gatilho automático.** O `release.yml` dispara em `v0.0.0` e monta a release como
 rascunho. O `ci.yml`, o `libretro.yml`, o `headless.yml` e o `android.yml` são `workflow_dispatch`:
 seis runners por execução é caro demais para gastar em cada push, e quem decide é quem pede.
-A exceção é o `discord-issues.yml`, que não compila nada: avisa no Discord quando uma issue abre,
-fecha ou muda de responsável.
+As exceções são o `discord-issues.yml`, que não compila nada: avisa no Discord quando uma issue
+abre, fecha ou muda de responsável; e o `qt.yml`, que roda a cada push na `feat/migrate-qt`:
+compila a interface Qt nos três sistemas e deixa os instaladores como artefatos da execução.
 
 Se você mexeu em algo que só um deles cobre — o APK, o core num alvo ARM —, diga ao humano que
 vale disparar aquele workflow antes da tag. Você não consegue dispará-lo.
