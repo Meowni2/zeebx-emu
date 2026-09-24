@@ -1360,6 +1360,24 @@ unsafe fn registra_opcoes_do_core() {
         // ([`zeebx::registro::Nivel`]) e a ordem é do mais grave para o mais falador, que é como
         // se escolhe um teto de gravidade: o nível escolhido entra, e tudo o que é mais grave
         // também.
+        let mut descarte_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        const DESCARTE_OPC: [(&CStr, &CStr); 2] = [
+            (c"desligado", c"Desligado (padrão)"),
+            (
+                c"ligado",
+                c"Ligado — experimental, só ajuda em GPU de tiles (Mali)",
+            ),
+        ];
+        for (i, (valor, rotulo)) in DESCARTE_OPC.iter().enumerate() {
+            descarte_values[i] = RetroCoreOptionValue {
+                value: valor.as_ptr(),
+                label: rotulo.as_ptr(),
+            };
+        }
+
         let mut log_values = [RetroCoreOptionValue {
             value: std::ptr::null(),
             label: std::ptr::null(),
@@ -1379,7 +1397,7 @@ unsafe fn registra_opcoes_do_core() {
             };
         }
 
-        let definicoes: [RetroCoreOptionV2Definition; 15] = [
+        let definicoes: [RetroCoreOptionV2Definition; 16] = [
             RetroCoreOptionV2Definition {
                 key: c"zeebx_midi_backend".as_ptr(),
                 desc: c"Sintetizador MIDI (reinício)".as_ptr(),
@@ -1511,6 +1529,16 @@ unsafe fn registra_opcoes_do_core() {
                 default_value: c"desligado".as_ptr(),
             },
             RetroCoreOptionV2Definition {
+                key: c"zeebx_descarte_de_tiles".as_ptr(),
+                desc: c"Descartar tiles (experimental)".as_ptr(),
+                desc_categorized: c"Descartar tiles (experimental)".as_ptr(),
+                info: c"Diz ao driver de vídeo que a profundidade e o estêncil do quadro podem ser jogados fora depois de ele ser apresentado. Rende em GPU de tiles, como o Mali dos portáteis, onde evita escrever esses anexos de volta na memória — e não se mede em placa de desktop. Desligado por padrão porque um jogo que não limpe a profundidade de um quadro para o outro conta com ela; se aparecer lixo na imagem com isto ligado, desligue. Vale na hora, e só tem efeito com o rasterizador de placa.".as_ptr(),
+                info_categorized: c"Só ajuda em GPU de tiles. Desligado por padrão porque um jogo pode contar com a profundidade do quadro anterior. Vale na hora.".as_ptr(),
+                category_key: c"video".as_ptr(),
+                values: descarte_values,
+                default_value: c"desligado".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
                 key: c"zeebx_log".as_ptr(),
                 desc: c"Log do núcleo".as_ptr(),
                 desc_categorized: c"Log do núcleo".as_ptr(),
@@ -1544,7 +1572,7 @@ unsafe fn registra_opcoes_do_core() {
             );
         }
     } else {
-        static VARIAVEIS: [RetroVariable; 15] = [
+        static VARIAVEIS: [RetroVariable; 16] = [
             RetroVariable {
                 key: c"zeebx_midi_backend".as_ptr(),
                 value: c"Sintetizador MIDI (reinício); auto|timbres|soundfont".as_ptr(),
@@ -1596,6 +1624,10 @@ unsafe fn registra_opcoes_do_core() {
             RetroVariable {
                 key: c"zeebx_frameskip".as_ptr(),
                 value: c"Pular quadros; desligado|automatico|1|2|3|4|5|6".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_descarte_de_tiles".as_ptr(),
+                value: c"Descartar tiles (experimental); desligado|ligado".as_ptr(),
             },
             RetroVariable {
                 key: c"zeebx_log".as_ptr(),
@@ -1870,6 +1902,11 @@ fn aplica_opcoes_quentes(estado: &mut Core) {
     }
     if let Some(neblina) = unsafe { le_opcao(c"zeebx_neblina") }.as_deref().and_then(ligado_de_texto) {
         estado.session.define_neblina(neblina);
+    }
+    if let Some(descartar) =
+        unsafe { le_opcao(c"zeebx_descarte_de_tiles") }.as_deref().and_then(ligado_de_texto)
+    {
+        estado.session.define_descarte_de_tiles(descartar);
     }
     // **O perfil "Portátil" ganha das opções individuais que ele cobre, quando ativo.** Volume e
     // névoa ficam de fora de propósito: são gosto de quem joga, não custo de processador ou

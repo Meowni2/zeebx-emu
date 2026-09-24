@@ -763,6 +763,14 @@ pub trait Rasterizador {
         (0, 0)
     }
 
+    /// Diz ao driver que os anexos de profundidade e estêncil podem ser descartados depois do
+    /// quadro. **Experimental, desligado por padrão, e só o rasterizador de placa faz.**
+    ///
+    /// Rende em GPU de tiles — o Mali dos dois portáteis —, onde evita escrever os anexos de volta
+    /// na memória. Um jogo que **não** limpe a profundidade de um quadro para o outro conta com
+    /// ela, e é por isso que não vem ligado. Ver `GpuState::define_descarte_de_tiles`.
+    fn define_descarte_de_tiles(&mut self, _descartar: bool) {}
+
     /// Verdadeiro no rasterizador de placa: ler o quadro de volta obriga a GPU a terminar e
     /// devolver os pixels, e num GPU de tiles isso é parada. Falso no de processador, onde a
     /// "leitura" é uma conversão em memória — ali adiar não economiza nada e ainda arrisca o

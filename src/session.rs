@@ -1198,6 +1198,11 @@ impl Session {
         self.machine.define_resolucao_interna(escala);
     }
 
+    /// Diz ao rasterizador de placa para descartar profundidade e estêncil depois do quadro.
+    pub fn define_descarte_de_tiles(&mut self, descartar: bool) {
+        self.machine.define_descarte_de_tiles(descartar);
+    }
+
     /// Reduz a resolução interna do 3D no rasterizador de **processador**, desenhando numa
     /// superfície menor e ampliando na apresentação. Ver [`Rasterizador::define_reducao`].
     pub fn define_reducao(&mut self, reducao: usize) {

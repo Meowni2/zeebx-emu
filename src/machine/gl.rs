@@ -1142,6 +1142,12 @@ impl<C: CpuBackend> Machine<C> {
         self.gl.desenha_no_fbo(fbo);
     }
 
+    /// Diz ao rasterizador de placa para descartar profundidade e estêncil depois do quadro.
+    /// Ver [`Rasterizador::define_descarte_de_tiles`].
+    pub fn define_descarte_de_tiles(&mut self, descartar: bool) {
+        self.gl.define_descarte_de_tiles(descartar);
+    }
+
     /// Reduz a resolução interna do 3D no rasterizador de processador. Ver
     /// [`Rasterizador::define_reducao`].
     pub fn define_reducao(&mut self, reducao: usize) {

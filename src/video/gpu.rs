@@ -410,6 +410,9 @@ pub struct GpuState {
     /// `Some(0)` é o framebuffer padrão do frontend — o que o `glow` escreve `None` no `bind`.
     /// Ver [`Rasterizador::desenha_no_fbo`].
     fbo_externo: Option<u32>,
+    /// Se os anexos de profundidade e estêncil são descartados depois do quadro. Ver
+    /// [`GpuState::define_descarte_de_tiles`].
+    descarta_tiles: bool,
     /// O que já está na placa. Ver [`Espelho`].
     espelho: std::cell::Cell<Espelho>,
     /// Chamadas de estado enviadas e poupadas pelo espelho, para conferência.
@@ -500,6 +503,7 @@ impl GpuState {
             gl,
             emprestado,
             blit_confiavel,
+            descarta_tiles: false,
             // **A viewport nasce com a tela inteira**, que é o que o OpenGL especifica como
             // padrão e o que o `GlState::new` faz. Nascer em zero era o que apagava toda a
             // geometria da Z-Wheel: ela nunca chama `glViewport` — zero vezes em treze segundos
@@ -2516,6 +2520,19 @@ impl Rasterizador for GpuState {
         self.sujo = false;
     }
 
+    fn define_descarte_de_tiles(&mut self, descartar: bool) {
+        self.descarta_tiles = descartar;
+        crate::registro!(
+            crate::registro::Nivel::Informacao,
+            "gl",
+            "descarte de profundidade e estêncil depois do quadro: {}",
+            match descartar {
+                true => "ligado (experimental, para GPU de tiles)",
+                false => "desligado",
+            }
+        );
+    }
+
     fn frame_rgb565_words(&mut self, width: usize, height: usize, out: &mut Vec<u16>) {
         self.descarrega();
         if !self.sujo && out.len() == width * height {
@@ -2547,6 +2564,24 @@ impl Rasterizador for GpuState {
             }
         }
         self.sujo = false;
+        // **O descarte dos anexos que ninguém vai ler.** O quadro de cor acabou de ser lido para
+        // a memória da CPU, e a profundidade e o estêncil deste quadro não são precisos para
+        // desenhar o próximo — desde que o jogo os limpe, que é o caso comum.
+        //
+        // **É experimental e vem desligado**, porque um jogo que **não** limpe a profundidade
+        // conta com ela de um quadro para o outro — o console é um framebuffer de verdade, e a
+        // profundidade de lá persiste. Num GPU de tiles, que é o caso do Mali dos portáteis,
+        // dizer isto ao driver evita escrever os anexos de volta na memória: rende lá, e não no
+        // desktop, que é onde ele não pode ser medido.
+        if self.descarta_tiles && self.fbo_externo.is_none() {
+            let gl = &self.gl;
+            unsafe {
+                gl.invalidate_framebuffer(
+                    glow::FRAMEBUFFER,
+                    &[glow::DEPTH, glow::STENCIL],
+                );
+            }
+        }
     }
 
     fn import_rgb565_changes(&mut self, width: usize, height: usize, old: &[u8], new: &[u8]) {
