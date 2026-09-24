@@ -335,3 +335,46 @@ diferente do que se pensava: o caminho de **software**, onde o custo por pixel �
 
 O trampolim **não** sobe nem desce: continua não medido, porque o `api_time` só conta o corpo
 do método.
+
+## 13. PDCA 1 — reutilização de índices temporários (rejeitado)
+
+### Plan
+
+`DrawArrays` criava um `Vec<u32>` novo por lote:
+
+```rust
+let indices: Vec<u32> = (0..count).map(|i| first + i).collect();
+```
+
+O Quake mediu 278.297 chamadas em 15 s. A hipótese era que reaproveitar a capacidade do vetor
+reduziria alocações e melhoraria o tempo.
+
+### Do
+
+Foi implementado localmente um `gl_indices_scratch` em `Machine`, reutilizado em
+`DrawArrays` e `DrawElements`. O patch não alterava índices, ABI, rasterização nem semântica.
+
+### Check
+
+A comparação foi controlada, sem `ZEEBX_ROM_PERFIL`, mesmo Ryzen 7 5700U, mesmo Quake, mesmo
+`ZEEBX_ROM_MS=15000`, e com o perfil release:
+
+| versão | tempo real | velocidade |
+|---|---:|---:|
+| baseline | 8,8 s | 171% |
+| scratch | 8,8 s | 169% |
+
+A variação é ruído de bancada. O patch não produziu ganho mensurável.
+
+### Act
+
+Patch **rejeitado e removido**. Não será commitado como otimização. A conclusão é útil: a
+alocação do vetor de índices não é o custo dominante neste caso; a rasterização, conversão e
+cópia no `SwapBuffers` são maiores. O próximo patch deve atacar esse caminho ou eliminar o
+materializador de índices por completo com um `DrawArrays` contínuo, não apenas reutilizar a
+capacidade.
+
+A varredura de 66 jogos foi interrompida para não contaminar o A/B. Ela chegou a Pac-Mania, que
+atingiu 52.830 ms virtuais em 240 s reais (22%); não é uma linha de base completa e não deve ser
+tratada como resultado final.
+
