@@ -32,7 +32,9 @@ ApplicationWindow {
 
     width: 720
     height: 640
-    title: "Zeebx — " + tr("nav.settings")
+    minimumWidth: 420
+    minimumHeight: 320
+    title: "Zeebx — " + tr("settings.title")
 
     // Os textos e os valores se refazem sozinhos: a `versao` do idioma e a das configurações são
     // lidas aqui, e uma ligação que chama estas funções depende delas.
