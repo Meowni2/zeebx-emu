@@ -28,9 +28,12 @@ cxx-qt-lib = { version = "0.10", optional = true, features = ["qt_gui", "qt_qml"
 # O `Arc<glow::Context>` que a sessão recebe é o do `glow` que o núcleo usa: a mesma versão, o
 # mesmo tipo.
 glow = { version = "0.16", optional = true }
+# O seletor de pastas e de arquivos das configurações, o mesmo que o egui usa pelo núcleo: o `rfd`
+# não é reexportado de lá. Mesma versão e mesmas features, então a árvore não cresce.
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"], optional = true }
 
 [features]
-ui-qt = ["dep:cxx", "dep:cxx-qt", "dep:cxx-qt-lib", "dep:cxx-qt-build", "dep:qt-build-utils", "dep:glow"]
+ui-qt = ["dep:cxx", "dep:cxx-qt", "dep:cxx-qt-lib", "dep:cxx-qt-build", "dep:qt-build-utils", "dep:glow", "dep:rfd"]
 
 # **Os instaladores vivem aqui, e não na raiz.** O `cargo packager` lê o manifesto do pacote que
 # produz o binário, e desde a 0.3.0 quem produz o `zeebx` é este crate. Os caminhos de ícone
