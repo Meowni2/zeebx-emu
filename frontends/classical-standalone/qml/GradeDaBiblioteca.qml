@@ -9,6 +9,8 @@ GridView {
     required property var biblioteca
     // Um cartão foi escolhido para jogar: pelo clique, pelo Enter ou pelo controle.
     signal abre(int linha)
+    // O teclado anda pela grade. Falso com outra janela por cima — ver `Principal.sobreposta`.
+    property bool escutando: true
 
     // O cartão tem 136 de largura; a imagem cabe num quadro de 112×145 — o `QUADRO_DA_CAPA` do
     // `biblioteca.rs`, que decide quando ampliar sem interpolar —, e o título ocupa duas linhas.
@@ -22,12 +24,13 @@ GridView {
     focus: true
     // A grade não dá a volta: descer da última linha fica na última.
     keyNavigationWraps: false
+    keyNavigationEnabled: escutando
     highlightFollowsCurrentItem: true
     ScrollBar.vertical: ScrollBar {}
 
-    Keys.onReturnPressed: abre(currentIndex)
-    Keys.onEnterPressed: abre(currentIndex)
-    Keys.onSpacePressed: abre(currentIndex)
+    Keys.onReturnPressed: if (escutando) abre(currentIndex)
+    Keys.onEnterPressed: if (escutando) abre(currentIndex)
+    Keys.onSpacePressed: if (escutando) abre(currentIndex)
 
     // O título e a descrição entram em texto rico na dica: um "&" ou um "<" no nome não pode
     // virar marcação.
