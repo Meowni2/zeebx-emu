@@ -1172,6 +1172,15 @@ impl Session {
         u64::from(self.machine.gl_swaps())
     }
 
+    /// Quantos quadros o jogo desenhou na placa — **trocas de buffer ou `glClear`**.
+    ///
+    /// É diferente de [`Session::quadros_apresentados`], que conta só trocas: a Z-Wheel desenha o
+    /// palco num pbuffer e nunca troca buffer, e um contador de trocas diria que ela não desenha
+    /// nada. Quem pergunta "a placa desenhou neste quadro?" precisa deste.
+    pub fn quadros_da_placa(&self) -> u32 {
+        self.machine.quadros()
+    }
+
     /// Antialias (amostras por pixel) e filtro anisotrópico do 3D na placa; valem na hora.
     pub fn define_melhorias(&mut self, amostras: usize, anisotropico: usize) {
         self.machine.define_melhorias(amostras, anisotropico);

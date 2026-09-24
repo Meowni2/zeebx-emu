@@ -620,6 +620,10 @@ struct Core {
     bitmasks: bool,
     /// Se o frontend aceita quadro nulo quando a tela não mudou.
     aceita_dupe: bool,
+    /// Quantos quadros de placa o jogo tinha desenhado no quadro anterior. O contador do motor é
+    /// acumulado, e a placa pode ter desenhado uma vez na abertura e nunca mais: o que decide é a
+    /// diferença entre este quadro e o anterior. Ver o comentário no bloco que monta o quadro.
+    gl_quadros_antes: u32,
     /// Assinatura do último quadro entregue.
     ultima_assinatura: Option<u64>,
     /// Relógio virtual da última chamada, para o áudio acompanhar o tempo que passou de verdade.
@@ -2504,6 +2508,7 @@ unsafe fn carrega(
         aberto_pela_z_wheel: false,
         bitmasks: false,
         aceita_dupe: false,
+        gl_quadros_antes: 0,
         ultima_assinatura: None,
         ultimo_relogio_ms: 0,
         audio_pendente: Vec::new(),
@@ -2627,7 +2632,7 @@ pub extern "C" fn retro_run() {
     // Os buffers saem do estado antes das chamadas ao frontend: nenhum cadeado do core fica preso
     // enquanto o frontend executa, e é isso que impede um aviso dele — "disco cheio, quer salvar?"
     // — de travar o emulador.
-    let (frame, audio, largura, altura, duplicado, emprestado) = {
+    let (frame, audio, largura, altura, duplicado, emprestado, na_placa) = {
         let Ok(mut guard) = core().lock() else {
             return;
         };
@@ -2846,10 +2851,20 @@ pub extern "C" fn retro_run() {
         // Vídeo: o framebuffer do console, no formato negociado.
         let tela = estado.session.screen();
         let (largura, altura) = (tela.width(), tela.height());
+        // **A placa desenhou neste quadro?** Um jogo que só desenha 2D — a Turma da Mônica e o
+        // Zenonia desenham por `IDisplay`/`IBitmap` e nunca trocam buffer de placa — não tem nada
+        // no FBO, e o frontend apresentaria uma tela preta nos dois frontends.
+        //
+        // O contador do motor é **acumulado**, e a placa pode ter desenhado uma vez na abertura e
+        // nunca mais: o que vale é a diferença desde o quadro anterior. Quando ela não desenhou, o
+        // que existe é o quadro do processador, e é ele que se entrega.
+        let gl_agora = estado.session.quadros_da_placa();
+        let desenhou_na_placa = gl_agora != estado.gl_quadros_antes;
+        estado.gl_quadros_antes = gl_agora;
         // No caminho de placa o frontend apresenta o FBO que recebeu no callback e ignora o
         // ponteiro de pixels. Não copie 600 KiB nem calcule assinatura CPU nesse caso: além de
         // inútil, isso competia com o Mali pela mesma CPU fraca que queremos deixar para o guest.
-        let na_placa = placa().is_some();
+        let na_placa = placa().is_some() && desenhou_na_placa;
         // O console é 640×480, e é esse o quadro que o shader espera receber. Um tamanho
         // diferente é avisado uma vez, em vez de aparecer como imagem torta sem explicação.
         if !estado.avisou_tamanho && (largura != 640 || altura != 480) {
@@ -2899,11 +2914,18 @@ pub extern "C" fn retro_run() {
         for amostra in estado.mixer.render(devidas) {
             som.push((amostra.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16);
         }
-        (quadro, som, largura, altura, duplicado, emprestado)
+        (
+            quadro,
+            som,
+            largura,
+            altura,
+            duplicado,
+            emprestado,
+            na_placa,
+        )
     };
     let frente = callbacks();
     if let Some(video) = frente.video {
-        let na_placa = placa().is_some();
         let (ponteiro, _) = match (na_placa, duplicado) {
             // **Em modo de placa o quadro já está no framebuffer do frontend**: entregar pixels
             // aqui seria mentira, e o `libretro` tem um sentinela para dizer exatamente isso.
