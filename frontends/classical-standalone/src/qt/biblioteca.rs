@@ -103,6 +103,10 @@ pub mod qobject {
         #[qinvokable]
         fn busca(self: Pin<&mut Biblioteca>, texto: &QString);
 
+        /// Refaz a lista sem varrer a pasta: a Z-Wheel ou o idioma mudaram, e com eles os nomes.
+        #[qinvokable]
+        fn refaz(self: Pin<&mut Biblioteca>);
+
         /// Varre a pasta de ROMs de novo, e relê a Z-Wheel e o acervo dela.
         #[qinvokable]
         #[cxx_name = "procuraDeNovo"]
@@ -118,9 +122,6 @@ pub mod qobject {
         #[cxx_name = "liberaSincronizacao"]
         fn libera_sincronizacao(self: &Biblioteca) -> QString;
 
-        /// Um texto do catálogo de idiomas, pela chave.
-        #[qinvokable]
-        fn tr(self: &Biblioteca, chave: &QString) -> QString;
 
         #[inherit]
         fn index(self: &Biblioteca, row: i32, column: i32, parent: &QModelIndex) -> QModelIndex;
@@ -185,7 +186,16 @@ fn resposta(aberta: Result<(), String>) -> QString {
 /// A imagem pedida pelo QML, pelo endereço sem o esquema. É a função que o provedor chama.
 fn imagem(endereco: &str) -> QImage {
     nucleo::com(|nucleo| {
-        let Some(imagem) = nucleo.imagem(endereco) else {
+        // O desenho do controle é feito na hora, na cor pedida; o resto já está na memória.
+        let tingida;
+        let imagem = match endereco.starts_with("controle/") {
+            true => {
+                tingida = nucleo.imagem_do_controle(endereco);
+                tingida.as_ref()
+            }
+            false => nucleo.imagem(endereco),
+        };
+        let Some(imagem) = imagem else {
             return QImage::default();
         };
         // SAFETY: `rgba` tem `largura × altura × 4` bytes, que é o `Format_RGBA8888`, e uma linha
@@ -348,6 +358,13 @@ impl qobject::Biblioteca {
         self.atualiza_textos();
     }
 
+    pub fn refaz(mut self: Pin<&mut Self>) {
+        unsafe { self.as_mut().begin_reset_model() };
+        nucleo::com(|nucleo| nucleo.refaz_lista());
+        unsafe { self.as_mut().end_reset_model() };
+        self.atualiza_textos();
+    }
+
     pub fn procura_de_novo(mut self: Pin<&mut Self>) {
         unsafe { self.as_mut().begin_reset_model() };
         nucleo::com(|nucleo| nucleo.procura_de_novo());
@@ -356,7 +373,12 @@ impl qobject::Biblioteca {
     }
 
     pub fn comandos(&self, escutando: bool) -> QList<i32> {
-        let comandos = nucleo::com(|nucleo| nucleo.comandos(escutando));
+        let comandos = nucleo::com(|nucleo| {
+            // O mesmo relógio lê o controle e mantém o resto em dia: a presença no Discord e a
+            // resposta da procura por versão nova.
+            nucleo.a_cada_quadro();
+            nucleo.comandos(escutando)
+        });
         let codigos: Vec<i32> = comandos
             .into_iter()
             .map(|comando| match comando {
@@ -377,11 +399,6 @@ impl qobject::Biblioteca {
             Err(erro) => erro,
         };
         QString::from(&recado)
-    }
-
-    pub fn tr(&self, chave: &QString) -> QString {
-        let chave = String::from(chave);
-        nucleo::com(|nucleo| QString::from(nucleo.catalogo.get(&chave)))
     }
 
     /// A contagem e o recado de lista vazia, que mudam com a busca e com a varredura.
