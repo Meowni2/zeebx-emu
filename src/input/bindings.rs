@@ -52,7 +52,12 @@ impl AxisSource {
 ///
 /// Sem isso um manche que não volta exatamente ao centro deixaria o eixo tremendo perto do
 /// zero, e o jogo veria o controle oscilando sozinho.
-const DEADZONE: f32 = 0.12;
+/// A zona morta do manche, em fração do curso.
+///
+/// Pública porque o núcleo Libretro precisa da **mesma** regra no laço que lê o RetroPad: lá o
+/// manche parado chega como zero, e escrever esse zero por cima apagaria o que o espelho do
+/// direcional acabou de pôr — a opção `zeebx_dpad_to_analog_pN` ficaria sem efeito, e só no núcleo.
+pub const DEADZONE: f32 = 0.12;
 
 impl Source {
     pub fn key(name: &str) -> Self {

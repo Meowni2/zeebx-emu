@@ -996,7 +996,8 @@ fn le_pad(porta: u32, bitmasks: bool) -> Pad {
     }
     // O direcional espelhado nos eixos, quando a opção desta porta está ligada. **Antes** do laço
     // do analógico: o espelho escreve zero no repouso — é assim que o manche volta ao centro ao
-    // soltar a direção —, e quem tem a última palavra tem de ser o manche de verdade.
+    // soltar a direção —, e quem tem a última palavra tem de ser o manche de verdade, que só
+    // escreve quando sai da zona morta.
     if let Some(chave) = chave_do_espelho(porta) {
         // SAFETY: consulta de opção do frontend, na thread de `retro_run`.
         if unsafe { le_opcao(chave) }.as_deref() == Some("enabled") {
@@ -1004,10 +1005,26 @@ fn le_pad(porta: u32, bitmasks: bool) -> Pad {
         }
     }
     // Os dois analógicos do RetroPad viram os quatro eixos do console, na faixa que o guest lê.
-    let eixo = |index: u32, id: u32| -> i32 {
+    poe_os_eixos_do_retropad(&mut pad, |index, id| {
         // SAFETY: consulta de estado do próprio frontend.
         unsafe { state(porta, DEVICE_ANALOG, index, id) as i32 }
-    };
+    });
+    pad
+}
+
+/// Põe nos eixos do console os dois analógicos do RetroPad, com a zona morta do repouso.
+///
+/// **A zona morta não é por tremor: é o que faz a opção do direcional funcionar.** O RetroPad
+/// entrega o manche parado no centro como zero, e escrever esse zero apagaria, a cada quadro, o que
+/// o espelho do direcional acabou de pôr — a opção `zeebx_dpad_to_analog_pN` ficava sem efeito
+/// dentro do núcleo, e só nele (o `Player::pad` do standalone já tinha esta regra, e foi por isso
+/// que a medida no harness passava e o RetroArch não). Quem está no centro **não escreve**; quem
+/// está fora da zona morta vence o espelho.
+///
+/// A leitura entra por parâmetro para o teste poder chamar isto sem frontend nenhum.
+fn poe_os_eixos_do_retropad(pad: &mut Pad, eixo: impl Fn(u32, u32) -> i32) {
+    let zona_morta =
+        (zeebx::input::bindings::DEADZONE * zeebx::input::AXIS_CURSO as f32).round() as i32;
     for (indice, valor) in [
         (0usize, eixo(ANALOG_LEFT, ANALOG_AXIS_X)),
         (1usize, eixo(ANALOG_LEFT, ANALOG_AXIS_Y)),
@@ -1015,9 +1032,12 @@ fn le_pad(porta: u32, bitmasks: bool) -> Pad {
         (3usize, eixo(1, ANALOG_AXIS_Y)),
     ] {
         // `-0x8000..=0x7fff` do frontend para o curso do manche do console.
-        pad.set_axis(indice, valor / 256);
+        let valor = valor / 256;
+        if valor.abs() < zona_morta {
+            continue;
+        }
+        pad.set_axis(indice, valor);
     }
-    pad
 }
 
 /// Registra os aparelhos que o usuário pode escolher em cada porta.
@@ -3545,6 +3565,52 @@ mod testes {
         // tem a medida dele (pico, rms, salto), e o core tem esta — se o lote chega ao frontend.
         AMOSTRAS.fetch_add(quadros as u32, Ordering::Relaxed);
         quadros
+    }
+
+    /// **O caminho inteiro do núcleo, na ordem em que ele acontece.** O direcional espelhado
+    /// escreve o eixo e, logo depois, o laço do analógico roda — com o RetroPad entregando o manche
+    /// **parado no centro**, que é o caso real de quem joga de direcional. Era ali que a opção não
+    /// fazia nada: o zero do repouso apagava o espelho a cada quadro, e só dentro do núcleo (o
+    /// standalone já tinha a zona morta, e foi por isso que a medida no harness passava).
+    #[test]
+    fn o_manche_parado_no_centro_nao_apaga_o_direcional_espelhado() {
+        use zeebx::input::{AXIS_CURSO, DPAD, Pad};
+
+        let parado = |_: u32, _: u32| 0i32;
+        let mut pad = Pad::default();
+        pad.press(DPAD[0], true); // direcional para cima
+        pad.espelha_o_direcional_nos_eixos();
+        poe_os_eixos_do_retropad(&mut pad, parado);
+        assert!(
+            pad.axes[1] < 0,
+            "o zero do manche parado apagou o direcional: eixo Y = {}",
+            pad.axes[1]
+        );
+        assert_eq!(pad.eixo_do_console(1), 128 - AXIS_CURSO, "cima é o valor baixo");
+
+        // Soltar a direção devolve o eixo ao centro, e o manche parado continua sem escrever.
+        pad.press(DPAD[0], false);
+        pad.espelha_o_direcional_nos_eixos();
+        poe_os_eixos_do_retropad(&mut pad, parado);
+        assert_eq!(pad.axes[1], 0);
+
+        // E o manche de verdade, quando sai da zona morta, vence o espelho.
+        let empurrado = |indice: u32, id: u32| match (indice, id) {
+            (0, 0) => 0x4000,
+            _ => 0,
+        };
+        pad.press(DPAD[0], true);
+        pad.espelha_o_direcional_nos_eixos();
+        poe_os_eixos_do_retropad(&mut pad, empurrado);
+        assert_eq!(pad.axes[0], 0x4000 / 256, "o manche de verdade tem a última palavra");
+        assert_eq!(pad.axes[1], -AXIS_CURSO, "e o direcional fica no outro eixo");
+
+        // Um tremor dentro da zona morta não escreve: é o que mantém um manche gasto em silêncio.
+        let tremor = |_: u32, _: u32| 512i32; // 2 no curso do console
+        pad.press(DPAD[0], true);
+        pad.espelha_o_direcional_nos_eixos();
+        poe_os_eixos_do_retropad(&mut pad, tremor);
+        assert_eq!(pad.axes[0], 0, "o tremor não passou da zona morta");
     }
 
     /// O eixo que o teste está empurrando, na faixa do RetroPad (`-0x8000..=0x7fff`).
