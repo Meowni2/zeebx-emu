@@ -1076,3 +1076,74 @@ conhecido dos dois conversores. **O NFS é o único dos três com divergência r
 o que a issue #36 relata sobre ele. Fica registrado como frente própria: ou o rasterizador de placa
 está desenhando diferente, ou o de software está.
 
+## 25. PDCA rejeitado: tirar a devolução do contexto do caminho por lote
+
+Frente 2 das treze (cache de estado GL). **Rejeitado**, e o registro vale mais que o código.
+
+### A hipótese, e por que ela parecia boa
+
+O `GpuState::submete_com` — que roda uma vez por lote de desenho — terminava chamando
+`devolve_o_contexto`, que faz **doze chamadas de GL** para desfazer o que o lote seguinte refaz:
+framebuffer padrão, textura nula, cinco capacidades desligadas, máscara e faixa de profundidade,
+máscara de estêncil e máscara de cor. A própria documentação do trait já dizia que ela deveria
+acontecer **uma vez por quadro**, e não a cada desenho.
+
+A conta parecia grande: com ~370 lotes por quadro no Quake, tirar doze chamadas por lote são mais
+de **quatro mil chamadas de GL por quadro**.
+
+### O que foi tentado, e o que cada tentativa mediu
+
+| tentativa | onde a devolução passou a acontecer | medido |
+|---|---|---|
+| 1 | fim da volta do guest (`Machine::fecha_volta`) | **2 923** devoluções para **78** quadros (Crash) |
+| 2 | só quando houve desenho, mais o quadro apresentado | **0** devoluções |
+
+A primeira tentativa **piorou**: o fim da volta é mais frequente que o lote — 2 923 voltas do guest
+para 78 quadros, ou seja 37 por quadro. Trocar "doze chamadas por lote" por "doze chamadas por
+volta" com 37 voltas por quadro é pagar mais.
+
+A segunda tentativa não conseguiu nem acender o contador, apesar de o caminho estar inteiro no
+papel: a marca é posta no fim do `submete_com`, a devolução é chamada no `present_gl` depois de
+pintar a fila, e o `emprestado` é verdadeiro no teste. Não achei a causa dentro do orçamento desta
+rodada, e **sem entender por que o contador fica em zero eu não mantenho a mudança**.
+
+### A decisão
+
+**Revertido.** O código voltou ao que estava antes deste PDCA, mantendo todo o resto. O que fica é
+a medida dos dois extremos — uma devolução por lote é desperdício, e uma por volta é pior — e o
+caminho do meio (por quadro apresentado) segue **não demonstrado**.
+
+### O que este PDCA ensinou
+
+1. **"Uma vez por quadro" precisa de um lugar que aconteça uma vez por quadro**, e o candidato
+   óbvio (o fim da volta do guest) não é esse lugar: a volta do guest não tem relação com o quadro
+   apresentado. Medido, e não suposto.
+2. **Um contador que não acende é informação, não silêncio.** A tentativa 2 parecia certa e não
+   moveu o número; manter assim seria trocar comportamento por nada, com risco para o desktop, onde
+   é essa devolução que impede a interface do `egui` de sumir.
+3. **Falhar num instrumento não invalida o alvo.** O cache de estado GL continua sendo o melhor
+   risco/ganho apontado pelas revisões — o que falhou aqui foi o *lugar* da devolução, não a ideia
+   de não repetir o que já está na placa. A próxima tentativa deve atacar as dezoito chamadas do
+   `aplica` com um espelho do estado, que é um trabalho diferente e mais direto.
+
+## Onde ficou a rodada
+
+| # | frente | estado |
+|---|---|---|
+| 1 | readback preguiçoso | **feito** — 78 e 184 leituras viraram 1 |
+| 2 | cache de estado GL | tentado e **revertido**; o alvo segue aberto |
+| 3 | `GET_CURRENT_SOFTWARE_FRAMEBUFFER` | pendente |
+| 4 | fastmem do Dynarmic | não priorizar (adendos) |
+| 5 | prova do blit do driver | **feito** |
+| 6 | PBO + fence | sem razão depois da frente 1 |
+| 7 | `0,5x`/`0,25x` | pendente |
+| 8 | NEON/SSE | despriorizado |
+| 9 | partilha JIT × despacho | **feito** — 38% fora do JIT, 2,6 µs por chamada |
+| 10 | PDCA do `sleep` no `retro_run` | pendente |
+| 11 | `lto = "fat"` | pendente (precisa de disco) |
+| 12 | `glInvalidateFramebuffer` | pendente |
+| 13 | Android drenar o registro | pendente, mecânico |
+
+Além das treze: o **perfil de API** foi consertado (media o próprio relógio), o
+`ARCHITECTURE.md` saiu da era do Unicorn, e o registro em cinco níveis entrou nos três frontends.
+
