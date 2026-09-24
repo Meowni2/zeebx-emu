@@ -2884,11 +2884,17 @@ mod tests {
         let Some((mut gpu, _)) = par(16, 16) else {
             return;
         };
-        gpu.set_active_texture(0);
+        // **A unidade vem como enum do GL, não como índice.** `set_active_texture` recebe o que o
+        // guest manda no `glActiveTexture`, e o estado guarda `enum - GL_TEXTURE0`. Passando `1`,
+        // a subtração dá um número enorme, a unidade 1 nunca é preparada — e a prova falhava
+        // acusando o código de perder o que ela mesma não tinha posto. Este teste ficou vermelho
+        // em `development` por isso: ele nasceu no PR dos save states do Android, cuja CI foi
+        // cancelada antes de rodá-lo.
+        gpu.set_active_texture(gles::GL_TEXTURE0);
         gpu.bind_texture(10);
         gpu.upload_level(10, 0, 1, 1, vec![[255, 0, 0, 255]]);
         gpu.set_capability(gles::GL_TEXTURE_2D, true);
-        gpu.set_active_texture(1);
+        gpu.set_active_texture(gles::GL_TEXTURE0 + 1);
         gpu.bind_texture(20);
         gpu.upload_level(20, 0, 1, 1, vec![[0, 255, 0, 255]]);
         gpu.set_capability(gles::GL_TEXTURE_2D, true);
