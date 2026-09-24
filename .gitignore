@@ -24,8 +24,6 @@ cmake-build-*/
 /target/
 # O cxx-qt-build escreve a configuração do servidor de linguagem QML com o caminho desta máquina.
 .qmlls.ini
-# A cópia da configuração dos instaladores Qt com a versão preenchida, feita antes de empacotar.
-.empacotamento-qt.gerado.toml
 
 # Saídas de depuração do `run` (--dump-heap) e o framebuffer exportado
 heap.bin
