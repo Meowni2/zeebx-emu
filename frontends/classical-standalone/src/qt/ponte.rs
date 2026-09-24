@@ -36,6 +36,7 @@ pub mod qobject {
         fn gl_torna_corrente() -> bool;
         fn gl_solta();
         fn gl_destroi();
+        fn aplica_icone();
         fn gl_funcao(nome: &str) -> usize;
     }
 
