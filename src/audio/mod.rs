@@ -559,6 +559,15 @@ pub struct Output {
     mixer: Mixer,
 }
 
+/// Quantos quadros a **placa** pediu, e quando foi a última vez que dissemos.
+///
+/// **É a medida do "nada toca".** O mixer pode render o som certo e mesmo assim o fluxo parar de
+/// ser alimentado — a placa deixa de pedir, e o que se ouve é só o que já estava no buffer dela:
+/// um pedaço, uma vez. Se este contador parar de crescer, o defeito está no fluxo, e não no motor.
+static PLACA_QUADROS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static PLACA_ULTIMO_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static PLACA_RELOGIO: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
 #[cfg(feature = "audio")]
 impl Output {
     /// Abre a placa padrão do sistema.
@@ -634,7 +643,28 @@ impl Output {
                 let mixer = mixer.clone();
                 device.build_output_stream(
                     &stream_config,
-                    move |out: &mut [f32], _| mixer.fill(out, channels),
+                    move |out: &mut [f32], _| {
+                        // A placa pediu: conta os quadros e, uma vez por segundo, diz que continua
+                        // viva. Ver [`PLACA_QUADROS`].
+                        {
+                            use std::sync::atomic::Ordering;
+                            let quadros = (out.len() / channels.max(1)) as u64;
+                            let total =
+                                PLACA_QUADROS.fetch_add(quadros, Ordering::Relaxed) + quadros;
+                            let inicio = *PLACA_RELOGIO.get_or_init(std::time::Instant::now);
+                            let agora = inicio.elapsed().as_millis() as u64;
+                            if agora >= PLACA_ULTIMO_MS.load(Ordering::Relaxed) + 1_000 {
+                                PLACA_ULTIMO_MS.store(agora, Ordering::Relaxed);
+                                crate::registro!(
+                                    crate::registro::Nivel::Informacao,
+                                    "audio",
+                                    "placa: {total} quadros pedidos em {agora} ms ({:.0} por segundo)",
+                                    total as f64 * 1000.0 / agora.max(1) as f64
+                                );
+                            }
+                        }
+                        mixer.fill(out, channels)
+                    },
                     |err| {
                         crate::registro!(
                             crate::registro::Nivel::Erro,
