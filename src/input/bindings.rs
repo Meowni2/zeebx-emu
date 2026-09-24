@@ -137,9 +137,18 @@ pub struct Player {
     /// é o que permite `Espaço` e `X` fazerem a mesma coisa.
     pub buttons: BTreeMap<String, Vec<Source>>,
     /// De onde vem cada eixo analógico do console, pelo nome do eixo (`x`, `y`, `z`, `rz`).
-    /// Vazio deixa os eixos por conta do direcional digital, que é o que o teclado permite.
+    ///
+    /// Vazio deixa os eixos **em repouso**: o direcional digital não os alimenta por conta própria.
+    /// Para que ele os alimente há [`Player::direcional_nos_eixos`].
     #[serde(default)]
     pub axes: BTreeMap<String, AxisSource>,
+    /// Espelha o direcional nos eixos `X`/`Y`, para jogo que só lê o manche.
+    ///
+    /// **Desligado por padrão, e é o mesmo ajuste nos dois frontends:** aqui e no
+    /// `zeebx_dpad_to_analog` do core Libretro. O motivo de não ser o padrão está em
+    /// [`Pad::espelha_o_direcional_nos_eixos`], com as duas tentativas medidas que o desfizeram.
+    #[serde(default)]
+    pub direcional_nos_eixos: bool,
     /// A calibração do sensor de movimento que alimenta esta porta, para o Boomerang.
     #[serde(default)]
     pub calibracao_movimento: CalibracaoDeMovimento,
@@ -243,8 +252,10 @@ impl Default for Player {
             aparelho: Aparelho::Controle,
             device: None,
             buttons,
-            // O teclado não tem analógico: os eixos ficam com o direcional digital.
+            // O teclado não tem analógico: os eixos ficam em repouso, e quem os alimenta é o
+            // manche de um controle ou o direcional com `direcional_nos_eixos` ligado.
             axes: BTreeMap::new(),
+            direcional_nos_eixos: false,
             calibracao_movimento: CalibracaoDeMovimento::default(),
         }
     }
@@ -410,8 +421,14 @@ impl Player {
                 pad.press(index, true);
             }
         }
-        // O direcional **não** escreve nos eixos — ver a nota do [`Pad::press`]. Este laço é do
-        // analógico, e ele é quem alimenta `X`/`Y` e `Z`/`RZ`, como no aparelho de verdade.
+        // O espelho do direcional, quando ligado, roda **antes** do laço do analógico. Ele escreve
+        // zero no repouso — é assim que o manche volta ao centro ao soltar a direção —, e quem tem
+        // a última palavra precisa ser o manche de verdade, quando ele está fora da zona morta.
+        if self.direcional_nos_eixos {
+            pad.espelha_o_direcional_nos_eixos();
+        }
+        // O direcional **não** escreve nos eixos por conta própria — ver a nota do [`Pad::press`].
+        // Este laço é do analógico, e ele é quem alimenta `X`/`Y` e `Z`/`RZ`, como no aparelho.
         for (index, name) in input::AXIS_NAMES.iter().enumerate() {
             let Some(source) = self.axes.get(*name) else {
                 continue;
@@ -673,6 +690,50 @@ mod tests {
         );
         assert_eq!(pad.axes[0], input::AXIS_CURSO / 2);
         assert_eq!(pad.axes[1], 0);
+    }
+
+    /// O pedido do issue #39, do lado do standalone: é o ajuste que o usuário liga na tela.
+    #[test]
+    fn o_direcional_nos_eixos_e_opt_in_e_nao_desliga_o_manche() {
+        let cima = |source: &Source| *source == Source::key("ArrowUp");
+        let mut player = Player::default();
+
+        // Sem a opção, o que já era verdade continua: o direcional só aperta botão.
+        let pad = player.pad(cima, |_| None);
+        assert_eq!(pad.axes[1], 0, "sem a opção, o eixo não se mexe");
+        assert!(pad.is_down(input::DPAD[0]), "e o botão segue apertado");
+
+        player.direcional_nos_eixos = true;
+        let pad = player.pad(cima, |_| None);
+        assert_eq!(pad.axes[1], -input::AXIS_CURSO);
+        assert!(
+            pad.eixo_do_console(1) < input::AXIS_CENTRO,
+            "cima é o baixo"
+        );
+        assert!(pad.is_down(input::DPAD[0]));
+
+        // Soltar a direção devolve o eixo ao centro.
+        let pad = player.pad(|_| false, |_| None);
+        assert_eq!([pad.axes[0], pad.axes[1]], [0, 0]);
+
+        // **O manche tem a última palavra:** com o direcional apertado e o analógico fora da zona
+        // morta, quem manda no eixo é o analógico. É para isso que o espelho roda antes do laço —
+        // e é só com controle que isto se vê, porque o teclado não tem fonte de eixo nenhuma.
+        let mut com_manche = Player::with_gamepad("Controle de teste".into());
+        com_manche.direcional_nos_eixos = true;
+        let pad = com_manche.pad(
+            |source| *source == Source::button("DPadUp"),
+            |axis| match axis {
+                "LeftStickX" => Some(0.5),
+                _ => None,
+            },
+        );
+        assert_eq!(pad.axes[0], input::AXIS_CURSO / 2, "o manche venceu");
+        assert_eq!(
+            pad.axes[1],
+            -input::AXIS_CURSO,
+            "e o direcional ficou no outro eixo"
+        );
     }
 
     #[test]

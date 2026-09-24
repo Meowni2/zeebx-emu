@@ -1561,6 +1561,25 @@ impl App {
     /// tem "apertado", tem curso, e por isso a origem é uma só e ganha um sentido.
     fn axes_section(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
+
+        // O direcional espelhado nos eixos — o pedido do issue #39, e o mesmo ajuste do
+        // `zeebx_dpad_to_analog_p1`/`_p2` do core Libretro. **Por porta**, porque são dois
+        // jogadores: quem joga de manche no controle 1 não decide pelo dono do controle 2.
+        let rotulo = self.catalog.get("controls.dpad_to_analog").to_string();
+        let dica = self.catalog.get("controls.dpad_to_analog.hint").to_string();
+        changed |= ui
+            .checkbox(
+                &mut self
+                    .settings
+                    .controls
+                    .player_mut(self.porta_editada)
+                    .direcional_nos_eixos,
+                rotulo,
+            )
+            .on_hover_text(dica)
+            .changed();
+        ui.add_space(6.0);
+
         ui.label(self.catalog.get("controls.axes"));
         ui.weak(self.catalog.get("controls.axes.hint"));
 

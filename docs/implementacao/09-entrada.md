@@ -64,9 +64,11 @@ O `Y` vai **invertido** em relação à biblioteca de controles: no HID o eixo v
 baixo, e cima é o valor baixo. O par da direita segue a mesma convenção.
 
 **O direcional e o manche são canais distintos.** Embora o descritor enumere `X` e `Y`, o
-direcional digital chega como botões `DPad_*`; o manche esquerdo alimenta `X` e `Y`. Não
-espelhamos um no outro: soltar uma seta enviaria uma falsa variação analógica de retorno ao
-centro, e jogos que usam variação em vez de estado passariam a navegar duas vezes.
+direcional digital chega como botões `DPad_*`; o manche esquerdo alimenta `X` e `Y`. **Não
+espelhamos um no outro por padrão**: soltar uma seta enviaria uma falsa variação analógica de
+retorno ao centro, e jogos que usam variação em vez de estado passariam a navegar duas vezes. O
+espelho existe como opção desligada, para os jogos que só escutam o eixo — ver *O espelho do
+direcional, e por que ele é opção*, adiante.
 
 Quem responde `GetAxesInfo` não devolve valores: devolve, em cada palavra, o **UID do eixo que
 ocupa aquela palavra**. É assim que o jogo descobre onde está cada direção, e por isso a tabela
@@ -124,6 +126,53 @@ Contando as chamadas de `IHIDDevice` em dez segundos de cada uma das 62 ROMs:
 Por isso os dois canais ficam. Desligar qualquer um deles deixa parte da biblioteca sem entrada
 nenhuma — foi medido: com o direcional só nos eixos, o menu do Tênis não anda; só nos botões, ele
 anda e fica.
+
+### O espelho do direcional, e por que ele é opção
+
+A seção anterior nomeia os jogos que só escutam o eixo: os ports de arcade da Data East chamam
+`GetPositionState` mais de duas mil vezes em quarenta segundos e `GetNextButtonEvent` **zero**. Para
+esses, o direcional de um controle não faz nada — no console ele é botão, e botão nenhum chega ao
+canal que eles leem. Medido, com o direcional apertado nos quatro sentidos, cinco segundos cada:
+
+| jogo | eixo fora do centro, sem a opção | com a opção | com o manche de verdade |
+|---|---|---|---|
+| Rally Master Pro | 0 | 4 | 4 |
+| Magical Drop III | 0 | 1212 | — |
+| Zeeboids | 0 | 600 | — |
+
+A coluna do meio é a que importa, e ela vem de `Machine::leituras_com_eixo_deslocado`: **a contagem
+de chamadas diz que o jogo pergunta; esta diz que a resposta chegou.** Sem ela, um port que consulta
+o eixo todo quadro parece igual com o direcional solto e apertado — e foi o que quase fez esta
+mudança ficar sem prova, porque a contagem de `GetPositionState` não muda com o direcional.
+
+**É opção, desligada por padrão, e são duas.** No núcleo, `zeebx_dpad_to_analog_p1` e
+`zeebx_dpad_to_analog_p2` (`disabled|enabled`), uma por porta; no standalone, a caixa equivalente na
+tela de controles, que também é por porta. Duas e não uma porque o console tem duas portas
+(`input::PORTAS = 2`) e são dois jogadores: quem joga de manche no controle 1 não decide pelo dono do
+controle 2. No standalone o ajuste mora em `Player::direcional_nos_eixos` e desce para o
+`settings.json` sozinho.
+
+A razão de não ser o padrão é a mesma que tirou o direcional dos eixos: **o defeito é por jogo**. O
+Zeeboids consulta os dois canais a cada quadro — 1.212 `GetPositionState` e 1.219
+`GetNextButtonEvent` em quarenta segundos —, então com a opção ligada ele recebe o mesmo aperto duas
+vezes; foi o que desfez a tentativa de `e705840` em `4418fe9`. Quem lê os dois canais deixa
+desligado; quem só lê o eixo liga.
+
+**A ordem importa, e é o detalhe que não se adivinha.** O espelho escreve o eixo *e o devolve ao
+centro* quando a direção não está apertada, porque é isso que um manche faz — e é a mesma "falsa
+variação de retorno ao centro" que o `Pad::press` anota como o risco da ideia. Isso obriga o espelho
+a rodar **antes** do laço do analógico, no `Player::pad`, e antes do roteiro do harness: o manche de
+verdade, quando existe e está fora da zona morta, precisa ter a última palavra. Escrito na ordem
+contrária, o espelho apagaria o manche parado no centro e o direcional venceria o analógico.
+
+Para medir sem janela:
+
+```sh
+zeebx bench "<jogo.zip>" --seconds=40 --keys=15000:up:5000,20000:down:5000 \\
+    --dpad-nos-eixos
+```
+
+O resumo traz a linha `eixo:` com as leituras fora do centro, e a linha `entrada:` com as chamadas.
 
 ### Há um terceiro canal, e nele a ordem da lista é tudo
 

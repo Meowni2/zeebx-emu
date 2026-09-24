@@ -935,6 +935,20 @@ fn le_select(porta: u32) -> bool {
     }
 }
 
+/// A chave da opção que espelha o direcional nos eixos desta porta.
+///
+/// **Uma por porta, e não uma para todos.** O console tem duas portas e dois jogadores: quem joga
+/// de manche no Z-Pad 1 não obriga o dono do Z-Pad 2 a jogar com o direcional virando eixo. O
+/// RetroArch anuncia oito portas e o núcleo só registra duas; porta fora da faixa não tem opção, e
+/// fica desligada.
+fn chave_do_espelho(porta: u32) -> Option<&'static CStr> {
+    match porta {
+        0 => Some(c"zeebx_dpad_to_analog_p1"),
+        1 => Some(c"zeebx_dpad_to_analog_p2"),
+        _ => None,
+    }
+}
+
 /// Lê o RetroPad e monta o estado que o console enxerga.
 ///
 /// Com `bitmasks`, os doze botões vêm numa palavra só — uma chamada ao frontend por quadro em vez
@@ -978,6 +992,15 @@ fn le_pad(porta: u32, bitmasks: bool) -> Pad {
             if let Some(indice) = Pad::button_by_name(nome) {
                 pad.press(indice, true);
             }
+        }
+    }
+    // O direcional espelhado nos eixos, quando a opção desta porta está ligada. **Antes** do laço
+    // do analógico: o espelho escreve zero no repouso — é assim que o manche volta ao centro ao
+    // soltar a direção —, e quem tem a última palavra tem de ser o manche de verdade.
+    if let Some(chave) = chave_do_espelho(porta) {
+        // SAFETY: consulta de opção do frontend, na thread de `retro_run`.
+        if unsafe { le_opcao(chave) }.as_deref() == Some("enabled") {
+            pad.espelha_o_direcional_nos_eixos();
         }
     }
     // Os dois analógicos do RetroPad viram os quatro eixos do console, na faixa que o guest lê.
@@ -1127,7 +1150,7 @@ unsafe fn registra_opcoes_do_core() {
         // `category_key: c"video"`, mas este arranjo só tinha a categoria `"audio"` — a de vídeo
         // nunca foi registrada. O frontend não trava com uma chave que não bate com nenhuma
         // categoria, mas a opção fica sem o agrupamento certo no menu, e ninguém tinha reparado.
-        static CATEGORIAS: [RetroCoreOptionV2Category; 4] = [
+        static CATEGORIAS: [RetroCoreOptionV2Category; 5] = [
             RetroCoreOptionV2Category {
                 key: c"audio".as_ptr(),
                 desc: c"Áudio".as_ptr(),
@@ -1142,6 +1165,11 @@ unsafe fn registra_opcoes_do_core() {
                 key: c"sistema".as_ptr(),
                 desc: c"Sistema".as_ptr(),
                 info: c"Perfis e ajustes gerais do Zeebx".as_ptr(),
+            },
+            RetroCoreOptionV2Category {
+                key: c"controles".as_ptr(),
+                desc: c"Controles".as_ptr(),
+                info: c"Como o RetroPad de cada porta vira o controle do console".as_ptr(),
             },
             RetroCoreOptionV2Category {
                 key: std::ptr::null(),
@@ -1397,7 +1425,26 @@ unsafe fn registra_opcoes_do_core() {
             };
         }
 
-        let definicoes: [RetroCoreOptionV2Definition; 16] = [
+        // O espelho do direcional nos eixos. A lista é a do pedido (issue #39): desligado primeiro,
+        // porque desligado é o padrão — e é o padrão porque a ideia já foi tentada e desfeita duas
+        // vezes (ver `Pad::espelha_o_direcional_nos_eixos`).
+        let mut espelho_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        const ESPELHO_OPC: [(&CStr, &CStr); 2] =
+            [(c"disabled", c"Desligado"), (c"enabled", c"Ligado")];
+        for (i, (valor, rotulo)) in ESPELHO_OPC.iter().enumerate() {
+            espelho_values[i] = RetroCoreOptionValue {
+                value: valor.as_ptr(),
+                label: rotulo.as_ptr(),
+            };
+        }
+
+        // **Uma definição por porta**, e são duas porque o console tem duas (`input::PORTAS`).
+        // Cada jogador liga a sua: quem joga de manche no Z-Pad 1 não obriga o dono do Z-Pad 2 a
+        // jogar com o direcional virando eixo.
+        let definicoes: [RetroCoreOptionV2Definition; 18] = [
             RetroCoreOptionV2Definition {
                 key: c"zeebx_midi_backend".as_ptr(),
                 desc: c"Sintetizador MIDI (reinício)".as_ptr(),
@@ -1549,6 +1596,26 @@ unsafe fn registra_opcoes_do_core() {
                 default_value: c"aviso".as_ptr(),
             },
             RetroCoreOptionV2Definition {
+                key: c"zeebx_dpad_to_analog_p1".as_ptr(),
+                desc: c"Direcional nos eixos do manche (jogador 1)".as_ptr(),
+                desc_categorized: c"Direcional nos eixos (jogador 1)".as_ptr(),
+                info: c"Com Ligado, o direcional do jogador 1 também empurra o manche esquerdo dos jogos: cada sentido escreve o curso inteiro no eixo, e soltar devolve o eixo ao centro. Serve a jogo que só escuta o eixo e ignora o direcional por completo. **Desligado por padrão** porque um jogo que lê os dois canais anda duas casas por toque, e porque quem lê variação lê a volta ao centro como um passo no sentido contrário — foi o defeito que desfez as duas tentativas anteriores. Os botões continuam funcionando: esta opção acrescenta o eixo, não troca o canal. Vale na hora.".as_ptr(),
+                info_categorized: c"O direcional do jogador 1 também empurra o manche. Para jogo que só lê o eixo. Desligado por padrão: quem lê os dois canais anda duas casas por toque.".as_ptr(),
+                category_key: c"controles".as_ptr(),
+                values: espelho_values,
+                default_value: c"disabled".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: c"zeebx_dpad_to_analog_p2".as_ptr(),
+                desc: c"Direcional nos eixos do manche (jogador 2)".as_ptr(),
+                desc_categorized: c"Direcional nos eixos (jogador 2)".as_ptr(),
+                info: c"O mesmo do jogador 1, para o controle da segunda porta. É uma opção separada porque são dois jogadores e dois controles: ligar no 1 não obriga o 2. Vale na hora.".as_ptr(),
+                info_categorized: c"O mesmo do jogador 1, para a segunda porta. Vale na hora.".as_ptr(),
+                category_key: c"controles".as_ptr(),
+                values: espelho_values,
+                default_value: c"disabled".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
                 key: std::ptr::null(),
                 desc: std::ptr::null(),
                 desc_categorized: std::ptr::null(),
@@ -1572,7 +1639,7 @@ unsafe fn registra_opcoes_do_core() {
             );
         }
     } else {
-        static VARIAVEIS: [RetroVariable; 16] = [
+        static VARIAVEIS: [RetroVariable; 18] = [
             RetroVariable {
                 key: c"zeebx_midi_backend".as_ptr(),
                 value: c"Sintetizador MIDI (reinício); auto|timbres|soundfont".as_ptr(),
@@ -1632,6 +1699,16 @@ unsafe fn registra_opcoes_do_core() {
             RetroVariable {
                 key: c"zeebx_log".as_ptr(),
                 value: c"Log do núcleo; desligado|fatal|erro|aviso|informacao|depuracao".as_ptr(),
+            },
+            // Uma por porta: o console tem duas (`zeebx::input::PORTAS`), e cada jogador liga a
+            // sua. Ver `chave_do_espelho`, do lado que lê.
+            RetroVariable {
+                key: c"zeebx_dpad_to_analog_p1".as_ptr(),
+                value: c"Direcional nos eixos do manche (jogador 1); disabled|enabled".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_dpad_to_analog_p2".as_ptr(),
+                value: c"Direcional nos eixos do manche (jogador 2); disabled|enabled".as_ptr(),
             },
             RetroVariable {
                 key: std::ptr::null(),
