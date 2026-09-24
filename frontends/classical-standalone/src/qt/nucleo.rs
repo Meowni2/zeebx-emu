@@ -10,7 +10,7 @@
 //! programa. Quem chama pega o que precisa aqui dentro e emite depois.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -21,7 +21,10 @@ use zeebx::library::{self, Game};
 use zeebx::session::Z_WHEEL;
 use zeebx::input::bindings::Aparelho;
 use zeebx::ui::calibracao::{Calibracao, Situacao};
+use zeebx::ui::acervo::{self, Acervo, Ficha};
 use zeebx::ui::depuracao;
+use zeebx::ui::navegacao::{self, Comando, Navegacao};
+use zeebx::video::icon::{self, Image};
 use zeebx::ui::entrada::EntradaDoDesktop;
 use zeebx::ui::i18n::{self, Catalog};
 use zeebx::ui::partida::{Abertura, Partida, Saida};
@@ -30,6 +33,9 @@ use zeebx::video::rasterizer::QuadroNaPlaca;
 use zeebx::video::display::Framebuffer;
 
 use super::ponte::qobject as gl;
+
+/// A imagem de quem não tem nenhuma: a logo do emulador, como no egui.
+const RESERVA: &[u8] = include_bytes!("../../../../assets/zeebx.png");
 
 thread_local! {
     static NUCLEO: RefCell<Option<Nucleo>> = const { RefCell::new(None) };
@@ -98,11 +104,25 @@ pub struct Nucleo {
     gl: Option<Arc<glow::Context>>,
     /// "software", ou a placa que o contexto achou: vai para a linha de estado.
     placa: Option<String>,
-    /// Os jogos da pasta de ROMs, e quais deles vão para a lista — a Z-Wheel sai dela e abre pelo
-    /// botão, como no egui.
+    /// Os jogos da pasta de ROMs.
     pub jogos: Vec<Game>,
-    pub lista: Vec<usize>,
+    /// O que a lista mostra, em ordem de título: `(título, índice em jogos)`. A Z-Wheel sai dela e
+    /// abre pelo botão, como no egui, e a busca deixa só o que casa.
+    pub lista: Vec<(String, usize)>,
+    /// O que está escrito na busca.
+    busca: String,
     pub z_wheel: Option<PathBuf>,
+    /// Capas, nomes, logos e descrições que a Z-Wheel traz dos jogos.
+    pub acervo: Option<Acervo>,
+    /// A imagem de quem não tem nenhuma.
+    reserva: Option<Image>,
+    /// Muda a cada varredura. Vai no endereço das imagens: o Qt as guarda pelo endereço, e sem
+    /// isto uma capa trocada na pasta continuaria a antiga depois de procurar de novo.
+    pub geracao: u32,
+    /// Se cada jogo tem uma capa ao lado, por índice em `jogos`: a resposta lê o disco, e o QML
+    /// pergunta a cada linha que aparece. Refeito a cada varredura.
+    capas_ao_lado: HashMap<usize, bool>,
+    navegacao: Navegacao,
     calibracao: Calibracao,
     /// As teclas apertadas na janela do jogo, como `egui::Key`. Ver
     /// [`zeebx::ui::entrada::tecla_apertada`].
@@ -112,15 +132,6 @@ pub struct Nucleo {
 impl Nucleo {
     fn novo() -> Self {
         let settings = Settings::load();
-        let jogos = settings
-            .roms_dir
-            .as_deref()
-            .map(library::scan)
-            .unwrap_or_default();
-        let lista = (0..jogos.len())
-            .filter(|&i| jogos[i].clsid != Some(Z_WHEEL))
-            .collect();
-        let z_wheel = library::z_wheel_de(settings.z_wheel_path.as_deref(), &jogos);
         // O mesmo idioma do egui: o escolhido nas configurações, ou o do sistema.
         let mut catalogo = Catalog::new(&settings::language_dirs());
         match &settings.language {
@@ -131,19 +142,128 @@ impl Nucleo {
                 catalogo.select_best(&i18n::system_language());
             }
         }
-        Self {
+        let mut nucleo = Self {
             settings,
             catalogo,
             entrada: EntradaDoDesktop::inicia(),
             partida: None,
             gl: None,
             placa: None,
-            jogos,
-            lista,
-            z_wheel,
+            jogos: Vec::new(),
+            lista: Vec::new(),
+            busca: String::new(),
+            z_wheel: None,
+            acervo: None,
+            reserva: icon::decode(RESERVA).ok(),
+            geracao: 0,
+            capas_ao_lado: HashMap::new(),
+            navegacao: Navegacao::default(),
             calibracao: Calibracao::default(),
             teclas: HashSet::new(),
+        };
+        nucleo.procura_de_novo();
+        nucleo
+    }
+
+    /// Varre a pasta de ROMs de novo, e relê a Z-Wheel e o acervo dela. É o "procurar de novo".
+    pub fn procura_de_novo(&mut self) {
+        self.jogos = self
+            .settings
+            .roms_dir
+            .as_deref()
+            .map(library::scan)
+            .unwrap_or_default();
+        if let Err(erro) = library::sync_catalog(&self.jogos) {
+            eprintln!("catálogo de jogos: {erro}");
         }
+        self.z_wheel = library::z_wheel_de(self.settings.z_wheel_path.as_deref(), &self.jogos);
+        self.acervo = self.z_wheel.as_deref().and_then(Acervo::carrega);
+        self.geracao = self.geracao.wrapping_add(1);
+        self.capas_ao_lado.clear();
+        self.refaz_lista();
+    }
+
+    /// A busca mudou.
+    pub fn define_busca(&mut self, busca: &str) {
+        self.busca = busca.to_string();
+        self.refaz_lista();
+    }
+
+    fn refaz_lista(&mut self) {
+        let idioma = self.catalogo.current().to_string();
+        let acervo = self.acervo.as_ref();
+        let mut lista: Vec<(String, usize)> = (0..self.jogos.len())
+            .filter(|&i| self.jogos[i].clsid != Some(Z_WHEEL))
+            .map(|i| (acervo::titulo_de(acervo, &self.jogos[i], &idioma), i))
+            .filter(|(titulo, _)| library::casa_com_a_busca(titulo, &self.busca))
+            .collect();
+        lista.sort_by_key(|(titulo, _)| titulo.to_lowercase());
+        self.lista = lista;
+    }
+
+    /// Quantos jogos a biblioteca tem, fora a Z-Wheel e sem a busca.
+    pub fn total(&self) -> usize {
+        self.jogos.iter().filter(|jogo| jogo.clsid != Some(Z_WHEEL)).count()
+    }
+
+    pub fn busca_atual(&self) -> &str {
+        &self.busca
+    }
+
+    pub fn buscando(&self) -> bool {
+        !self.busca.trim().is_empty()
+    }
+
+    /// A ficha da Z-Wheel sobre o jogo da linha, se ela o conhece.
+    pub fn ficha(&self, linha: usize) -> Option<&Ficha> {
+        let (_, indice) = self.lista.get(linha)?;
+        let classe = self.jogos[*indice].clsid?;
+        self.acervo.as_ref()?.ficha(classe)
+    }
+
+    /// A imagem do jogo de índice `indice` em `jogos`. Ver [`acervo::imagem_do_jogo`].
+    pub fn capa(&mut self, indice: usize) -> Option<&Image> {
+        let jogo = self.jogos.get(indice)?;
+        let ao_lado = *self
+            .capas_ao_lado
+            .entry(indice)
+            .or_insert_with(|| acervo::capa_ao_lado(jogo));
+        let ficha = jogo.clsid.and_then(|classe| self.acervo.as_ref()?.ficha(classe));
+        acervo::imagem_do_jogo(jogo, ficha, self.reserva.as_ref(), ao_lado)
+    }
+
+    /// A imagem pedida pelo QML, pelo endereço sem o esquema: `capa/<geração>/<índice>`,
+    /// `logo/<geração>/<classe>` ou `classificacao/<geração>/<classe>`.
+    pub fn imagem(&mut self, endereco: &str) -> Option<&Image> {
+        let mut partes = endereco.split('/');
+        let (tipo, _geracao, chave) = (partes.next()?, partes.next()?, partes.next()?);
+        let chave: usize = chave.parse().ok()?;
+        match tipo {
+            "capa" => self.capa(chave),
+            "logo" => self.acervo.as_ref()?.ficha(chave as u32)?.logo.as_ref(),
+            "classificacao" => self.acervo.as_ref()?.ficha(chave as u32)?.classificacao.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Os comandos que o controle manda à biblioteca nesta leitura.
+    ///
+    /// **Só o controle.** O teclado da biblioteca é do QML, que já anda pela lista com as setas:
+    /// passar as teclas aqui também faria uma seta mapeada no controle andar dois passos. Com um
+    /// jogo aberto, ou a janela principal sem o foco, o controle não é da biblioteca.
+    pub fn comandos(&mut self, escutando: bool) -> Vec<Comando> {
+        if !escutando || self.partida.is_some() {
+            self.navegacao.silencia();
+            return Vec::new();
+        }
+        let pads: Vec<_> = self
+            .entrada
+            .pads(&self.settings.controls, &HashSet::new())
+            .into_iter()
+            .map(|(_, pad)| pad)
+            .collect();
+        let agora = navegacao::apertado([false; 5], &pads);
+        self.navegacao.comandos(agora, Instant::now())
     }
 
     /// O que a tela do jogo mostra agora.
@@ -177,14 +297,14 @@ impl Nucleo {
     /// O nome do jogo aberto.
     ///
     /// A sessão só conhece a pasta de extração, que leva a impressão digital do pacote
-    /// (`Zeebo-Extreme-Boia-Cross-21503726-1788761080`). O nome sai da biblioteca pelo ClassID, e
-    /// só na falta dela a pasta, sem os dois números do fim — a regra do egui. O nome oficial da
-    /// Z-Wheel, que o egui prefere quando ela descreve o jogo, entra com o acervo na fase 4.
+    /// (`Zeebo-Extreme-Boia-Cross-21503726-1788761080`). O nome sai da biblioteca pelo ClassID — o
+    /// oficial da Z-Wheel quando ela descreve o jogo —, e só na falta dela a pasta, sem os dois
+    /// números do fim. A regra do egui.
     pub fn titulo(&self) -> Option<String> {
         let sessao = self.partida.as_ref()?.sessao();
         let classe = sessao.classe();
         if let Some(jogo) = self.jogos.iter().find(|jogo| jogo.clsid == Some(classe)) {
-            return Some(jogo.title.clone());
+            return Some(acervo::titulo_de(self.acervo.as_ref(), jogo, self.catalogo.current()));
         }
         let titulo = library::sem_impressao_digital(sessao.title());
         (!titulo.is_empty()).then_some(titulo)
