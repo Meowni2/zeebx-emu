@@ -1704,3 +1704,24 @@ A parte que **depende de conserto no procedimento** continua valendo e já está
 conserto no **código** continua aberta, e agora com um suspeito de outra natureza — não um arquivo
 visível, mas um **caminho de leitura diferente**.
 
+## 34. Os extras dos estudos: um a um, com o desfecho
+
+Para não deixar nenhum extra em ambiguidade, o desfecho de cada um.
+
+| extra | vindo de | desfecho |
+|---|---|---|
+| readback preguiçoso | Flycast, DuckStation | **feito** — 78 e 184 leituras viraram 1 |
+| espelho de estado | DuckStation, Flycast | **feito** — 80% e 76% das chamadas de estado |
+| buffer emprestado do frontend | PCSX-ReARMed | **feito** — frente 3 |
+| prova do blit do driver | Flycast | **feito** — frente 5 |
+| escala `0,5x` no perfil Portátil | Flycast/DuckStation (resolução) | **feito** — e medido em 22% |
+| coalescer strips adjacentes (restart de primitiva) | Flycast | **sem ganho para nós**: o nosso lote já junta desenhos **consecutivos de mesmo estado** numa chamada só. O truque do Flycast junta strips **dentro** de um desenho, e o guest do Zeebo emite um `DrawArrays` por strip — que já cai no mesmo lote. Não há o que juntar |
+| frameskip reagindo a "fila de GPU cheia" | Flycast | **precisa de telemetria de GPU**, que não temos. Fica como pista |
+| apresentação numa thread separada | DuckStation (e o adiamento dela) | **não fazer** — o core Libretro entrega um quadro por `retro_run`, e o desktop pinta depois da nossa volta; a thread custaria sincronização sem tirar trabalho do caminho |
+| PBO com fence | DuckStation | **fechado** — sem razão depois da frente 1 |
+| cache binário de shader | Mupen64Plus-Next | **não se aplica** — o motor tem um shader |
+| caminho GLES 2 separado | PCSX-ReARMed | **compatibilidade, não desempenho**; fica para quando houver aparelho que precise |
+| `AHardwareBuffer`/`EGLImage` | Mupen64Plus-Next | **Android e coerência de memória**; hoje não temos caminho zero-copy que o justifique |
+| NEON nos laços largos | PCSX-ReARMed, Flycast | **despriorizado pelos adendos** — pouca transferibilidade confirmada |
+| fastmem próprio / dynarec | Flycast, DuckStation, PCSX | **despriorizado pelos adendos** — o Dynarmic já entrega tabela de páginas, e o que resta é SMC medido |
+
