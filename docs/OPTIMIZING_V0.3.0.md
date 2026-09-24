@@ -1516,3 +1516,75 @@ adendos das revisões.
 3. **PR de `perf-v0.3.0` para `development`** — a branch está no fork e não há PR aberto.
 4. **`lto = "fat"`** quando houver disco.
 
+## 32. A varredura não é determinística — e o critério de aceitação repousa nela
+
+O critério 2 de aceitação desta rodada diz: *"a varredura dos 62 jogos não regride comportamento"*.
+Ao rodar esse critério pela primeira vez com os patches aplicados, o resultado foi **32 de 63 ROMs
+com diferença** — e antes de atribuir isso aos patches, fui verificar se a varredura é
+reprodutível.
+
+**Não é.**
+
+### A medida
+
+O mesmo binário, a mesma ROM (Action Hero 3D), dois relatórios seguidos:
+
+| | voltas | instruções | chamadas de API | tempo virtual |
+|---|---:|---:|---:|---:|
+| rodada A | 216 | 1 052 233 | 46 145 | 6 002 ms |
+| rodada B | 216 | **1 052 127** | **46 137** | 6 002 ms |
+
+**Mesmo número de voltas, mesmo tempo virtual, e 106 instruções e 8 chamadas de diferença.** O
+relatório completo difere em **48 linhas**, e o padrão das diferenças é inconfundível: os mesmos
+eventos com endereços de heap deslocados 64 bytes —
+
+```text
+-   OpenFile "a3d_sound_effect_04spf.wav"  (0x8c0d8 0x1 0xf0003008) -> 805311000
++   OpenFile "a3d_sound_effect_04spf.wav"  (0x8c0d8 0x1 0xf0003008) -> 805310936
+```
+
+Uma alocação a menos no começo desloca tudo o que vem depois. Contra a linha de base, isso vira 814
+linhas removidas e 740 adicionadas — que o teste lê como regressão de comportamento.
+
+### O que isso significa
+
+1. **O critério 2 não pode ser cobrado hoje.** Ele acusa ruído como regressão, e um teste que fica
+   vermelho sozinho não guarda nada — a mesma lição do `os_dois_rasterizadores_desenham_o_mesmo_quadro`,
+   que já falhava no Need for Speed e ninguém sabia porque a CI não tem ROMs.
+2. **O quadro "reproduzível bit a bit" tem uma exceção não documentada.** O `ARCHITECTURE.md`
+   afirma que duas execuções iguais desenham os mesmos pixels — e elas desenham, porque o desenho
+   é função do estado; mas o **estado do guest** já não é o mesmo em duas execuções, e é isso que
+   as instruções a mais mostram.
+
+### O que já foi descartado como causa
+
+- **`aee_GetRand`**: é um LCG com semente fixa (`0x1234_5678`) e entra no save state. Determinístico.
+- **`aee_GetTimeMS` / `aee_GetUpTimeMS` / `aee_GetSeconds`**: leem o relógio **virtual**, que sai das
+  instruções. Determinístico.
+- **Ordem de `HashMap` do host chegando ao guest**: `timers` e `pending_calls` são `Vec` (ordem de
+  inserção); `threads` e `resume_callbacks` só são acessados por chave. O `call_log` itera um
+  `HashMap`, mas é ordenado antes de sair no relatório.
+
+### A próxima etapa, concreta
+
+A divergência é de **106 instruções em 1,05 milhão** com as mesmas 216 voltas. O caminho é
+binário: comparar, entre duas execuções, o *número de instruções por volta* e achar a primeira volta
+em que os dois números se separam; dali para trás, o evento que decidiu diferente. O instrumento
+existe — `Machine::advance` já conta voltas, e `instructions()` já conta instruções.
+
+Suspeito natural, e não conferido: o **adiantamento de relógio por espera** (`note_spin`, em
+`machine/time.rs`), que decide *quando* uma volta de laço é espera e adianta o relógio. É a única
+peça do emulador que olha para um laço de chamadas em vez de para uma chamada, e um limiar que
+dependa de algo fora do estado do guest explicaria exatamente um desvio pequeno e raro.
+
+### O que ficou decidido
+
+O critério 2 fica **suspenso**, e não cumprido: não por os patches terem regredido — nada indica
+isso, e as diferenças são de endereço — mas por a régua não medir o que promete. Antes de cobrar
+"não regrediu" de uma varredura, ela precisa ser reprodutível, ou a comparação precisa ignorar os
+campos que carregam endereços.
+
+O que **pode** ser cobrado hoje, e foi conferido nesta rodada: o **estado** de cada ROM bate com a
+linha de base — 63 ROMs, e as categorias são as mesmas (56 rodam, 3 não criam o applet, 2 quebram no
+laço, 2 terminam sozinhas). A diferença está no log de eventos, não no desfecho.
+
