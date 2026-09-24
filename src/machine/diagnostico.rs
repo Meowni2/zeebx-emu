@@ -314,7 +314,7 @@ impl<C: CpuBackend> Machine<C> {
     /// quem aparece. Ver o quadro do OpenGL sozinho é o que diz se a renderização 3D está
     /// certa.
     pub fn gl_frame(&self) -> Option<Framebuffer> {
-        if self.gl_last_frame.is_empty() {
+        if self.gl_last_frame_words.is_empty() {
             return None;
         }
         let (width, height) = {
@@ -322,7 +322,7 @@ impl<C: CpuBackend> Machine<C> {
             (target.width(), target.height())
         };
         let mut surface = Framebuffer::new(width, height);
-        surface.load_rgb565_bytes(&self.gl_last_frame);
+        surface.load_rgb565_words(&self.gl_last_frame_words);
         Some(surface)
     }
 

@@ -748,6 +748,8 @@ pub trait Rasterizador {
     fn desenha_no_fbo(&mut self, _fbo: Option<u32>) {}
 
     fn frame_rgb565(&mut self, width: usize, height: usize, out: &mut Vec<u8>);
+    /// Exporta diretamente em RGB565 nativo para a tela do host, sem passar por bytes.
+    fn frame_rgb565_words(&mut self, width: usize, height: usize, out: &mut Vec<u16>);
     fn import_rgb565_changes(&mut self, width: usize, height: usize, old: &[u8], new: &[u8]);
 
     /// Quantas vezes o quadro é desenhado maior que o do console, por lado. O jogo continua
@@ -1001,6 +1003,9 @@ impl Rasterizador for GlState {
     }
     fn frame_rgb565(&mut self, width: usize, height: usize, out: &mut Vec<u8>) {
         GlState::frame_rgb565(self, width, height, out)
+    }
+    fn frame_rgb565_words(&mut self, width: usize, height: usize, out: &mut Vec<u16>) {
+        GlState::frame_rgb565_words(self, width, height, out)
     }
     fn import_rgb565_changes(&mut self, width: usize, height: usize, old: &[u8], new: &[u8]) {
         GlState::import_rgb565_changes(self, width, height, old, new)
@@ -2473,6 +2478,33 @@ impl GlState {
                 let linha = &self.color[(y * sh / height) * self.width..][..self.width];
                 for (x, par) in saida.chunks_exact_mut(2).enumerate() {
                     par.copy_from_slice(&converte(linha[x * sw / width]).to_le_bytes());
+                }
+            }
+        }
+        self.sujo = false;
+    }
+
+    /// Mesmo quadro da exportação em bytes, mas sem a ida RGB565 -> bytes -> RGB565.
+    pub fn frame_rgb565_words(&mut self, width: usize, height: usize, out: &mut Vec<u16>) {
+        self.flush();
+        if !self.sujo && out.len() == width * height {
+            return;
+        }
+        let (sw, sh) = self.surface();
+        out.clear();
+        out.resize(width * height, 0);
+        let converte = |p: [u8; 4]| {
+            ((p[0] as u16 >> 3) << 11) | ((p[1] as u16 >> 2) << 5) | (p[2] as u16 >> 3)
+        };
+        if sw == width && sh == height {
+            for (saida, &pixel) in out.iter_mut().zip(&self.color) {
+                *saida = converte(pixel);
+            }
+        } else {
+            for y in 0..height {
+                let linha = &self.color[(y * sh / height) * self.width..][..self.width];
+                for x in 0..width {
+                    out[y * width + x] = converte(linha[x * sw / width]);
                 }
             }
         }

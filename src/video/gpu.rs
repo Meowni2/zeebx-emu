@@ -2145,6 +2145,39 @@ impl Rasterizador for GpuState {
         self.sujo = false;
     }
 
+    fn frame_rgb565_words(&mut self, width: usize, height: usize, out: &mut Vec<u16>) {
+        self.descarrega();
+        if !self.sujo && out.len() == width * height {
+            return;
+        }
+        let (sw, sh) = self.surface();
+        if sw == 0 || sh == 0 {
+            return;
+        }
+        let em_565 = self.le_quadro_rgb565(sw, sh);
+        out.clear();
+        out.resize(width * height, 0);
+        let pixel = |p: &[u8]| -> u16 {
+            if em_565 {
+                u16::from_le_bytes([p[0], p[1]])
+            } else {
+                ((p[0] as u16 >> 3) << 11) | ((p[1] as u16 >> 2) << 5) | (p[2] as u16 >> 3)
+            }
+        };
+        let passo = if em_565 { 2 } else { 4 };
+        let colunas: Vec<usize> = (0..width)
+            .map(|x| (x * sw / width).min(sw - 1) * passo)
+            .collect();
+        for (y, saida) in out.chunks_exact_mut(width).enumerate() {
+            let inicio = (y * sh / height).min(sh - 1) * sw * passo;
+            let linha = &self.pixels[inicio..inicio + sw * passo];
+            for (destino, &coluna) in saida.iter_mut().zip(&colunas) {
+                *destino = pixel(&linha[coluna..coluna + passo]);
+            }
+        }
+        self.sujo = false;
+    }
+
     fn import_rgb565_changes(&mut self, width: usize, height: usize, old: &[u8], new: &[u8]) {
         self.descarrega();
         let (sw, sh) = self.surface();

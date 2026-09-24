@@ -2499,11 +2499,12 @@ pub struct Machine<C: CpuBackend> {
     cargas_de_midia: HashMap<u64, CargaDeMidia>,
     /// Para onde o som vai, quando há para onde.
     audio: Option<crate::audio::Mixer>,
-    /// O último quadro que o jogo apresentou, já no tamanho da tela.
+    /// O último quadro que o jogo apresentou, em palavras RGB565 e no tamanho da tela.
     ///
     /// Guardado no `eglSwapBuffers` porque é ali que o quadro está pronto: ler o buffer no fim
-    /// da execução pega o desenho pela metade, quase sempre logo depois do `Clear`.
-    gl_last_frame: Vec<u8>,
+    /// da execução pega o desenho pela metade, quase sempre logo depois do `Clear`. Palavras
+    /// evitam converter bytes RGB565 de volta para `u16` só para atualizar a tela.
+    gl_last_frame_words: Vec<u16>,
     /// Estado e buffers do OpenGL ES.
     ///
     /// Despacho dinâmico porque o rasterizador é trocável: a fronteira inteira está no
@@ -3021,7 +3022,7 @@ impl<C: CpuBackend> Machine<C> {
             media: HashMap::new(),
             cargas_de_midia: HashMap::new(),
             audio: None,
-            gl_last_frame: Vec::new(),
+            gl_last_frame_words: Vec::new(),
             gl: rasterizador(SCREEN_WIDTH as usize, SCREEN_HEIGHT as usize),
             gl_vertices: ArrayPointer::default(),
             gl_colors: ArrayPointer::default(),

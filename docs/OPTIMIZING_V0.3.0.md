@@ -378,3 +378,39 @@ A varredura de 66 jogos foi interrompida para não contaminar o A/B. Ela chegou 
 atingiu 52.830 ms virtuais em 240 s reais (22%); não é uma linha de base completa e não deve ser
 tratada como resultado final.
 
+## 14. PDCA 2 — exportação direta em palavras RGB565 (aceito com ganho pequeno)
+
+### Plan
+
+`present_gl` fazia o rasterizador gerar bytes RGB565 e depois a superfície convertia cada par de
+bytes de volta para `u16`. No caminho de software, isto era trabalho e tráfego duplicados.
+
+### Do
+
+Foi adicionado `frame_rgb565_words()` ao contrato do rasterizador, implementado nos caminhos
+software e placa. `present_gl` agora atualiza a superfície com `load_rgb565_words()`. O vetor
+`gl_last_frame` também passou a guardar palavras RGB565; a conversão para bytes fica apenas nos
+caminhos que pedem bytes, como `eglGetColorBuffer`.
+
+### Check
+
+A/B sequencial, sem perfil, mesma bancada, Quake, 15.016 ms virtuais por rodada:
+
+| rodada | baseline | palavras RGB565 |
+|---:|---:|---:|
+| 1 | 9,1 s / 165% | 9,0 s / 167% |
+| 2 | 9,0 s / 167% | 8,8 s / 170% |
+| 3 | 8,8 s / 171% | 8,8 s / 170% |
+| média | **8,97 s / 168%** | **8,87 s / 169%** |
+
+Ganho médio: aproximadamente **1,1% no relógio** e **0,6% na velocidade**. É pequeno e fica
+próximo do ruído da bancada; não é apresentado como grande salto. Os testes release do núcleo
+passaram.
+
+### Act
+
+Patch mantido porque remove uma conversão estruturalmente desnecessária, não porque o Quake
+prometeu grande ganho. A próxima confirmação deve ser no rasterizador de placa dos handhelds e
+em jogos diferentes. O gargalo dominante continua sendo `flush`/preenchimento, não este loop
+isolado.
+

@@ -434,6 +434,16 @@ impl Framebuffer {
         }
     }
 
+    /// Recarrega uma superfície já convertida em palavras RGB565.
+    pub fn load_rgb565_words(&mut self, words: &[u16]) {
+        for (pixel, &value) in self.pixels.iter_mut().zip(words) {
+            if *pixel != value {
+                *pixel = value;
+                self.touched += 1;
+            }
+        }
+    }
+
     /// Bytes por linha no buffer do `IDIB`: a largura em RGB565 alinhada em 4 bytes.
     ///
     /// Numa largura par é o mesmo `largura * 2`; numa ímpar sobra um pixel de enchimento no

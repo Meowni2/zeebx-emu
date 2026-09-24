@@ -444,7 +444,7 @@ impl<C: CpuBackend> Machine<C> {
 /// (`HashMap<u32, número>` ou `HashMap<u32, punhado de números>`), e o que muda é só o nome.
 ///
 /// **O que não entra:** as tabelas que guardam pixels ou bytes em quantidade — `bitmaps`,
-/// `images`, `gl_last_frame`. Elas são a maior parte do que sobra e precisam de um formato próprio
+/// `images`, `gl_last_frame_words`. Elas são a maior parte do que sobra e precisam de um formato próprio
 /// (comprimir, ou apontar para a memória do guest quando o conteúdo já está lá). Enquanto não
 /// entrarem, o core continua dizendo que não salva.
 impl<C: CpuBackend> Machine<C> {
