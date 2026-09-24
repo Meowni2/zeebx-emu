@@ -33,7 +33,19 @@ fn interface_qt() {
     )
     .files(["src/qt/ponte.rs", "src/qt/biblioteca.rs"])
     .include_dir("src/qt/cpp")
-    .cpp_files(["src/qt/cpp/gl_qt.cpp"])
+    .cpp_files([
+        "src/qt/cpp/gl_qt.cpp",
+        // O cabeçalho entra para o moc: o `ItemDoQuadro` tem `Q_OBJECT`.
+        "src/qt/cpp/quadro.h",
+        "src/qt/cpp/quadro.cpp",
+    ])
+    // A imagem do aviso de calibração, em `qrc:/zeebx/boomerang.png`. O `assets/` é do projeto, e
+    // não deste pacote.
+    .qrc_resources(cxx_qt_build::QResources::new().resource(
+        cxx_qt_build::QResource::new()
+            .prefix("/zeebx")
+            .file(qt_build_utils::QResourceFile::new("../../assets/boomerang.png").alias("boomerang.png")),
+    ))
     .qt_module("Quick")
     // O Qt Qml pede o Network no macOS.
     .qt_module("Network")
