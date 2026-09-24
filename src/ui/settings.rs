@@ -365,6 +365,27 @@ impl Settings {
     }
 }
 
+/// O rótulo de um fator de resolução interna: o fator, o tamanho e a referência de mercado.
+pub fn rotulo_da_resolucao(fator: u8) -> String {
+    let (largura, altura) = (640 * u32::from(fator), 480 * u32::from(fator));
+    let referencia = match fator {
+        1 => "nativa",
+        2 => "~720p",
+        3 => "~1080p",
+        4 => "~1440p",
+        _ => "~4K",
+    };
+    format!("{fator}x · {largura}×{altura} · {referencia}")
+}
+
+/// O rótulo de um nível de antialias ou de anisotrópico: 1 é desligado.
+pub fn rotulo_de_nivel(nivel: u8, sigla: &str, desligado: &str) -> String {
+    match nivel {
+        0 | 1 => desligado.to_string(),
+        n => format!("{n}x {sigla}"),
+    }
+}
+
 pub fn settings_path() -> PathBuf {
     config_dir().join(FILE_NAME)
 }
