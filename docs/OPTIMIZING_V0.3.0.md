@@ -141,6 +141,13 @@ Regras de medida, herdadas do erro documentado em `8af069f`:
 - rodar sempre em `--release`;
 - comparar proporção com perfil ligado, relógio com ele desligado.
 
+**Cuidado com o que o perfil de API mede.** O `api_time` só soma o tempo de
+`dispatch_inner` (`src/machine/mod.rs:3370`), isto é, **o corpo do método**. Ele não inclui o
+`halt` do JIT nem a reentrada por `jit.run()`. O custo do trampolim, que é justamente o número
+de `1,4 µs` que se quer refazer, **não sai daqui**: precisa de um micro-teste próprio — um laço
+do guest chamando um método barato, comparado com o mesmo laço sem a chamada. Confundir os dois
+é o erro fácil desta rodada.
+
 ### 6.2 Jogos da rodada
 
 | jogo | por que ele |
@@ -194,9 +201,24 @@ Uma otimização entra quando:
 4. `cargo test`, `cargo clippy` e o core Libretro continuam verdes;
 5. o documento de arquitetura é atualizado junto, com o número novo e a data.
 
-## 9. Registro das medidas
 
-Esta seção é preenchida pela rodada. Até lá, vale o aviso: **não há número novo ainda.**
+## 10. Referência externa
+
+Uma sessão de consulta com o DeepSeek sobre otimização de emuladores levantou pontos que valem
+como leitura, e também mostra onde uma análise de fora erra:
+
+https://chat.deepseek.com/share/yjigu5xc76ahsri24s
+
+O que ela acertou: o trampolim de API é o gargalo estrutural; o rasterizador não é o gargalo; a
+lição de pedir bloco em vez de elemento; estender o fastmem para leitura.
+
+O que ela errou: propôs ativar `lto` e `codegen-units = 1`, que já estão ligados
+(`Cargo.toml:171`), inferindo o arquivo pelo tamanho em bytes sem abri-lo; propôs paralelizar o
+rasterizador, que já é paralelo (`src/video/rasterizer.rs:2341`); propôs thread dedicada de
+áudio, que é contra o contrato do Libretro; e tratou os números do `ARCHITECTURE.md` como
+atuais, quando são da era do Unicorn — que é exatamente o motivo deste documento existir.
+
+## 11. Registro das medidas
 
 | data | jogo | backend | velocidade | instr/s | µs por chamada de API | observação |
 |---|---|---|---|---|---|---|
