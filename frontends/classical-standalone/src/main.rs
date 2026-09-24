@@ -495,10 +495,11 @@ fn main() -> ExitCode {
                              [--portas=controle|teclado|nenhum,...] [--teclas=ms:nome,...]"
             );
             eprintln!(
-                "     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N] [--msaa=N] [--aniso=N] [--perfil[=MS]] [--boomerang] [--movimento=ms:x:y:z,...] [--wiimote] [--proporcao=16:9] [--portas=controle,controle]  (a sessão da janela, sem janela)"
+                "     zeebx sessao <arquivo.zip> [--seconds=N] [--keys=ms:botão,...] [--dump=QUADRO.bmp] [--fotos=ms,...] [--placa] [--serial=CAMINHO] [--fabrica] [--sem-fim-de-vida] [--sem-transicoes] [--escala=N] [--msaa=N] [--aniso=N] [--perfil[=MS]] [--boomerang] [--movimento=ms:x:y:z,...] [--wiimote] [--proporcao=16:9]
+                             [--portas=controle,controle] [--dpad-nos-eixos]  (a sessão da janela, sem janela)"
             );
             eprintln!(
-                "     zeebx bench <arquivo.mod|zip> [--seconds=N] [--keys=ms:tecla,...] [--dump=QUADRO.bmp] [--teclas=ms:nome,...] [--instalados=0xCLSID[:id],...] [--dump-surfaces=DIR]  (Dynarmic, sem janela)"
+                "     zeebx bench <arquivo.mod|zip> [--seconds=N] [--keys=ms:tecla,...] [--dump=QUADRO.bmp] [--teclas=ms:nome,...] [--instalados=0xCLSID[:id],...] [--dump-surfaces=DIR] [--dpad-nos-eixos]  (Dynarmic, sem janela)"
             );
             ExitCode::FAILURE
         }

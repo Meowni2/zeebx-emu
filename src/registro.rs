@@ -56,6 +56,26 @@ impl Nivel {
         Nivel::Fatal,
     ];
 
+    /// O nome canônico em português — o que fica guardado no ajuste da interface.
+    ///
+    /// **Serve para haver um só.** [`Nivel::de_texto`] aceita dois vocabulários, o do core
+    /// (português) e o do `log` do Rust (inglês), e guardar o texto que veio faria o mesmo nível
+    /// tomar duas formas no `settings.json` e no `config.ini`. Quem lê aceita as duas, mas dois
+    /// ajustes iguais deixavam de ser iguais — e foi assim que o teste do `config.ini` de fábrica
+    /// pegou o `log = warn` do arquivo contra o padrão `aviso` do emulador.
+    ///
+    /// Os nomes são os mesmos que o `zeebx_log` do core Libretro oferece, de propósito: um nível,
+    /// um token, nos três lugares que o escrevem.
+    pub fn nome(self) -> &'static str {
+        match self {
+            Nivel::Depuracao => "depuracao",
+            Nivel::Informacao => "informacao",
+            Nivel::Aviso => "aviso",
+            Nivel::Erro => "erro",
+            Nivel::Fatal => "fatal",
+        }
+    }
+
     /// O nome curto, em maiúsculas, como sai no log do frontend.
     pub fn etiqueta(self) -> &'static str {
         match self {
@@ -367,6 +387,35 @@ mod tests {
 
         let tudo = Nivel::Depuracao;
         assert!(Nivel::TODOS.iter().all(|n| n.passa(tudo)));
+    }
+
+    /// O `nome` é o token canônico, e os outros dois vocabulários continuam entrando.
+    ///
+    /// É o que faz `log = warn` no `config.ini` e `aviso` no `settings.json` serem o **mesmo**
+    /// ajuste — antes, o arquivo de fábrica do frontend sem janela descrevia um padrão que não era
+    /// o do emulador, e a bateria dele ficava vermelha por isso.
+    #[test]
+    fn o_nome_canonico_e_o_token_de_um_so_nivel() {
+        assert_eq!(Nivel::Aviso.nome(), "aviso");
+        assert_eq!(Nivel::Depuracao.nome(), "depuracao");
+        for nivel in Nivel::TODOS {
+            assert_eq!(
+                Nivel::de_texto(nivel.nome()),
+                Some(nivel),
+                "{}",
+                nivel.nome()
+            );
+            assert_eq!(
+                Nivel::de_texto(nivel.etiqueta()),
+                Some(nivel),
+                "a etiqueta do log também é aceita"
+            );
+        }
+        // Os dois vocabulários do lado de fora continuam valendo, e caem no mesmo nome.
+        assert_eq!(Nivel::de_texto("warn"), Some(Nivel::Aviso));
+        assert_eq!(Nivel::de_texto("warning"), Some(Nivel::Aviso));
+        assert_eq!(Nivel::de_texto("DEBUG"), Some(Nivel::Depuracao));
+        assert_eq!(Nivel::de_texto("banana"), None);
     }
 
     #[test]

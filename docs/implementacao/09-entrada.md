@@ -165,6 +165,11 @@ a rodar **antes** do laço do analógico, no `Player::pad`, e antes do roteiro d
 verdade, quando existe e está fora da zona morta, precisa ter a última palavra. Escrito na ordem
 contrária, o espelho apagaria o manche parado no centro e o direcional venceria o analógico.
 
+Os três frontends que passam pelo [`Player::pad`] obedecem à opção: o desktop, o sem janela (pela
+chave `dpad_to_analog` de cada seção `[portN]` do `config.ini`) e o núcleo Libretro. **O frontend
+Android monta o próprio `Pad`** — o controle de tela e o gamepad dele não passam por aqui —, e por
+isso a opção não o alcança.
+
 Para medir sem janela:
 
 ```sh

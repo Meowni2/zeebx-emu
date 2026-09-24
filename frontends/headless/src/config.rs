@@ -236,6 +236,16 @@ fn secao_da_porta(indice: usize, player: &Player) -> String {
         Some(nome) => linhas.push(format!("controller = \"{nome}\"")),
         None => linhas.push("# controller = \"Xbox Wireless Controller\"".to_string()),
     }
+    linhas.push(
+        "# O direcional também empurra o manche esquerdo, para jogo que só escuta o eixo.".to_string(),
+    );
+    linhas.push(
+        "# **Desligado por padrão**: quem lê os dois canais anda duas casas por toque.".to_string(),
+    );
+    linhas.push(format!(
+        "dpad_to_analog = {}",
+        sim_ou_nao(player.direcional_nos_eixos)
+    ));
     linhas.push(String::new());
 
     // Na ordem em que a interface os mostra, e não na alfabética do mapa: `up, down, left,
@@ -430,7 +440,14 @@ pub fn de_texto(texto: &str) -> Lido {
         match Ajuste::de_texto(texto) {
             Some(ajuste) => {
                 ajuste.aplica();
-                settings.debug.nivel_de_log = texto.to_string();
+                // **O nome canônico, e não o texto que veio.** O `config.ini` fala inglês
+                // (`log = warn`) e o ajuste guardado é em português (`aviso`): guardar o texto cru
+                // deixava o mesmo nível com duas formas, e o `config.ini` de fábrica passava a
+                // descrever um padrão que não era o do emulador. Ver [`Nivel::nome`].
+                settings.debug.nivel_de_log = match ajuste {
+                    Ajuste::Desligado => "desligado".to_string(),
+                    Ajuste::Ate(nivel) => nivel.nome().to_string(),
+                };
             }
             // Um nível escrito errado não pode ser aceito em silêncio: quem depura precisa saber
             // que a linha não fez nada, em vez de concluir que o log é que está quebrado.
@@ -488,6 +505,13 @@ fn le_porta(ini: &mut Ini, secao: &str, player: &mut Player, avisos: &mut Vec<St
     let mut ligada = player.ligada;
     booleano(ini, secao, "enabled", &mut ligada, avisos);
     player.ligada = ligada;
+
+    // O direcional espelhado nos eixos: o mesmo ajuste da caixa na tela de controles do desktop
+    // e do `zeebx_dpad_to_analog_pN` do núcleo. Sem esta linha o frontend sem janela não teria
+    // como ligá-lo — o `Controls` chegaria com o padrão e ninguém saberia por quê.
+    let mut espelha = player.direcional_nos_eixos;
+    booleano(ini, secao, "dpad_to_analog", &mut espelha, avisos);
+    player.direcional_nos_eixos = espelha;
 
     if let Some(v) = ini.pega(secao, "device") {
         match v.texto.to_lowercase().as_str() {
@@ -707,6 +731,24 @@ mod testes {
         let segunda = portas.player(1).unwrap();
         assert!(segunda.ligada);
         assert_eq!(segunda.aparelho, Aparelho::Teclado);
+    }
+
+    /// O direcional nos eixos sai do `config.ini` como qualquer outra chave da porta — e a
+    /// porta que não escreve fica com o padrão, que é desligado.
+    #[test]
+    fn o_direcional_nos_eixos_vem_do_ini_e_o_padrao_e_desligado() {
+        let lido = de_texto("[port1]\ndpad_to_analog = yes\n");
+        assert!(lido.avisos.is_empty(), "{:?}", lido.avisos);
+        assert!(lido.settings.controls.player(0).unwrap().direcional_nos_eixos);
+        assert!(
+            !lido.settings.controls.player(1).unwrap().direcional_nos_eixos,
+            "a segunda porta não escreveu, e o padrão é desligado"
+        );
+
+        // E o valor de fábrica que o gerador escreve volta como o padrão do emulador: é o que
+        // cobra o teste que compara o arquivo completo com `de_texto("")`.
+        let padrao = de_texto("[port1]\ndpad_to_analog = false\n");
+        assert!(!padrao.settings.controls.player(0).unwrap().direcional_nos_eixos);
     }
 
     /// Escrever um botão substitui o padrão dele, e só dele.
