@@ -9,6 +9,8 @@ mod ponte;
 
 use std::process::ExitCode;
 
+use cxx_qt::casting::Upcast;
+
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl, QVariant};
 
 pub fn launch(jogo: Option<&str>) -> ExitCode {
@@ -24,6 +26,8 @@ pub fn launch(jogo: Option<&str>) -> ExitCode {
     let jogo = QString::from(jogo.unwrap_or_default());
     propriedades.insert(QString::from("jogoInicial"), QVariant::from(&jogo));
     engine.as_mut().set_initial_properties(&propriedades);
+    // As capas, os logos e as classificações da biblioteca: `image://zeebx/…`.
+    biblioteca::registra_imagens(engine.as_mut().upcast_pin());
     engine.load(&QUrl::from("qrc:/qt/qml/zeebx/qml/Principal.qml"));
     let saida = app.exec();
     // **A ordem é a correção.** Primeiro a engine; depois o jogo, solto com o contexto de GL
