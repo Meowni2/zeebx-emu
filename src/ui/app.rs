@@ -121,10 +121,8 @@ pub struct App {
     log_status: Option<String>,
     /// A janela de log foi fechada nesta execução. Zera ao abrir outro jogo.
     log_dismissed: bool,
-    /// A presença no Discord e desde quando o que ela mostra começou: o ClassID do jogo aberto,
-    /// ou nenhum no menu, e o instante em milissegundos Unix.
-    presenca: discord::Presenca,
-    inicio_da_presenca: (Option<u32>, i64),
+    /// A presença no Discord, acompanhando o que a janela mostra.
+    presenca: discord::Acompanha,
     /// O resultado da última exportação de imagens para o Discord.
     discord_recado: Option<String>,
     /// A procura por versão nova em andamento, e o que ela respondeu.
@@ -237,8 +235,7 @@ impl App {
             procura_de_atualizacao: None,
             atualizacao: None,
             aviso_de_atualizacao: false,
-            presenca: discord::Presenca::default(),
-            inicio_da_presenca: (None, agora_ms()),
+            presenca: discord::Acompanha::default(),
             discord_recado: None,
             aviso_nao_mostrar: false,
             log_gravado: None,
@@ -397,55 +394,13 @@ impl App {
         changed
     }
 
-    /// Diz ao Discord o que está acontecendo. Barato de chamar a cada quadro: a presença só
-    /// manda alguma coisa quando o texto ou a imagem mudam.
+    /// Diz ao Discord o que está acontecendo. Ver [`discord::Acompanha`].
     fn atualiza_presenca(&mut self) {
         let classe = self.partida.as_ref().map(Partida::sessao).map(Session::classe);
-        if self.inicio_da_presenca.0 != classe {
-            self.inicio_da_presenca = (classe, agora_ms());
-        }
-        let atividade = self
-            .settings
-            .discord
-            .ativo
-            .then(|| self.atividade_do_discord());
-        self.presenca.define(atividade);
-    }
-
-    fn atividade_do_discord(&self) -> discord::Atividade {
-        let inicio_ms = self.inicio_da_presenca.1;
-        let icone = discord::CHAVE_DO_ICONE.to_string();
-        let menu = |chave: &str| discord::Atividade {
-            detalhes: self.catalog.get(chave).to_string(),
-            imagem: icone.clone(),
-            texto_da_imagem: "Zeebx".to_string(),
-            icone: None,
-            inicio_ms,
-        };
-        let Some(classe) = self.partida.as_ref().map(Partida::sessao).map(Session::classe) else {
-            return menu("discord.menu");
-        };
-        if classe == crate::session::Z_WHEEL {
-            return menu("discord.z_wheel");
-        }
-        let titulo = self
-            .titulo_do_jogo_aberto()
-            .unwrap_or_else(|| self.catalog.get("library.unknown_title").to_string());
-        let chave = discord::chave_da_capa(classe);
-        let modelo = self.settings.discord.capas_url.trim();
-        let imagem = match modelo.is_empty() {
-            true => chave,
-            false => modelo
-                .replace("{clsid}", &format!("{classe:08x}"))
-                .replace("{chave}", &chave),
-        };
-        discord::Atividade {
-            detalhes: self.catalog.format("discord.playing", &[("name", &titulo)]),
-            imagem,
-            texto_da_imagem: titulo,
-            icone: Some((icone, "Zeebx".to_string())),
-            inicio_ms,
-        }
+        let titulo = self.titulo_do_jogo_aberto();
+        let discord = &self.settings.discord;
+        self.presenca
+            .atualiza(discord.ativo, &self.catalog, classe, titulo, &discord.capas_url);
     }
 
     /// Grava o ícone e as capas no formato que o Developer Portal aceita, com o nome de arquivo
@@ -1264,35 +1219,10 @@ impl App {
                     }
                 });
             if let Some(device) = chosen {
-                // Escolher um controle traz o mapeamento típico dele junto; ficar sem controle
-                // volta para o teclado puro. Nos dois casos o que estava configurado à mão se
-                // perde, e é por isso que a troca é um clique deliberado numa lista.
-                // Trocar o controle troca **o mapeamento**, não a porta: quem ela é e se está
-                // ligada foi decidido acima, e perder isso aqui seria a configuração se desfazer
-                // sozinha ao escolher um aparelho na lista.
-                let atual = self.settings.controls.player_mut(self.porta_editada);
-                let (ligada, aparelho) = (atual.ligada, atual.aparelho);
-                *atual = match device {
-                    // O Wii Remote não passa pelo gilrs, mas é um controle como os outros: o
-                    // mapeamento típico dele vem junto, e muda-se na tela como qualquer outro.
-                    Some(name) if crate::input::wiimote::Wiimotes::indice_do_nome(&name).is_some() => {
-                        crate::input::bindings::Player::with_wiimote(name)
-                    }
-                    Some(name) => crate::input::bindings::Player::with_gamepad(name),
-                    None => crate::input::bindings::Player::default(),
-                };
-                atual.ligada = ligada;
-                // **Um controle do host numa porta de teclado vira um controle para o console.**
-                // O `aparelho` é o que o console enumera, e uma porta marcada como teclado não
-                // entra na lista de joysticks que os jogos pedem: quem escolhia o segundo
-                // controle para a porta dois continuava sem ser visto como segundo jogador. As
-                // outras escolhas (Z-Pad, Boomerang) já são controle e ficam onde estão.
-                atual.aparelho = match (aparelho, &atual.device) {
-                    (crate::input::bindings::Aparelho::Teclado, Some(_)) => {
-                        crate::input::bindings::Aparelho::Controle
-                    }
-                    (outro, _) => outro,
-                };
+                self.settings
+                    .controls
+                    .player_mut(self.porta_editada)
+                    .troca_controle(device);
                 changed = true;
             }
             if ui.button(self.catalog.get("controls.rescan")).clicked() {
@@ -1311,10 +1241,8 @@ impl App {
                     .controls
                     .player(self.porta_editada)
                     .and_then(|player| player.device.clone());
-                *self.settings.controls.player_mut(self.porta_editada) = match device {
-                    Some(name) => crate::input::bindings::Player::with_gamepad(name),
-                    None => crate::input::bindings::Player::default(),
-                };
+                *self.settings.controls.player_mut(self.porta_editada) =
+                    crate::input::bindings::Player::padrao_do_controle(device);
                 changed = true;
             }
         });
@@ -1667,14 +1595,14 @@ impl App {
             ui.label(self.catalog.get("graphics.internal_resolution"));
             let atual = graphics.resolucao_interna.clamp(1, 6);
             egui::ComboBox::from_id_salt("resolucao-interna")
-                .selected_text(rotulo_da_resolucao(atual))
+                .selected_text(settings::rotulo_da_resolucao(atual))
                 .show_ui(ui, |ui| {
                     for fator in 1..=6u8 {
                         resolucao_mudou |= ui
                             .selectable_value(
                                 &mut graphics.resolucao_interna,
                                 fator,
-                                rotulo_da_resolucao(fator),
+                                settings::rotulo_da_resolucao(fator),
                             )
                             .changed();
                     }
@@ -1701,11 +1629,11 @@ impl App {
             ui.add_space(8.0);
             ui.label(self.catalog.get("graphics.antialias"));
             egui::ComboBox::from_id_salt("antialias")
-                .selected_text(rotulo_de_nivel(graphics.antialias, "MSAA", &desligado))
+                .selected_text(settings::rotulo_de_nivel(graphics.antialias, "MSAA", &desligado))
                 .show_ui(ui, |ui| {
                     for n in [1u8, 2, 4, 8] {
                         melhoria_mudou |= ui
-                            .selectable_value(&mut graphics.antialias, n, rotulo_de_nivel(n, "MSAA", &desligado))
+                            .selectable_value(&mut graphics.antialias, n, settings::rotulo_de_nivel(n, "MSAA", &desligado))
                             .changed();
                     }
                 });
@@ -1714,11 +1642,11 @@ impl App {
             ui.add_space(8.0);
             ui.label(self.catalog.get("graphics.anisotropic"));
             egui::ComboBox::from_id_salt("anisotropico")
-                .selected_text(rotulo_de_nivel(graphics.anisotropico, "AF", &desligado))
+                .selected_text(settings::rotulo_de_nivel(graphics.anisotropico, "AF", &desligado))
                 .show_ui(ui, |ui| {
                     for n in [1u8, 2, 4, 8, 16] {
                         melhoria_mudou |= ui
-                            .selectable_value(&mut graphics.anisotropico, n, rotulo_de_nivel(n, "AF", &desligado))
+                            .selectable_value(&mut graphics.anisotropico, n, settings::rotulo_de_nivel(n, "AF", &desligado))
                             .changed();
                     }
                 });
@@ -2579,12 +2507,6 @@ impl eframe::App for App {
 }
 
 /// Agora, em milissegundos Unix — o relógio que o Discord usa para contar o tempo de jogo.
-fn agora_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
-}
-
 /// A luz de um botão apertado agora. Translúcida de propósito: ela acende o botão, não o
 /// substitui — o traço do desenho continua aparecendo por baixo.
 const LIT: [u8; 4] = [0x2f, 0xd6, 0x8a, 0xb4];
@@ -2729,28 +2651,6 @@ fn draw_controller(
         true => hovered.map(str::to_string),
         false => None,
     }
-}
-
-/// Envia o quadro do console para a textura, criando-a na primeira vez.
-/// O nome de um nível de melhoria: `desligado` no 1, e `4x MSAA` nos outros.
-fn rotulo_de_nivel(nivel: u8, sigla: &str, desligado: &str) -> String {
-    match nivel {
-        0 | 1 => desligado.to_string(),
-        n => format!("{n}x {sigla}"),
-    }
-}
-
-/// O nome de um fator de resolução interna, com o tamanho que ele dá e o vídeo mais próximo.
-fn rotulo_da_resolucao(fator: u8) -> String {
-    let (largura, altura) = (640 * u32::from(fator), 480 * u32::from(fator));
-    let referencia = match fator {
-        1 => "nativa",
-        2 => "~720p",
-        3 => "~1080p",
-        4 => "~1440p",
-        _ => "~4K",
-    };
-    format!("{fator}x · {largura}×{altura} · {referencia}")
 }
 
 fn upload(
