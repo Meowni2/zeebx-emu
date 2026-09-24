@@ -28,7 +28,7 @@ fn interface_qt() {
 
     CxxQtBuilder::new_qml_module(
         QmlModule::new("zeebx")
-            .qml_files(["qml/Principal.qml", "qml/Jogo.qml"])
+            .qml_files(["qml/Principal.qml", "qml/Jogo.qml", "qml/GradeDaBiblioteca.qml", "qml/SliderDaBiblioteca.qml"])
             .depend("QtQuick"),
     )
     .files(["src/qt/ponte.rs", "src/qt/biblioteca.rs"])
@@ -38,6 +38,7 @@ fn interface_qt() {
         // O cabeçalho entra para o moc: o `ItemDoQuadro` tem `Q_OBJECT`.
         "src/qt/cpp/quadro.h",
         "src/qt/cpp/quadro.cpp",
+        "src/qt/cpp/imagens.cpp",
     ])
     // A imagem do aviso de calibração, em `qrc:/zeebx/boomerang.png`. O `assets/` é do projeto, e
     // não deste pacote.
@@ -51,4 +52,5 @@ fn interface_qt() {
     .qt_module("Network")
     .build();
     println!("cargo:rerun-if-changed=src/qt/cpp/gl_qt.h");
+    println!("cargo:rerun-if-changed=src/qt/cpp/imagens.h");
 }
