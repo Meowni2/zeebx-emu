@@ -174,8 +174,15 @@ impl<C: CpuBackend> Machine<C> {
                 // Um jogo que consulta o eixo todo quadro lê o centro quase sempre. O contador
                 // separa "lê o eixo" de "o eixo chegou deslocado", que é o que o espelho do
                 // direcional muda — e o que dá para medir sem olhar a tela.
-                if axes.iter().any(|&valor| valor != input::AXIS_CENTRO) {
+                let mut fora = 0u32;
+                for (indice, &valor) in axes.iter().enumerate() {
+                    if valor != input::AXIS_CENTRO {
+                        fora |= 1 << indice;
+                    }
+                }
+                if fora != 0 {
                     self.eixos_deslocados += 1;
+                    self.mascara_de_eixos_deslocados |= fora;
                 }
                 self.write_position_info(a1, &axes)?;
                 SUCCESS

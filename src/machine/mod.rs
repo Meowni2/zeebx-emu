@@ -2382,6 +2382,12 @@ pub struct Machine<C: CpuBackend> {
     /// "o jogo lê o eixo" de "o eixo **chegou** ao jogo", e é o que dá para medir sem olhar a tela
     /// — o espelho do direcional depende dele.
     eixos_deslocados: u64,
+    /// **Quais** eixos foram vistos fora do centro, um bit por eixo. Ver o contador acima.
+    ///
+    /// É o que responde "o direcional chegou no manche **esquerdo**?", que é a pergunta do issue
+    /// #39: `X` e `Y` são os do manche esquerdo, `Z` e `RZ` os do direito, e um jogo que só lê o
+    /// esquerdo tem de aparecer com os dois primeiros bits, e só eles.
+    mascara_de_eixos_deslocados: u32,
     /// Custo de uma leitura do relógio nesta máquina, para descontá-lo do perfil de custo.
     clock_ns: u64,
     profiling_api: bool,
@@ -3012,6 +3018,7 @@ impl<C: CpuBackend> Machine<C> {
             api_time: HashMap::new(),
             api_calls: 0,
             eixos_deslocados: 0,
+            mascara_de_eixos_deslocados: 0,
             clock_ns: 0,
             profiling_api: false,
             image_notify: HashMap::new(),

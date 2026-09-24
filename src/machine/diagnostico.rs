@@ -246,6 +246,17 @@ impl<C: CpuBackend> Machine<C> {
         self.eixos_deslocados
     }
 
+    /// Quais eixos foram vistos fora do centro, pelos nomes do console: `X` e `Y` são os do
+    /// manche esquerdo, `Z` e `RZ` os do direito.
+    pub fn eixos_vistos_deslocados(&self) -> Vec<&'static str> {
+        crate::input::AXIS_NAMES
+            .iter()
+            .enumerate()
+            .filter(|(indice, _)| self.mascara_de_eixos_deslocados & (1 << indice) != 0)
+            .map(|(_, nome)| *nome)
+            .collect()
+    }
+
     pub fn call_log(&self) -> Vec<(String, u64)> {
         self.calls
             .iter()

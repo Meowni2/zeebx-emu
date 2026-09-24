@@ -1241,7 +1241,10 @@ fn bench_dynarmic(
     // apertado — e é o número que prova o espelho do direcional (issue #39).
     let deslocados = machine.leituras_com_eixo_deslocado();
     if deslocados > 0 {
-        println!("eixo:      {deslocados} leitura(s) com eixo fora do centro");
+        // **Quais** eixos, e não só quantos: `X` e `Y` são do manche esquerdo, `Z` e `RZ` do
+        // direito. É o que responde "o direcional chegou no manche que o jogo lê?".
+        let nomes = machine.eixos_vistos_deslocados().join(", ");
+        println!("eixo:      {deslocados} leitura(s) fora do centro, em {nomes}");
     }
     if let Some(path) = dump {
         std::fs::write(path, machine.screen().to_bmp())?;
