@@ -1588,3 +1588,84 @@ O que **pode** ser cobrado hoje, e foi conferido nesta rodada: o **estado** de c
 linha de base — 63 ROMs, e as categorias são as mesmas (56 rodam, 3 não criam o applet, 2 quebram no
 laço, 2 terminam sozinhas). A diferença está no log de eventos, não no desfecho.
 
+## 33. A varredura é determinística — o que não é é o cache de extração
+
+Continuação da seção 32, e o resultado é melhor do que ela dizia. **O emulador é determinístico.**
+O que muda a execução do guest é o **estado do cache de extração**: frio (extraindo agora) contra
+quente (reaproveitando a extração que já está lá).
+
+### As medidas
+
+| rodada | cache | instruções | chamadas de API |
+|---|---|---:|---:|
+| quente 1 | reaproveitado | 760 815 | 46 137 |
+| quente 2 | reaproveitado | **760 815** | 46 137 |
+| quente 3 | reaproveitado | **760 815** | 46 137 |
+| frio | recém-extraído | **760 921** | 46 145 |
+
+Três rodadas em cache quente dão **o mesmo número de instruções, dígito por dígito** — 760 815 nas
+três. O cache frio dá 106 instruções a mais, uma chamada `CreateInstance` a mais e os endereços de
+heap deslocados 64 bytes.
+
+**Determinismo, então, está de pé:** o mesmo estado de cache dá o mesmo resultado. O que não estava
+era o controle da variável.
+
+### As duas linhas de tempo
+
+Entre duas rodadas quentes, o relatório difere em **seis linhas** — e todas as seis são do bloco de
+desempenho:
+
+```text
+-  rodou 0.8 s reais para 6002 ms virtuais (754% da velocidade do console)
++  rodou 0.8 s reais para 6002 ms virtuais (757% da velocidade do console)
+-  1052127 instruções (1323430/s), 46137 chamada(s) de API
++  1052127 instruções (1328443/s), 46137 chamada(s) de API
+```
+
+São relógio de parede, e não têm o que fazer num arquivo que existe para guardar comportamento. O
+resumo comparado (`Relatorio::resumo`) já os exclui — o que os guarda é o relatório completo, que
+vai para `ZEEBX_ROM_SAIDA` e **não** é o comparado. Está certo como está; o que faltava era o
+controle do cache.
+
+### Por que a linha de base acusou 32 de 63
+
+A rodada do corpus foi feita com um cache **misturado**: 37 entradas já existiam (quentes, de runs
+anteriores) e o resto foi extraído na hora (frio). Cada ROM foi medida num dos dois estados, e a
+linha de base foi gravada num deles. O resultado é 814 linhas removidas e 740 adicionadas — que o
+teste lê como regressão, e não é: é a mesma execução com o heap deslocado.
+
+### O que fazer antes de confiar na comparação
+
+1. **Aquecer o cache antes de comparar.** Rodar o corpus uma vez sem `ZEEBX_ROM_BASE` (o que também
+   grava o que falta), e só então rodar contra a linha de base. A primeira passada é o aquecimento;
+   a segunda é a medida.
+2. **Gravar a linha de base sempre na mesma condição**, e dizer qual é. A de `docs/varredura/` foi
+   gravada quente ou fria — não está dito, e é isso que hoje não se sabe.
+
+Fica registrado no procedimento da varredura, que é onde quem for repetir vai olhar.
+
+### O defeito de fidelidade que sobra, e que é real
+
+**O primeiro jogo aberto se comporta diferente dos seguintes.** Isso não é ruído de medição: é o
+guest executando 106 instruções a mais por causa de algo que só existe no host. Os suspeitos, em
+ordem:
+
+1. **`.zeebx-pacote`, o manifesto, dentro da raiz do jogo.** É um arquivo *nosso*, escrito na pasta
+   que o guest enxerga como raiz, e a enumeração de diretório **não o esconde** (`machine/file.rs`
+   lista, ordena e deduplica, sem filtro). Um jogo que enumere a própria pasta vê um arquivo que não
+   existe no console. Se ele estiver presente numa condição e ausente na outra, a diferença de 106
+   instruções e uma `CreateInstance` está explicada.
+2. **Ordem de escrita da extração**: mudaria a ordem de `read_dir`, mas a enumeração ordena antes de
+   entregar — então não pode ser esta.
+
+O caminho para fechar: abrir o mesmo jogo duas vezes com o cache forçado a cada estado e comparar o
+rastreio das primeiras chamadas (`ZEEBX_ROM_TRACO`), que mostra onde as duas execuções se separam.
+E, independente disso, **esconder o manifesto do guest é uma correção devida**: é um arquivo do host
+numa pasta que o jogo considera dele.
+
+### O critério de aceitação, com o veredito corrigido
+
+Não está suspenso por o emulador ser não-determinístico — ele não é. Está **pendente de controle de
+variável**: rodar o corpus com o cache num estado só. Com isso, a comparação volta a poder ser
+cobrada, e as diferenças que sobrarem serão regressões de verdade.
+
