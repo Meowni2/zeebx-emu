@@ -1217,3 +1217,62 @@ Quatro pontos mexem neste estado **fora** do `aplica`, e cada um avisa o espelho
 A contagem é do desktop. **No Mali a mesma chamada custa validação de driver**, e é lá que os 80%
 devem aparecer no relógio. O contador viaja no relatório: `Session::estado_enviado_e_poupado()`.
 
+## 27. Frente 7 (`0,5x`/`0,25x`): o desenho, medido antes de escrever
+
+Não implementado nesta rodada. O desenho abaixo sai de leitura do código, e existe para a próxima
+retomada começar sabendo onde está a dificuldade — que **não** é onde eu supunha.
+
+### O que eu supunha, e o que é
+
+Supunha ser preciso mexer em viewport, tesoura, anexo, leitura e apresentação. É menos: **o
+rasterizador de software já sabe desenhar numa superfície menor e ampliar na apresentação** — é o
+caminho que existe para o `EGL_QUALCOMM_surface_scale`, em que o jogo declara uma superfície
+pequena e o aparelho estica.
+
+O que faz isso funcionar:
+
+- `GlState::surface()` devolve a superfície declarada, limitada ao quadro, e `frame_rgb565`
+  **reamostra** dela para o tamanho de saída. Com 320×240 de superfície e 640×480 de saída o
+  reamostrador é vizinho mais próximo com passo 2 — exato, e já escrito;
+- `GlState::set_viewport` **deduz a superfície da maior viewport**: `surface = max(x + width)`. Ou
+  seja, reduzir a viewport reduz a superfície deduzida sozinho, sem nenhuma outra mudança.
+
+### O que falta, então
+
+1. `GlState`: um campo `reducao: usize` (1, 2, 4) e um `define_reducao`;
+2. `set_viewport` e `set_scissor`: dividir a coordenada por `reducao` antes de guardar — e a
+   superfície deduzida sai reduzida junto;
+3. `read_rect` (`glReadPixels`): o pedido do jogo vem em pixels do console e a superfície está
+   reduzida; é preciso mapear o retângulo e **replicar** cada pixel reduzido, porque o chamador
+   escreve `width * height` pixels na memória do guest;
+4. a opção do core: hoje `zeebx_resolucao_interna` é `1|2|3|4` e vale só na placa. Ela precisa
+   aceitar `0.5` e `0.25`, e mandar para o caminho de **software** — na placa quem reduz é outro
+   mecanismo, e a placa ignora;
+5. `clear`: conferir se limpa o quadro inteiro ou só a superfície. Aparentemente o quadro inteiro,
+   o que é inofensivo — a apresentação só lê a região da superfície.
+
+### Onde medir
+
+**No desktop, e sem depender do portátil**: a varredura e o perfil de API rodam no rasterizador de
+**software**. Com o perfil de API consertado (seção 23), o custo de `SwapBuffers` — que em software
+é o `flush` da fila, ou seja a rasterização — sai direto. Reduzir a área para um quarto deve
+aparecer ali, no mesmo instrumento que já mostrou `SwapBuffers` com 90,6% do tempo de método.
+
+### O risco
+
+HUD e alinhamento: qualquer desenho que o jogo faça **fora** da viewport declarada (um HUD em
+coordenadas de tela sem `glViewport` próprio) cairia fora da superfície deduzida. É o mesmo risco
+que já existe hoje para o `surface_scale`, e a mitigação é a mesma: a redução é opt-in, e o padrão
+continua 1×.
+
+### A ordem entre as frentes que sobraram
+
+| frente | por que nesta ordem |
+|---|---|
+| 7 `0,5x`/`0,25x` | mede-se no desktop, ataca o `SwapBuffers`, que é 90% do tempo de método |
+| 10 PDCA do `sleep` | mede-se no desktop, contrato do Libretro |
+| 12 `glInvalidateFramebuffer` | só rende no Mali, e não se mede aqui |
+| 3 `GET_CURRENT_SOFTWARE_FRAMEBUFFER` | só rende em frontend de framebuffer de software |
+| 13 Android drenar o registro | mecânico, e o build Android não se verifica nesta máquina |
+| 11 `lto = "fat"` | precisa de disco: 3,4 GB livres e o LTO gordo recompila as dependências |
+
