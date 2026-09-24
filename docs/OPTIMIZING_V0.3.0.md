@@ -586,3 +586,70 @@ Seis casos pedem triagem: Bejeweled, Kingdom Hearts homebrew, Pac-Mania (22% e t
 Prey Evil, Ridge Racer e Opera Mini. Eles não devem ser chamados de regressão sem comparação com
 a linha de base e roteiro equivalentes.
 
+## 19. Referência: PCSX-ReARMed, DuckStation e Flycast
+
+Fontes revisados sem copiar código:
+
+- `libretro/pcsx_rearmed` em `ff81ed1`;
+- `stenzek/duckstation` em `7326f90`;
+- `flyinghead/flycast` em `869038f`.
+
+### O consenso útil
+
+1. **Framebuffer fica na GPU.** Flycast mantém RTT como textura; DuckStation baixa só o retângulo
+   solicitado; PCSX-ReARMed escreve direto no software framebuffer oferecido pelo Libretro. O
+   Zeebx não deve fazer readback de todo quadro normal.
+2. **Readback é uma operação guest, não apresentação.** Quando inevitável: bounding rect/tiles,
+   staging/PBO em anel, fence e espera apenas quando a CPU guest realmente consome. DuckStation
+   chega a manter rasterizador software paralelo para evitar round-trip em jogos de muita leitura.
+3. **Shadow-state antes de mais batching.** DuckStation e Flycast evitam programa, textura,
+   blend, depth, stencil, scissor e parâmetros repetidos. O `GpuState::aplica` do Zeebx ainda
+   reemite quase tudo a cada flush.
+4. **Batch/arena por estado compatível.** DuckStation acumula até mudar textura/blend/máscara ou
+   hazard; Flycast envia vértices/índices/uniforms em arena por frame. O Zeebx já agrupa primitivas
+   de mesmo `Estado`; deve acrescentar dirty bits e streaming seguro, não reescrever do zero.
+5. **Thread de vídeo tem fila limitada.** DuckStation usa FIFO SPSC e no máximo dois frames;
+   Flycast aplica back-pressure/deduplica e descarta apresentação velha. Fila ilimitada troca FPS
+   por latência e RAM. Em Libretro/GL, ownership do contexto torna isto alto risco.
+6. **Raster software em blocos especializados.** PCSX-ReARMed separa setup/textura/shade/blend e
+   processa blocos de pixels com NEON; DuckStation compila o mesmo oráculo em escalar e SIMD. É o
+   modelo para o `fill_band` do Zeebx: scalar correto, kernels por estado comum, teste diferencial.
+7. **Fastmem/JIT não é para copiar.** DuckStation/Flycast usam arena virtual, fault-and-patch,
+   block linking e invalidação adaptativa. O Zeebx já recebe JIT ARM e page table do Dynarmic; só
+   valem como checklist e telemetria, não como substituto.
+8. **Pacing no core Libretro não dorme.** PCSX-ReARMed executa até a fronteira emulada e devolve;
+   o frontend controla wall clock. Flycast e DuckStation usam deadline/filas nos frontends próprios.
+   O `sleep` atual do Zeebx dentro de `retro_run` merece PDCA separado por risco de double-throttle.
+
+### Achados específicos
+
+- **PCSX-ReARMed:** `GET_CURRENT_SOFTWARE_FRAMEBUFFER` pode remover uma cópia no fallback software;
+  exige respeitar pitch/formato/lifetime. Seu GPU GLES é legado e não serve de backend moderno.
+- **DuckStation:** dirty rectangles, download textures/PBO com fence, pipeline/shader cache e
+  thread de vídeo robusta. Seu caminho AVX2 de rasterização está desativado por defeitos: aviso
+  contra assumir que SIMD é automaticamente correto.
+- **Flycast:** realmente tem quirks Mali. Testa `glBlitFramebuffer` e cai para quad se o driver
+  anuncia mas falha; usa `DEPTH24_STENCIL8` no Mali; no Vulkan acrescenta barreiras ARM específicas.
+  O Zeebx já usa `DEPTH24_STENCIL8`, mas deve testar blit no contexto real antes de confiar em MSAA
+  e resolução interna.
+- **Frameskip Flycast:** reage separadamente a CPU lenta e fila GPU ocupada. O Zeebx hoje reage ao
+  aviso de áudio do Libretro; telemetria de backlog/tempo de GPU permitiria decisão melhor.
+
+### Ordem que resulta desta comparação
+
+1. lazy readback/zero-copy;
+2. shadow-state + uniform cache;
+3. teste real de FBO blit no driver;
+4. PBO com fence para leitura inevitável;
+5. `GET_CURRENT_SOFTWARE_FRAMEBUFFER` no fallback;
+6. NEON/SSE no rasterizador software em blocos;
+7. fila de vídeo limitada, somente depois;
+8. PDCA do `sleep` dentro de `retro_run`.
+
+### Licenças
+
+PCSX-ReARMed e Flycast são GPL-2.0 ou posterior/compatíveis por arquivo, mas dependências variam.
+O DuckStation atual usa **CC-BY-NC-ND-4.0**: não se copia nem porta código para o Zeebx distribuído.
+Dele entram somente fatos e ideias, com implementação independente. Nenhum código destes três foi
+copiado nesta rodada.
+
