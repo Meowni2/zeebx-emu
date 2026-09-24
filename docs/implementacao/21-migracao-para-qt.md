@@ -14,7 +14,8 @@ marcada aqui como feita.
 | 2 — estrutura | feita: núcleo da interface Qt, `Biblioteca` como modelo, janela principal e janela do jogo |
 | 3 — janela do jogo | feita: textura da placa sem cópia, enquadramento, faixas de parada e de depuração, aviso de calibração, título e modo da janela |
 | 4 — biblioteca | feita: grade e slider, capas e nomes do acervo, busca, navegação pelo controle |
-| 5 a 9 | não começadas |
+| 5 — configurações | feita: as seis abas, o desenho do controle com clique pela silhueta, captura, eixos, Boomerang, Discord e atualizações |
+| 6 a 9 | não começadas |
 
 ## Onde o egui está de verdade
 
@@ -308,6 +309,11 @@ mudar de comportamento.
 - **O estilo é o Fusion.** O Basic, padrão do Qt Quick Controls, pinta os campos e o texto com a
   paleta dele, e o fundo da janela seguia a do sistema: num tema escuro, texto escuro sobre fundo
   escuro. O Fusion segue a paleta do sistema em tudo. `QT_QUICK_CONTROLS_STYLE` continua mandando.
+- **A roda anda o slider por uma `MouseArea`, e não por um `WheelHandler`.** O `WheelHandler` só
+  aceita o mouse por padrão — `acceptedDevices` 1, conferido no Qt 6.11 — e só um eixo: num
+  notebook, a rolagem de dois dedos do touchpad não andava o slider. Reproduzido com o
+  `qmltestrunner`, com o slider de verdade e uma biblioteca falsa; o evento sintético é sempre de
+  mouse, então o touchpad em si foi conferido à mão.
 - A barra de cima tem a Z-Wheel, a busca (Ctrl+F, Esc limpa, Enter joga o escolhido) e o "liberar
   sincronização" do Zeeboids. As configurações e os saves entram com as janelas deles.
 
@@ -317,9 +323,57 @@ controle de verdade.
 
 ### 5 — Configurações
 
-Uma `Window` com as abas em `ScrollView`. O `PadArt` já é independente de toolkit: cada silhueta
-vira uma `Image`, e o clique continua testado pela máscara em Rust. Captura de tecla pela mesma
-tabela `Qt::Key → nome`. O `rfd` fica na primeira passada — ele não depende de toolkit.
+Uma janela do sistema (`JanelaDeConfiguracoes.qml`), com as seis abas do egui. O nome não é
+`Configuracoes.qml` porque `Configuracoes` já é o `QObject` Rust registrado no mesmo módulo.
+
+- **Uma chave, e não uma propriedade por opção.** São dezenas de opções; o `Configuracoes`
+  (`src/qt/configuracoes.rs`) lê e grava pela chave do `settings.json` (`graphics.smooth`,
+  `audio.volume`), dá as escolhas das listas já traduzidas, e a cada gravação salva e aplica o
+  efeito na hora, como o egui: o volume e a névoa no jogo aberto, e a resolução interna, a proporção
+  e as melhorias refazendo o destino na placa — com o contexto de GL corrente, porque é GL.
+- **O idioma troca na hora.** O `tr()` do QML é uma chamada, e uma ligação só se refaz quando lê
+  uma propriedade que mudou. O singleton `Idioma` tem uma `versao` que o `tr()` de cada arquivo lê;
+  trocar o idioma a muda, e todo texto se refaz. A lista da biblioteca é refeita junto, porque os
+  nomes oficiais da Z-Wheel são por idioma.
+- **O que era do `App` e as duas janelas precisam** foi para o núcleo: a presença do Discord
+  (`discord::Acompanha`), os rótulos da resolução e dos níveis (`settings::rotulo_*`) e a troca de
+  controle de uma porta (`Player::troca_controle`, com teste). A janela Qt passou a ter a presença no
+  Discord e a procura por versão nova.
+- **A aba de controles** tem o seletor de portas e de aparelho, o controle do host — com o
+  configurado na lista mesmo desligado, como o egui mostra —, o mapeamento com captura por tecla ou
+  por botão, os eixos com o valor ao vivo, e o desenho. O desenho vem pelo provedor de imagens: a
+  arte de base e cada silhueta já tingida na cor da vez; o clique é testado pela silhueta no
+  `PadArt::hit`. Com uma porta de Boomerang, a prévia gira com o sensor, com a calibração e a
+  liberação dos sensores pelo `pkexec`. O estado ao vivo é relido a cada 33 ms com a aba à vista, e
+  a `versao` só muda quando a configuração muda — a janela não se refaz a cada leitura do controle.
+- **Uma ligação depende da versão por argumento, e não por uma expressão solta.** O QML é
+  compilado antecipadamente (`qmlcachegen`), e o compilador descarta uma leitura cujo valor não é
+  usado: `(cfg.versao, cfg.aparelho())` perdia a leitura da versão, e a ligação deixava de depender
+  dela. O sintoma foi trocar o aparelho de Boomerang para Z-Pad e a aba continuar na prévia do
+  Boomerang — e o mesmo defeito deixava o idioma sem trocar na hora. Medido pela ligação, no binário:
+  depois da troca, o Rust respondia Z-Pad e a ligação continuava em Boomerang; com o QML
+  interpretado (`QML_DISABLE_DISK_CACHE=1 QV4_FORCE_INTERPRETER=1`), acompanhava. O `qmltestrunner`
+  interpreta, e por isso o teste da roda não pegaria nada disto. A forma que ficou é
+  `depende([versoes], valor)`: o argumento é avaliado na chamada, e a leitura acontece.
+- **Com as configurações abertas, a biblioteca não escuta o controle nem o teclado** — nem se a
+  principal voltar a ter o foco. Mapeando o controle, o botão apertado abria um jogo sem querer. A
+  regra é uma só, `Principal.sobreposta`, verdadeira com qualquer janela por cima (a do jogo, a de
+  configurações, e as da fase 6 quando entrarem); o mouse continua valendo, como no egui. Ao voltar
+  a escutar, o que já estava apertado não conta: a navegação fica silenciada enquanto não escuta.
+  Conferido no binário, abrindo as configurações e devolvendo o foco à principal.
+- **Os botões da aba não pegam o foco.** Com ele, capturar o espaço clicaria o "atribuir" de novo e
+  desistiria da captura.
+- **O "pôr o quadro na tela pelo GL" não aparece.** A janela Qt sempre põe o quadro pelo scene
+  graph, com a textura da placa quando há uma.
+- Os seletores de pasta e de arquivo continuam no `rfd`, como no egui.
+
+**Uma mudança de comportamento, de propósito:** no egui, o "restaurar" de uma porta com Wii Remote
+aplicava o mapeamento de controle comum ao Wii Remote, enquanto escolhê-lo na lista aplicava o dele.
+O `Player::padrao_do_controle` usa a mesma regra nos dois, e o restaurar volta ao do Wii Remote.
+
+Conferido na tela, por captura da janela numa cópia da configuração: as seis abas, a prévia do
+Boomerang lendo o sensor de um Pro Controller, e o desenho do controle com a captura pulsando e os
+manches. **Não conferido:** a calibração e a liberação dos sensores de ponta a ponta.
 
 ### 6 — Janelas auxiliares
 
