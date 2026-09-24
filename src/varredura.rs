@@ -456,12 +456,76 @@ pub struct Desempenho {
     pub instrucoes: u64,
     /// Chamadas de API atendidas.
     pub chamadas: u64,
+    /// Entradas no JIT e nanossegundos gastos dentro dele, quando o backend mede.
+    ///
+    /// É o que separa o guest do despacho: o tempo do laço que **não** está aqui dentro é
+    /// trampolim mais corpo do método. Ver [`zeebx::cpu::CpuBackend::relato_do_jit`].
+    pub entradas_no_jit: u64,
+    /// Nanossegundos **estimados** dentro do JIT, e quantas amostras sustentam a estimativa.
+    pub nanos_no_jit: u64,
+    pub amostras_no_jit: u64,
     /// Bytes de heap do guest entregues, e objetos nossos vivos no fim.
     pub heap: u32,
     pub objetos: usize,
 }
 
 impl Desempenho {
+    /// A linha do relatório que diz onde o tempo foi: dentro ou fora do JIT.
+    ///
+    /// **Só o tempo dentro do JIT é amostrado.** As entradas são contadas sempre, e o relógio é
+    /// ligado pelo mesmo interruptor do perfil de API — sem ele, o que sai aqui é a contagem, e
+    /// dizer isso é melhor que apresentar zero como se fosse medida.
+    pub fn relato_do_despacho(&self) -> String {
+        if self.entradas_no_jit == 0 {
+            return "sem entrada no JIT para medir (backend sem a conta)".to_string();
+        }
+        if self.amostras_no_jit == 0 {
+            return format!(
+                "{} entrada(s) no JIT; tempo dentro dele não medido (ligue ZEEBX_ROM_PERFIL)",
+                self.entradas_no_jit
+            );
+        }
+        let total = self.laco.as_nanos() as u64;
+        let dentro = self.nanos_no_jit.min(total) / 1_000_000;
+        let fora = total / 1_000_000 - dentro;
+        let fatia = self.fatia_do_despacho().unwrap_or(0);
+        let por_chamada = match self.nanos_fora_do_jit_por_chamada() {
+            Some(ns) => format!("{ns} ns fora do JIT por chamada de API"),
+            None => "sem chamada de API para dividir".to_string(),
+        };
+        format!(
+            "{dentro} ms dentro do JIT e {fora} ms fora ({fatia}% do laço no despacho); \
+{} entrada(s) em {} amostra(s), {por_chamada}",
+            self.entradas_no_jit, self.amostras_no_jit
+        )
+    }
+
+    /// Quanto do laço ficou fora do JIT, em porcentagem — o despacho, medido.
+    ///
+    /// `None` quando o backend não mede a entrada no JIT, ou quando o laço foi curto demais para
+    /// a razão dizer alguma coisa.
+    pub fn fatia_do_despacho(&self) -> Option<u64> {
+        let real = self.laco.as_nanos() as u64;
+        if real == 0 || self.entradas_no_jit == 0 || self.amostras_no_jit == 0 {
+            return None;
+        }
+        let dentro = self.nanos_no_jit.min(real);
+        Some((real - dentro) * 100 / real)
+    }
+
+    /// Nanossegundos de relógio fora do JIT por chamada de API.
+    ///
+    /// **É o número que faltava.** O `ZEEBX_ROM_PERFIL` mede só o corpo do método; este mede o que
+    /// sobra, e é onde o trampolim vive. Sem ele, o custo por chamada de API é desconhecido — e
+    /// foi tratando um número da era do Unicorn como atual que a revisão externa errou.
+    pub fn nanos_fora_do_jit_por_chamada(&self) -> Option<u64> {
+        let real = self.laco.as_nanos() as u64;
+        if real == 0 || self.chamadas == 0 || self.amostras_no_jit == 0 {
+            return None;
+        }
+        Some(real.saturating_sub(self.nanos_no_jit.min(real)) / self.chamadas)
+    }
+
     /// Fração da velocidade do console, em porcentagem: tempo virtual sobre tempo real.
     pub fn velocidade(&self) -> u64 {
         let real = self.laco.as_millis() as u64;
@@ -776,6 +840,7 @@ impl Relatorio {
                  abriu em {:.1} s, rodou {:.1} s reais para {} ms virtuais ({}% da velocidade do console)\n  \
                  {} volta(s), {} quadro(s) ({} fps virtuais)\n  \
                  {} instruções ({}/s), {} chamada(s) de API\n  \
+                 {}\n  \
                  {} KB de heap, {} objeto(s) vivo(s)\n",
                 d.abertura.as_secs_f32(),
                 d.laco.as_secs_f32(),
@@ -787,6 +852,7 @@ impl Relatorio {
                 d.instrucoes,
                 d.ips(),
                 d.chamadas,
+                d.relato_do_despacho(),
                 d.heap / 1024,
                 d.objetos,
             ));
@@ -1162,6 +1228,12 @@ pub fn examina(arquivo: &Path, ms_virtuais: u32, teto: Duration) -> Relatorio {
     medida.laco = laco.elapsed();
     medida.virtual_ms = session.clock_ms().saturating_sub(base_ms);
     medida.instrucoes = session.machine().instructions();
+    // A partilha do relógio entre o JIT e o despacho. Ver `relato_do_despacho`.
+    if let Some((entradas, nanos, amostras)) = session.machine().relato_do_jit() {
+        medida.entradas_no_jit = entradas;
+        medida.nanos_no_jit = nanos;
+        medida.amostras_no_jit = amostras;
+    }
     let mut chamadas = session.machine().call_log();
     medida.chamadas = chamadas.iter().map(|(_, vezes)| vezes).sum();
     let (heap, objetos) = session.memory();

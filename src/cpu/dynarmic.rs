@@ -109,6 +109,25 @@ struct Estado {
     instrucoes: Cell<u64>,
     limite: Cell<u64>,
     parada: Cell<Parada>,
+    /// Quantas vezes o host entrou no JIT, e quanto tempo ficou lá dentro.
+    ///
+    /// **É o número que separa o guest do despacho.** Cada chamada de API é uma saída e uma
+    /// reentrada, então o que sobra do relógio depois de descontar o tempo passado dentro do
+    /// `jit.run` é, quase todo, trampolim mais corpo do método. Sem esta conta o custo por
+    /// chamada de API é desconhecido — e foi tratando um número da era do Unicorn como atual que
+    /// a revisão externa errou. Ver [`CpuBackend::relato_do_jit`].
+    ///
+    /// Ficam aqui, e não no `DynarmicCpu`, porque o empréstimo do `Jit` está vivo durante toda a
+    /// `run`: um `Cell` no estado atravessa o empréstimo imutável sem brigar com ele.
+    ///
+    /// **Contar é de graça; cronometrar não é.** Medido: um par de `Instant::now()` por entrada
+    /// custava **40% do relógio** nesta máquina (o `Instant::now` daqui é chamada de sistema, não
+    /// o caminho rápido do vDSO), e são 1,3 milhão de entradas num Quake de quinze segundos. Por
+    /// isso a contagem é sempre ligada — uma soma num `Cell` — e o relógio é **amostrado** e só
+    /// quando alguém pede o perfil de custo. Ver [`liga_medicao_do_jit`].
+    entradas_no_jit: Cell<u64>,
+    nanos_no_jit: Cell<u64>,
+    amostras_no_jit: Cell<u64>,
     jit: Cell<*mut Jit<Estado>>,
     /// A tabela de páginas do Dynarmic: `PAGINAS` ponteiros, o início de cada página no host, ou
     /// nulo para a página que precisa passar pelas callbacks. Ver [`DynarmicCpu::tabela`].
@@ -305,6 +324,9 @@ impl Callbacks for Estado {
     }
 }
 
+/// De quantas em quantas entradas no JIT o relógio é lido, quando a medição está ligada.
+const AMOSTRA_DO_JIT: u64 = 64;
+
 /// Recompilador A32. Fica separado do backend padrão até a equivalência ser estabelecida jogo
 /// a jogo; criar a CPU não aloca o JIT, porque o mapa do guest só existe em `reset`.
 pub struct DynarmicCpu {
@@ -467,6 +489,9 @@ impl CpuBackend for DynarmicCpu {
             instrucoes: Cell::new(0),
             limite: Cell::new(0),
             parada: Cell::new(Parada::Nenhuma),
+            entradas_no_jit: Cell::new(0),
+            nanos_no_jit: Cell::new(0),
+            amostras_no_jit: Cell::new(0),
             jit: Cell::new(std::ptr::null_mut()),
             tabela: self.tabela.as_mut_ptr(),
         };
@@ -496,6 +521,19 @@ impl CpuBackend for DynarmicCpu {
 
     fn instructions(&self) -> u64 {
         self.jit().map_or(0, |jit| jit.instrucoes.get())
+    }
+
+    fn relato_do_jit(&self) -> Option<(u64, u64, u64)> {
+        self.jit().ok().map(|jit| {
+            let entradas = jit.entradas_no_jit.get();
+            let amostras = jit.amostras_no_jit.get();
+            // A média amostrada vale para todas as entradas: nenhuma delas é especial.
+            let nanos = match amostras {
+                0 => 0,
+                n => jit.nanos_no_jit.get() / n * entradas,
+            };
+            (entradas, nanos, amostras)
+        })
     }
 
     fn set_instructions(&mut self, valor: u64) {
@@ -627,7 +665,28 @@ impl CpuBackend for DynarmicCpu {
         jit.parada.set(Parada::Nenhuma);
         jit.limite
             .set(jit.instrucoes.get().saturating_add(max_instructions));
+        // O relógio em volta do `jit.run`, e só dele: tudo o que se passa aqui dentro é execução
+        // do guest (mais as callbacks de memória, que o próprio JIT chama). O que fica de fora é
+        // o despacho — e é aí que o trampolim vive.
+        //
+        // **Amostrado de propósito, e ligado sempre.** O `Instant::now` desta máquina é chamada de
+        // sistema, e um par por entrada custou 40% do relógio. Uma entrada em cada `AMOSTRA` mede
+        // o mesmo por 1/64 do preço — cerca de 0,6% do relógio, medido —, e por isso a partilha
+        // sai em todo relatório em vez de depender de alguém lembrar de ligá-la. A média
+        // amostrada é multiplicada pelo contador depois.
+        let entrada = jit.entradas_no_jit.get();
+        let cronometrar = entrada % AMOSTRA_DO_JIT == 0;
+        let comeco = cronometrar.then(std::time::Instant::now);
         let _ = unsafe { jit.run() };
+        if let Some(comeco) = comeco {
+            jit.nanos_no_jit.set(
+                jit.nanos_no_jit
+                    .get()
+                    .saturating_add(comeco.elapsed().as_nanos() as u64),
+            );
+            jit.amostras_no_jit.set(jit.amostras_no_jit.get().saturating_add(1));
+        }
+        jit.entradas_no_jit.set(entrada.saturating_add(1));
         // Não há invalidação para páginas de dados: só código previamente executado chega aqui.
         // É seguro mexer no cache depois de o JIT devolver o controle, nunca da callback.
         let paginas = std::mem::take(&mut *jit.codigo_sujo.borrow_mut());

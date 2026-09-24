@@ -84,6 +84,10 @@ impl<C: CpuBackend> Machine<C> {
     }
 
     /// Liga a medição de tempo real por método de API. Ver [`Machine::api_profile`].
+    ///
+    /// A partilha do relógio do JIT **não** depende daqui: ela é amostrada e sai em todo
+    /// relatório. Este interruptor é para o custo por método, que é caro. Ver
+    /// [`Machine::relato_do_jit`].
     pub fn enable_api_profile(&mut self) {
         self.profiling_api = true;
     }
@@ -281,6 +285,15 @@ impl<C: CpuBackend> Machine<C> {
     /// Quantas instruções o guest executou.
     pub fn instructions(&self) -> u64 {
         self.cpu.instructions()
+    }
+
+    /// Entradas no JIT e tempo gasto dentro dele, quando o backend mede.
+    ///
+    /// Serve para separar guest de despacho: `chamadas` conta as APIs, e o tempo de relógio que
+    /// **não** está aqui dentro é trampolim mais corpo do método. Ver [`Machine::api_profile`]
+    /// para o que acontece do lado de fora, e o relatório da varredura para a razão entre os dois.
+    pub fn relato_do_jit(&self) -> Option<(u64, u64, u64)> {
+        self.cpu.relato_do_jit()
     }
 
     /// Quantos quadros o jogo apresentou pelo OpenGL.
