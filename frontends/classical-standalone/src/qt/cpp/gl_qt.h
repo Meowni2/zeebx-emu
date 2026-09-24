@@ -8,8 +8,9 @@
 
 namespace zeebx {
 
-// Antes do QGuiApplication: GL como API do Qt Quick, 3.3 core, contextos compartilhados e o
-// render loop `basic`, que desenha na thread principal — onde o emulador roda.
+// Antes do QGuiApplication: GL como API do Qt Quick, 3.3 core, contextos compartilhados, o
+// render loop `basic`, que desenha na thread principal — onde o emulador roda —, e o estilo
+// Fusion dos controles.
 void prepara_gl();
 
 // O contexto do rasterizador: próprio, fora de tela e compartilhado com o do Qt Quick. Depois
