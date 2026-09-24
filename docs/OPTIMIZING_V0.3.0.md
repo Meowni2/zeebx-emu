@@ -519,3 +519,48 @@ Isso **não** remove ainda o `glReadPixels` que ocorre em `present_gl`; esse é 
 precisa de readback preguiçoso para não quebrar jogos que misturam GL, `IDisplay` e leitura de
 pixels.
 
+## 17. Referência: ParaLLEl-N64 e Mupen64Plus-Next
+
+Fontes revisados sem copiar código:
+
+- `libretro/parallel-n64` em `6e4c44c`;
+- `libretro/mupen64plus-libretro-nx` em `6752836`.
+
+A CPU guest do N64 é MIPS e o Zeebo é ARM, então o lowering dos dynarecs não serve. A arquitetura
+serve: fastmem por páginas, block linking, invalidação granular e corpus diferencial. O Zeebx já
+delega isso ao Dynarmic; trocar por um JIT MIPS adaptado seria regressão de projeto.
+
+As lições gráficas úteis são mais diretas:
+
+1. **Quadro normal fica na GPU.** Os cores entregam `RETRO_HW_FRAME_BUFFER_VALID`; readback existe
+   para a memória guest, screenshot ou compatibilidade, não para apresentar todo quadro.
+2. **Readback sob demanda.** GLideN64 marca framebuffer sujo, lê apenas quando a CPU guest observa,
+   pode recortar página/faixa e reduz para resolução nativa antes de copiar.
+3. **PBO em anel.** Quando readback é inevitável, usa PBO duplo/triplo e consome o anterior; o
+   fallback GLES2 é `glReadPixels` síncrono. O Zeebx deve marcar slots válidos e usar fence — o
+   código de referência não é seguro para copiar literalmente.
+4. **Shadow state.** Cacheia enable, FBO, buffer, textura, viewport, scissor, blend, depth, programa,
+   atributos e uniforms. O `GpuState::aplica` do Zeebx ainda reemite quase tudo por lote e desliga
+   VAO/programa depois de cada draw; este é o próximo quick win Mali depois do readback.
+5. **Batch por chave.** Acumula triângulos até mudar FBO/programa/texturas/blend/depth/scissor ou
+   aparecer barreira. O Zeebx já agrupa leques/faixas de mesmo `Estado`, então deve melhorar o
+   cache de estado antes de construir outro batcher.
+6. **Streaming de VBO.** Usa ring persistente quando há `bufferStorage`; senão map unsynchronized.
+   No Zeebx, só vale com segmentos e fences para não sobrescrever dados em uso no Mali.
+7. **SIMD com oráculo escalar.** Angrylion mantém SSE2/NEON e escalar bit a bit. É o padrão certo
+   para RGB565, textura e rasterização; não justifica importar o código específico do RDP/RSP.
+8. **Thread GL é opcional.** Mupen avisa que melhora alguns drivers e adiciona latência. Contexto
+   Libretro e lifetime dos argumentos tornam isso projeto de alto risco, não quick win.
+
+Não há receita Mali pronta nesses cores. Eles usam capability probing e quirks medidos. Isso levou
+a duas correções locais imediatas:
+
+- handheld AArch64 agora pede **GLES 3.0**, suficiente para VAO/FBO blit/MSAA/GLSL 300, em vez de
+  recusar Panfrost 3.1 por exigir 3.2;
+- `GL_DEPTH_CLAMP` não é mais emitido no GLES, evitando `GL_INVALID_ENUM` e validação inútil por
+  lote no driver Mali.
+
+Prioridade resultante: lazy readback/zero-copy, shadow-state/uniform cache, PBO somente para
+readback inevitável, e depois NEON nos kernels medidos. Vulkan/ParaLLEl-RDP e o dynarec MIPS ficam
+fora do escopo.
+

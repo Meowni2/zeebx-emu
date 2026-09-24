@@ -114,10 +114,10 @@ const ENV_SET_HW_RENDER: u32 = 14;
 ///
 /// Desktop usa `RETRO_HW_CONTEXT_OPENGL_CORE` (3), medido com RetroArch/Mesa. Os handhelds
 /// Linux AArch64 (R36S/R35S/RGB20S com ArkOS/AeolusUX/dArkOS/dArkOSen e RG40XX-H com muOS)
-/// expõem OpenGL ES no RetroArch, não um contexto OpenGL Core 3.3. Neles pedimos GLES 3.2
-/// (`RETRO_HW_CONTEXT_OPENGLES_VERSION`, 5), e o `gpu.rs` usa `#version 300 es`, compatível com
-/// o subconjunto necessário. Se o frontend/driver só oferecer GLES 3.1, ele recusa
-/// o pedido e o core permanece no rasterizador software — nunca depende de X11, Wayland ou EGL.
+/// expõem OpenGL ES no RetroArch, não um contexto OpenGL Core 3.3. Neles pedimos GLES 3.0
+/// (`RETRO_HW_CONTEXT_OPENGLES3`, 4): VAO, FBO blit, MSAA e `#version 300 es` já são ES 3.0.
+/// Pedir 3.2 recusava desnecessariamente drivers Panfrost que oferecem 3.1 e devolvia todo o
+/// desenho ao processador — nunca dependemos de X11, Wayland ou EGL.
 ///
 /// No desktop o valor 1 (`RETRO_HW_CONTEXT_OPENGL`, compatibilidade) não serve: em RetroArch/EGL
 /// ele entregava perfil diferente do que o motor esperava e falhava com `GL: Invalid enum`.
@@ -129,11 +129,11 @@ const HW_VERSION_MAJOR: u32 = 3;
 const HW_VERSION_MINOR: u32 = 0;
 
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-const HW_CONTEXT: u32 = 5; // RETRO_HW_CONTEXT_OPENGLES_VERSION (GLES 3.1+)
+const HW_CONTEXT: u32 = 4; // RETRO_HW_CONTEXT_OPENGLES3 — GLES 3.0
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 const HW_VERSION_MAJOR: u32 = 3;
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-const HW_VERSION_MINOR: u32 = 2;
+const HW_VERSION_MINOR: u32 = 0;
 
 #[cfg(not(any(
     target_os = "emscripten",

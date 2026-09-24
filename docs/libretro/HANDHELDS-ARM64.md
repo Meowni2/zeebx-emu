@@ -28,10 +28,10 @@ O core não depende de X11, Wayland, EGL, ALSA, udev ou GTK. Vídeo, áudio e co
 ABI Libretro. Se o RetroArch não oferecer contexto OpenGL ES 3, o core aceita a recusa e usa o
 rasterizador software; ele não cai por falta de uma GPU compatível.
 
-Em Linux AArch64 o pedido de renderização em hardware é `RETRO_HW_CONTEXT_OPENGLES_VERSION`,
-com versão 3.2. O rasterizador seleciona `#version 300 es`, pois usa somente o subconjunto GLES 3
-necessário ao desenho. Se o driver aberto expuser apenas GLES 3.1, o frontend recusa o pedido e o
-core usa software. Em desktop continua pedindo OpenGL Core 3.3, pois o contexto é diferente. Os
+Em Linux AArch64 o pedido de renderização em hardware é `RETRO_HW_CONTEXT_OPENGLES3`,
+ou seja, GLES 3.0. VAO, blit de FBO, MSAA e o shader `#version 300 es` já pertencem a essa versão;
+pedir 3.2 fazia um Panfrost 3.1 perfeitamente suficiente recusar o contexto e mandar todo o desenho
+para o processador. Em desktop continua pedindo OpenGL Core 3.3, pois o contexto é diferente. Os
 dois caminhos usam o mesmo FBO do frontend.
 
 ## Instalação
@@ -185,8 +185,8 @@ deixe o core cair para software; isso é uma degradação suportada, não uma fa
   <https://docs.mesa3d.org/drivers/panfrost.html>
 
 Portanto **3.2 é a capacidade anunciada do hardware e do libMali**, mas não é seguro afirmar que
-cada imagem com Panfrost expõe 3.2. O core solicita 3.2 para aproveitar o caminho de hardware e
-continua funcional em software quando o driver só oferece 3.1.
+cada imagem com Panfrost expõe 3.2. O core requer apenas GLES 3.0 e aceita Panfrost 3.1; continua
+funcional em software quando nem GLES 3.0 estiver disponível.
 
 
 ## Procedimento atual de teste — R36S com ArkOS/AeolusUX/dArkOSen

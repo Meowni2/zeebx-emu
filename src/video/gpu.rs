@@ -731,9 +731,11 @@ impl GpuState {
             // — na Z-Wheel era uma faixa do fundo, entre a linha do horizonte e o chão. Preso em
             // vez de recortado, o comportamento volta a ser o do software.
             //
-            // É core desde o OpenGL 3.2, que é o perfil pedido. Na queda para GLES 3.x ele não
-            // existe e a chamada não tem efeito: ali o plano distante volta a recortar.
-            gl.enable(glow::DEPTH_CLAMP);
+            // É core no OpenGL desktop, mas não existe no GLES. Emitir o enum inválido em todo
+            // lote custa validação no driver Mali e deixa `GL_INVALID_ENUM` pendente.
+            if !gl.version().is_embedded {
+                gl.enable(glow::DEPTH_CLAMP);
+            }
             // O `glScissor` do jogo vem em pixels do console, com o `y` de baixo para cima —
             // a mesma convenção da viewport —, e o anexo é `escala` vezes maior. Ver
             // [`tesoura_no_anexo`].
