@@ -51,18 +51,22 @@ jobs:
         include:
           - alvo: linux-x86_64
             nome: linux-x86_64
+            qt: "6.11.2"
             sistema: ubuntu-24.04
             binario: target/release/zeebx
           - alvo: linux-aarch64
             nome: linux-aarch64
+            qt: "6.11.2"
             sistema: ubuntu-24.04-arm
             binario: target/release/zeebx
           - alvo: windows-x86_64
             nome: windows-x86_64
+            qt: "6.10.3"
             sistema: windows-latest
             binario: target/release/zeebx.exe
           - alvo: windows-aarch64
             nome: windows-aarch64
+            qt: "6.10.3"
             sistema: windows-11-arm
             # Windows ARM64 **não** tem o `unicorn` (falta montador MASM para ARM64 e o QEMU do Windows
             # monta um `.asm` com o `ml` do MSVC, que só existe para x86 e x64). O alvo compila assim
@@ -71,10 +75,12 @@ jobs:
             binario: target/release/zeebx.exe
           - alvo: macos-x86_64
             nome: macos-x86_64
+            qt: "6.11.2"
             sistema: macos-15-intel
             binario: target/release/zeebx
           - alvo: macos-arm64
             nome: macos-arm64
+            qt: "6.11.2"
             sistema: macos-latest
             binario: target/release/zeebx
     steps:
@@ -100,6 +106,25 @@ jobs:
       - name: Dependências do macOS
         if: runner.os == 'macOS'
         run: brew install cmake ninja pkg-config || true
+
+      # A interface é a do Qt (a feature `ui-qt` vem ligada). As versões são as do `release.yml`:
+      # exatas, e o Windows no 6.10 — ver o `qt.yml`. O `install-qt-action` reconhece sozinho os
+      # runners ARM64, e o repositório do Qt tem o 6.11.2 para Linux ARM64 e o 6.10.3 para Windows
+      # ARM64, conferido no `download.qt.io`.
+      - name: Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ matrix.qt }}
+          cache: true
+
+      # O `cxx-qt-build` acha o Qt pelo `qmake`. Dizer qual evita pegar outro que esteja no PATH
+      # da imagem do runner.
+      - name: qmake
+        shell: bash
+        run: |
+          qmake="$QT_ROOT_DIR/bin/qmake"
+          [ "$RUNNER_OS" = Windows ] && qmake="$qmake.exe"
+          echo "QMAKE=$qmake" >> "$GITHUB_ENV"
 
       # Sem debuginfo a árvore passa de mais de 5 GiB para algumas centenas de MB — o mesmo motivo
       # que fez o build local encher o disco.
