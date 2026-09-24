@@ -1422,7 +1422,7 @@ unsafe fn registra_opcoes_do_core() {
                 key: c"zeebx_perfil".as_ptr(),
                 desc: c"Perfil".as_ptr(),
                 desc_categorized: c"Perfil".as_ptr(),
-                info: c"Portátil aplica de uma vez o que o aparelho de mão fraco (RG40XX-H, muOS) precisa: tabela de timbres em vez de SoundFont, taxa e vozes do MIDI reduzidas, cache de som menor e o 3D desenhado em 0,5x — 320x240 ampliado para os 640x480 na apresentação, o que mediu 22% menos tempo real. **A imagem fica mais quadrada por causa disso.** Enquanto ativo, ignora as opções individuais que ele cobre (mas não volume, névoa nem rasterizador, que continuam por conta própria). O sintetizador MIDI muda ao recarregar o conteúdo; o resto vale sem recarregar.".as_ptr(),
+                info: c"Portátil aplica de uma vez o que o aparelho de mão fraco (RG40XX-H, muOS) precisa: tabela de timbres em vez de SoundFont, taxa e vozes do MIDI reduzidas, cache de som menor e, **quando o desenho é no processador**, o 3D em 0,5x — 320x240 ampliado para os 640x480 na apresentação, o que mediu 22% menos tempo real, com a imagem mais quadrada. Com o rasterizador de placa o perfil não mexe na resolução: ali quem manda é a opção separada. Enquanto ativo, ignora as opções individuais que ele cobre (mas não volume, névoa nem rasterizador, que continuam por conta própria). O sintetizador MIDI muda ao recarregar o conteúdo; o resto vale sem recarregar.".as_ptr(),
                 info_categorized: c"Portátil junta os ajustes de desempenho para aparelho de mão fraco. Ignora as opções individuais que cobre.".as_ptr(),
                 category_key: c"sistema".as_ptr(),
                 values: perfil_values,
