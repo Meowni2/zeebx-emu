@@ -40,12 +40,13 @@ fn interface_qt() {
         "src/qt/cpp/quadro.cpp",
         "src/qt/cpp/imagens.cpp",
     ])
-    // A imagem do aviso de calibração, em `qrc:/zeebx/boomerang.png`. O `assets/` é do projeto, e
-    // não deste pacote.
+    // A imagem do aviso de calibração e a logo do ícone, em `qrc:/zeebx/`. O `assets/` é do
+    // projeto, e não deste pacote.
     .qrc_resources(cxx_qt_build::QResources::new().resource(
         cxx_qt_build::QResource::new()
             .prefix("/zeebx")
-            .file(qt_build_utils::QResourceFile::new("../../assets/boomerang.png").alias("boomerang.png")),
+            .file(qt_build_utils::QResourceFile::new("../../assets/boomerang.png").alias("boomerang.png"))
+            .file(qt_build_utils::QResourceFile::new("../../assets/zeebx.png").alias("zeebx.png")),
     ))
     .qt_module("Quick")
     // O Qt Qml pede o Network no macOS.
