@@ -151,6 +151,111 @@ impl Default for Estado {
     }
 }
 
+/// Se o `glBlitFramebuffer` desta placa entrega o que promete.
+///
+/// **O anúncio não basta.** O Flycast, que roda nos drivers ruins de Android e de portátil, não
+/// confia nele: faz um blit de verdade e, quando o resultado não bate, desenha um quadrilátero no
+/// lugar. Aqui o blit também não é enfeite — é o `resolve` do MSAA e a redução do quadro grande
+/// antes da leitura —, e um blit que mente **não dá erro**: dá imagem errada em silêncio, que é
+/// exatamente o tipo de defeito que só aparece no aparelho de quem está jogando.
+///
+/// A prova é mínima de propósito: 2×2, uma cor chapada, ida e volta pela CPU. Custa duas texturas
+/// e dois framebuffers, uma vez por contexto.
+#[cfg(not(target_arch = "wasm32"))]
+fn blit_serve(gl: &glow::Context) -> bool {
+    use glow::HasContext;
+
+    /// A cor que se escreve num lado e se cobra do outro.
+    const MARCA: [u8; 4] = [0x00, 0xff, 0x00, 0xff];
+
+    (|| -> Option<bool> {
+        unsafe {
+            let criar = |largura: u32| -> Option<(glow::Texture, glow::Framebuffer)> {
+                let cor = gl.create_texture().ok()?;
+                gl.bind_texture(glow::TEXTURE_2D, Some(cor));
+                gl.tex_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    glow::RGBA8 as i32,
+                    largura as i32,
+                    largura as i32,
+                    0,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelUnpackData::Slice(None),
+                );
+                let fbo = gl.create_framebuffer().ok()?;
+                gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+                gl.framebuffer_texture_2d(
+                    glow::FRAMEBUFFER,
+                    glow::COLOR_ATTACHMENT0,
+                    glow::TEXTURE_2D,
+                    Some(cor),
+                    0,
+                );
+                Some((cor, fbo))
+            };
+
+            let (cor_a, fbo_a) = criar(2)?;
+            let (cor_b, fbo_b) = criar(2)?;
+
+            // Ida: pinta o lado A. A tesoura fica desligada porque ela é do jogo e pode estar
+            // recortando fora deste pedaço.
+            gl.disable(glow::SCISSOR_TEST);
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo_a));
+            gl.clear_color(
+                f32::from(MARCA[0]) / 255.0,
+                f32::from(MARCA[1]) / 255.0,
+                f32::from(MARCA[2]) / 255.0,
+                f32::from(MARCA[3]) / 255.0,
+            );
+            gl.clear(glow::COLOR_BUFFER_BIT);
+
+            // Volta: copia A para B pelo mesmo caminho que o `resolve` e a redução usam.
+            gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(fbo_a));
+            gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(fbo_b));
+            gl.blit_framebuffer(
+                0,
+                0,
+                2,
+                2,
+                0,
+                0,
+                2,
+                2,
+                glow::COLOR_BUFFER_BIT,
+                glow::NEAREST,
+            );
+
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo_b));
+            let mut lido = [0u8; 4];
+            gl.read_pixels(
+                0,
+                0,
+                1,
+                1,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelPackData::Slice(Some(&mut lido)),
+            );
+
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            gl.bind_texture(glow::TEXTURE_2D, None);
+            gl.delete_framebuffer(fbo_a);
+            gl.delete_framebuffer(fbo_b);
+            gl.delete_texture(cor_a);
+            gl.delete_texture(cor_b);
+
+            // **Um erro armado conta como falha.** Um blit que devolve a imagem certa e deixa um
+            // erro pendente é um driver que aceitou por sorte, e o erro apareceria depois, longe
+            // daqui, na primeira chamada que o consumisse.
+            let limpo = gl.get_error() == glow::NO_ERROR;
+            Some(lido == MARCA && limpo)
+        }
+    })()
+    .unwrap_or(false)
+}
+
 pub struct GpuState {
     /// A contabilidade de estado e a etapa de vértice, compartilhadas com o software.
     estado: GlState,
@@ -216,6 +321,11 @@ pub struct GpuState {
     proporcao: Option<f32>,
     /// Se o lote que vai para a placa foi transformado por uma projeção em perspectiva.
     em_perspectiva: bool,
+    /// Se o `glBlitFramebuffer` desta placa passou na prova de [`blit_serve`].
+    ///
+    /// Falso desliga o antialias e a resolução interna: os dois dependem de copiar entre
+    /// framebuffers, e um blit que mente daria imagem errada em silêncio.
+    blit_confiavel: bool,
     /// O framebuffer de fora em que desenhar, quando o frontend entrega um. `None` é o próprio.
     ///
     /// `Some(0)` é o framebuffer padrão do frontend — o que o `glow` escreve `None` no `bind`.
@@ -286,11 +396,26 @@ impl GpuState {
             let ponte = gl.create_texture()?;
             (programa, vao, vbo, ponte)
         };
+        // A prova do blit antes de qualquer desenho, uma vez por contexto.
+        #[cfg(not(target_arch = "wasm32"))]
+        let blit_confiavel = blit_serve(&gl);
+        // O `wasm32` não tem `blitFramebuffer`: ali o WebGL2 não expõe a função, e o caminho de
+        // placa nem é usado. Responder `true` mantém o resto do código com uma resposta só.
+        #[cfg(target_arch = "wasm32")]
+        let blit_confiavel = true;
+        if !blit_confiavel {
+            crate::registro!(
+                crate::registro::Nivel::Aviso,
+                "gl",
+                "o glBlitFramebuffer desta placa não devolve o que mandaram copiar: antialias e resolução interna ficam desligados nesta sessão"
+            );
+        }
         Ok(Self {
             estado: GlState::new(largura, altura),
             _proprio: proprio,
             gl,
             emprestado,
+            blit_confiavel,
             // **A viewport nasce com a tela inteira**, que é o que o OpenGL especifica como
             // padrão e o que o `GlState::new` faz. Nascer em zero era o que apagava toda a
             // geometria da Z-Wheel: ela nunca chama `glViewport` — zero vezes em treze segundos
@@ -2301,6 +2426,11 @@ impl Rasterizador for GpuState {
     }
 
     fn define_escala(&mut self, escala: usize) {
+        // Sem blit confiável não há redução do quadro grande, e a escala é justamente isso: o
+        // desenho maior reduzido antes de qualquer leitura. Ficar em 1x é a resposta certa.
+        if !self.blit_confiavel {
+            return;
+        }
         self.descarrega();
         // O teto é o maior anexo que a placa aceita: um fator acima dele não criaria o destino.
         let maximo = unsafe {
@@ -2355,6 +2485,11 @@ impl Rasterizador for GpuState {
     }
 
     fn define_antialias(&mut self, amostras: usize) {
+        // O `resolve` do MSAA é um blit entre framebuffers. Sem blit confiável, pedir amostras
+        // daria borda suja em vez de borda suave.
+        if !self.blit_confiavel {
+            return;
+        }
         self.descarrega();
         let maximo = unsafe { self.gl.get_parameter_i32(glow::MAX_SAMPLES) }.max(1) as usize;
         // Potências de dois são o que as placas oferecem; 1 é desligado.
