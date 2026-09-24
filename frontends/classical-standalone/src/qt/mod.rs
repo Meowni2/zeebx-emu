@@ -3,6 +3,7 @@
 //! `zeebx qt` abre a biblioteca; `zeebx qt <jogo>` abre direto o jogo. Não substitui nada ainda:
 //! a interface padrão continua sendo a do egui.
 
+mod auxiliares;
 mod biblioteca;
 mod configuracoes;
 mod nucleo;
