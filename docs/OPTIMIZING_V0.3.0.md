@@ -225,6 +225,30 @@ atuais, quando são da era do Unicorn — que é exatamente o motivo deste docum
 | 2026-09-11 | Quake | Unicorn | 52% | 86 M | — | `ARCHITECTURE.md:243`, cena de jogo |
 | 2026-09-24 | Quake | Dynarmic | **170%** | **195 M** | 1.323.900 | 15.016 ms virtuais em 8,8 s reais, 583 quadros, rasterizador de software |
 
+### A bancada
+
+Número de desempenho sem a máquina que o produziu não vale nada. Todas as medidas de bancada
+deste documento saem daqui, até que se diga o contrário:
+
+| item | valor |
+|---|---|
+| aparelho | Lenovo IdeaPad 3 |
+| processador | AMD Ryzen 7 5700U (Zen 2, 8 núcleos / 16 linhas, até 4,37 GHz) |
+| gráficos | Radeon integrado (Vega), Mesa |
+| memória | 9 GiB |
+| sistema | Debian GNU/Linux 13 (trixie), núcleo 6.19.5-x64v3-xanmod1 |
+| compilador | rustc 1.98.1 |
+| perfil | `--release`, `lto = "thin"`, `codegen-units = 1` |
+
+Isto é um portátil de escritório, não uma bancada de medição: o relógio varia com temperatura e
+com o governador, e a medida do mesmo trabalho oscila entre execuções. Vale para comparar
+**antes e depois no mesmo aparelho**, na mesma sessão, e não para publicar número absoluto.
+
+E a diferença para o alvo é enorme, o que é justamente o ponto: o Ryzen 5700U tem 16 linhas de
+execução e mais de 4 GHz, enquanto o R36S tem um Cortex-A35 e o RG40XX-H um Cortex-A53. Os 170%
+do Quake **não** se transportam para o portátil, e qualquer conclusão sobre gargalo de aparelho
+precisa ser medida no aparelho.
+
 **A primeira medida com o Dynarmic desmente a leitura pessimista.** O Quake saiu de 52% para
 170% da velocidade do console, e o núcleo de 86 M para 195 M de instruções por segundo — 2,3
 vezes. O emulador que o `ARCHITECTURE.md` descreve não é o que está na árvore.
