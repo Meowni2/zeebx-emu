@@ -1147,3 +1147,73 @@ caminho do meio (por quadro apresentado) segue **não demonstrado**.
 Além das treze: o **perfil de API** foi consertado (media o próprio relógio), o
 `ARCHITECTURE.md` saiu da era do Unicorn, e o registro em cinco níveis entrou nos três frontends.
 
+## 26. Espelho de estado: 80% das chamadas de estado saíram
+
+Frente 2 das treze, depois do PDCA rejeitado da seção 25. Commit `f323467`.
+
+### O que é
+
+Um espelho, dentro do `GpuState`, do que já está na placa. **Todo campo começa em `None`, e `None`
+quer dizer "não se sabe"** — é o que torna a invalidação trivial: esquecer é voltar ao padrão, e
+daí tudo é reenviado uma vez.
+
+Ele cobre as dezoito chamadas de [`GpuState::aplica`]: viewport, tesoura e o liga/desliga dela,
+abraço de profundidade, teste, função, máscara e faixa de profundidade, mistura e sua função,
+máscara de cor, descarte e seu modo, face frontal, teste, função, máscara e operações de estêncil.
+
+### O erro que a primeira versão cometeu
+
+A primeira versão esquecia o espelho **por inteiro** dentro do `devolve_o_contexto` — que roda a
+cada lote. Um espelho zerado a cada lote responde "mudou" dezoito vezes sempre. Medido:
+
+```text
+placa: 1602 estado(s) enviado(s) e 0 poupado(s) pelo espelho
+```
+
+**Zero.** O espelho existia e não poupava nada.
+
+O conserto é a diferença entre esquecer e **aprender**: em vez de zerar, a devolução registra o
+estado **que ela mesma deixa** — tesoura desligada, teste de profundidade, mistura, descarte e
+estêncil desligados, máscara de profundidade ligada, faixa (0,1), máscara de estêncil cheia,
+máscara de cor toda ligada. As chaves que ela não toca continuam **desconhecidas**, porque o outro
+usuário do contexto pode ter mexido nelas — e é por isso que esquecer tudo seria seguro, só que
+inútil.
+
+O contador foi o que pegou isso: sem ele, a mudança pareceria certa e não valeria nada.
+
+### A medida
+
+| jogo | envios antes | envios agora | poupados |
+|---|---:|---:|---:|
+| Crash Bandicoot Nitro Kart 3D | 1 602 | **315** | 1 287 (**80,3%**) |
+| Need for Speed Carbon | 5 593 | **1 339** | 4 254 (**76,1%**) |
+
+O número é de **chamadas**, não de tempo: `Session::estado_enviado_e_poupado()` devolve o par, e o
+teste de comparação dos dois rasterizadores o imprime. É o que dá para provar no desktop, onde o
+driver já cacheia estado e o relógio não separaria nada.
+
+### Onde a invalidação fica
+
+Quatro pontos mexem neste estado **fora** do `aplica`, e cada um avisa o espelho:
+
+| ponto | o que faz | como avisa |
+|---|---|---|
+| `devolve_o_contexto` | desliga capacidades e mexe em máscaras | **aprende** o estado que deixa |
+| `destino` (destino novo) | viewport, máscaras, tesoura desligada | esquece tudo |
+| `resolve` | desliga a tesoura para o blit de MSAA | esquece a tesoura |
+| `liga_para_leitura` | idem, para a redução do quadro grande | esquece a tesoura |
+| `clear` | desliga a tesoura antes do `glClear` | esquece a tesoura |
+
+### O que ficou de fora, e por quê
+
+- **Programa, VAO, buffers e texturas**: o `submete_com` já os liga uma vez por lote e o custo é
+  menor que o do estado acima. Um espelho deles exigiria rastrear a unidade de textura ativa, que
+  muda dentro do próprio lote.
+- **A devolução do contexto**: continua por lote, como estava. Movê-la exigiria um lugar que
+  aconteça uma vez por quadro, e a seção 25 mostra por que o candidato óbvio não serve.
+
+### O que fica para o portátil
+
+A contagem é do desktop. **No Mali a mesma chamada custa validação de driver**, e é lá que os 80%
+devem aparecer no relógio. O contador viaja no relatório: `Session::estado_enviado_e_poupado()`.
+
