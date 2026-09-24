@@ -73,6 +73,27 @@ A tela de controles do RetroArch mostra esses nomes com a posição junto — *"
 então dá para conferir sem decorar. Se preferir outra ordem, o remapeamento é do próprio RetroArch
 (Settings → Input), e o mesmo vale para o aplicativo, que tem tela de controles.
 
+## Medir no aparelho: o `testa_zeebx.sh`
+
+O teste do aparelho é **um script e um menu**, sem SSH e sem digitar comando na mão:
+
+1. Copie `ferramentas/testa_zeebx.sh` para a pasta de **ports** do cartão (`EASYROMS/ports/` no
+   ArkOS, `ROMS/Ports/` no muOS).
+2. No aparelho: **Ports** → **testa_zeebx**. Ele roda sozinho, na tela do aparelho.
+3. São doze rodadas de vinte segundos (~5 min). No fim, o cartão traz `logs-zeebx-<data>/` com o
+   `resumo.txt` e o log de cada rodada.
+
+Cada rodada roda um número fixo de quadros e mede o **tempo de parede**: a conta é *quadros por
+segundo de verdade*, e **60 quer dizer velocidade cheia naquele ajuste**. As rodadas comparam o
+ajuste de fábrica com o perfil Portátil e com o descarte de tiles — este último **só rende em GPU de
+tiles**, e é por isso que o aparelho é o único lugar onde ele se mede.
+
+Os jogos incluem de propósito o **Zenonia** (que só desenha 2D: no caminho de placa fica preto e no
+processador aparece — é o par que documenta o defeito no aparelho) e o **Zeebo Sports Peteca**.
+
+O script guarda e devolve as Core Options no fim, e escreve o aviso do `glBlitFramebuffer` no log se
+o driver da placa reprovar na prova do blit (ver a frente 5 em `docs/OPTIMIZING_V0.3.0.md`).
+
 ## Instalação
 
 1. Baixe o artefato **Linux AArch64** da release/Actions.
