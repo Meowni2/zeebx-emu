@@ -1336,3 +1336,43 @@ cor só.
   perfil `Portátil` deve passar a oferecê-la.
 - O padrão continua 1×: quem não pede nada não perde nitidez.
 
+## 29. Frente 10 fechada sem mudar código: o freio de velocidade entrega 1×
+
+A frente pedia um PDCA do `sleep` dentro do `retro_run`, porque a revisão do PCSX-ReARMed mostrou
+que, no caminho Libretro, **o relógio de parede é do frontend** — o `pl_frame_limit` de lá só marca a
+fronteira emulada e não dorme. A suspeita era de dupla frenagem: o nosso `sleep` somado ao do
+frontend.
+
+### Como foi medido
+
+O teste `a_abi_do_core_roda_uma_rom` roda `retro_run` em laço apertado, com um frontend de mentira
+que **não espera retraço nem áudio**. Ali o nosso `sleep` é o único freio que existe — que é
+exatamente o que se quer isolar. Acrescentei ao teste a medição do ritmo:
+
+```text
+ritmo: 120 quadro(s) — virtual 1983 ms em real 1985 ms (100% da velocidade),
+       por quadro: mediana 16.59 ms, p95 17.62 ms, pior 18.60 ms
+```
+
+### O que o número diz
+
+1. **100% da velocidade.** 1 983 ms de tempo virtual em 1 985 ms de tempo real, sem o frontend
+   ajudar em nada. O freio acerta o alvo.
+2. **Mediana 16,59 ms** por quadro, contra os 16,67 ms de um quadro a 60 Hz — um décimo de
+   milissegundo de erro sistemático.
+3. **p95 17,62 ms e pior 18,60 ms.** A irregularidade fica abaixo de dois milissegundos, ou 12% de
+   um quadro. Não é fonte de judder por si só.
+
+### Por que a dupla frenagem não acontece
+
+O `sleep` é um **piso, não um freio a mais**. Ele só dorme o que o relógio virtual está adiantado em
+relação ao real (`ahead_ms`), e esse adiantamento é *líquido*: se o frontend já segurou a chamada
+por 16 ms, o tempo virtual avançou junto e o adiantamento é negativo — o `sleep` não acontece. Um
+frontend que espera retraço não é punido duas vezes; um que não espera é segurado por nós.
+
+### Conclusão
+
+**Nada foi mudado.** A frente fecha com a medida que a própria frente pedia, e o teste fica com uma
+prova de ritmo que antes não existia: qualquer mudança futura no laço do core que estrague a
+cadência aparece ali como desvio de velocidade ou como p95 acima de dois milissegundos.
+
