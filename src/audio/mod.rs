@@ -290,6 +290,11 @@ pub struct Mixer {
 
 impl Mixer {
     fn new(rate: u32, master: f32, muted: bool) -> Self {
+        crate::registro!(
+            crate::registro::Nivel::Informacao,
+            "mixer",
+            "mixer criado a {rate} Hz, mestre {master:.2}, mudo {muted}"
+        );
         Self {
             state: Arc::new(Mutex::new(State {
                 rate,
@@ -307,6 +312,25 @@ impl Mixer {
         let Ok(mut state) = self.state.lock() else {
             return;
         };
+        // **A medida que separa "corta" de "toca rápido".** O passo da voz é a razão entre a taxa do
+        // som e a do mixer, e é ele que decide a velocidade e a altura: passo 2 toca uma amostra a
+        // cada duas e o som sai agudo e na metade do tempo, que é o sintoma relatado. Se este número
+        // não for 1,0 para um som de 44100 num mixer de 44100, o defeito está aqui.
+        crate::registro!(
+            crate::registro::Nivel::Informacao,
+            "mixer",
+            "voz {:#x}: som {} Hz x{} canal(is), mixer {} Hz, passo {:.4}, volume {:.2}, repete {}",
+            id,
+            sound.rate,
+            sound.channels,
+            state.rate,
+            f64::from(sound.rate) / f64::from(state.rate.max(1)),
+            volume,
+            match repeat {
+                0 => "para sempre".to_string(),
+                n => format!("{n}x"),
+            }
+        );
         let step = f64::from(sound.rate) / f64::from(state.rate.max(1));
         // **Uma voz trocada enquanto tocava é um corte.** O objeto `IMedia` de um jogo costuma ser
         // reaproveitado para o som seguinte, e aí a troca é o que o aparelho faria; mas se o
@@ -581,6 +605,17 @@ impl Output {
                 .map_err(|err| err.to_string())?
         };
         let channels = config.channels() as usize;
+        // **A taxa que o aparelho realmente usa.** O mixer nasce com ela, e é esta a última légua que
+        // o 5-why do #43 aponta: um aparelho numa taxa diferente da esperada faz o som sair agudo e
+        // rápido, e nada dentro do motor mostra isso.
+        crate::registro!(
+            crate::registro::Nivel::Informacao,
+            "audio",
+            "aparelho a {} Hz, {} canal(is), formato {:?}",
+            config.sample_rate().0,
+            channels,
+            config.sample_format()
+        );
         let mixer = Mixer::new(config.sample_rate().0, volume, muted);
         let mut stream_config = config.config();
         // O emulador pode ter picos pesados de CPU/GPU. Dar ~21 ms de capacidade ao Oboe evita

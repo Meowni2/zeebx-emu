@@ -1265,6 +1265,12 @@ fn bench_dynarmic(
             println!("  [{}] {}: {}", linha.nivel.etiqueta(), linha.alvo, linha.texto);
         }
     }
+    // **Dizer o que se perdeu.** Um instrumento que descarta linhas em silêncio mente por omissão:
+    // foi assim que uma medição relatou "zero sons decodificados" com 123 sons pedidos no registro.
+    let descartes = zeebx::registro::descartes();
+    if descartes > 0 {
+        println!("registro:  {descartes} linha(s) foram descartadas pelo anel antes de serem lidas");
+    }
     // As chamadas de entrada dizem se o jogo chega a consultar o controle e por qual canal: o de
     // eventos de botão (`GetNextButtonEvent`) ou o de posição (`GetPositionState`). É a pergunta
     // que decide se espelhar o direcional nos eixos muda alguma coisa para este jogo.
@@ -1579,6 +1585,12 @@ fn sessao_sem_janela(
         for linha in registro {
             println!("  [{}] {}: {}", linha.nivel.etiqueta(), linha.alvo, linha.texto);
         }
+    }
+    // **Dizer o que se perdeu.** Um instrumento que descarta linhas em silêncio mente por omissão:
+    // foi assim que uma medição relatou "zero sons decodificados" com 123 sons pedidos no registro.
+    let descartes = zeebx::registro::descartes();
+    if descartes > 0 {
+        println!("registro:  {descartes} linha(s) foram descartadas pelo anel antes de serem lidas");
     }
     if let Some((desde, inicio, instrucoes_antes)) = perfil_ligado_em {
         let real = inicio.elapsed();

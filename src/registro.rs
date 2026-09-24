@@ -26,7 +26,14 @@ use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 /// Trezentas linhas cobrem com folga o arranque de um applet e uma troca de cena. É o mesmo
 /// espírito do teto do log do jogo ([`crate::machine`]), e o motivo é o mesmo: o relatório é
 /// para ser lido, não armazenado.
-const CAPACIDADE: usize = 300;
+/// Quantas linhas o anel guarda antes de sobrescrever as mais antigas.
+///
+/// **O número é do instrumento, não do jogo.** Com 300, uma corrida de 40 s em que o jogo fala
+/// muito no boot perde justamente as linhas do áudio antes de qualquer um as ler: o `run` drena o
+/// anel no fim, e o que ele imprime é só o que sobrou. Foi assim que uma medição minha relatou
+/// "zero sons decodificados" com 123 sons pedidos. Quatro mil linhas custam menos de um megabyte e
+/// cobrem uma corrida inteira; os descartes continuam contados, e o relatório os mostra.
+const CAPACIDADE: usize = 4096;
 
 /// Os cinco níveis, do mais falador para o mais grave.
 ///

@@ -880,6 +880,16 @@ fn log_com_nivel(nivel: u32, mensagem: &str) {
     }
 }
 
+/// Quadros de áudio entregues, e a contagem de tempo real para medir a taxa de verdade.
+///
+/// O `av_info` declara 44100 quadros por segundo. Se o que sai daqui for outra coisa, o frontend
+/// reamostra — ou o buffer dele esvazia — e o sintoma é som agudo, rápido ou fatiado, sem que nada
+/// dentro do motor apareça. Uma linha por segundo responde isso em qualquer aparelho.
+static AUDIO_QUADROS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static AUDIO_ANTERIOR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static AUDIO_ULTIMO_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static AUDIO_RELOGIO: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
 /// Pede ao frontend o buffer em que o quadro deve ser desenhado.
 ///
 /// Devolve `None` quando ele não oferece, quando o buffer não serve (formato diferente de RGB565,
@@ -3035,6 +3045,28 @@ pub extern "C" fn retro_run() {
         let quadros = audio.len() / 2;
         // SAFETY: o lote é intercalado em estéreo e o tamanho é o número de quadros.
         let aceitos = unsafe { batch(audio.as_ptr(), quadros) }.min(quadros);
+        // **A última légua, medida.** Quantos quadros o core entrega por segundo real, contra os
+        // 44100 que ele declara. Ver [`AUDIO_QUADROS`].
+        {
+            use std::sync::atomic::Ordering;
+            let total = AUDIO_QUADROS.fetch_add(quadros as u64, Ordering::Relaxed) + quadros as u64;
+            let inicio = *AUDIO_RELOGIO.get_or_init(std::time::Instant::now);
+            let agora = inicio.elapsed().as_millis() as u64;
+            let ultimo = AUDIO_ULTIMO_MS.load(Ordering::Relaxed);
+            if agora >= ultimo + 1_000 {
+                let antes = AUDIO_ANTERIOR.swap(total, Ordering::Relaxed);
+                AUDIO_ULTIMO_MS.store(agora, Ordering::Relaxed);
+                zeebx::registro!(
+                    zeebx::registro::Nivel::Informacao,
+                    "audio",
+                    "audio: {} quadros por segundo real ({:.0}% de 44100); o frontend aceitou {}/{} neste quadro",
+                    (total - antes) * 1_000 / (agora - ultimo).max(1),
+                    ((total - antes) * 1_000) as f64 / (agora - ultimo).max(1) as f64 / 441.0,
+                    aceitos,
+                    quadros
+                );
+            }
+        }
         if aceitos < quadros {
             sobra = audio[aceitos * 2..].to_vec();
         }
