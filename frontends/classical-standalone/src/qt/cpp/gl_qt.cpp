@@ -1,7 +1,11 @@
 #include "gl_qt.h"
 
 #include <QtCore/QCoreApplication>
+#include <QtGui/QGuiApplication>
+#include <QtGui/QIcon>
+#include <QtGui/QImage>
 #include <QtGui/QOffscreenSurface>
+#include <QtGui/QPixmap>
 #include <QtGui/QOpenGLContext>
 #include <QtGui/QSurfaceFormat>
 #include <QtQuick/QQuickWindow>
@@ -44,6 +48,18 @@ void prepara_gl()
     formato.setDepthBufferSize(24);
     formato.setStencilBufferSize(8);
     QSurfaceFormat::setDefaultFormat(formato);
+}
+
+void aplica_icone()
+{
+    // A logo tem mais de mil pixels de lado. O egui a reduzia a 256 pelo mesmo motivo: guardar a
+    // imagem inteira para desenhar algo que nunca passa de alguns pixels na barra.
+    const QImage logo(QStringLiteral(":/zeebx/zeebx.png"));
+    if (logo.isNull()) {
+        return;
+    }
+    const QImage icone = logo.scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    QGuiApplication::setWindowIcon(QIcon(QPixmap::fromImage(icone)));
 }
 
 bool gl_cria()
