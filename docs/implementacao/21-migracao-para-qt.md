@@ -13,7 +13,8 @@ marcada aqui como feita.
 | 1 — desacoplar | feita: `Viewport` do pintor, tradução de teclas, `ui::partida::Partida` e `ui::entrada::EntradaDoDesktop` |
 | 2 — estrutura | feita: núcleo da interface Qt, `Biblioteca` como modelo, janela principal e janela do jogo |
 | 3 — janela do jogo | feita: textura da placa sem cópia, enquadramento, faixas de parada e de depuração, aviso de calibração, título e modo da janela |
-| 4 a 9 | não começadas |
+| 4 — biblioteca | feita: grade e slider, capas e nomes do acervo, busca, navegação pelo controle |
+| 5 a 9 | não começadas |
 
 ## Onde o egui está de verdade
 
@@ -278,11 +279,41 @@ aviso de calibração com um Boomerang de verdade.
 
 ### 4 — Biblioteca
 
-Varredura, `acervo`, `casa_com_a_busca` não mudam. Um `QAbstractListModel` em Rust; grade em
-`GridView` com `smooth: false` para ícone menor que o cartão (a ampliação sem interpolação do
-[10](10-interface.md#a-imagem-de-cada-cartão)); slider em `PathView`, com a mola e a volta da
-lista continuando em Rust. O controle é lido por um `QTimer` enquanto a biblioteca tem o foco —
-o controle não gera evento no Qt, como não gerava no egui.
+**As regras são uma só; o desenho é de cada janela.** Saíram do `vitrine.rs` do egui para o núcleo:
+a busca (`library::casa_com_a_busca`, com os testes), a navegação pelo controle
+(`ui::navegacao`, com a repetição ao segurar e três testes), o nome oficial da Z-Wheel
+(`acervo::titulo_de`) e a escolha da imagem de cada jogo (`acervo::imagem_do_jogo` — capa ao lado,
+capa da Z-Wheel, ícone do `.mif`, reserva — e `amplia_sem_interpolar`). O egui passou a usá-las sem
+mudar de comportamento.
+
+- **O modelo.** A `Biblioteca` tem os papéis `titulo`, `descricao`, `classe`, `capa`,
+  `capaNitida`, `logo` e `classificacao`, e a lista vem do núcleo da interface já ordenada, sem a
+  Z-Wheel e filtrada pela busca. O `item(linha)` serve o slider, que mostra os jogos em volta da
+  escolha dando a volta na lista, e não uma linha por delegado.
+- **As imagens chegam por `image://zeebx/…`**, de um `QQuickImageProvider` em C++
+  (`cpp/imagens.h`) que chama o Rust por um `rust::Fn`. O endereço leva um número de geração: o Qt
+  guarda as imagens pelo endereço, e sem ele o "procurar de novo" mostraria as capas antigas. O
+  provedor é síncrono de propósito — o estado mora num `thread_local` da thread da interface.
+- **A capa ao lado do jogo é perguntada ao disco uma vez por varredura.** O egui só não sentia o
+  custo porque guardava a textura de cada jogo; o `data()` de um modelo Qt é chamado a cada linha
+  que aparece. A regra passou a receber a resposta de quem chama (`acervo::capa_ao_lado`).
+- **O teclado da biblioteca é do QML**, que já anda pela grade com as setas; o controle chega pela
+  `Biblioteca.comandos`, lido a cada 33 ms com a janela principal em foco e sem jogo aberto — como
+  no egui, em que o controle não gera evento. Passar o teclado também pelo Rust faria uma seta
+  mapeada no controle andar dois passos, o que o egui evita juntando os dois antes.
+- **A grade** (`GradeDaBiblioteca.qml`) e **o slider** (`SliderDaBiblioteca.qml`) seguem as medidas
+  e as curvas do egui: o cartão de 136 com o quadro de 112×145, o rolo em cilindro com os painéis a
+  0,42 radiano, as caixas encolhendo com a distância, a mola de `1 − e^(−12·dt)`. Os nomes não são
+  `Grade`/`Slider` porque `Slider` já é um tipo do Qt Quick Controls.
+- **O estilo é o Fusion.** O Basic, padrão do Qt Quick Controls, pinta os campos e o texto com a
+  paleta dele, e o fundo da janela seguia a do sistema: num tema escuro, texto escuro sobre fundo
+  escuro. O Fusion segue a paleta do sistema em tudo. `QT_QUICK_CONTROLS_STYLE` continua mandando.
+- A barra de cima tem a Z-Wheel, a busca (Ctrl+F, Esc limpa, Enter joga o escolhido) e o "liberar
+  sincronização" do Zeeboids. As configurações e os saves entram com as janelas deles.
+
+Conferido na tela, pelo `grabToImage` de uma cópia da configuração: a grade e o slider, com as capas
+e os logos da Z-Wheel, os nomes oficiais e a classificação. **Não conferido:** a navegação por um
+controle de verdade.
 
 ### 5 — Configurações
 
