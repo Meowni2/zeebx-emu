@@ -17,8 +17,8 @@ marcada aqui como feita.
 | 5 — configurações | feita: as seis abas, o desenho do controle com clique pela silhueta, captura, eixos, Boomerang, Discord e atualizações |
 | 6 — janelas auxiliares | feita: saves, log da execução, aviso de abertura e aviso de versão nova |
 | 7 — conferência | feita: as chaves de texto das duas interfaces comparadas, teste de que toda chave usada existe, e o que faltava no Qt (ícone, `app_id`, tamanhos mínimos, tela cheia na biblioteca) |
-| 8 — corte do eframe | primeira etapa feita: compilado com `ui-qt`, o Qt é a interface padrão, e o egui fica em `zeebx egui`. A licença já não prende (`GPL-2.0-or-later`); o corte espera uma release com o Qt |
-| 9 — build e empacotamento | feita no `qt.yml`: AppImage, NSIS e `.dmg` com o Qt 6.11 embutido, e o `.deb` com o Qt do sistema, saindo como artefatos da execução. Falta o `release.yml` adotá-los |
+| 8 — corte do eframe | segunda etapa feita: a feature `ui-qt` vem ligada, o Qt é a interface padrão e o egui fica em `zeebx egui`. O corte espera uma release com o Qt |
+| 9 — build e empacotamento | feita: o `release.yml` monta o AppImage, o NSIS e o `.dmg` com o Qt embutido, e o `.deb` com o Qt do sistema; o `ci.yml` instala o Qt nos seis alvos; o `qt.yml` faz o mesmo que a release e abre cada instalador antes de sair |
 
 ## Onde o egui está de verdade
 
@@ -466,16 +466,15 @@ independente desta. O [10](10-interface.md), o diagrama de camadas do
 `zeebx qt [jogo]` continua valendo. Conferido pelo log de imports do QML
 (`QT_LOGGING_RULES="qt.qml.import=true"`): o `zeebx` carrega o QML, o `zeebx egui` não.
 
-**A feature continua desligada por padrão, de propósito.** O `ci.yml` e o `release.yml` compilam
-o standalone sem Qt e não o instalam; ligá-la por padrão os deixaria vermelhos antes de a fase 9
-ensinar o CI a instalar e empacotar o Qt. E a interface Qt não vai para uma release antes de o
-`LICENSE`, o `Cargo.toml` e o `AGENTS.md` saírem do GPL-2.0-only (ver *Licença*) — o que já
-aconteceu: a licença é `GPL-2.0-or-later`.
-Então a ordem que sobra é:
+**A segunda etapa, feita: a feature `ui-qt` vem ligada por padrão.** Ela esperou duas coisas: a
+fase 9, que ensinou o CI a instalar e empacotar o Qt, e a licença sair do GPL-2.0-only (ver
+*Licença*), que agora é `GPL-2.0-or-later`. O `ci.yml` instala o Qt nos seis alvos, e o
+`release.yml` monta os instaladores com ele. Sem o Qt, `--no-default-features` ainda compila a
+interface do egui, e o `ferramentas/prepara_build.py` confere o Qt junto com o resto. A ordem que
+sobra é:
 
-1. a fase 9: o empacotamento de cada sistema — feita no `qt.yml`; o `release.yml` o adota no passo
-   seguinte;
-2. a licença trocada — feito, `GPL-2.0-or-later` —, e a feature ligada por padrão;
+1. a fase 9 — feita;
+2. a licença trocada e a feature ligada por padrão — feito;
 3. uma release com o Qt padrão e o `zeebx egui` ainda lá;
 4. na seguinte, o corte: saem o `eframe`, o `ui::App`, o `zeebx egui` e os caminhos `cfg` da
    feature, e são reescritos o [10](10-interface.md), o `ARCHITECTURE.md` e os comentários do
@@ -487,18 +486,21 @@ O CI instala o Qt nos três sistemas. O `cargo packager` não implanta Qt: cada 
 passo dele (`linuxdeploy-plugin-qt`, `windeployqt`, `macdeployqt`), e o `.deb` passa a depender
 de `libqt6gui6`, `libqt6qml6`, `libqt6quick6` e dos módulos QML usados.
 
-**Feita no `qt.yml`, e não no `release.yml`.** A interface Qt não vai para uma release antes de a
-licença mudar (fase 8) — e ela já mudou; enquanto o `release.yml` não os adota, os instaladores
-saem como artefatos da execução do `qt.yml`, para
-baixar e testar. A configuração deles é `frontends/classical-standalone/empacotamento-qt.toml`,
-separada do `[package.metadata.packager]` do `Cargo.toml`, que continua sendo o da release com o
-egui. Com a feature ligada por padrão, ela vira a de lá e os passos passam para o `release.yml`.
+**Primeiro no `qt.yml`, depois no `release.yml`.** Enquanto a licença prendia, os instaladores
+saíam só como artefatos do `qt.yml`, com uma configuração à parte, passada por `--config`. Com a
+feature ligada por padrão, a configuração passou ao `[package.metadata.packager]` do `Cargo.toml`
+do standalone, e os mesmos passos estão no `release.yml`: o AppImage no Ubuntu 22.04, o `.deb` num
+job à parte no 24.04, o NSIS e os dois `.dmg`. O `qt.yml` faz o mesmo e, além disso, abre cada
+instalador numa tela virtual antes de deixá-lo como artefato — é onde testar antes de uma tag. O
+`--config` trazia dois tropeços, que sumiram com ele: sem ler o `Cargo.toml`, o `cargo packager`
+não sabia a versão, e o 0.11.8 entrava no caminho do *arquivo* como se fosse uma pasta, parando
+com "Not a directory".
 
-- **Com `--config`, o `cargo packager` não lê o `Cargo.toml`.** A versão entra numa cópia do
-  arquivo (`@VERSAO@`), feita pelo workflow, e o arquivo não se chama `packager.toml` porque esse
-  nome o `cargo packager` procura sozinho, e a release o pegaria. O `name` vai preenchido por um
-  defeito do 0.11.8: sem ele, o `cargo packager` entra no caminho do *arquivo* como se fosse uma
-  pasta e para com "Not a directory".
+- **A chave do cache leva o sistema.** O job do AppImage passou do Ubuntu 24.04 para o 22.04 com a
+  mesma chave, e o "Compila" saiu com 101 — enquanto o mesmo build passava num contêiner 22.04
+  limpo. A causa provável, não confirmada sem o log: o cache restaurou os scripts de build
+  compilados no 24.04, ligados a uma glibc mais nova. A chave agora é `nome-sistema`, no `qt.yml`
+  e no `release.yml`, o que vale de qualquer forma.
 - **O AppImage**, montado no Ubuntu 22.04 como o da release, leva o Qt 6.11.2 pelo
   `linuxdeploy-plugin-qt`. O Wayland não vem sozinho: é preciso pedir o plugin de plataforma
   (`libqwayland.so`, um só a partir do Qt 6.10) e o módulo `waylandcompositor`, sem o qual a
