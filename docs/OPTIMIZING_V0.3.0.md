@@ -844,3 +844,83 @@ nomes de função para conferência e as decisões de engenharia listadas acima.
 | desce | SIMD dos cores | pouca transferibilidade confirmada |
 | desce | thread de apresentação | o DuckStation removeu por piorar o pacing |
 
+## 22. A partilha do relógio: quanto fica fora do JIT
+
+**O número que faltava desde o começo desta rodada.** O `ARCHITECTURE.md` publicava 1,4 µs por
+chamada de API, medidos com o Unicorn; o instrumento de então (`ZEEBX_ROM_PERFIL`) mede só o corpo
+do método. Agora o relatório da varredura separa o relógio em duas metades.
+
+### Como é medido
+
+O `run` do Dynarmic já era o lugar por onde tudo passa: cada chamada de API é uma saída e uma
+reentrada. O relógio em volta dele dá o tempo **dentro** do JIT — execução do guest mais as
+callbacks de memória que o próprio JIT chama. Tudo o que sobra do laço é despacho: o trampolim, o
+corpo do método, os callbacks entregues na fronteira e a contabilidade da sessão.
+
+### O erro que a primeira versão cometeu, e o que ele ensinou
+
+Com o relógio em **toda** entrada, o Quake saiu de 8,8 s para 12,3 s: **40% mais lento**. O
+`Instant::now` desta máquina é chamada de sistema, e não o caminho rápido do `vDSO` — 1,3 µs por
+leitura, 2,6 µs por entrada, num jogo com 1,3 milhão de entradas.
+
+A correção é ler o relógio **uma entrada em cada 64** e multiplicar a média amostrada pelo
+contador. E como o custo caiu para cerca de 0,6%, a medida ficou **sempre ligada**: todo relatório
+de varredura passa a trazer a partilha, sem depender de alguém lembrar de ligá-la.
+
+### A prova de que não custa
+
+Cinco rodadas do mesmo Quake, 15.016 ms virtuais, intercalando as duas construções:
+
+| construção | rodada | tempo real | velocidade |
+|---|---:|---:|---:|
+| com a partilha | 1 | 8,9 s | 168% |
+| com a partilha | 2 | 8,8 s | 170% |
+| sem a partilha | 1 | 8,9 s | 169% |
+| sem a partilha | 2 | 8,8 s | 171% |
+| com a partilha | 3 | 8,9 s | 169% |
+
+As duas construções são indistinguíveis. O instrumento entra.
+
+### O que ele diz
+
+```text
+desempenho:
+  abriu em 0.1 s, rodou 8.9 s reais para 15016 ms virtuais (169% da velocidade do console)
+  1091 volta(s), 583 quadro(s) (38 fps virtuais)
+  1712755541 instruções (193 milhões/s), 1323900 chamada(s) de API
+  5434 ms dentro do JIT e 3458 ms fora (38% do laço no despacho); 1324767 entrada(s)
+  em 20700 amostra(s), 2612 ns fora do JIT por chamada de API
+```
+
+Três leituras, e as três importam:
+
+1. **38% do relógio está fora do JIT.** O despacho não é detalhe: é mais de um terço do trabalho
+   do Quake, e é o maior alvo isolado que a árvore tem hoje.
+2. **2,6 µs por chamada, fora do JIT.** É o dobro do 1,4 µs que o documento publicava — e o dobro
+   de um número que era de outro backend.
+3. **Dentro do JIT são 317 milhões de instruções por segundo**, contra 193 milhões no total. O
+   recompilador é rápido; o que custa é atravessar a fronteira.
+
+**A ressalva, dita por inteiro:** 2,6 µs é **limite superior** do trampolim. Dentro desses 3458 ms
+também estão o corpo de cada método, os callbacks entregues na fronteira e o trabalho do próprio
+arranjo de medição. O que separa corpo de trampolim é o perfil de API — e ele confirma o número
+por outro caminho: com o perfil ligado, "fora do JIT" subiu para 7272 ms, e o custo do próprio
+perfil (1,32 milhão de chamadas × cerca de 2,6 µs) responde por uns 3,4 s disso, o que devolve os
+mesmos ~3,9 s. Os dois instrumentos concordam.
+
+### O que isso muda na ordem
+
+**O trampolim sobe ao primeiro lugar**, à frente do cache de estado GL. Ele custa 38% do relógio no
+pior caso da árvore; o cache de estado GL ataca um punhado de chamadas por lote de desenho. E há um
+caminho de ganho que não exige o redesenho do trampolim: **reduzir o número de fronteiras**. O Quake
+atravessa 1,32 milhão de vezes em quinze segundos, e 845 mil delas são os três métodos de geometria
+— `VertexPointer`, `TexCoordPointer` e `DrawArrays`, um trio por lote. Enquanto o trio continuar
+sendo três chamadas, o custo fixo é pago três vezes por lote.
+
+### Pendências desta frente
+
+- medir a partilha **no portátil**: o desktop diz 38%, e o aparelho tem outro equilíbrio entre
+  núcleo e memória. O instrumento agora viaja no relatório de lá.
+- o mesmo relatório no Pac-Mania, que é o caso de 48 milhões de chamadas: se a partilha dele for
+  ainda maior, ele deixa de ser "o jogo lento" e passa a ser a medida do custo fixo.
+
