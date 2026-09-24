@@ -2528,6 +2528,15 @@ pub struct Machine<C: CpuBackend> {
     /// da execução pega o desenho pela metade, quase sempre logo depois do `Clear`. Palavras
     /// evitam converter bytes RGB565 de volta para `u16` só para atualizar a tela.
     gl_last_frame_words: Vec<u16>,
+    /// Se há um quadro do OpenGL esperando ser trazido para a tela da CPU.
+    ///
+    /// Ver [`Machine::present_gl`]: pintar a fila é rasterizar, e ler o quadro de volta é outra
+    /// coisa — essa só acontece quando o desenho 2D por cima ou uma leitura de pixels precisa
+    /// dela.
+    gl_quadro_pendente: bool,
+    /// Quantas vezes o quadro pendente foi trazido para a tela da CPU. Ver
+    /// [`Machine::materializacoes_do_quadro_gl`].
+    gl_materializacoes: u32,
     /// Estado e buffers do OpenGL ES.
     ///
     /// Despacho dinâmico porque o rasterizador é trocável: a fronteira inteira está no
@@ -3062,6 +3071,8 @@ impl<C: CpuBackend> Machine<C> {
             cargas_de_midia: HashMap::new(),
             audio: None,
             gl_last_frame_words: Vec::new(),
+            gl_quadro_pendente: false,
+            gl_materializacoes: 0,
             gl: rasterizador(SCREEN_WIDTH as usize, SCREEN_HEIGHT as usize),
             gl_vertices: ArrayPointer::default(),
             gl_colors: ArrayPointer::default(),

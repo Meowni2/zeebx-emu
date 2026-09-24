@@ -1034,11 +1034,51 @@ impl<C: CpuBackend> Machine<C> {
         }
     }
 
-    /// Copia o quadro do OpenGL para a tela.
+    /// Fecha o quadro no `eglSwapBuffers`.
     ///
-    /// É o que o `eglSwapBuffers` faz no console: o buffer de trás vira o da frente. Aqui a
-    /// tela é o framebuffer RGB565 que já sabemos exportar.
+    /// **Pinta a fila e não lê o resultado.** São duas coisas diferentes, e separá-las é o ganho:
+    ///
+    /// - pintar a fila é a **rasterização** do quadro, e ela não tem como ser adiada — é o trabalho
+    ///   que o jogo pediu;
+    /// - ler o quadro de volta para a memória da CPU existe para o **desenho 2D por cima** e para
+    ///   quando o guest pede os pixels. Um jogo de 3D puro não faz nenhuma das duas coisas, e no
+    ///   portátil essa leitura obriga a GPU de tiles a terminar e devolver o quadro a cada troca.
+    ///
+    /// Então o quadro fica **pendente**, e [`Machine::materializa_quadro_gl`] o traz quando alguém
+    /// precisar de verdade. Quem decide é o caminho de desenho: qualquer chamada de 2D materializa
+    /// antes de escrever, porque escrever por cima de um quadro velho apagaria a cena.
     pub(super) fn present_gl(&mut self) {
+        self.gl.descarrega_o_desenho();
+        self.gl_quadro_pendente = true;
+        // **Só a placa adia.** No rasterizador de processador a leitura é uma conversão em
+        // memória: não há espera a economizar, e o frontend lê a tela todo quadro de qualquer
+        // jeito — adiar ali só criaria a chance de ele apresentar um quadro velho.
+        if !self.gl.quadro_espera_pela_placa() {
+            self.materializa_quadro_gl();
+        }
+    }
+
+    /// Quantas vezes o quadro da placa foi trazido para a tela da CPU nesta sessão.
+    ///
+    /// Comparado com [`Machine::gl_swaps`] diz o quanto o adiamento rendeu: cada troca de buffer
+    /// sem materialização é uma leitura de quadro que **não** aconteceu. Serve de número de
+    /// conferência no portátil, onde a leitura é a cara: ver [`Machine::present_gl`].
+    pub fn materializacoes_do_quadro_gl(&self) -> u32 {
+        self.gl_materializacoes
+    }
+
+    /// Traz para a tela da CPU o quadro que o `eglSwapBuffers` deixou pendente.
+    ///
+    /// Chamado por todo caminho que **lê ou escreve** a tela do console: as três interfaces de
+    /// desenho 2D, a leitura de pixels e o despejo de diagnóstico. Não é chamado pela janela nem
+    /// pelo core quando eles apresentam a textura da placa — esses não querem os pixels, querem a
+    /// textura, e o readback existia para eles por engano.
+    pub fn materializa_quadro_gl(&mut self) {
+        if !self.gl_quadro_pendente {
+            return;
+        }
+        self.gl_quadro_pendente = false;
+        self.gl_materializacoes = self.gl_materializacoes.saturating_add(1);
         // A tela pode ser a superfície do "device bitmap", quando o jogo pediu uma — é ela que
         // vale, e não o framebuffer de reserva.
         let (width, height) = {
@@ -1054,6 +1094,9 @@ impl<C: CpuBackend> Machine<C> {
             None => self.screen.load_rgb565_words(&words),
         }
         self.gl_last_frame_words = words;
+        // **A marca é do instante em que a tela ficou igual ao quadro 3D**, e é por isso que ela
+        // vem aqui e não na troca de buffer: `quadro_na_placa` compara esta contagem com a de
+        // agora para saber se algum 2D desenhou por cima depois disso.
         self.escritas_do_quadro_gl = Some(self.screen().escritas());
     }
 

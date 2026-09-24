@@ -352,7 +352,10 @@ impl<C: CpuBackend> Machine<C> {
     /// por cima entre um `eglSwapBuffers` e o seguinte, e no fim quem escreveu por último é
     /// quem aparece. Ver o quadro do OpenGL sozinho é o que diz se a renderização 3D está
     /// certa.
-    pub fn gl_frame(&self) -> Option<Framebuffer> {
+    pub fn gl_frame(&mut self) -> Option<Framebuffer> {
+        // Quem pergunta pelo quadro do OpenGL quer **os pixels**, então aqui a leitura pendente
+        // acontece: sem isto o diagnóstico mostraria o quadro da vez anterior.
+        self.materializa_quadro_gl();
         if self.gl_last_frame_words.is_empty() {
             return None;
         }

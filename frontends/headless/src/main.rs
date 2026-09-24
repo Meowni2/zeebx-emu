@@ -170,6 +170,11 @@ fn sem_janela(mut console: Console, caminho: &std::path::Path) -> ExitCode {
         let Some(sessao) = console.sessao_mut() else {
             return ExitCode::SUCCESS;
         };
+        // **O quadro da placa precisa ser trazido antes de sair daqui.** Com o readback adiado
+        // (`Session::materializa_quadro_gl`), a tela da CPU só recebe o quadro quando alguém o
+        // pede — e este laço é justamente quem pede: ele compara a tela consigo mesma para não
+        // repetir quadro e escreve os bytes no cano.
+        sessao.materializa_quadro_gl();
         let agora = {
             let tela = sessao.screen();
             (tela.serie(), tela.escritas())

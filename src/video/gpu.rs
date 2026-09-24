@@ -2239,6 +2239,10 @@ impl Rasterizador for GpuState {
         saida
     }
 
+    fn quadro_espera_pela_placa(&self) -> bool {
+        true
+    }
+
     fn frame_rgb565(&mut self, width: usize, height: usize, out: &mut Vec<u8>) {
         self.descarrega();
         // Mesmo atalho do rasterizador de software: quadro igual ao que já está em `out` não tem

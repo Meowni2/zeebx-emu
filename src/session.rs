@@ -1042,6 +1042,24 @@ impl Session {
         self.machine.file_root()
     }
 
+    /// Traz para a tela da CPU o quadro que o `eglSwapBuffers` deixou pendente.
+    ///
+    /// **Quem lê os pixels da tela precisa chamar isto antes.** O desenho 2D chama sozinho, e a
+    /// janela que apresenta a textura da placa não precisa dos pixels. Quem converte a tela para
+    /// bytes — o despejo de quadro, um frontend de fora, a análise da varredura — precisa, senão
+    /// recebe o quadro anterior. Ver [`crate::machine::Machine::present_gl`].
+    pub fn materializa_quadro_gl(&mut self) {
+        self.machine.materializa_quadro_gl();
+    }
+
+    /// Quantas trocas de buffer houve e quantas delas precisaram trazer o quadro para a CPU.
+    pub fn leituras_do_quadro_gl(&self) -> (u32, u32) {
+        (
+            self.machine.gl_swaps(),
+            self.machine.materializacoes_do_quadro_gl(),
+        )
+    }
+
     /// A tela, como está agora.
     pub fn screen(&self) -> &Framebuffer {
         self.intermediario
@@ -1102,7 +1120,7 @@ impl Session {
 
     /// O último quadro do rasterizador GL, quando há um. Serve para separar o que o 3D desenhou
     /// do que chegou à tela composto.
-    pub fn quadro_gl(&self) -> Option<Framebuffer> {
+    pub fn quadro_gl(&mut self) -> Option<Framebuffer> {
         self.machine.gl_frame()
     }
 
@@ -1680,6 +1698,18 @@ fn os_dois_rasterizadores_desenham_o_mesmo_quadro() {
                 Step::Running | Step::Ahead => {}
             }
         }
+        // O quadro do OpenGL pode estar pendente — ver [`Session::materializa_quadro_gl`]. Sem
+        // isto, o caminho de placa entregaria a tela anterior, e a comparação lá embaixo seria
+        // entre duas telas velhas: passaria sem comparar imagem nenhuma.
+        session.materializa_quadro_gl();
+        let (trocas, leituras) = session.leituras_do_quadro_gl();
+        eprintln!(
+            "  {}: {trocas} troca(s) de buffer, {leituras} leitura(s) do quadro para a CPU",
+            match placa {
+                true => "placa",
+                false => "processador",
+            }
+        );
         let tela = session.screen();
         let (largura, altura) = (tela.width(), tela.height());
         let mut bytes = Vec::new();
@@ -1729,6 +1759,18 @@ fn os_dois_rasterizadores_desenham_o_mesmo_quadro() {
         pior = pior.max(d as u16);
     }
     let total = software.2.len() / 2;
+    // **Guarda contra passe vazio.** Se as duas telas estiverem apagadas, a comparação abaixo
+    // passa sem ter comparado imagem nenhuma — foi o que aconteceu quando o quadro da placa
+    // passou a ser adiado e este teste não materializava antes de ler.
+    let acesos = software
+        .2
+        .chunks_exact(2)
+        .filter(|p| p[0] != 0 || p[1] != 0)
+        .count();
+    assert!(
+        acesos > total / 100,
+        "o quadro saiu apagado ({acesos} de {total} pixel(is) aceso(s)): não há imagem para comparar"
+    );
     let percentual = diferentes as f64 * 100.0 / total as f64;
     let grosseiro = grosseiras as f64 * 100.0 / total as f64;
     let media = soma as f64 / total as f64;

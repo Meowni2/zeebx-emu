@@ -747,6 +747,16 @@ pub trait Rasterizador {
     /// [`Self::frame_rgb565`] de sempre. É o que permite ao mesmo motor servir aos dois caminhos.
     fn desenha_no_fbo(&mut self, _fbo: Option<u32>) {}
 
+    /// Se trazer o quadro para a memória da CPU custa uma **espera pela placa**.
+    ///
+    /// Verdadeiro no rasterizador de placa: ler o quadro de volta obriga a GPU a terminar e
+    /// devolver os pixels, e num GPU de tiles isso é parada. Falso no de processador, onde a
+    /// "leitura" é uma conversão em memória — ali adiar não economiza nada e ainda arrisca o
+    /// frontend apresentar um quadro velho. Ver [`crate::machine::Machine::present_gl`].
+    fn quadro_espera_pela_placa(&self) -> bool {
+        false
+    }
+
     fn frame_rgb565(&mut self, width: usize, height: usize, out: &mut Vec<u8>);
     /// Exporta diretamente em RGB565 nativo para a tela do host, sem passar por bytes.
     fn frame_rgb565_words(&mut self, width: usize, height: usize, out: &mut Vec<u16>);

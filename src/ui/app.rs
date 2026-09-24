@@ -703,6 +703,11 @@ impl App {
             .then(|| Self::caminho_da_serial(&library::title_for(&path)));
         // Um jogo aberto pela Z-Wheel começa com a tela que ela deixou: ver
         // [`Session::herda_tela`]. A própria Z-Wheel, reaberta, abre com a imagem dela.
+        // O quadro pendente da sessão anterior entra antes de ela ser largada: ver
+        // [`Session::materializa_quadro_gl`].
+        if let Some(anterior) = self.session.as_mut() {
+            anterior.materializa_quadro_gl();
+        }
         let tela_anterior = self
             .session
             .as_ref()
@@ -2731,16 +2736,28 @@ impl App {
         alterna_tela_cheia(ctx);
 
         let smooth = self.settings.graphics.smooth;
-        // O quadro em RGB565, do jeito que a superfície do console o guarda: é o que o pintor
-        // de GL sobe direto para a placa.
-        let quadro_largura = session.screen().width() as i32;
-        let quadro_altura = session.screen().height() as i32;
-        let quadro_bytes = session.screen().to_rgb565_bytes();
         // Com GL não há por que converter o mesmo quadro de novo para textura do egui: seriam
         // duas conversões por repaint, e só uma delas iria para a tela.
         let pela_placa = self.settings.graphics.gpu_present
             && self.gl.is_some()
             && !self.gpu_falhou.load(std::sync::atomic::Ordering::Relaxed);
+        // **A tela da CPU só é lida quando ela é que vai à janela.** Com o quadro indo pela placa,
+        // os pixels da CPU não são usados — e buscá-los custaria, no caminho de placa, a leitura
+        // do quadro de volta a cada repaint, que é justamente o que a apresentação pela placa
+        // existe para evitar. Ver [`Session::materializa_quadro_gl`]: com o readback adiado, o
+        // quadro precisa ser materializado antes de qualquer conversão para bytes.
+        let (quadro_largura, quadro_altura, quadro_bytes) = match pela_placa {
+            true => (0, 0, Vec::new()),
+            false => {
+                session.materializa_quadro_gl();
+                let tela = session.screen();
+                (
+                    tela.width() as i32,
+                    tela.height() as i32,
+                    tela.to_rgb565_bytes(),
+                )
+            }
+        };
         if !pela_placa {
             // Subir a textura só quando a tela mudou: a janela repinta mais vezes que o jogo
             // desenha, e cada subida inteira custa uma conversão e uma ida à placa.
