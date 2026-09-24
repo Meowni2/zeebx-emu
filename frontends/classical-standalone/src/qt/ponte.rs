@@ -83,9 +83,6 @@ pub mod qobject {
         #[cxx_name = "modoDaJanela"]
         fn modo_da_janela(self: &Self) -> i32;
 
-        /// Um texto do catálogo de idiomas, pela chave.
-        #[qinvokable]
-        fn tr(self: &Self, chave: &QString) -> QString;
 
         /// O jogo saiu sozinho e não há para onde voltar: a janela fecha, como a do egui.
         #[qsignal]
@@ -316,10 +313,6 @@ impl qobject::TelaDoJogo {
         nucleo::com(|nucleo| modo(nucleo.settings.graphics.janela_do_jogo))
     }
 
-    pub fn tr(&self, chave: &QString) -> QString {
-        let chave = String::from(chave);
-        nucleo::com(|nucleo| QString::from(nucleo.catalogo.get(&chave)))
-    }
 }
 
 /// O `QImage` construído sobre bytes próprios exige linhas alinhadas a quatro bytes. Uma
@@ -345,7 +338,7 @@ fn imagem_rgb565(bytes: &[u8], largura: usize, altura: usize) -> QImage {
 /// O nome que o egui dá à tecla, a partir do `Qt::Key`. É o nome que está gravado no
 /// `settings.json`: mudar de interface não pode desfazer o mapeamento de ninguém.
 /// O `egui::Key` de um `Qt::Key`, passando pelo nome.
-fn tecla_do_qt(codigo: i32) -> Option<Key> {
+pub(super) fn tecla_do_qt(codigo: i32) -> Option<Key> {
     nome_da_tecla(codigo).and_then(|nome| Key::from_name(&nome))
 }
 
