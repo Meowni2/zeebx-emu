@@ -525,11 +525,7 @@ impl App {
     }
 
     fn titulo_de(&self, jogo: &Game) -> String {
-        jogo.clsid
-            .and_then(|cls| self.acervo.as_ref()?.ficha(cls))
-            .and_then(|ficha| ficha.titulo(self.catalog.current()))
-            .map(str::to_string)
-            .unwrap_or_else(|| jogo.title.clone())
+        acervo::titulo_de(self.acervo.as_ref(), jogo, self.catalog.current())
     }
 
     /// O que o console vê em cada porta, a partir do que está configurado.
