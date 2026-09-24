@@ -19,6 +19,8 @@ pub const REPOSITORIO: &str = "https://github.com/ZeebxTeam/zeebx-emu";
 pub const DISCORD: &str = "https://discord.gg/D96HjsKTPa";
 
 pub mod acervo;
+// Sem gate: é só a regra de quando o aviso abre e some; o desenho é de cada janela.
+pub mod calibracao;
 // Sem gate, como os irmãos abaixo: o painel só fala com a `session`, o `i18n` e o `settings`,
 // e é o mesmo que o frontend de Android desenha. Não há nada de desktop aqui.
 pub mod depuracao;
