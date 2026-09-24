@@ -273,3 +273,65 @@ As três primeiras somam 844.996 das 1.323.900 chamadas — **64% de todas as ch
 os três pontos de entrada de geometria**, e elas andam juntas: um `VertexPointer`, um
 `TexCoordPointer` e um `DrawArrays` por lote. Se o custo do trampolim ainda pesar, é aqui que
 ele pesa, e é aqui que agrupar paga.
+
+## 12. Onde o tempo foi, nos cinco jogos (2026-09-24)
+
+Rodada com `ZEEBX_ROM_PERFIL=1`, 15 s virtuais, rasterizador de software, na bancada descrita
+acima. **O perfil custa caro**: o Quake sai de 8,8 s (170%) sem perfil para 12,6 s (119%) com
+ele, cerca de 43%. Por isso a tabela abaixo serve para **proporção**, e o relógio absoluto vem
+da rodada sem perfil.
+
+| jogo | real | velocidade | instr/s | chamadas de API | tempo em API | apresentação |
+|---|---:|---:|---:|---:|---:|---:|
+| Crash Nitro Kart 3D | 1,5 s | 1009% | 207 M | 44.559 | 1.145 ms | 975 ms (85%) |
+| Double Dragon | 2,6 s | 569% | 22 M | 37.808 | 2.010 ms | 1.643 ms (82%) |
+| NFS Carbon | 6,3 s | 238% | 51 M | 252.324 | 4.809 ms | 4.062 ms (84%) |
+| Quake | 12,6 s | 119% | 136 M | 1.323.900 | 8.109 ms | 5.139 ms (63%) |
+| Zeebo Extreme Rolimã | 3,8 s | 396% | 240 M | 176.080 | 2.316 ms | 1.242 ms (54%) |
+
+"Apresentação" é o `eglSwapBuffers`/`SwapBuffers`, e é preciso dizer o que ele **é** por dentro,
+senão o número engana:
+
+```rust
+"SwapBuffers" => {
+    self.sync_egl_color_from_guest()?;
+    self.egl_swaps += 1;
+    self.present_gl();
+    self.wait_for_vsync();
+    (2, gles::EGL_TRUE)
+}
+```
+`src/machine/egl.rs:311`
+
+O `present_gl` chama `frame_rgb565` (`src/machine/gl.rs:1051`), e o `frame_rgb565` do software
+começa com `self.flush()` (`src/video/rasterizer.rs:2451`) — **é ali que a fila de triângulos
+vira pixel**. Ou seja: o tempo do `SwapBuffers` é rasterização, conversão RGBA→RGB565 e cópia,
+não "troca de buffer". O `wait_for_vsync` só mexe no relógio virtual e não dorme
+(`src/machine/time.rs:115`).
+
+### O que isso muda
+
+**A frase "o rasterizador não é gargalo" do `ARCHITECTURE.md:271` não vale mais nesta
+configuração.** Ela foi escrita quando o ARM custava o dobro; com o Dynarmic, a fatia do ARM
+encolheu e o preenchimento passou a dominar: 54% a 85% do tempo de API em todos os cinco jogos,
+e algo entre 41% e 65% do relógio de parede.
+
+Outros alvos que o perfil mostra:
+
+- **Geometria, no Quake:** `DrawArrays` 876 ms (10,8%), `TexCoordPointer` 431 ms (5,3%),
+  `VertexPointer` 427 ms (5,3%) — 1,73 s, 21% do tempo de API. O trio não é caro só por parar o
+  JIT; ele custa por dentro também.
+- **`memset`, no Rolimã:** 728 ms, 31,4% do tempo de API. Confirma a suspeita antiga.
+- **`strcmp`, no Quake:** 203 ms, 2,5%. Menor do que o número de chamadas sugeria — 137 mil
+  chamadas, mas o `read_cbytes` já lê em blocos de 64 bytes.
+- **Crash Nitro Kart:** 44 mil chamadas em 15 s e 1009% de velocidade. O jogo que motivou a
+  proteção do `glReadPixels` é, na bancada, o mais folgado dos cinco.
+
+### Consequência para o plano
+
+A escala interna fracionária (`0,5x`, `0,25x`) **sobe** de prioridade, mas com um alvo
+diferente do que se pensava: o caminho de **software**, onde o custo por pixel é CPU e o
+`define_escala` hoje é ignorado de propósito (`src/video/rasterizer.rs:756`).
+
+O trampolim **não** sobe nem desce: continua não medido, porque o `api_time` só conta o corpo
+do método.
