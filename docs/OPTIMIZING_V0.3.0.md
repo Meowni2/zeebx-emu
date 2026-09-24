@@ -1376,3 +1376,50 @@ frontend que espera retraço não é punido duas vezes; um que não espera é se
 prova de ritmo que antes não existia: qualquer mudança futura no laço do core que estrague a
 cadência aparece ali como desvio de velocidade ou como p95 acima de dois milissegundos.
 
+## 30. Frente 3: o quadro vai direto ao buffer que o frontend empresta
+
+Frente que parecia depender de aparelho e não depende: `RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER`
+é verificável no desktop, porque o teste do core tem um frontend de mentira, e é ele que empresta
+o buffer.
+
+### O que mudou
+
+Antes, o core montava o quadro num vetor próprio e o frontend copiava — 600 KB por quadro. Agora o
+core **pede o buffer** e escreve onde o quadro vai ficar, entregando o ponteiro emprestado ao
+`retro_video_refresh`, como a `libretro.h` exige (sem deslocamento).
+
+Três cuidados, todos conferidos:
+
+1. **O passo de linha é respeitado.** `Framebuffer::write_rgb565_with_pitch` escreve linha a linha
+   no passo que o frontend deu, e o que sobra no fim de cada linha fica como estava.
+2. **Formato e tamanho são conferidos antes de escrever.** A `libretro.h` diz que o frontend pode
+   devolver outro formato; escrever RGB565 num buffer XRGB8888 daria imagem plausível e falsa.
+   Qualquer recusa cai no caminho de sempre.
+3. **O ponteiro vale só dentro da chamada**, e por isso o pedido e o uso ficam no mesmo lugar, sem
+   guardar nada entre quadros.
+
+### A prova
+
+O frontend falso da suíte passou a emprestar um buffer com **folga de passo** (64 bytes) — de
+propósito: com passo igual à largura, quem ignorasse o `pitch` acertaria por sorte, e a folga é o
+que faz a imagem sair torta se ele for ignorado. O teste confere que o buffer **não ficou apagado**,
+isto é, que o core desenhou nele. E a medição de ritmo continua no mesmo teste:
+
+```text
+ritmo: 120 quadro(s) — virtual 1983 ms em real 1984 ms (100% da velocidade),
+       por quadro: mediana 16.86 ms, p95 17.87 ms, pior 17.97 ms
+```
+
+### O que isso rende
+
+Uma cópia de quadro a menos por quadro, no caminho de software. Não é o caminho dos dois portáteis
+(lá é placa), mas é o de todo frontend que usa framebuffer de software — RetroArch com driver de
+vídeo em software, outros frontends, e a própria suíte.
+
+### Um defeito meu que a suíte pegou
+
+A prova do contador de descartes do registro (`o_contador_de_descartes_aparece_e_zera`) falhou ao
+rodar a suíte inteira: ela escrevia no nível `Informacao` sem fixar o nível ativo, e dependia do
+que a prova anterior tivesse deixado. Passava até a ordem das provas mudar — que foi o que
+aconteceu quando esta rodada acrescentou provas. Corrigida fixando o nível.
+
