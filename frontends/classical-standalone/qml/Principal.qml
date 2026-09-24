@@ -17,13 +17,20 @@ Window {
 
     width: 960
     height: 720
-    visible: true
     title: "Zeebx"
 
     // Fechar a biblioteca encerra tudo, com ou sem jogo aberto — como no egui.
     onClosing: Qt.quit()
 
     Component.onCompleted: {
+        // O modo configurado para a janela principal (`graphics.janela`), como no egui.
+        const modo = biblioteca.modoDaJanela()
+        if (modo === 2)
+            showFullScreen()
+        else if (modo === 1)
+            showMaximized()
+        else
+            showNormal()
         if (jogoInicial !== "")
             mostra(biblioteca.abreCaminho(jogoInicial))
     }
@@ -31,11 +38,8 @@ Window {
     // `erro` vazio é jogo aberto.
     function mostra(erro) {
         aviso.text = erro
-        if (erro === "") {
-            jogo.show()
-            jogo.raise()
-            jogo.requestActivate()
-        }
+        if (erro === "")
+            jogo.abre()
     }
 
     Biblioteca {
