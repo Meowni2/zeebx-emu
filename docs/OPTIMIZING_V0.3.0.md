@@ -1276,3 +1276,63 @@ continua 1×.
 | 13 Android drenar o registro | mecânico, e o build Android não se verifica nesta máquina |
 | 11 `lto = "fat"` | precisa de disco: 3,4 GB livres e o LTO gordo recompila as dependências |
 
+## 28. Escala interna fracionária: `0,5x` e `0,25x` no rasterizador de software
+
+Frente 7, feita no commit seguinte desta seção. O desenho da seção 27 acertou o diagnóstico: o
+caminho já existia, e faltava pouco.
+
+### O que foi feito
+
+1. `GlState` ganhou `reducao` (1, 2 ou 4) e `define_reducao`, que **esquece a superfície** e
+   reinicia viewport e tesoura — as coordenadas guardadas eram do tamanho antigo.
+2. `set_viewport` e `set_scissor` dividem a coordenada por `reducao` antes de guardar. Como a
+   superfície é **deduzida da maior viewport**, ela sai reduzida sozinha: não houve uma segunda
+   mudança para manter em dia.
+3. `read_rect` (o `glReadPixels` do jogo) mapeia o retângulo do console para a superfície reduzida.
+   O chamador escreve `width × height` pixels na memória do guest, e a amostragem por divisão já
+   entrega exatamente isso — cada pixel lido vale `reducao` pixels do console.
+4. A opção `zeebx_resolucao_interna` passou a aceitar `0.5` e `0.25`, além de `1..4`. **Um número
+   só, dois mecanismos:** abaixo de 1 quem reduz é o processador, acima de 1 quem amplia é a placa,
+   e cada um usa o que lhe cabe.
+
+### A medida
+
+Quake, 15.016 ms virtuais, rasterizador de software, com o perfil de API ligado (que agora é
+barato e honesto — ver a seção 23):
+
+| redução | tempo real | velocidade | `SwapBuffers` |
+|---|---:|---:|---:|
+| 1× (nativo) | 8,9 s | 168% | 4 867 ms |
+| **1/2** (320×240) | **6,9 s** | **216%** | 3 176 ms |
+| **1/4** (160×120) | **6,0 s** | **249%** | 2 447 ms |
+
+- `1/2`: **22% menos tempo real**, 29% mais velocidade;
+- `1/4`: **33% menos tempo real**, 48% mais velocidade.
+
+O `SwapBuffers` não cai na proporção da área (1/4 da área, 50% do custo) porque ele também carrega
+a leitura do quadro e a conversão para RGB565, que continuam em 640×480. Ou seja: o que sobra depois
+da redução é, em boa parte, o caminho de apresentação — o mesmo que a frente 1 atacou no lado da
+placa.
+
+### A conferência da imagem
+
+O desenho continua o mesmo, só menor. Comparando o relatório de 4 s nas duas pontas:
+
+```text
+nativo:  tela: 177 cor(es), dominante 0x220a
+1/4:     tela: 177 cor(es), dominante 0x220a
+```
+
+Mesma contagem de cores e mesma cor dominante. Uma redução que quebrasse o desenho — HUD fora do
+lugar, superfície não descoberta, leitura torta — apareceria aqui como queda de cores ou tela de uma
+cor só.
+
+### O que fica dito
+
+- **Só o processador reduz.** Na placa, 640×480 não satura o Mali, e reduzir estragaria a imagem sem
+  ganhar nada. A opção diz isso nos rótulos, e o código recusa em silêncio do lado da placa.
+- **A redução é a alavanca de portátil mais direta que a rodada achou**: num aparelho fraco, 33% de
+  tempo real é a diferença entre 30 e 45 quadros por segundo. É a primeira coisa a ligar lá — e o
+  perfil `Portátil` deve passar a oferecê-la.
+- O padrão continua 1×: quem não pede nada não perde nitidez.
+
