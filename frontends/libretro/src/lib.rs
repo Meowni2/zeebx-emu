@@ -200,12 +200,29 @@ static OFERTA_DE_PLACA: Mutex<Option<RetroHwRenderCallback>> = Mutex::new(None);
 static CONTEXTO_PRONTO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// O contexto de GL montado a partir do que o frontend entregou, quando ele entregou.
+///
+/// **Este cadeado guarda o ponteiro, e não o uso do contexto.** Ele serializa quem lê e quem troca
+/// o `Arc` — `placa()`, o `liga_a_placa` e os dois callbacks do frontend —, e não os `gl*` que o
+/// emulador roda dentro do `retro_run`: o contexto em si é usado **sem** cadeado nenhum, em duas
+/// threads (ver a nota de corrida em [`contexto_perdido`]). É o que a ABI permite: ela diz o que
+/// fazer com o contexto (`libretro.h`: "Any GL state is lost, and must not be deinitialized
+/// explicitly"; "If context_reset is called without any notification (context_destroy), the OpenGL
+/// context was lost and resources should just be recreated without any attempt to free old
+/// resources"), e não diz de que thread os callbacks vêm nem que eles não cheguem no meio de um
+/// `retro_run`.
 static PLACA: std::sync::Mutex<Option<std::sync::Arc<glow::Context>>> =
     std::sync::Mutex::new(None);
 
 /// O contexto de placa, quando já se desenha nele.
 fn placa() -> Option<std::sync::Arc<glow::Context>> {
-    PLACA.lock().ok().and_then(|guarda| guarda.clone())
+    // **Cadeado envenenado não pode virar "não há placa".** Um pânico enquanto ele estava preso —
+    // há `catch_unwind` em [`liga_a_placa`], e o que ele protege mexe em GL — deixaria o emulador
+    // concluindo que não há placa e caindo no processador em silêncio, com `placa_ligada`
+    // verdadeiro. O valor que ficou guardado é o que interessa, e ele continua legível.
+    PLACA
+        .lock()
+        .unwrap_or_else(|envenenado| envenenado.into_inner())
+        .clone()
 }
 
 /// Pede o contexto de placa ao frontend, uma vez, e guarda a resposta.
@@ -276,6 +293,10 @@ fn liga_a_placa(estado: &mut Core) {
             pega_endereco(nome.as_ptr())
         })
     });
+    // **A placa de agora pode ter caído no endereço de uma que morreu.** A marca de óbito é por
+    // endereço, e endereço é coisa do alocador: sem esta limpeza a placa nova nasceria marcada como
+    // morta e não desenharia nada, em silêncio. Ver [`zeebx::video::gpu::a_placa_nasceu`].
+    zeebx::video::gpu::a_placa_nasceu(zeebx::video::gpu::endereco_da_placa(&contexto));
     // A versão pedida pelo callback não prova a versão realmente entregue pelo driver. Registrar
     // os quatro valores evita confundir o libMali do RK3326 com o caminho Mesa/Panfrost do H700.
     let (vendor, renderer, version, shading) = unsafe {
@@ -334,8 +355,30 @@ fn liga_a_placa(estado: &mut Core) {
 }
 
 /// O `context_reset` que nós preenchemos: o frontend chama quando o contexto está utilizável.
+///
+/// **E também quando ele foi refeito.** A ABI é explícita: "When context_reset is called, OpenGL
+/// resources in the libretro implementation are guaranteed to be invalid" (`libretro.h`), e um
+/// `context_reset` pode chegar **sem** o `context_destroy` — quando o contexto se perdeu por fora,
+/// "the OpenGL context was lost and resources should just be recreated without any attempt to free
+/// old resources". Ou seja: este callback diz as duas coisas ao mesmo tempo — o contexto novo está
+/// de pé **e** o que a sessão viva guarda da placa anterior é lixo.
+///
+/// Por isso ele faz o mesmo que o [`contexto_perdido`] com o contexto velho, e mais: marca que a
+/// sessão precisa nascer de novo. É o `liga_a_placa` do `retro_run` seguinte que a traz de volta —
+/// a placa é reconstruída **sob demanda**, com o resolvedor que o frontend deixou em
+/// [`OFERTA_DE_PLACA`], que continua valendo.
 unsafe extern "C" fn contexto_pronto() {
+    if let Ok(mut guarda) = PLACA.lock() {
+        // O `glow::Context` que guardamos é o do contexto que acabou de ser refeito: as funções
+        // que ele resolveu apontam para o contexto **velho**. Quem desenha com ele precisa saber
+        // disso antes de qualquer `gl*` — ver [`zeebx::video::gpu::a_placa_morreu`].
+        if let Some(placa) = guarda.as_ref() {
+            zeebx::video::gpu::a_placa_morreu(zeebx::video::gpu::endereco_da_placa(placa));
+        }
+        *guarda = None;
+    }
     CONTEXTO_PRONTO.store(true, std::sync::atomic::Ordering::Relaxed);
+    PERDEU_A_PLACA.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// O frontend avisa que o contexto deixou de valer.
@@ -343,15 +386,46 @@ unsafe extern "C" fn contexto_pronto() {
 /// **O `glow::Context` guardado vira lixo aqui**: as funções de GL que ele resolveu não existem
 /// mais. Descartar o contexto e voltar ao software é a resposta segura — o jogo continua rodando
 /// no processador, e o aviso diz por quê.
+///
+/// # A corrida, e o que ela custa
+///
+/// **Quem chama isto é o driver de vídeo do frontend, e pode ser outra thread.** O core roda
+/// [`retro_run`] na thread que o frontend usa para o jogo; este callback chega da thread de vídeo
+/// dele — trocar de driver, ligar ou desligar vídeo em thread, recriar a janela. A ABI
+/// (`libretro.h`) **não garante nada** sobre isso: ela diz o que fazer com os objetos de GL quando
+/// o aviso chega, e não de que thread ele vem nem que ele espere o quadro terminar.
+///
+/// O que o núcleo pode fazer aqui é barato e é o que está feito: **marcar a placa como morta**, com
+/// um `AtomicUsize` e sem cadeado nenhum (`a_placa_morreu`), porque travar neste callback pode
+/// travar o núcleo — o frontend pode estar com o quadro do emulador nas mãos, e um cadeado
+/// partilhado com o `retro_run` fecharia o ciclo. A partir daí quem desenha vê a marca
+/// (`GpuState`): para de mandar desenho e de ler o quadro, e o `Drop` da sessão larga os nomes de
+/// GL sem chamar `delete_*` num contexto morto.
+///
+/// **O que não dá para consertar daqui, e por quê:** o `gl*` que já está em curso quando o aviso
+/// chega **termina no contexto morto** — não há como interromper uma chamada de driver no meio. E
+/// não há como impedir que as duas threads usem o mesmo contexto sem mudar o contrato com o
+/// frontend: serializar desenho e `context_destroy` num cadeado exige que o desenho aconteça numa
+/// thread que o core controle, e ele não controla — o `retro_run` é chamado pelo frontend, e é ele
+/// quem decide se o vídeo é em thread separada. Um cadeado em volta de `core()` aqui, além disso,
+/// trava de verdade: o `retro_video_refresh` entrega o quadro sem cadeado nenhum (ver a nota no
+/// começo do [`retro_run`]), e o frontend que espera este callback enquanto o núcleo espera o
+/// frontend consome o quadro é um abraço mortal.
 unsafe extern "C" fn contexto_perdido() {
     if let Ok(mut guarda) = PLACA.lock() {
+        if let Some(placa) = guarda.as_ref() {
+            zeebx::video::gpu::a_placa_morreu(zeebx::video::gpu::endereco_da_placa(placa));
+        }
         *guarda = None;
     }
     CONTEXTO_PRONTO.store(false, std::sync::atomic::Ordering::Relaxed);
     PERDEU_A_PLACA.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Se o frontend já avisou que o contexto se perdeu. Ver [`contexto_perdido`].
+/// Se o frontend avisou que a placa de agora deixou de valer, ou que uma placa nova está pronta.
+///
+/// Os dois avisos entram aqui porque a resposta é a mesma: a sessão viva desenha numa placa que já
+/// não é a de agora. Ver [`contexto_perdido`] e [`contexto_pronto`].
 static PERDEU_A_PLACA: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Pergunta se o frontend aceita receber quadro nulo quando nada mudou.
@@ -2652,10 +2726,6 @@ pub extern "C" fn retro_run() {
         RELOGIO.store(estado.session.clock_ms(), std::sync::atomic::Ordering::Relaxed);
         #[cfg(test)]
         INSTRUCOES.store(estado.session.instrucoes(), std::sync::atomic::Ordering::Relaxed);
-        // **A placa entra no primeiro quadro.** O contexto de GL só existe depois que o frontend
-        // chama o `context_reset`, que acontece depois do `retro_load_game`; aqui é o primeiro
-        // lugar em que ele pode estar pronto. Recriar a sessão custa um reinício que ninguém vê:
-        // nenhum quadro foi entregue ainda.
         // **As opções que dá para aplicar a quente.** Ver [`opcoes_mudaram`]: o frontend avisa uma
         // vez, e só então vale reler — e a releitura trata todas juntas, porque o aviso é
         // consumido na primeira pergunta (ver [`aplica_opcoes_quentes`]). O sintetizador MIDI e o
@@ -2711,12 +2781,27 @@ pub extern "C" fn retro_run() {
         estado.session.define_pula_desenho(
             (pula_por_frameskip || pula_por_limite) && !estado.session.leu_pixels(),
         );
-        liga_a_placa(estado);
-        // **O contexto se perdeu e a sessão estava nele.** O aviso sozinho não basta: a sessão
-        // guarda o rasterizador de placa, e continuar desenhando por ele chamaria funções de GL que
-        // já não existem. Voltar ao software é o mesmo caminho da falha na ativação.
-        if PERDEU_A_PLACA.swap(false, std::sync::atomic::Ordering::Relaxed) && estado.placa_ligada {
+        // **A placa de agora, e a sessão de agora.** O aviso do frontend — contexto perdido, ou
+        // contexto refeito — chega no meio do quadro e vira uma marca só (`PERDEU_A_PLACA`, ver
+        // [`contexto_perdido`]); o que se faz com ela é isto, **antes** de [`liga_a_placa`], porque
+        // a sessão viva guarda o rasterizador da placa de antes: continuar desenhando por ele
+        // chamaria funções de GL que já não existem.
+        //
+        // `placa_ligada` é o que diz que a sessão está na placa, e é ele que se zera — a sessão
+        // nova nasce **sob demanda**, no `liga_a_placa` logo abaixo, quando o contexto já voltou.
+        // Sem contexto novo, ela volta ao processador, que é o mesmo caminho da falha na ativação.
+        //
+        // **A placa também entra no primeiro quadro, e por isto é aqui.** O contexto de GL só
+        // existe depois que o frontend chama o `context_reset`, que acontece depois do
+        // `retro_load_game`: este é o primeiro lugar em que ele pode estar pronto. Recriar a sessão
+        // custa um reinício que ninguém vê — nenhum quadro foi entregue ainda.
+        let perdeu = PERDEU_A_PLACA.swap(false, std::sync::atomic::Ordering::Relaxed);
+        let estava_na_placa = perdeu && estado.placa_ligada;
+        if perdeu {
             estado.placa_ligada = false;
+        }
+        liga_a_placa(estado);
+        if estava_na_placa && !estado.placa_ligada {
             let antes = estado.path.clone();
             if let Err(erro) = troca_para(estado, &antes, false) {
                 aviso(&format!(
