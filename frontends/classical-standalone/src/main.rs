@@ -856,11 +856,37 @@ fn run(path: &str, options: Options) -> Result<(), Box<dyn std::error::Error>> {
         despeja_superficies(&machine, dir)?;
     }
 
+    let (heap, objetos) = (machine.heap_used(), machine.live_objects());
+    println!("heap:      {heap} bytes em uso, {objetos} objetos vivos");
+    // **Quanto sobra não diz como sobra.** Um heap com 30 MB livres em 400 buracos não entrega
+    // uma alocação de 2 MB, e o jogo relata isso como falta de memória; a linha abaixo é o que
+    // separa os dois casos no relatório.
+    let retrato = machine.heap_retrato();
     println!(
-        "heap:      {} bytes em uso, {} objetos vivos",
-        machine.heap_used(),
-        machine.live_objects()
+        "           {} buraco(s), maior livre {} de {} livres ({}% do livre preso em buracos), {} blocos vivos de {}",
+        retrato.buracos,
+        retrato.maior_buraco,
+        retrato.livre,
+        u64::from(retrato.perdido_em_buracos()) * 100 / u64::from(retrato.livre.max(1)),
+        retrato.vivos,
+        retrato.teto,
     );
+    let recusas = machine.refused_allocations();
+    if let Some((tamanho, lr)) = recusas.first() {
+        println!(
+            "recusado:  {} pedido(s) de malloc sem lugar; o primeiro: {} bytes, pedido em {lr:#010x}",
+            recusas.len(),
+            tamanho
+        );
+    }
+    let checagens = machine.refused_availability_checks();
+    if let Some((tamanho, lr)) = checagens.first() {
+        println!(
+            "recusado:  {} pergunta(s) de memória disponível respondidas com \"não cabe\"; a primeira: {} bytes em {lr:#010x}",
+            checagens.len(),
+            tamanho
+        );
+    }
     if !machine.suspicious_objects().is_empty() {
         println!(
             "atenção:   {} chamadas com ponteiro `this` inesperado",

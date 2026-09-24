@@ -777,6 +777,22 @@ impl Session {
         (self.machine.heap_used(), self.machine.live_objects())
     }
 
+    /// O retrato do heap do jogo: buracos, maior bloco, livre e usado.
+    ///
+    /// `memory()` diz **quanto** está em uso; este diz **como** o que sobra está repartido — e é
+    /// isso que separa "o heap encheu" de "o heap se despedaçou".
+    pub fn heap_retrato(&self) -> crate::brew::heap::Retrato {
+        self.machine.heap_retrato()
+    }
+
+    /// As alocações e as checagens que o heap recusou, com o tamanho pedido e quem pediu.
+    pub fn heap_recusas(&self) -> (Vec<(u32, u32)>, Vec<(u32, u32)>) {
+        (
+            self.machine.refused_allocations(),
+            self.machine.refused_availability_checks(),
+        )
+    }
+
     /// O relógio do jogo, em milissegundos.
     pub fn clock_ms(&self) -> u32 {
         self.machine.clock_ms()
