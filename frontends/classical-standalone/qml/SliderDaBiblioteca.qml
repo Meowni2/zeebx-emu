@@ -6,8 +6,21 @@ import QtQuick
 Item {
     id: slider
 
+    // Devolve `valor`, e faz a ligação que chama isto depender das `versoes`.
+    //
+    // **As versões vão como argumento, e não numa expressão solta.** O QML é compilado
+    // antecipadamente (qmlcachegen), e o compilador descarta uma leitura cujo valor não é usado:
+    // `(cfg.versao, cfg.aparelho())` perdia a leitura da versão, a ligação deixava de depender
+    // dela, e trocar o aparelho de Boomerang para Z-Pad não trocava a tela. Interpretado, como no
+    // qmltestrunner, funcionava — por isso os testes não pegaram.
+    function depende(versoes, valor) {
+        return valor
+    }
+
     required property var biblioteca
     signal abre(int linha)
+    // O teclado anda pelo slider. Falso com outra janela por cima — ver `Principal.sobreposta`.
+    property bool escutando: true
 
     // O jogo escolhido, sem limite: o slider dá a volta, e a posição na lista é o resto da
     // divisão. Assim a animação da última para a primeira anda um passo, e não a lista toda.
@@ -53,11 +66,11 @@ Item {
 
     focus: true
     clip: true
-    Keys.onLeftPressed: cursor -= 1
-    Keys.onRightPressed: cursor += 1
-    Keys.onReturnPressed: abre(linha(cursor))
-    Keys.onEnterPressed: abre(linha(cursor))
-    Keys.onSpacePressed: abre(linha(cursor))
+    Keys.onLeftPressed: if (escutando) cursor -= 1
+    Keys.onRightPressed: if (escutando) cursor += 1
+    Keys.onReturnPressed: if (escutando) abre(linha(cursor))
+    Keys.onEnterPressed: if (escutando) abre(linha(cursor))
+    Keys.onSpacePressed: if (escutando) abre(linha(cursor))
 
     // A posição corre atrás do cursor com uma mola amortecida: rápida no começo, macia no fim.
     FrameAnimation {
@@ -70,10 +83,19 @@ Item {
         }
     }
 
-    // A roda do mouse anda um jogo por entalhe, de qualquer eixo.
+    // A roda anda um jogo por entalhe, de qualquer eixo e de qualquer aparelho.
+    //
+    // **Uma `MouseArea`, e não um `WheelHandler`.** O `WheelHandler` só aceita o mouse por padrão
+    // (`acceptedDevices` 1, conferido no Qt 6.11) e só um eixo: num notebook, a rolagem de dois
+    // dedos do touchpad não andava o slider. A `MouseArea` sem botões recebe a roda de tudo, nos
+    // dois eixos; os painéis e as caixas por cima não tratam a roda, e ela chega até aqui.
     property real roda: 0
-    WheelHandler {
+    MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.NoButton
         onWheel: (evento) => {
+            // Um entalhe de mouse é 120 em `angleDelta`; o touchpad manda o mesmo movimento em
+            // pedaços menores, que se somam até valer um passo.
             slider.roda += (evento.angleDelta.x - evento.angleDelta.y) / 2
             while (Math.abs(slider.roda) >= 60) {
                 slider.cursor += Math.sign(slider.roda)
@@ -86,7 +108,7 @@ Item {
     readonly property real alturaDaFicha: Math.min(Math.max(height * 0.2, 72), 130)
     readonly property real topoDoPalco: 8 + alturaDoRolo + 6 + 40 + 4
     readonly property real alturaDoPalco: height - alturaDaFicha - topoDoPalco
-    readonly property var atual: (versao, total > 0 ? biblioteca.item(linha(cursor)) : ({}))
+    readonly property var atual: slider.depende([versao], total > 0 ? biblioteca.item(linha(cursor)) : ({}))
 
     // O rolo: um cilindro de painéis, cada um num ângulo. O da frente é o do jogo escolhido.
     Rectangle {
@@ -109,7 +131,7 @@ Item {
             readonly property int k: Math.round(slider.posicao) - 5 + index
             readonly property real angulo: (k - slider.posicao) * 0.42
             readonly property real frente: Math.cos(angulo)
-            readonly property var jogo: (slider.versao, slider.total > 0 ? slider.biblioteca.item(slider.linha(k)) : ({}))
+            readonly property var jogo: slider.depende([slider.versao], slider.total > 0 ? slider.biblioteca.item(slider.linha(k)) : ({}))
             readonly property bool escolhido: k === slider.cursor
                                               && Math.abs(slider.posicao - slider.cursor) < 0.5
 
@@ -187,7 +209,7 @@ Item {
             readonly property real d: k - slider.posicao
             readonly property real escala: 1 / (1 + 0.38 * Math.abs(d))
             readonly property real alturaBase: slider.alturaDoPalco * 0.92
-            readonly property var jogo: (slider.versao, slider.total > 0 ? slider.biblioteca.item(slider.linha(k)) : ({}))
+            readonly property var jogo: slider.depende([slider.versao], slider.total > 0 ? slider.biblioteca.item(slider.linha(k)) : ({}))
             readonly property real aspecto: capa.sourceSize.height > 0
                                             ? capa.sourceSize.width / capa.sourceSize.height : 0.77
             readonly property real passo: alturaBase * 0.62
