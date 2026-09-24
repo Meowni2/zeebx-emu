@@ -3,9 +3,9 @@
 # `docs/implementacao/21-migracao-para-qt.md`.
 #
 # **Separado do `[package.metadata.packager]` do `Cargo.toml` de propósito.** Aquele é o da release,
-# que continua com a interface do egui até a licença passar para GPLv3. Quando passar, isto vira o
-# de lá, e este arquivo sai. O nome não é `packager.toml` porque o `cargo packager` procura esse
-# nome sozinho em toda a árvore, e a release pegaria este por engano.
+# que continua com a interface do egui até a feature `ui-qt` ser ligada por padrão. Quando for,
+# isto vira o de lá, e este arquivo sai. O nome não é `packager.toml` porque o `cargo packager`
+# procura esse nome sozinho em toda a árvore, e a release pegaria este por engano.
 #
 # Com `--config`, o `cargo packager` não lê o `Cargo.toml`: a versão vem do workflow, que troca o
 # `@VERSAO@` numa cópia deste arquivo, e o lugar do binário vai no `binaries-dir`.
@@ -36,12 +36,12 @@ main = true
 # O ALSA vai com o `libasound2t64` primeiro pelo motivo que o `Cargo.toml` explica: com o
 # `libasound2` na frente, o Ubuntu 24.04 instalava uma imitação do ALSA sem todos os símbolos.
 #
-# O `.deb` usa o Qt do sistema, e por isso é compilado contra ele: um binário do Qt 6.11 não roda num
-# Qt mais velho, e o Ubuntu 24.04 traz o 6.4. As bibliotecas de janela e de áudio são as do `.deb`
-# do egui, que continua no binário; as do Qt são as que o binário linka, conferidas com `ldd` e
-# `dpkg -S` num Ubuntu 24.04 — o `gui`, o `network` e o `opengl` com os dois nomes, porque o Ubuntu
-# 24.04 os chama com `t64` e o Debian 13 sem; e os módulos QML são os que os `import` pedem, mais o
-# `qt6-wayland`, sem o qual a janela abre pelo XWayland.
+# O `.deb` usa o Qt do sistema, e por isso é compilado contra ele: um binário do Qt 6.11 não roda
+# num Qt mais velho, e o Ubuntu 24.04 traz o 6.4. As bibliotecas de janela e de áudio são as do
+# `.deb` do egui, que continua no binário; as do Qt são as que o binário linka, conferidas com `ldd`
+# e `dpkg -S` num Ubuntu 24.04 — o `gui`, o `network` e o `opengl` com os dois nomes, porque o
+# Ubuntu 24.04 os chama com `t64` e o Debian 13 sem; e os módulos QML são os que os `import` pedem,
+# mais o `qt6-wayland`, sem o qual a janela abre pelo XWayland.
 [deb]
 section = "games"
 depends = [
