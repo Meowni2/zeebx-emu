@@ -319,7 +319,7 @@ impl<C: CpuBackend> Machine<C> {
             "Read" => {
                 // O tamanho vem do jogo: conferido antes de alocar, ou um pedido absurdo derruba o
                 // processo em vez de virar erro de API.
-                let count = self.tamanho_do_guest(a2 as usize)?;
+                let count = tamanho_do_guest(a2 as usize)?;
                 let mut buffer = vec![0u8; count];
                 let read = match self.open_files.get_mut(&this) {
                     Some(open) => {

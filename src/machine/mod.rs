@@ -1368,6 +1368,30 @@ fn tira_de_quadros(gif: &crate::video::gif::Gif) -> DecodedImage {
     }
 }
 
+/// O maior pedido de bytes que pode vir do guest sem virar uma alocação desproporcional do host.
+///
+/// **O tamanho é do jogo, e o alocador é nosso.** `IFILE_Read(pBuffer, 0x7fffffff)` é uma linha que
+/// cabe no guest e pediria 2 GiB aqui; o `vec![0u8; n]` correspondente não devolve erro — ele
+/// aborta o processo. O teto é 128 MiB: oito vezes a maior leitura legítima já medida (o pacote de
+/// 16 MB do Iron Sight, lido em pedaços grandes) e o dobro do heap do jogo. Nada maior que isso
+/// pode ser entregue ao guest de qualquer forma.
+pub(super) const TETO_DA_LEITURA: u32 = 128 * 1024 * 1024;
+
+/// **Um tamanho que veio do guest, conferido antes de virar alocação.**
+///
+/// O tamanho de uma leitura ou de uma escrita é argumento do jogo, e o alocador é nosso:
+/// `IFILE_Read(pBuffer, 0x7fffffff)` é uma linha que cabe no guest e pediria 2 GiB aqui, e um
+/// `vec![0u8; n]` desse tamanho não devolve erro — o processo morre. Ver
+/// [`TETO_DA_LEITURA`]: um argumento inválido tem de virar erro de API.
+pub(super) fn tamanho_do_guest(len: usize) -> Result<usize, CpuError> {
+    if len > TETO_DA_LEITURA as usize {
+        return Err(CpuError(format!(
+            "o guest pediu {len} bytes, acima do teto de {TETO_DA_LEITURA}"
+        )));
+    }
+    Ok(len)
+}
+
 /// Descomprime um bloco de deflate.
 ///
 /// A documentação do `IUnzipAStream` fala do "algoritmo deflate, o usado pelo gzip", e as duas
@@ -1382,7 +1406,7 @@ fn inflate(compressed: &[u8]) -> Option<Vec<u8>> {
     // O `take` corta o decodificador ao teto mais um byte: se a saída passar disso, é bomba, não
     // dado, e o pedido é recusado em vez de derrubar o processo.
     let teto = u64::from(TETO_DO_INFLATE);
-    let mut le = |fonte: &[u8], qual: u8| -> Option<Vec<u8>> {
+    let le = |fonte: &[u8], qual: u8| -> Option<Vec<u8>> {
         let mut out = Vec::new();
         let mut leitor: Box<dyn Read> = match qual {
             0 => Box::new(flate2::read::GzDecoder::new(fonte)),

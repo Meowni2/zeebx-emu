@@ -849,7 +849,8 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 // Zerar o resto é parte da resposta: o jogo passa um buffer que ele mesmo
                 // zerou, mas quem chama esta função não pode contar com isso.
-                self.cpu.write_mem(info, &vec![0u8; tamanho])?;
+                self.cpu
+                    .write_mem(info, &vec![0u8; tamanho_do_guest(tamanho as usize)?])?;
                 self.cpu.write_u32(info + ESTADO_DO_SERVICO, COM_SERVICO)?;
                 self.cpu.write_u32(info + MODO_DE_OPERACAO, NO_AR)?;
                 self.cpu

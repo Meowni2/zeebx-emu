@@ -149,7 +149,7 @@ impl<C: CpuBackend> Machine<C> {
                 // numa linha que cabe no guest, e o `vec!` correspondente aborta o processo. O
                 // teto é o mesmo das leituras, e pelo mesmo motivo.
                 let conteudo = if dados == 0 {
-                    vec![0u8; self.tamanho_do_guest(tamanho as usize)?]
+                    vec![0u8; tamanho_do_guest(tamanho as usize)?]
                 } else {
                     self.read_bytes(dados, tamanho)?
                 };

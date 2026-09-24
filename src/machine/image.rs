@@ -64,7 +64,7 @@ impl<C: CpuBackend> Machine<C> {
                 // pedido absurdo aborta o processo em vez de virar erro de API. O teto do que já
                 // foi entregue é conferido no mesmo passo: antes o excesso era detectado depois de
                 // a memória já estar gasta.
-                let count = self.tamanho_do_guest(a2 as usize)?;
+                let count = tamanho_do_guest(a2 as usize)?;
                 if a1 != 0 && count > 0 {
                     let ja_entregue = self.decoders.get(&decoder).map_or(0, |state| state.fed.len());
                     if ja_entregue + count > MAX_DECODED_INPUT {
