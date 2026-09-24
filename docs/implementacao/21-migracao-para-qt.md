@@ -16,7 +16,8 @@ marcada aqui como feita.
 | 4 — biblioteca | feita: grade e slider, capas e nomes do acervo, busca, navegação pelo controle |
 | 5 — configurações | feita: as seis abas, o desenho do controle com clique pela silhueta, captura, eixos, Boomerang, Discord e atualizações |
 | 6 — janelas auxiliares | feita: saves, log da execução, aviso de abertura e aviso de versão nova |
-| 7 a 9 | não começadas |
+| 7 — conferência | feita: as chaves de texto das duas interfaces comparadas, teste de que toda chave usada existe, e o que faltava no Qt (ícone, `app_id`, tamanhos mínimos, tela cheia na biblioteca) |
+| 8 e 9 | não começadas |
 
 ## Onde o egui está de verdade
 
@@ -419,6 +420,35 @@ versão nova vindo de uma procura de verdade.
 `discord.rs`, `i18n.rs`, `saves.rs`, `acervo.rs` e `library.rs` não mudam. Os textos continuam
 vindo do `Catalog` — **não** do `qsTr` —, para os JSON soltos e o teste de chaves seguirem
 valendo.
+
+- **Os módulos compartilhados.** Contra o `master`, o `i18n.rs` está intacto, e os outros quatro só
+  ganharam linhas, nenhuma alterada: é o que saiu do `App` para as duas interfaces usarem — a
+  presença do Discord, a lista de saves, e funções da biblioteca e do acervo. Nenhum `qsTr` no QML.
+- **As duas interfaces, comparadas pelas chaves de texto.** Uma chave que o egui usa e o Qt não é
+  uma função que ficou para trás. Sobraram só três: o "pôr o quadro na tela pelo GL", tirado de
+  propósito na fase 5; a exportação das imagens do Discord, que no egui também está fora da tela
+  (`#[allow(dead_code)]`); e o `settings.title`, que o Qt passou a usar no título das
+  configurações. As chaves que nenhuma das duas usa são montadas em tempo de execução
+  (`button.*`, `axis.*`) ou são do frontend Android (`play.*`).
+- **Toda chave usada existe no catálogo** — `tests/chaves_da_interface.rs`, no pacote raiz: no
+  do standalone, com a interface Qt ligada, o cxx-qt liga o módulo QML em todo alvo, e um teste de
+  integração, sem as pontes que são do binário, não linkava. O teste de `i18n.rs` confere que
+  os idiomas têm as mesmas chaves entre si; faltava o outro lado. Uma chave errada não quebra nada:
+  o `Catalog` a devolve como ela mesma, e a tela mostra `saves.confirm.yes` no lugar de "Excluir".
+  No QML vale todo literal com cara de chave, menos os das configurações (`chave:`, `v()`,
+  `define()`, `opcoes()`), que também têm pontos; no Rust, o primeiro argumento das chamadas ao
+  catálogo em `src/qt/`, `src/ui/` e no frontend Android. Conferido trocando uma chave por uma que
+  não existe: o teste aponta o arquivo e a linha.
+- **O que não tem texto**, comparado pelo que o `eframe` recebia e pelo `update` do `App`:
+  - O ícone e o `app_id`. O Qt não dava nenhum dos dois. Agora a logo, reduzida a 256 pixels como
+    no egui, é o ícone de todas as janelas (`aplica_icone`, em `gl_qt.cpp`), e o
+    `setDesktopFileName("zeebx")` faz o papel do `app_id`: no Wayland é por ele que o compositor
+    acha o `zeebx.desktop` e o ícone. Rodando de `target/`, sem o `.desktop` instalado, o portal
+    avisa que não achou o aplicativo; é só o aviso.
+  - Os tamanhos mínimos do egui: a biblioteca, 480×360; as configurações, 420×320; o jogo, 320×240.
+    A de saves e a de log já tinham.
+  - F11 e Alt+Enter também na biblioteca. No egui a tela cheia vale na janela principal e na do
+    jogo; o Qt só tinha na do jogo.
 
 ### 8 — Corte do eframe
 
