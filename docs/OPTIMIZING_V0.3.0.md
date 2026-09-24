@@ -508,3 +508,14 @@ do muOS prova o tipo de caminho, mas não substitui o log do driver efetivamente
 próxima instalação deve capturar essa linha e comparar vendor/renderer/version antes de qualquer
 conclusão sobre Panfrost ou libMali.
 
+### Primeiro passo seguro do caminho Mali
+
+Antes do zero-copy completo, o core já evita um custo inútil no modo de placa: `retro_run` não
+chama `write_rgb565_into()` nem calcula a assinatura CPU quando há FBO de hardware ativo. O
+RetroArch recebe `HW_FRAME_BUFFER_VALID` e ignora o ponteiro de pixels nesse modo. Isso remove a
+cópia/varredura CPU por quadro sem alterar a composição 2D nem o fallback.
+
+Isso **não** remove ainda o `glReadPixels` que ocorre em `present_gl`; esse é o próximo patch e
+precisa de readback preguiçoso para não quebrar jogos que misturam GL, `IDisplay` e leitura de
+pixels.
+

@@ -2489,6 +2489,10 @@ pub extern "C" fn retro_run() {
         // Vídeo: o framebuffer do console, no formato negociado.
         let tela = estado.session.screen();
         let (largura, altura) = (tela.width(), tela.height());
+        // No caminho de placa o frontend apresenta o FBO que recebeu no callback e ignora o
+        // ponteiro de pixels. Não copie 600 KiB nem calcule assinatura CPU nesse caso: além de
+        // inútil, isso competia com o Mali pela mesma CPU fraca que queremos deixar para o guest.
+        let na_placa = placa().is_some();
         // O console é 640×480, e é esse o quadro que o shader espera receber. Um tamanho
         // diferente é avisado uma vez, em vez de aparecer como imagem torta sem explicação.
         if !estado.avisou_tamanho && (largura != 640 || altura != 480) {
@@ -2501,7 +2505,9 @@ pub extern "C" fn retro_run() {
         // 30 FPS é cadência de apresentação, não só otimização 3D: no quadro oculto preservamos
         // os bytes anteriores. Se o frontend aceita dupe, entregaremos ponteiro nulo; se não
         // aceita, entregaremos os mesmos bytes de novo — nos dois casos a imagem é realmente 30.
-        let duplicado = if estado.limite_fps_duplica {
+        let duplicado = if na_placa {
+            false
+        } else if estado.limite_fps_duplica {
             estado.aceita_dupe
         } else {
             tela.write_rgb565_into(&mut quadro);
