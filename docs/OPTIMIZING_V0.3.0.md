@@ -540,8 +540,12 @@ As lições gráficas úteis são mais diretas:
    fallback GLES2 é `glReadPixels` síncrono. O Zeebx deve marcar slots válidos e usar fence — o
    código de referência não é seguro para copiar literalmente.
 4. **Shadow state.** Cacheia enable, FBO, buffer, textura, viewport, scissor, blend, depth, programa,
-   atributos e uniforms. O `GpuState::aplica` do Zeebx ainda reemite quase tudo por lote e desliga
-   VAO/programa depois de cada draw; este é o próximo quick win Mali depois do readback.
+   atributos e uniforms. **Feito o programa/VAO/VBO**: os três são criados uma vez e nunca trocam, e
+   o `submete_com` os religava a cada lote e os **desligava** no fim de cada um — cinco chamadas de
+   driver por lote para reafirmar o que já valia, e desligar programa e VAO é o que faz um driver
+   fino de ARM revalidar mais coisa. O Quake chega a 370 lotes por quadro. Agora entram uma vez
+   (`GpuState::ligados`), e só o contexto refeito os invalida. O que **falta** do shadow state é o
+   resto: o `aplica` ainda reemite enable/blend/depth/textura por lote.
 5. **Batch por chave.** Acumula triângulos até mudar FBO/programa/texturas/blend/depth/scissor ou
    aparecer barreira. O Zeebx já agrupa leques/faixas de mesmo `Estado`, então deve melhorar o
    cache de estado antes de construir outro batcher.
@@ -1725,3 +1729,28 @@ Para não deixar nenhum extra em ambiguidade, o desfecho de cada um.
 | NEON nos laços largos | PCSX-ReARMed, Flycast | **despriorizado pelos adendos** — pouca transferibilidade confirmada |
 | fastmem próprio / dynarec | Flycast, DuckStation, PCSX | **despriorizado pelos adendos** — o Dynarmic já entrega tabela de páginas, e o que resta é SMC medido |
 
+### O que os logs do RG40XX-H (muOS) já provaram
+
+Medido no aparelho, em 2026-09-24, com o log do núcleo em `depuracao`:
+
+```text
+Zeebx: GL real vendor=ARM; renderer=Mali-G31; version=OpenGL ES 3.2 v1.r20p0-01rel0.…
+       GLSL=OpenGL ES GLSL ES 3.20
+Zeebx: o frontend aceitou render em hardware (OpenGL 3.0); o desenho passa a ser na placa
+Geometry: 640x480, Aspect: 1.333
+Set video size to: 640x480
+```
+
+1. **O driver é o libMali r20p0, não Panfrost** — é a verificação que esta seção pedia e que não
+   existia. Com ela, as conclusões abaixo deixam de ser suposição.
+2. **A prova do blit passou.** Não há nenhum aviso de `glBlitFramebuffer` no log: neste driver o
+   antialias e a resolução interna **não** foram desligados pela frente 5.
+3. **O contexto que chega ao núcleo é GL 3.0**, embora o driver anuncie ES 3.2. Fica anotado como
+   suspeito do custo: contexto mais baixo costuma fechar caminhos rápidos do driver.
+4. **A tela do aparelho é 640×480**, e o RetroArch apresenta nesse tamanho: não há escala
+   envolvida, então o que se mede ali é rasterização pura.
+
+E o que o usuário mediu à mão: **reduzir a resolução pela metade e desenhar no processador foi
+mais rápido do que no caminho de placa** com as mesmas opções. É essa a diferença que o cache de
+programa/VAO/VBO acima veio atacar, e a comparação no aparelho está montada (dois `.so` na pasta
+`ports`, e o `testa_zeebx.sh` aceita qual usar).

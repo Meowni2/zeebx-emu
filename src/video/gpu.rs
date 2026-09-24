@@ -366,6 +366,17 @@ pub struct GpuState {
     /// Se os ponteiros de atributo já estão gravados no `vao`. Eles não mudam: o layout do
     /// vértice é um só, e a posição de cada desenho no anel vai no `first` do `draw_arrays`.
     vao_pronto: bool,
+    /// Se o **programa**, o `vao` e o `vbo` já estão ligados na placa.
+    ///
+    /// Os três são criados uma vez e nunca trocam, então ligá-los a cada desenho era pagar três
+    /// chamadas de driver por lote — e o lote do Quake chega a umas 370 por quadro. Pior: o
+    /// `submete_com` **desligava** os dois no fim de cada desenho, e num driver fino de ARM, como
+    /// o Mali dos portáteis, desligar programa e VAO é justamente o que revalida mais coisa.
+    ///
+    /// O que pode largar um dos três é outro código desenhando com o mesmo contexto — não há: o
+    /// programa é um só, e o `vbo` fica preso aos atributos do `vao`. O frontend, que desenha o
+    /// `FBO` depois do `retro_run`, liga o que precisa por conta própria.
+    ligados: bool,
     /// **Os desenhos juntados que ainda não foram à placa**, em triângulos soltos, com o estado
     /// e a perspectiva em que foram pedidos.
     ///
@@ -521,6 +532,7 @@ impl GpuState {
             vbo,
             anel: (0, 0),
             vao_pronto: false,
+            ligados: false,
             lote: Vec::new(),
             estado_do_lote: None,
             soltos: Vec::new(),
@@ -916,6 +928,8 @@ impl GpuState {
         self.uniformes = Uniformes::default();
         self.anel = (0, 0);
         self.vao_pronto = false;
+        // O contexto foi refeito: o que estava ligado nele deixou de estar.
+        self.ligados = false;
         self.lote.clear();
         self.estado_do_lote = None;
         self.soltos.clear();
@@ -1149,9 +1163,13 @@ impl GpuState {
         };
         let gl = &self.gl;
         unsafe {
-            gl.use_program(Some(self.programa));
-            gl.bind_vertex_array(Some(self.vao));
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+            // Ligados **uma vez**, e nao a cada desenho: ver [`GpuState::ligados`].
+            if !self.ligados {
+                gl.use_program(Some(self.programa));
+                gl.bind_vertex_array(Some(self.vao));
+                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+                self.ligados = true;
+            }
             let passo = (FLOATS_POR_VERTICE * 4) as i32;
             if !self.vao_pronto {
                 for (indice, tamanho, deslocamento) in
@@ -1225,8 +1243,8 @@ impl GpuState {
             );
             uniforme_vec3(gl, &self.uniformes, self.programa, "cor_neblina", neblina.cor);
             gl.draw_arrays(modo, primeiro as i32, quantos as i32);
-            gl.bind_vertex_array(None);
-            gl.use_program(None);
+            // **Nao desligue aqui.** Desligar no fim de cada desenho era o custo que este cache
+            // veio tirar: um programa a menos por lote e uma revalidacao a menos em cada um.
         }
         self.devolve_o_contexto();
         self.sujo = true;
