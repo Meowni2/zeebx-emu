@@ -241,7 +241,7 @@ fn pede_o_contexto_de_placa() {
         ));
         if let Ok(mut g) = OFERTA_DE_PLACA.lock() { *g = Some(oferta); }
     } else {
-        log("Zeebx: o frontend não oferece render em hardware; o desenho fica no processador");
+        aviso("Zeebx: o frontend não oferece render em hardware; o desenho fica no processador");
     }
 }
 
@@ -772,8 +772,14 @@ unsafe fn environ(cmd: u32, data: *mut c_void) -> bool {
     unsafe { callback(cmd, data) }
 }
 
+/// Uma linha **informativa** no log do frontend: o que o núcleo decidiu e onde foi buscar as coisas.
+///
+/// **Estava tudo saindo como erro.** Este atalho escrevia com o nível 3 (`RETRO_LOG_ERROR`) e é por
+/// ele que passa quase todo o relato do núcleo — fonte, banco de som, rasterizador, fim de jogo. No
+/// log do RetroArch isso vira `[libretro ERROR]` em linha informativa, e quem lê o log para decidir
+/// alguma coisa (foi assim que se leu a sessão do R36S) começa procurando um defeito que não existe.
 fn log(mensagem: &str) {
-    log_com_nivel(3, mensagem);
+    log_com_nivel(1, mensagem);
 }
 
 /// Escreve no log do frontend com o nível do `retro_log_level`.
@@ -2284,7 +2290,7 @@ pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
         .to_string_lossy()
         .into_owned();
     let Some(save_dir) = diretorio(ENV_GET_SAVE_DIRECTORY) else {
-        log("Zeebx: o frontend não informou diretório de saves; recusando carregar.");
+        log_com_nivel(3, "Zeebx: o frontend não informou diretório de saves; recusando carregar.");
         return false;
     };
     let sistema = diretorio(ENV_GET_SYSTEM_DIRECTORY);
@@ -2319,7 +2325,7 @@ pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
     let mut formato = PIXEL_FORMAT_RGB565;
     let alvo = &mut formato as *mut u32 as *mut c_void;
     if !unsafe { environ(ENV_SET_PIXEL_FORMAT, alvo) } {
-        log("Zeebx: o frontend não aceita RGB565.");
+        log_com_nivel(3, "Zeebx: o frontend não aceita RGB565.");
         return false;
     }
     // Uma chamada por quadro em vez de doze, quando o frontend entrega a máscara.
@@ -2349,7 +2355,7 @@ pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
             true
         }
         Err(erro) => {
-            log(&format!("Zeebx: não deu para abrir {caminho}: {erro}"));
+            log_com_nivel(3, &format!("Zeebx: não deu para abrir {caminho}: {erro}"));
             false
         }
     }
@@ -2952,7 +2958,7 @@ pub extern "C" fn retro_run() {
                         Some(caminho) => match troca_para(estado, &caminho, false) {
                             Ok(()) => log("Zeebx: fim do jogo; de volta à Z-Wheel"),
                             Err(erro) => {
-                                log(&format!("Zeebx: não deu para voltar à Z-Wheel: {erro}"));
+                                log_com_nivel(2, &format!("Zeebx: não deu para voltar à Z-Wheel: {erro}"));
                                 dispensar = true;
                             }
                         },
