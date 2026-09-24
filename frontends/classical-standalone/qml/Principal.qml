@@ -14,6 +14,17 @@ import zeebx
 ApplicationWindow {
     id: principal
 
+    // Devolve `valor`, e faz a ligação que chama isto depender das `versoes`.
+    //
+    // **As versões vão como argumento, e não numa expressão solta.** O QML é compilado
+    // antecipadamente (qmlcachegen), e o compilador descarta uma leitura cujo valor não é usado:
+    // `(cfg.versao, cfg.aparelho())` perdia a leitura da versão, a ligação deixava de depender
+    // dela, e trocar o aparelho de Boomerang para Z-Pad não trocava a tela. Interpretado, como no
+    // qmltestrunner, funcionava — por isso os testes não pegaram.
+    function depende(versoes, valor) {
+        return valor
+    }
+
     // O jogo pedido na linha de comando, se houve: abre direto, sem passar pela lista.
     required property string jogoInicial
 
@@ -25,7 +36,14 @@ ApplicationWindow {
     onClosing: Qt.quit()
 
     Component.onCompleted: {
-        // O modo configurado para a janela principal (`graphics.janela`), como no egui.
+        aplicaModo()
+        if (jogoInicial !== "")
+            mostra(biblioteca.abreCaminho(jogoInicial))
+    }
+
+    // O modo configurado para a janela principal (`graphics.janela`), como no egui. As
+    // configurações chamam isto de novo quando ele muda: na principal, vale na hora.
+    function aplicaModo() {
         const modo = biblioteca.modoDaJanela()
         if (modo === 2)
             showFullScreen()
@@ -33,8 +51,11 @@ ApplicationWindow {
             showMaximized()
         else
             showNormal()
-        if (jogoInicial !== "")
-            mostra(biblioteca.abreCaminho(jogoInicial))
+    }
+
+    // Os textos se refazem sozinhos quando o idioma muda: a ligação que chama isto lê a versão.
+    function tr(chave) {
+        return depende([Idioma.versao], Idioma.texto(chave))
     }
 
     // `erro` vazio é jogo aberto.
@@ -56,8 +77,8 @@ ApplicationWindow {
         slider.reinicia()
     }
 
-    // O modo da biblioteca vem das configurações: 0 grade, 1 slider.
-    readonly property bool emSlider: biblioteca.modoDaBiblioteca() === 1
+    // O modo da biblioteca vem das configurações: 0 grade, 1 slider. Relido quando elas mudam.
+    readonly property bool emSlider: principal.depende([configuracoes.cfg.versao], biblioteca.modoDaBiblioteca() === 1)
     readonly property Item vista: emSlider ? slider : grade
 
     Biblioteca {
@@ -68,15 +89,30 @@ ApplicationWindow {
         id: jogo
     }
 
+    JanelaDeConfiguracoes {
+        id: configuracoes
+
+        biblioteca: biblioteca
+        principal: principal
+        visible: false
+    }
+
+    // **Com outra janela por cima, a biblioteca não escuta o controle nem o teclado** — nem se a
+    // principal voltar a ter o foco. Mapeando o controle nas configurações, o botão apertado
+    // abriria um jogo sem querer. O mouse continua valendo, como no egui. Toda janela que abrir
+    // por cima da principal entra aqui.
+    readonly property bool sobreposta: jogo.visible || configuracoes.visible
+
     // O controle não gera evento no Qt, como não gerava no egui: enquanto a biblioteca está à
-    // vista, ele é lido aqui. Com um jogo aberto ou a janela sem o foco, o controle não é dela —
-    // e escrevendo na busca ele continua navegando, como no egui.
+    // vista, ele é lido aqui. Sem o foco, ou com outra janela por cima, o controle não é dela — e
+    // escrevendo na busca ele continua navegando, como no egui. Ao voltar a escutar, o que já
+    // estava apertado não conta: a navegação é silenciada enquanto não escuta.
     Timer {
         interval: 33
         repeat: true
         running: true
         onTriggered: {
-            const escutando = principal.active && !jogo.visible
+            const escutando = principal.active && !principal.sobreposta
             for (const codigo of biblioteca.comandos(escutando)) {
                 if (codigo === 5)
                     principal.mostra(biblioteca.abreZWheel())
@@ -109,12 +145,12 @@ ApplicationWindow {
             }
 
             Button {
-                text: "▶ " + biblioteca.tr("nav.z_wheel")
-                enabled: biblioteca.temZWheel()
+                text: "▶ " + tr("nav.z_wheel")
+                enabled: principal.depende([configuracoes.cfg.versao], biblioteca.temZWheel())
                 onClicked: principal.mostra(biblioteca.abreZWheel())
                 ToolTip.visible: hovered
                 ToolTip.delay: 500
-                ToolTip.text: biblioteca.tr(enabled ? "nav.z_wheel.hint" : "nav.z_wheel.missing")
+                ToolTip.text: tr(enabled ? "nav.z_wheel.hint" : "nav.z_wheel.missing")
             }
 
             // A busca: filtra a lista pelo nome, sem ligar para acentos. Esc limpa; o Enter joga
@@ -123,7 +159,7 @@ ApplicationWindow {
                 id: busca
 
                 Layout.preferredWidth: 220
-                placeholderText: biblioteca.tr("nav.search")
+                placeholderText: tr("nav.search")
                 onTextChanged: {
                     biblioteca.busca(text)
                     principal.recomeca()
@@ -132,11 +168,11 @@ ApplicationWindow {
                     text = ""
                     principal.vista.forceActiveFocus()
                 }
-                Keys.onReturnPressed: principal.mostra(biblioteca.abre(principal.escolhido()))
-                Keys.onEnterPressed: principal.mostra(biblioteca.abre(principal.escolhido()))
+                Keys.onReturnPressed: if (!principal.sobreposta) principal.mostra(biblioteca.abre(principal.escolhido()))
+                Keys.onEnterPressed: if (!principal.sobreposta) principal.mostra(biblioteca.abre(principal.escolhido()))
                 ToolTip.visible: hovered
                 ToolTip.delay: 500
-                ToolTip.text: biblioteca.tr("nav.search.hint")
+                ToolTip.text: tr("nav.search.hint")
             }
 
             ToolButton {
@@ -144,22 +180,31 @@ ApplicationWindow {
                 visible: busca.text !== ""
                 onClicked: busca.text = ""
                 ToolTip.visible: hovered
-                ToolTip.text: biblioteca.tr("nav.search.clear")
+                ToolTip.text: tr("nav.search.clear")
             }
 
             Item {
                 Layout.fillWidth: true
             }
 
+            Button {
+                text: tr("nav.settings")
+                onClicked: {
+                    configuracoes.show()
+                    configuracoes.raise()
+                    configuracoes.requestActivate()
+                }
+            }
+
             // O Zeeboids só deixa sincronizar uma vez por dia, e a trava é dele: guarda a data no
             // próprio banco. Testar rede com isso custa um dia por tentativa, então o botão recua
             // a data em um dia.
             Button {
-                text: biblioteca.tr("nav.unlock_sync")
+                text: tr("nav.unlock_sync")
                 onClicked: recado.text = biblioteca.liberaSincronizacao()
                 ToolTip.visible: hovered
                 ToolTip.delay: 500
-                ToolTip.text: biblioteca.tr("nav.unlock_sync.hint")
+                ToolTip.text: tr("nav.unlock_sync.hint")
             }
         }
 
@@ -174,7 +219,7 @@ ApplicationWindow {
                 wrapMode: Text.Wrap
             }
             Button {
-                text: biblioteca.tr("nav.unlock_sync.ok")
+                text: tr("nav.unlock_sync.ok")
                 onClicked: recado.text = ""
             }
         }
@@ -187,7 +232,7 @@ ApplicationWindow {
                 text: biblioteca.contagem
             }
             Button {
-                text: biblioteca.tr("library.rescan")
+                text: tr("library.rescan")
                 onClicked: {
                     biblioteca.procuraDeNovo()
                     principal.recomeca()
@@ -198,7 +243,7 @@ ApplicationWindow {
                 horizontalAlignment: Text.AlignRight
                 elide: Text.ElideLeft
                 opacity: 0.6
-                text: biblioteca.tr("library.controls_hint")
+                text: tr("library.controls_hint")
             }
         }
 
@@ -236,6 +281,7 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: !principal.emSlider && biblioteca.vazio === ""
+            escutando: !principal.sobreposta
             biblioteca: biblioteca
             onAbre: (linha) => principal.mostra(biblioteca.abre(linha))
         }
@@ -246,6 +292,7 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: principal.emSlider && biblioteca.vazio === ""
+            escutando: !principal.sobreposta
             biblioteca: biblioteca
             onAbre: (linha) => principal.mostra(biblioteca.abre(linha))
         }
