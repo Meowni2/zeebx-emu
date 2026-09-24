@@ -134,13 +134,9 @@ pub struct App {
     aviso_de_abertura: bool,
     /// A caixa "não mostrar de novo" do aviso de abertura.
     aviso_nao_mostrar: bool,
-    /// Quando o relatório foi gravado em disco pela última vez.
-    ///
-    /// Ele é gravado sozinho, a cada poucos segundos, num lugar fixo. O botão de exportar abre
-    /// um diálogo, e diálogo é coisa que se esquece de confirmar: passei três idas e vindas
-    /// analisando um relatório velho porque o arquivo nunca tinha sido regravado. Um caminho
-    /// previsível e sempre atual vale mais do que um que o usuário escolhe.
-    log_gravado: Option<std::time::Instant>,
+    /// O relatório da execução, gravado sozinho a cada poucos segundos. Ver
+    /// [`partida::Relatorio`].
+    relatorio: partida::Relatorio,
     /// Os controles do host, os Wii Remotes e os sensores de movimento.
     entrada: EntradaDoDesktop,
     /// Qual botão do Zeebo está esperando uma tecla, na tela de controles.
@@ -238,7 +234,7 @@ impl App {
             presenca: discord::Acompanha::default(),
             discord_recado: None,
             aviso_nao_mostrar: false,
-            log_gravado: None,
+            relatorio: partida::Relatorio::default(),
             entrada: EntradaDoDesktop::inicia(),
             porta_editada: 0,
             capturing: None,
@@ -527,7 +523,7 @@ impl App {
         }
         self.frame = None;
         self.log_dismissed = false;
-        self.log_gravado = None;
+        self.relatorio.esquece();
         self.log_status = None;
         // A serial é ligada junto com o começo, e não depois: o construtor do applet roda
         // dentro do `start_with`, e o que ele faz ao nascer precisa estar na captura.
@@ -535,7 +531,7 @@ impl App {
             .settings
             .debug
             .log
-            .then(|| Self::caminho_da_serial(&library::title_for(&path)));
+            .then(|| partida::caminho_da_serial(&library::title_for(&path)));
         let abertura = Abertura {
             settings: &self.settings,
             serial: serial.as_deref(),
@@ -1718,27 +1714,7 @@ impl App {
     /// A leitura toca o disco, então não vai no desenho do quadro: a janela redesenha muitas
     /// vezes por segundo e varrer o cache em cada uma seria varrer à toa.
     fn recarrega_saves(&mut self) {
-        // Os caches feitos antes de o manifesto existir não sabem o que veio do pacote. Antes de
-        // listar, reconstrói o manifesto de cada um a partir do zip — que continua na pasta de
-        // ROMs. Sem isso o jogo antigo simplesmente não apareceria na lista.
-        if let Some(roms) = self.settings.roms_dir.clone() {
-            for entrada in std::fs::read_dir(roms).into_iter().flatten().flatten() {
-                let caminho = entrada.path();
-                if caminho
-                    .extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
-                {
-                    let _ = archive::completar_manifesto(&caminho);
-                }
-            }
-        }
-        let jogos = crate::ui::saves::dos_jogos(&archive::cache_dir());
-        let aparelho = crate::ui::saves::do_aparelho(&archive::device_dir());
-        self.saves = jogos
-            .into_iter()
-            .map(|s| (false, s))
-            .chain(aparelho.into_iter().map(|s| (true, s)))
-            .collect();
+        self.saves = crate::ui::saves::todos(self.settings.roms_dir.as_deref());
         self.saves_confirmar = None;
     }
 
@@ -1977,52 +1953,15 @@ impl App {
         }
     }
 
-    /// Grava o log num arquivo escolhido pelo usuário e devolve o que dizer sobre isso.
-    /// Onde o relatório desta execução é gravado sozinho.
-    /// Onde a captura de serial daquele jogo é gravada, ao lado do relatório.
-    fn caminho_da_serial(titulo: &str) -> PathBuf {
-        let nome = match titulo.is_empty() {
-            true => "zeebx.serial.log".to_string(),
-            false => format!("{titulo}.serial.log"),
-        };
-        crate::ui::settings::config_dir()
-            .join("relatorios")
-            .join(nome)
-    }
-
+    /// Onde o relatório desta execução é gravado sozinho. Ver [`partida::Relatorio`].
     pub fn caminho_do_relatorio(&self) -> PathBuf {
-        let nome = match self.partida.as_ref().map(Partida::sessao).map(Session::title) {
-            Some(title) if !title.is_empty() => format!("{title}.log"),
-            _ => "zeebx.log".to_string(),
-        };
-        crate::ui::settings::config_dir()
-            .join("relatorios")
-            .join(nome)
+        match self.partida.as_ref() {
+            Some(partida) => partida.caminho_do_relatorio(),
+            None => crate::ui::settings::config_dir().join("relatorios").join("zeebx.log"),
+        }
     }
 
-    /// Grava o relatório em disco, no máximo uma vez a cada [`Self::INTERVALO_DO_RELATORIO`].
-    ///
-    /// Sem isto o único jeito de ver o relatório de um jogo que **não termina** — e a Z-Wheel
-    /// não termina, ela repete a abertura — é abrir a janela de log e exportar à mão.
-    fn grava_relatorio(&mut self) {
-        let agora = std::time::Instant::now();
-        if self
-            .log_gravado
-            .is_some_and(|antes| agora - antes < Self::INTERVALO_DO_RELATORIO)
-        {
-            return;
-        }
-        self.log_gravado = Some(agora);
-        let Some(session) = self.partida.as_ref().map(Partida::sessao) else {
-            return;
-        };
-        let destino = self.caminho_do_relatorio();
-        if let Some(pai) = destino.parent() {
-            let _ = std::fs::create_dir_all(pai);
-        }
-        let _ = std::fs::write(&destino, session.log().join("\n") + "\n");
-    }
-
+    /// Grava o log num arquivo escolhido pelo usuário e devolve o que dizer sobre isso.
     fn export_log(&self, linhas: &[String]) -> String {
         let sugestao = match self.partida.as_ref().map(Partida::sessao).map(Session::title) {
             Some(title) if !title.is_empty() => format!("{title}.log"),
@@ -2164,10 +2103,6 @@ impl App {
     }
 
     /// Roda e desenha o jogo na janela dele. Devolve se é hora de fechá-la.
-    /// De quanto em quanto tempo o relatório é regravado. Dois segundos é frequente o bastante
-    /// para acompanhar uma execução e raro o bastante para não pesar.
-    const INTERVALO_DO_RELATORIO: std::time::Duration = std::time::Duration::from_secs(2);
-
     fn playing_screen(&mut self, ctx: &egui::Context) -> bool {
         let Some(calibracao) = self.partida.as_ref().map(Partida::sessao).map(Session::calibracao) else {
             return true;
@@ -2496,7 +2431,9 @@ impl eframe::App for App {
         self.acompanha_atualizacao(ctx);
         self.atualiza_presenca();
         if self.partida.is_some() {
-            self.grava_relatorio();
+            if let Some(partida) = &self.partida {
+                self.relatorio.grava(partida);
+            }
             self.game_window(ctx);
             // A janela de log acompanha o jogo: só existe enquanto há execução para registrar.
             if self.settings.debug.log && !self.log_dismissed {
