@@ -31,6 +31,8 @@ pub mod depuracao;
 pub mod gpu;
 pub mod i18n;
 pub mod library;
+// Sem gate: é o que transforma teclado e controle em comandos da biblioteca, no egui e no Qt.
+pub mod navegacao;
 // Sem gate: a partida só fala com a `session` e o `settings`, e é o que as janelas do egui e do Qt
 // usam para abrir e rodar um jogo do mesmo jeito.
 pub mod partida;
