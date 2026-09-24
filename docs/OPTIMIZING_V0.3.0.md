@@ -220,6 +220,32 @@ atuais, quando são da era do Unicorn — que é exatamente o motivo deste docum
 
 ## 11. Registro das medidas
 
-| data | jogo | backend | velocidade | instr/s | µs por chamada de API | observação |
+| data | jogo | backend | velocidade | instr/s | chamadas de API | observação |
 |---|---|---|---|---|---|---|
-| — | — | Dynarmic | — | — | — | a medir |
+| 2026-09-11 | Quake | Unicorn | 52% | 86 M | — | `ARCHITECTURE.md:243`, cena de jogo |
+| 2026-09-24 | Quake | Dynarmic | **170%** | **195 M** | 1.323.900 | 15.016 ms virtuais em 8,8 s reais, 583 quadros, rasterizador de software |
+
+**A primeira medida com o Dynarmic desmente a leitura pessimista.** O Quake saiu de 52% para
+170% da velocidade do console, e o núcleo de 86 M para 195 M de instruções por segundo — 2,3
+vezes. O emulador que o `ARCHITECTURE.md` descreve não é o que está na árvore.
+
+Ressalva honesta, para a medida não virar propaganda: **a cena não é a mesma.** A medida antiga
+descrevia a cena de jogo com meio milhão de draw calls; esta rodou 15 segundos a partir da
+abertura, com 278.297 `DrawArrays`. O que é diretamente comparável é o ritmo do núcleo
+(instruções por segundo), não o relógio de parede de cenas diferentes. Para comparar relógio
+será preciso um roteiro de teclas (`ZEEBX_ROM_TECLAS`) que chegue ao mesmo ponto do jogo.
+
+O perfil de chamadas do mesmo relatório mostra onde a conversa com o guest se concentra:
+
+| chamadas | método |
+|---:|---|
+| 283.982 | `IGLES11::VertexPointer` |
+| 282.717 | `IGLES11::TexCoordPointer` |
+| 278.297 | `IGLES11::DrawArrays` |
+| 137.720 | `AEEHelpers::strcmp` |
+| 61.143 | `AEEHelpers::aee_GetRand` |
+
+As três primeiras somam 844.996 das 1.323.900 chamadas — **64% de todas as chamadas de API são
+os três pontos de entrada de geometria**, e elas andam juntas: um `VertexPointer`, um
+`TexCoordPointer` e um `DrawArrays` por lote. Se o custo do trampolim ainda pesar, é aqui que
+ele pesa, e é aqui que agrupar paga.
