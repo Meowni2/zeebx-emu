@@ -28,12 +28,11 @@
 # do pacote, e o Linux e o macOS falharam no passo do Qt sem mudar uma linha do projeto. Subir de
 # versão passa a ser uma mudança deste arquivo, feita quando o patch novo estiver completo.
 #
-# **Os instaladores saem como artefatos da execução, e não numa release** (fase 9 do plano). A
-# release continua com a interface do egui até a feature `ui-qt` ser ligada por padrão; até lá, os
-# instaladores do Qt se baixam na página da execução, para testar. A configuração deles é
-# `frontends/classical-standalone/empacotamento-qt.toml`. O AppImage, o NSIS e o `.dmg` levam o
-# próprio Qt; o `.deb` usa o do sistema, e por isso tem um job à parte, compilado contra o Qt do
-# Ubuntu 24.04.
+# **Os instaladores saem como artefatos da execução** (fase 9 do plano), com os mesmos passos do
+# `release.yml` e a mesma configuração, a do `Cargo.toml` do standalone: aqui eles se baixam na
+# página da execução para testar antes de uma tag, e cada um é aberto numa tela virtual antes de
+# sair. O AppImage, o NSIS e o `.dmg` levam o próprio Qt; o `.deb` usa o do sistema, e por isso
+# tem um job à parte, compilado contra o Qt do Ubuntu 24.04.
 #
 # Fica de fora o Windows ARM64: o `install-qt-action` não tem ali o mesmo pacote de desktop que tem
 # no x64, e a pergunta da fase 0 é se a ponte compila com MSVC e com o clang da Apple, não em
@@ -60,8 +59,7 @@ jobs:
       matrix:
         include:
           # O Ubuntu 22.04, e não o 24.04, pelo AppImage: ele roda nos sistemas com uma glibc igual
-          # ou mais nova que a de onde foi montado, e a release monta o do egui no 22.04 pelo mesmo
-          # motivo.
+          # ou mais nova que a de onde foi montado, e a release o monta no 22.04 pelo mesmo motivo.
           - nome: linux-x86_64
             sistema: ubuntu-22.04
             binario: target/release/zeebx
@@ -87,9 +85,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # O sistema entra na chave: o cache do Ubuntu 24.04 restaurado no 22.04 traz scripts de build
+      # ligados a uma glibc mais nova, que não rodam lá. Foi a causa provável do "Compila" saindo
+      # com 101 quando o job do AppImage passou ao 22.04 — o mesmo build passava num contêiner
+      # 22.04 limpo.
       - uses: Swatinem/rust-cache@v2
         with:
-          key: qt-${{ matrix.nome }}
+          key: qt-${{ matrix.nome }}-${{ matrix.sistema }}
 
       # A mesma lista do `ci.yml`: o núcleo e a janela do egui continuam no binário. As `libxcb-*`
       # são as dependências do plugin de plataforma do Qt (`libqxcb.so`), que o
@@ -165,16 +167,6 @@ jobs:
       - name: cargo-packager
         run: cargo install cargo-packager --locked
 
-      # Com `--config`, o `cargo packager` não lê a versão do `Cargo.toml`: ela entra numa cópia da
-      # configuração. A cópia fica ao lado da original porque os caminhos de lá são relativos a ela.
-      - name: Configuração dos pacotes
-        shell: bash
-        working-directory: frontends/classical-standalone
-        run: |
-          versao=$(cargo pkgid | sed 's/.*[#@]//')
-          sed "s/@VERSAO@/$versao/" empacotamento-qt.toml > .empacotamento-qt.gerado.toml
-          echo "versão $versao"
-
       # O `linuxdeploy-plugin-qt` leva o Qt que o `QMAKE` diz, com os módulos QML que o
       # `QML_SOURCES_PATHS` importa. O Wayland vai à parte: o plugin de plataforma
       # (`libqwayland.so`, um só a partir do Qt 6.10) e o módulo `waylandcompositor`, sem o qual a
@@ -190,7 +182,7 @@ jobs:
           EXTRA_PLATFORM_PLUGINS: libqwayland.so
           EXTRA_QT_MODULES: waylandcompositor
           APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: cargo packager --config .empacotamento-qt.gerado.toml --formats appimage
+        run: cargo packager --release --formats appimage
 
       # O `windeployqt` junta numa pasta o que o `zeebx.exe` precisa do Qt — as DLLs, os plugins e
       # os módulos QML que os arquivos de `qml/` importam —, e a configuração dos pacotes manda o
@@ -205,13 +197,13 @@ jobs:
             --qmldir frontends/classical-standalone/qml \
             --dir target/qt-implantado target/release/zeebx.exe
           cd frontends/classical-standalone
-          cargo packager --config .empacotamento-qt.gerado.toml --formats nsis
+          cargo packager --release --formats nsis
 
       # O `cargo packager` monta o `.app`, e o `macdeployqt` põe dentro dele os frameworks, os
       # plugins e os módulos QML. Ele altera os binários, e no ARM um binário alterado sem
       # assinatura válida é morto ao abrir: a assinatura ad-hoc é refeita depois. O `.dmg` sai do
       # `hdiutil` porque o `dmg` do `cargo packager` remontaria o `.app` por cima do que o
-      # `macdeployqt` fez.
+      # `macdeployqt` fez; ele leva o atalho para Aplicativos, como o do `cargo packager` levava.
       - name: Imagem do macOS
         if: runner.os == 'macOS'
         shell: bash
@@ -219,12 +211,16 @@ jobs:
           QMAKE: ${{ env.QT_ROOT_DIR }}/bin/qmake
         run: |
           set -euo pipefail
-          (cd frontends/classical-standalone && cargo packager --config .empacotamento-qt.gerado.toml --formats app)
+          (cd frontends/classical-standalone && cargo packager --release --formats app)
           app=target/pacotes/Zeebx.app
           macdeployqt "$app" -qmldir="$GITHUB_WORKSPACE/frontends/classical-standalone/qml"
           codesign --force --deep --sign - "$app"
           codesign --verify --deep --strict "$app"
-          hdiutil create -volname Zeebx -srcfolder "$app" -ov -format UDZO target/pacotes/Zeebx.dmg
+          raiz=$(mktemp -d)
+          cp -R "$app" "$raiz/"
+          ln -s /Applications "$raiz/Applications"
+          hdiutil create -volname Zeebx -srcfolder "$raiz" -ov -format UDZO target/pacotes/Zeebx.dmg
+          rm -rf "$raiz"
 
       - name: Nomear
         shell: bash
@@ -303,9 +299,7 @@ jobs:
         env:
           QMAKE: /usr/bin/qmake6
         run: |
-          versao=$(cargo pkgid | sed 's/.*[#@]//')
-          sed "s/@VERSAO@/$versao/" empacotamento-qt.toml > .empacotamento-qt.gerado.toml
-          cargo packager --config .empacotamento-qt.gerado.toml --formats deb
+          cargo packager --release --formats deb
           mv ../../target/pacotes/*.deb ../../target/pacotes/zeebx-qt-linux-x86_64.deb
 
       - name: Instala e abre
