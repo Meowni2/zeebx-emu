@@ -747,6 +747,16 @@ unsafe fn environ(cmd: u32, data: *mut c_void) -> bool {
 }
 
 fn log(mensagem: &str) {
+    log_com_nivel(3, mensagem);
+}
+
+/// Escreve no log do frontend com o nível do `retro_log_level`.
+///
+/// `0..=3` são `DEBUG`, `INFO`, `WARN` e `ERROR` do `libretro.h`. **Não há `FATAL` na ABI**, e
+/// por isso o [`zeebx::registro::Nivel::Fatal`] sai como `ERROR`: inventar um número fora da
+/// faixa faria o frontend descartar a linha, que é o pior desfecho para a mensagem que diz que
+/// o emulador não pode continuar.
+fn log_com_nivel(nivel: u32, mensagem: &str) {
     let Ok(texto) = CString::new(mensagem) else {
         return;
     };
@@ -755,8 +765,73 @@ fn log(mensagem: &str) {
     if unsafe { environ(ENV_GET_LOG_INTERFACE, alvo) } {
         if let Some(escreve) = callback.log {
             // SAFETY: o frontend forneceu o callback e o formato é literal.
-            unsafe { escreve(3, c"%s".as_ptr(), texto.as_ptr()) };
+            unsafe { escreve(nivel, c"%s".as_ptr(), texto.as_ptr()) };
         }
+    }
+}
+
+/// O nível do `libretro.h` que corresponde ao nível do núcleo.
+fn nivel_do_libretro(nivel: zeebx::registro::Nivel) -> u32 {
+    use zeebx::registro::Nivel;
+    match nivel {
+        Nivel::Depuracao => 0,
+        Nivel::Informacao => 1,
+        Nivel::Aviso => 2,
+        // `FATAL` não existe na ABI: o teto dela é `ERROR`.
+        Nivel::Erro | Nivel::Fatal => 3,
+    }
+}
+
+/// Despeja no frontend o que o núcleo registrou desde a última chamada.
+///
+/// **Aqui, e não dentro do núcleo.** O log do frontend é um callback variádico do C, e chamá-lo
+/// do fundo de uma função de desenho ou de carregamento significaria atravessar código do
+/// frontend no meio de um estado nosso. O anel do [`zeebx::registro`] existe exatamente para
+/// isso: o núcleo guarda, e o core entrega num ponto em que a ABI espera ser chamada.
+///
+/// O teto por chamada evita que um jogo depurado, que escreve milhares de linhas por quadro,
+/// transforme o log do frontend no gargalo do emulador.
+fn despeja_o_registro() {
+    /// Quantas linhas saem por quadro. Trezentas é o anel inteiro, e mais que isso só sairia no
+    /// quadro seguinte — sem atrasar o jogo para servir de log.
+    const POR_QUADRO: usize = 64;
+
+    for linha in zeebx::registro::drena().into_iter().take(POR_QUADRO) {
+        log_com_nivel(
+            nivel_do_libretro(linha.nivel),
+            &format!(
+                "Zeebx [{}] {}: {}",
+                linha.nivel.etiqueta(),
+                linha.alvo,
+                linha.texto
+            ),
+        );
+    }
+    let descartes = zeebx::registro::descartes();
+    if descartes > 0 {
+        zeebx::registro::zera_descartes();
+        log_com_nivel(
+            2,
+            &format!("Zeebx: {descartes} linha(s) de log descartada(s) pelo teto do anel"),
+        );
+    }
+}
+
+/// Aplica a opção `zeebx_log` ao registro do núcleo.
+///
+/// A variável de ambiente `ZEEBX_LOG` vale como ponto de partida — é o que serve a quem depura
+/// pela linha de comando —, e a opção do frontend ganha dela quando existe, porque é escolha
+/// explícita de quem está com o RetroArch aberto.
+fn aplica_nivel_de_log() {
+    zeebx::registro::le_do_ambiente();
+    let Some(texto) = (unsafe { le_opcao(c"zeebx_log") }) else {
+        return;
+    };
+    match zeebx::registro::Ajuste::de_texto(&texto) {
+        Some(ajuste) => ajuste.aplica(),
+        None => log(&format!(
+            "Zeebx: `{texto}` não é nível de log; seguindo no valor do ZEEBX_LOG ou no padrão"
+        )),
     }
 }
 
@@ -1199,7 +1274,30 @@ unsafe fn registra_opcoes_do_core() {
             };
         }
 
-        let definicoes: [RetroCoreOptionV2Definition; 14] = [
+        // **Cinco níveis, e "desligado" separado deles.** A lista é a mesma do registro do núcleo
+        // ([`zeebx::registro::Nivel`]) e a ordem é do mais grave para o mais falador, que é como
+        // se escolhe um teto de gravidade: o nível escolhido entra, e tudo o que é mais grave
+        // também.
+        let mut log_values = [RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; 128];
+        const LOG_OPC: [(&CStr, &CStr); 6] = [
+            (c"desligado", c"Desligado"),
+            (c"fatal", c"Fatal — só o que impede continuar"),
+            (c"erro", c"Erro — falhas tratadas e acima"),
+            (c"aviso", c"Aviso — o que saiu do previsto (padrão)"),
+            (c"informacao", c"Informação — o que aconteceu e vale saber"),
+            (c"depuracao", c"Depuração — o caminho de cada decisão (verboso)"),
+        ];
+        for (i, (valor, rotulo)) in LOG_OPC.iter().enumerate() {
+            log_values[i] = RetroCoreOptionValue {
+                value: valor.as_ptr(),
+                label: rotulo.as_ptr(),
+            };
+        }
+
+        let definicoes: [RetroCoreOptionV2Definition; 15] = [
             RetroCoreOptionV2Definition {
                 key: c"zeebx_midi_backend".as_ptr(),
                 desc: c"Sintetizador MIDI (reinício)".as_ptr(),
@@ -1331,6 +1429,16 @@ unsafe fn registra_opcoes_do_core() {
                 default_value: c"desligado".as_ptr(),
             },
             RetroCoreOptionV2Definition {
+                key: c"zeebx_log".as_ptr(),
+                desc: c"Log do núcleo".as_ptr(),
+                desc_categorized: c"Log do núcleo".as_ptr(),
+                info: c"Quanto o núcleo escreve no log do RetroArch. O nível escolhido entra e tudo o que for mais grave também: Aviso mostra só o que saiu do previsto, Informação acrescenta abertura de jogo, poda de cache e carga do banco de som, e Depuração mostra o caminho de cada decisão (verboso, e mais lento). Vale na hora, e o log sai no arquivo que o RetroArch configurar.".as_ptr(),
+                info_categorized: c"Quanto o núcleo escreve no log. O nível entra com o que for mais grave. Vale na hora.".as_ptr(),
+                category_key: c"sistema".as_ptr(),
+                values: log_values,
+                default_value: c"aviso".as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
                 key: std::ptr::null(),
                 desc: std::ptr::null(),
                 desc_categorized: std::ptr::null(),
@@ -1354,7 +1462,7 @@ unsafe fn registra_opcoes_do_core() {
             );
         }
     } else {
-        static VARIAVEIS: [RetroVariable; 14] = [
+        static VARIAVEIS: [RetroVariable; 15] = [
             RetroVariable {
                 key: c"zeebx_midi_backend".as_ptr(),
                 value: c"Sintetizador MIDI (reinício); auto|timbres|soundfont".as_ptr(),
@@ -1406,6 +1514,10 @@ unsafe fn registra_opcoes_do_core() {
             RetroVariable {
                 key: c"zeebx_frameskip".as_ptr(),
                 value: c"Pular quadros; desligado|automatico|1|2|3|4|5|6".as_ptr(),
+            },
+            RetroVariable {
+                key: c"zeebx_log".as_ptr(),
+                value: c"Log do núcleo; desligado|fatal|erro|aviso|informacao|depuracao".as_ptr(),
             },
             RetroVariable {
                 key: std::ptr::null(),
@@ -1634,6 +1746,9 @@ fn ligado_de_texto(texto: &str) -> Option<bool> {
 /// Cada opção ausente ou estragada mantém o que já havia, em vez de voltar ao padrão: um frontend
 /// antigo, que não conhece a chave, não pode desfazer a escolha de quem configurou.
 fn aplica_opcoes_quentes(estado: &mut Core) {
+    // **Primeiro o log.** Tudo o que as opções abaixo decidirem sai registrado no nível que o
+    // usuário acabou de escolher, em vez de o nível ser aplicado depois das decisões.
+    aplica_nivel_de_log();
     // **O modo é lido aqui; a decisão de pular ou não é por quadro**, em `retro_run`. Ver
     // [`Frameskip`]: reler o modo só quando algo mudou é barato, mas a decisão em si (que quadro
     // pular) precisa de um contador ou do aviso do frontend, e os dois valem a cada quadro, não
@@ -2164,6 +2279,7 @@ unsafe fn carrega(
     // As opções valem desde o primeiro quadro. É a **mesma** função do caminho quente de propósito:
     // duas cópias da aplicação divergem com o tempo, e a que roda menos é a que fica errada sem
     // ninguém ver.
+    aplica_nivel_de_log();
     aplica_opcoes_quentes(&mut core);
     Ok(core)
 }
@@ -2305,6 +2421,9 @@ pub extern "C" fn retro_run() {
         if opcoes_mudaram() {
             aplica_opcoes_quentes(estado);
         }
+        // O ponto seguro para falar com o frontend: dentro do `retro_run`, onde a ABI espera ser
+        // chamada. Ver [`despeja_o_registro`].
+        despeja_o_registro();
         // **A decisão de pular é por quadro, e vale a cada quadro** — ao contrário do modo, que só
         // muda quando o usuário mexe na opção. Um `Fixo(n)` que só decidisse quando a opção muda
         // pularia (ou não) para sempre a partir da primeira leitura, e não a cada quadro n de n+1.
@@ -3005,6 +3124,32 @@ mod testes {
         assert_eq!(numero_de_texto("0", 1, 8), Some(1));
         assert_eq!(numero_de_texto("-3", 1, 8), None);
         assert_eq!(numero_de_texto("muito", 1, 8), None);
+    }
+
+    /// O nível de log do núcleo atravessa os tokens da opção, e o token inválido **não** cala o
+    /// registro: um erro de escrita desligando o log sem avisar é o pior desfecho.
+    #[test]
+    fn o_nivel_de_log_da_opcao_vira_o_ajuste_do_nucleo() {
+        use zeebx::registro::{Ajuste, Nivel};
+
+        assert_eq!(Ajuste::de_texto("desligado"), Some(Ajuste::Desligado));
+        assert_eq!(Ajuste::de_texto("aviso"), Some(Ajuste::Ate(Nivel::Aviso)));
+        assert_eq!(Ajuste::de_texto("informacao"), Some(Ajuste::Ate(Nivel::Informacao)));
+        assert_eq!(Ajuste::de_texto("depuracao"), Some(Ajuste::Ate(Nivel::Depuracao)));
+        assert_eq!(Ajuste::de_texto("fatal"), Some(Ajuste::Ate(Nivel::Fatal)));
+        // O que não é token nenhum é recusado, e quem trata é quem chama.
+        assert_eq!(Ajuste::de_texto("banana"), None);
+
+        // Cada nível tem o seu número no `libretro.h`, e o `FATAL` cai no teto da ABI.
+        assert_eq!(nivel_do_libretro(Nivel::Depuracao), 0);
+        assert_eq!(nivel_do_libretro(Nivel::Informacao), 1);
+        assert_eq!(nivel_do_libretro(Nivel::Aviso), 2);
+        assert_eq!(nivel_do_libretro(Nivel::Erro), 3);
+        assert_eq!(
+            nivel_do_libretro(Nivel::Fatal),
+            3,
+            "a ABI não tem FATAL: o teto é ERROR"
+        );
     }
 
     /// O texto da opção de volume vira fator do mixer, e o texto estragado **não** vira silêncio.

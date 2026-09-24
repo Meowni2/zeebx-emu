@@ -12,6 +12,7 @@
 use std::path::PathBuf;
 
 use zeebx::input::bindings::{Aparelho, AxisSource, Controls, Player, Source};
+use zeebx::registro::Ajuste;
 use zeebx::ui::settings::{Audio, Graphics, ModoDaJanela, Proporcao, Scaling, Settings};
 
 use crate::ini::{Ini, Valor, sem_aspas};
@@ -422,6 +423,22 @@ pub fn de_texto(texto: &str) -> Lido {
             Ok(0) => headless.segundos = None,
             Ok(n) => headless.segundos = Some(n),
             Err(_) => avisa(&mut avisos, &v, "seconds expects a number"),
+        }
+    }
+    if let Some(v) = ini.pega("system", "log") {
+        let texto = sem_aspas(&v.texto);
+        match Ajuste::de_texto(texto) {
+            Some(ajuste) => {
+                ajuste.aplica();
+                settings.debug.nivel_de_log = texto.to_string();
+            }
+            // Um nível escrito errado não pode ser aceito em silêncio: quem depura precisa saber
+            // que a linha não fez nada, em vez de concluir que o log é que está quebrado.
+            None => avisa(
+                &mut avisos,
+                &v,
+                "`log` expects off, fatal, error, warn, info or debug",
+            ),
         }
     }
     booleano(&mut ini, "system", "exit_with_game", &mut headless.sair_com_o_jogo, &mut avisos);
