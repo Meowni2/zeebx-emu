@@ -5,7 +5,6 @@ mod vitrine;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::Duration;
 
 use eframe::egui;
 
@@ -16,8 +15,9 @@ use crate::input::{self, Pad};
 use crate::loader::archive;
 use crate::ponte;
 use crate::session::Session;
+use crate::ui::calibracao::{Calibracao, Situacao};
 use crate::ui::entrada::{EntradaDoDesktop, SensorDaPorta};
-use crate::ui::partida::{Abertura, Partida, Saida};
+use crate::ui::partida::{self, Abertura, Partida, Saida};
 use crate::ui::i18n::Catalog;
 use crate::ui::library::Game;
 use crate::ui::settings::{Scaling, Settings};
@@ -28,73 +28,6 @@ const SCREEN: [usize; 2] = [640, 480];
 
 /// A imagem de quem não tem imagem nenhuma.
 const PLACEHOLDER: &[u8] = include_bytes!("../../assets/zeebx.png");
-
-/// O estado do aviso de calibração na janela do jogo.
-struct AvisoDeCalibracao {
-    aberto_em: std::time::Instant,
-    /// As últimas leituras, para dizer se o controle está parado.
-    recentes: std::collections::VecDeque<[f32; 3]>,
-    parado_desde: Option<std::time::Instant>,
-    concluido_em: Option<std::time::Instant>,
-}
-
-impl AvisoDeCalibracao {
-    /// Quanto a leitura pode variar e o controle ainda contar como parado, em g.
-    const TOLERANCIA: f32 = 0.05;
-    const LEITURAS: usize = 20;
-    /// A animação até ficar reto, e quanto o aviso fica depois dela.
-    const ASSENTA: Duration = Duration::from_millis(400);
-    const FICA: Duration = Duration::from_millis(1200);
-    /// Um aviso que nunca conclui não fica para sempre na tela.
-    const MAXIMO: Duration = Duration::from_secs(30);
-
-    fn novo(agora: std::time::Instant) -> Self {
-        Self {
-            aberto_em: agora,
-            recentes: Default::default(),
-            parado_desde: None,
-            concluido_em: None,
-        }
-    }
-
-    /// Guarda uma leitura e diz se o controle está parado.
-    fn amostra(&mut self, leitura: [f32; 3], agora: std::time::Instant) -> bool {
-        if self.recentes.len() == Self::LEITURAS {
-            self.recentes.pop_front();
-        }
-        self.recentes.push_back(leitura);
-        let parado = self.recentes.len() == Self::LEITURAS
-            && (0..3).all(|eixo| {
-                let (menor, maior) = self.recentes.iter().fold((f32::MAX, f32::MIN), |(a, b), l| {
-                    (a.min(l[eixo]), b.max(l[eixo]))
-                });
-                maior - menor < Self::TOLERANCIA
-            });
-        match (parado, self.parado_desde) {
-            (true, None) => self.parado_desde = Some(agora),
-            (false, _) => self.parado_desde = None,
-            _ => {}
-        }
-        parado
-    }
-
-    fn conclui(&mut self, agora: std::time::Instant) {
-        self.concluido_em.get_or_insert(agora);
-    }
-
-    fn progresso_da_conclusao(&self, agora: std::time::Instant) -> f32 {
-        self.concluido_em.map_or(0.0, |em| {
-            ((agora - em).as_secs_f32() / Self::ASSENTA.as_secs_f32()).clamp(0.0, 1.0)
-        })
-    }
-
-    fn expirou(&self, agora: std::time::Instant) -> bool {
-        agora - self.aberto_em > Self::MAXIMO
-            || self
-                .concluido_em
-                .is_some_and(|em| agora - em > Self::ASSENTA + Self::FICA)
-    }
-}
 
 /// Quantas leituras paradas a calibração do movimento junta: meio segundo a 100 por segundo.
 const AMOSTRAS_DA_CALIBRACAO: usize = 50;
@@ -183,8 +116,7 @@ pub struct App {
     /// A última calibração foi recusada por não estar de face para cima.
     calibracao_recusada: bool,
     /// O aviso de calibração aberto na janela do jogo, e as calibrações da sessão já vistas.
-    aviso_calibracao: Option<AvisoDeCalibracao>,
-    calibracoes_vistas: (u32, u32),
+    calibracao: Calibracao,
     /// O que dizer sobre a última tentativa de exportar o log.
     log_status: Option<String>,
     /// A janela de log foi fechada nesta execução. Zera ao abrir outro jogo.
@@ -298,8 +230,7 @@ impl App {
             calibrando: None,
             liberacao_dos_sensores: Default::default(),
             calibracao_recusada: false,
-            aviso_calibracao: None,
-            calibracoes_vistas: (0, 0),
+            calibracao: Calibracao::default(),
             log_status: None,
             log_dismissed: false,
             aviso_de_abertura,
@@ -638,8 +569,7 @@ impl App {
     fn play(&mut self, path: PathBuf) {
         self.error = None;
         // As contagens de calibração são da sessão: a nova começa do zero.
-        self.calibracoes_vistas = (0, 0);
-        self.aviso_calibracao = None;
+        self.calibracao.reinicia();
         self.teclado_apertado.clear();
         if let Some(partida) = self.partida.as_mut() {
             partida.esquece_entrada();
@@ -1168,53 +1098,33 @@ impl App {
     /// some sozinho logo depois.
     fn aviso_de_calibracao(&mut self, ctx: &egui::Context, calibracao: (u32, u32)) {
         use crate::input::bindings::Aparelho;
-        let agora = std::time::Instant::now();
-        let (comecadas, terminadas) = calibracao;
-        let novas = (comecadas > self.calibracoes_vistas.0, terminadas > self.calibracoes_vistas.1);
-        self.calibracoes_vistas = calibracao;
-        let Some(porta) = self
+        let porta = self
             .settings
             .controls
             .ligadas()
             .find(|(_, jogador)| jogador.aparelho == Aparelho::Boomerang)
-            .map(|(indice, _)| indice)
+            .map(|(indice, _)| indice);
+        let leitura = porta.map(|porta| {
+            (self.movimento_da_porta(porta), self.movimento_bruto_da_porta(porta).is_some())
+        });
+        let ligado = self.settings.movimento.aviso_de_calibracao;
+        let agora = std::time::Instant::now();
+        let (Some(porta), Some(vista)) =
+            (porta, self.calibracao.quadro(calibracao, leitura, ligado, agora))
         else {
-            self.aviso_calibracao = None;
             return;
         };
-        if novas.0 && self.settings.movimento.aviso_de_calibracao {
-            self.aviso_calibracao = Some(AvisoDeCalibracao::novo(agora));
-        }
-        let movimento = self.movimento_da_porta(porta);
-        let com_sensor = self.movimento_bruto_da_porta(porta).is_some();
-        let Some(aviso) = &mut self.aviso_calibracao else {
-            return;
-        };
-        if novas.1 {
-            aviso.conclui(agora);
-        }
-        // Parado é só informação: quem diz que calibrou é o jogo. Concluir por estar parado dizia
-        // "calibrado" enquanto o Crash Nitro Kart ainda recusava as leituras.
-        let parado = aviso.amostra(movimento, agora);
-        if aviso.expirou(agora) {
-            self.aviso_calibracao = None;
-            return;
-        }
-        let [x, y, _] = movimento;
-        let no_plano = (x * x + y * y).sqrt();
-        let volante = x.atan2(y) * ((no_plano - 0.3) / 0.4).clamp(0.0, 1.0);
-        // Concluída, a inclinação vai a zero em uma animação curta: o modelo "assenta".
-        let giro = volante * (1.0 - aviso.progresso_da_conclusao(agora));
-        let concluido = aviso.concluido_em.is_some();
-        let titulo = match concluido {
+        let giro = vista.giro;
+        let titulo = match vista.concluido {
             true => self.tr("calibration.toast.done"),
             false => self.tr("calibration.toast.title"),
         };
-        let estado = match (com_sensor, parado, concluido) {
-            (_, _, true) => String::new(),
-            (false, _, _) => self.descreve_sensor(&self.sensor_da_porta(porta)),
-            (true, true, _) => self.tr("calibration.toast.still"),
-            (true, false, _) => self.tr("calibration.toast.moving"),
+        let parado = vista.situacao == Some(Situacao::Parado);
+        let estado = match vista.situacao {
+            None => String::new(),
+            Some(Situacao::SemSensor) => self.descreve_sensor(&self.sensor_da_porta(porta)),
+            Some(Situacao::Parado) => self.tr("calibration.toast.still"),
+            Some(Situacao::Mexendo) => self.tr("calibration.toast.moving"),
         };
         let textura = self.textura_do_boomerang(ctx);
         egui::Area::new(egui::Id::new("aviso-de-calibracao"))
@@ -2314,16 +2224,7 @@ impl App {
 
     /// Em uma linha, de onde vem o movimento do Boomerang e se ele está chegando.
     fn descreve_sensor(&self, sensor: &SensorDaPorta) -> String {
-        let (chave, nome) = match sensor {
-            SensorDaPorta::Wiimote(w) if w.com_acelerometro => ("controls.boomerang.sensor", "Wii Remote"),
-            SensorDaPorta::Wiimote(_) => ("controls.boomerang.sensor_waiting", "Wii Remote"),
-            SensorDaPorta::Controle(s) if s.sem_permissao => ("controls.boomerang.sensor_denied", s.nome.as_str()),
-            SensorDaPorta::Controle(s) if s.com_leitura => ("controls.boomerang.sensor", s.nome.as_str()),
-            SensorDaPorta::Controle(s) => ("controls.boomerang.sensor_waiting", s.nome.as_str()),
-            SensorDaPorta::SemSensor(nome) => ("controls.boomerang.no_sensor", nome.as_str()),
-            SensorDaPorta::Nenhum => ("controls.boomerang.no_device", ""),
-        };
-        self.tr(chave).replace("{nome}", nome)
+        sensor.descreve(&self.catalog)
     }
 
     fn sensor_da_porta(&self, porta: usize) -> SensorDaPorta {
@@ -2883,31 +2784,9 @@ fn upload(
     }
 }
 
-/// O retângulo em que a imagem do console é desenhada dentro de `area`.
-///
-/// Separado da interface porque é a única parte com regra de verdade, e a única que dá para
-/// conferir sem abrir uma janela.
+/// O tamanho do quadro na área dada. Ver [`crate::ui::partida::enquadra`].
 fn placement(area: egui::Vec2, scaling: Scaling, keep_aspect: bool, aspecto: f32) -> egui::Vec2 {
-    let native = egui::vec2(SCREEN[1] as f32 * aspecto, SCREEN[1] as f32);
-    if area.x <= 0.0 || area.y <= 0.0 {
-        return native;
-    }
-    match (scaling, keep_aspect) {
-        (Scaling::Stretch, false) => area,
-        (Scaling::Stretch, true) | (Scaling::Fit, _) => {
-            let factor = (area.x / native.x).min(area.y / native.y);
-            native * factor
-        }
-        (Scaling::Integer, _) => {
-            // Nunca some: abaixo de uma vez o tamanho original, encolhe proporcional em vez de
-            // não caber, porque uma janela pequena não pode esconder o jogo.
-            let factor = (area.x / native.x).min(area.y / native.y);
-            match factor >= 1.0 {
-                true => native * factor.floor(),
-                false => native * factor,
-            }
-        }
-    }
+    egui::Vec2::from(partida::enquadra(area.into(), scaling, keep_aspect, aspecto))
 }
 
 #[cfg(test)]
@@ -2958,37 +2837,6 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn a_ampliacao_inteira_so_usa_multiplos_exatos() {
-        // Numa janela de 1500x1100 cabem duas vezes a tela de 640x480, e não duas e pouco.
-        let size = placement(egui::vec2(1500.0, 1100.0), Scaling::Integer, true, 4.0 / 3.0);
-        assert_eq!(size, egui::vec2(1280.0, 960.0));
-    }
-
-    #[test]
-    fn a_ampliacao_inteira_encolhe_quando_nao_cabe_uma_vez() {
-        // Uma janela menor que a tela não pode esconder o jogo, então ali ela encolhe.
-        let size = placement(egui::vec2(320.0, 240.0), Scaling::Integer, true, 4.0 / 3.0);
-        assert_eq!(size, egui::vec2(320.0, 240.0));
-    }
-
-    #[test]
-    fn caber_na_janela_mantem_a_proporcao() {
-        // Janela larga demais: sobra borda dos lados, não estica.
-        let size = placement(egui::vec2(1920.0, 480.0), Scaling::Fit, true, 4.0 / 3.0);
-        assert_eq!(size, egui::vec2(640.0, 480.0));
-    }
-
-    #[test]
-    fn preencher_so_deforma_quando_a_proporcao_e_dispensada() {
-        let area = egui::vec2(1000.0, 500.0);
-        assert_eq!(placement(area, Scaling::Stretch, false, 4.0 / 3.0), area);
-        // Com a proporção mantida, "preencher" vira "caber".
-        assert_eq!(
-            placement(area, Scaling::Stretch, true, 4.0 / 3.0),
-            placement(area, Scaling::Fit, true, 4.0 / 3.0)
-        );
-    }
 }
 
 /// Instruções por segundo, na escala que couber.
