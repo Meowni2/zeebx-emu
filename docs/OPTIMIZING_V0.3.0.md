@@ -446,3 +446,65 @@ rodadas apontam na mesma direção e o primeiro ganho foi de 24%.
 Patch mantido. O caminho foi coberto pelos testes de memória e pela suíte release do núcleo.
 Ainda falta medir NFS, Quake e os 66 jogos para saber quanto o ganho aparece fora do Rolimã.
 
+## 16. Caminho de GPU nos handhelds: Mali não é AMD
+
+### Hardware correto
+
+- **R36S:** Rockchip **RK3326** (não RK3356), Cortex-A35, Mali-G31 MP2.
+- **RG40XX-H:** Allwinner H700/A133, Cortex-A53, Mali-G31.
+
+Ambos anunciam GLES 3.2 no hardware/libMali. Isso não garante que toda imagem com Mesa/Panfrost
+exponha 3.2: há drivers G31 que expõem apenas GLES 3.1. O core pede GLES 3.2 e recua para o
+software se o frontend recusar.
+
+### Caminho real atual
+
+No core Libretro, o fluxo de hardware é:
+
+```text
+retro_run
+  -> context_reset / glow::Context
+  -> GpuState
+  -> gles_draw (lotes no host)
+  -> eglSwapBuffers
+       -> flush()
+       -> glReadPixels (GLES lê RGBA8)
+       -> conversão para RGB565
+       -> tela CPU
+  -> retro_video_refresh(HW_FRAME_BUFFER_VALID)
+```
+
+O último passo entrega o framebuffer do frontend ao RetroArch, mas o caminho anterior ainda faz
+readback para a superfície CPU. No Mali, esse readback pode forçar a GPU tiled a terminar o quadro
+e bloquear a CPU. A AMD do laptop pode esconder esse custo com cache/banda muito maiores; portanto
+o benchmark software no Ryzen não estima o custo do Mali.
+
+O patch `64ceaa5` removeu a conversão intermediária bytes→`u16`, mas **não** removeu `glReadPixels`.
+O próximo grande patch de GPU deve ser lazy readback/zero-copy:
+
+1. em cena 3D pura, apresentar o FBO do frontend sem ler a GPU para a CPU;
+2. só fazer readback quando houver composição 2D, `GetColorBuffer`, `glReadPixels`, dump ou fallback;
+3. preservar a tela 640×480 quando o jogo misturar `IDisplay` com GL;
+4. manter Crash Nitro Kart no caminho seguro, porque ele lê pixels de volta;
+5. medir antes/depois em libMali R36S e no driver do H700.
+
+Não é seguro simplesmente apagar `present_gl`: jogos que desenham 2D depois do GL precisam da
+base atualizada. A implementação deve ter um estado `gl_readback_pendente` e um ponto único que
+materialize a tela antes de qualquer desenho 2D/leitura.
+
+### Verificação que falta no RG40XX-H
+
+O core agora registra no log, no `context_reset`:
+
+```text
+GL_VENDOR
+GL_RENDERER
+GL_VERSION
+GLSL_VERSION
+```
+
+O R36S já teve `Mali-G31`/GLES 3.2 observado no teste físico. No RG40XX-H, o `video_driver="gl"`
+do muOS prova o tipo de caminho, mas não substitui o log do driver efetivamente carregado. A
+próxima instalação deve capturar essa linha e comparar vendor/renderer/version antes de qualquer
+conclusão sobre Panfrost ou libMali.
+

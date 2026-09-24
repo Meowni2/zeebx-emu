@@ -13,6 +13,7 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+use glow::HasContext;
 use zeebx::audio::Mixer;
 use zeebx::config::ZWheel;
 use zeebx::input::Pad;
@@ -275,6 +276,19 @@ fn liga_a_placa(estado: &mut Core) {
             pega_endereco(nome.as_ptr())
         })
     });
+    // A versão pedida pelo callback não prova a versão realmente entregue pelo driver. Registrar
+    // os quatro valores evita confundir o libMali do RK3326 com o caminho Mesa/Panfrost do H700.
+    let (vendor, renderer, version, shading) = unsafe {
+        (
+            contexto.get_parameter_string(glow::VENDOR),
+            contexto.get_parameter_string(glow::RENDERER),
+            contexto.get_parameter_string(glow::VERSION),
+            contexto.get_parameter_string(glow::SHADING_LANGUAGE_VERSION),
+        )
+    };
+    log(&format!(
+        "Zeebx: GL real vendor={vendor}; renderer={renderer}; version={version}; GLSL={shading}"
+    ));
     // A placa entra no global **antes** da troca: é ele que `troca_para` consulta para decidir se
     // a sessão nasce com o rasterizador de placa. Assim as trocas seguintes — a Z-Wheel abrindo um
     // jogo, o jogo voltando para ela — também nascem na placa.
