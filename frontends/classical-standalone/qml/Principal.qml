@@ -41,8 +41,11 @@ ApplicationWindow {
         aplicaModo()
         if (avisos.deAbertura())
             boasVindas.open()
+        // Depois de a montagem acabar, e não dentro dela: no Qt 6.4 do Ubuntu 24.04, mostrar a
+        // janela do jogo daqui a deixava sem aparecer — o `visible` voltava falso e a janela nunca
+        // era mapeada. No 6.11 passava. Aberto pela biblioteca, já montada, os dois funcionam.
         if (jogoInicial !== "")
-            mostra(biblioteca.abreCaminho(jogoInicial))
+            Qt.callLater(() => principal.mostra(biblioteca.abreCaminho(jogoInicial)))
     }
 
     // O modo configurado para a janela principal (`graphics.janela`), como no egui. As
@@ -172,9 +175,11 @@ ApplicationWindow {
                      ? Window.Windowed : Window.FullScreen
     }
 
-    // Ctrl+F leva à busca, de qualquer lugar da janela.
+    // Ctrl+F leva à busca, de qualquer lugar da janela. Em `sequences`, e não em `sequence`: onde
+    // o sistema dá mais de uma tecla ao "procurar" (Ctrl+F e F3), o Qt 6.11 liga só a primeira e
+    // avisa no terminal.
     Shortcut {
-        sequence: StandardKey.Find
+        sequences: [StandardKey.Find]
         onActivated: busca.forceActiveFocus()
     }
 
