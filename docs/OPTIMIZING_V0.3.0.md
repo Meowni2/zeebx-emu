@@ -1423,3 +1423,96 @@ rodar a suíte inteira: ela escrevia no nível `Informacao` sem fixar o nível a
 que a prova anterior tivesse deixado. Passava até a ordem das provas mudar — que foi o que
 aconteceu quando esta rodada acrescentou provas. Corrigida fixando o nível.
 
+## 31. Fim da rodada: as treze frentes, cada uma com o seu desfecho
+
+### Frente 13 — Android drena o registro (feita e verificada)
+
+Faltava o destino: o desktop imprime no `stderr`, o core manda pelo `retro_log`, o headless imprime,
+e o Android não tinha para onde. Agora drena no `log`, que o `android_logger` já instala, com a
+gravidade preservada — um aviso do núcleo sai como `WARN` no `logcat`, o que faz `adb logcat *:W`
+mostrar o que interessa.
+
+**A verificação foi a CI do Android do fork**, disparada à mão (`gh workflow run android.yml`). Ela
+não roda sozinha em push: o único gatilho automático do repositório é a tag. Foi ela que verificou
+esta frente — e, antes disso, **pegou uma regressão minha que este host não tem como ver**.
+
+### A regressão que a CI do Android pegou
+
+`DebugView` deixou de ser `Copy` quando ganhou o campo de texto do nível de registro, e o frontend
+Android faz `let debug = self.settings.debug;` — move de um tipo que já não é `Copy`. O pacote
+`zeebx-android` **não compila fora de um alvo Android** (`ndk-sys` recusa: *"only supports compiling
+for Android"*), então `cargo check`, `cargo test` e `cargo build` no desktop não veem esse erro. Ele
+ficou no repositório desde a instrumentação e só apareceu quando alguém compilou para Android.
+
+Conserto: `clone()` no ponto do movimento — o mesmo que já havia sido feito no desktop, e na mesma
+classe de struct (meia dúzia de campos, uma vez por desenho do painel de depuração).
+
+**A lição vale para a rodada inteira:** o único frontend que a suíte local não alcança é o que mais
+precisa de CI, e essa CI é manual (`workflow_dispatch`). Quem mexer em `ui::settings` tem de
+disparar `android.yml` à mão — nada avisa.
+
+### Frente 12 — descarte de tiles (entregue como experimento, **não medido**)
+
+Opção nova, `zeebx_descarte_de_tiles`, **desligada por padrão**. Ligada, o rasterizador de placa diz
+ao driver que profundidade e estêncil podem ser jogados fora depois do quadro — o que num GPU de
+tiles evita escrever os dois anexos de volta na memória.
+
+**Não é ganho medido, e não está contado como tal.** Duas razões para vir desligada:
+
+1. um jogo que **não** limpe a profundidade de um quadro para o outro conta com ela — o console é um
+   framebuffer de verdade, e lá a profundidade persiste;
+2. o ganho é do Mali, onde eu não posso medir.
+
+O que a entrega faz é **tornar o teste possível**: a opção existe, está rotulada como experimental,
+e a primeira coisa a fazer no aparelho é ligá-la e olhar a imagem e o relógio.
+
+### Frente 11 — `lto = "fat"` (fechada por decisão, com o motivo)
+
+Não vale o preço, e o motivo é medível sem rodar:
+
+- o código quente **não é Rust de outro crate**. O JIT é C++ (Dynarmic, fora do alcance do LTO do
+  Rust) e o rasterizador de software está no próprio `zeebx`;
+- `codegen-units = 1` já está ligado, então a inlining dentro do crate já é máxima;
+- o `thin` já faz inlining entre crates do que é pequeno;
+- o custo é um rebuild do LTO gordo, que recompila **todas** as dependências, com 3,4 GB livres.
+
+Fica registrado como a coisa a testar quando houver disco — e não como pendência esquecida.
+
+### Frente 6 — PBO com fence (sem razão depois da frente 1)
+
+O PBO existe para esconder a latência do `glReadPixels`. Depois da frente 1, o caminho de placa faz
+**uma** leitura por sessão, e não uma por quadro: não há latência a esconder. Fechada.
+
+### Extras vindos dos estudos, implementados nesta rodada
+
+- **`GET_CURRENT_SOFTWARE_FRAMEBUFFER`** (do PCSX-ReARMed) — frente 3, feita e provada.
+- **Perfil Portátil ligando `0,5x`** — o item de desempenho que faltava no perfil. É a recomendação
+  da seção 28, agora de fábrica: quem escolhe Portátil ganha a redução que mediu 22% menos tempo
+  real, e quem não gostar da imagem mais quadrada escolhe a opção à mão.
+- **Teste do blit do driver** (do Flycast) — frente 5.
+- **Espelho de estado** (do DuckStation e do Flycast) — frente 2.
+- **Readback preguiçoso** (do Flycast e do DuckStation) — frente 1.
+
+### O placar das treze
+
+| desfecho | frentes |
+|---|---|
+| feitas e verificadas | 1, 2, 3, 5, 7, 9, 10, 13 |
+| entregue como experimento, não medida | 12 |
+| fechada por decisão, com motivo | 11 |
+| sem razão depois de outra frente | 6 |
+| despriorizadas por decisão registrada | 4, 8 |
+
+**Oito das treze com medida.** As cinco restantes têm desfecho escrito, e não ficaram em aberto por
+esquecimento: três dependem de aparelho ou de disco, e duas foram despriorizadas pelos próprios
+adendos das revisões.
+
+### O que ficou pendente de verdade
+
+1. **Medir no aparelho** — `0,5x` no perfil, o descarte de tiles, a partilha JIT × despacho e a
+   contagem de leituras de quadro. O instrumento viaja em todas elas (`Session::leituras_do_quadro_gl`,
+   `Session::estado_enviado_e_poupado`, e o relatório de varredura).
+2. **Triagem dos seis casos da varredura** — segue sem ser feita.
+3. **PR de `perf-v0.3.0` para `development`** — a branch está no fork e não há PR aberto.
+4. **`lto = "fat"`** quando houver disco.
+
