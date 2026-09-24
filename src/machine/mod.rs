@@ -551,6 +551,12 @@ struct FluxoPcm {
     inicio_us: u64,
     quadros_lidos: u64,
     tocando: bool,
+    /// Se já avisamos no log que o jogo **parou de fornecer amostras** neste fluxo.
+    ///
+    /// É a medida que o issue #43 pede: uma fala que morre cedo morre aqui, quando o `Read` do
+    /// jogo devolve zero, e a linha diz depois de quantos segundos de áudio isso aconteceu. Uma
+    /// vez por fluxo, senão o log vira a métrica.
+    avisou_do_fim: bool,
 }
 
 /// Comandos e status de `IMedia`, de `inc/AEEIMedia.h` do SDK do BREW 4.0.2.

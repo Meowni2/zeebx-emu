@@ -419,6 +419,29 @@ impl<C: CpuBackend> Machine<C> {
         };
         if !self.cargas_de_midia.contains_key(&chave) {
             let carga = self.decodifica_som(&bytes);
+            // **A conta que o issue #43 pede, em uma linha por som.** O formato que chegou (pelos
+            // primeiros bytes), quantos bytes, e quantos segundos decodificamos de verdade. Se uma
+            // fala longa aparecer aqui com um segundo, o corte está aqui e não no jogo -- e é isso
+            // que separa "não decodifica" de "decodifica e é cortado".
+            crate::registro!(
+                crate::registro::Nivel::Informacao,
+                "midia",
+                "som: {} bytes, assinatura {:?}, decodificado em {}",
+                bytes.len(),
+                String::from_utf8_lossy(&bytes[..bytes.len().min(4)]),
+                match &carga.som {
+                    Some(som) => format!(
+                        "{:.2}s a {} Hz, {} canal(is)",
+                        som.samples.len() as f64 / som.rate.max(1) as f64,
+                        som.rate,
+                        som.channels
+                    ),
+                    None => format!(
+                        "nada (só cronometrado: {} ms)",
+                        carga.silencio_us.map(|us| us / 1000).unwrap_or(0)
+                    ),
+                },
+            );
             self.cargas_de_midia.insert(chave, carga);
             self.descarta_sons_sem_dono(chave);
         }
@@ -792,6 +815,7 @@ impl<C: CpuBackend> Machine<C> {
                 inicio_us: 0,
                 quadros_lidos: 0,
                 tocando: false,
+                avisou_do_fim: false,
             },
         );
         Ok(true)
@@ -877,6 +901,24 @@ impl<C: CpuBackend> Machine<C> {
                 };
                 let lidos = code as i32;
                 if lidos <= 0 {
+                    // **O ponto onde uma fala morre.** O fluxo não tem fim conhecido: quem o
+                    // encerra é o jogo, parando de fornecer amostras. A linha diz depois de quantos
+                    // segundos de áudio isso aconteceu e como o fluxo foi declarado.
+                    if let Some(fluxo) = self.fluxos_pcm.get_mut(&this)
+                        && !fluxo.avisou_do_fim
+                    {
+                        fluxo.avisou_do_fim = true;
+                        crate::registro!(
+                            crate::registro::Nivel::Informacao,
+                            "midia",
+                            "fluxo {}: o jogo parou de fornecer amostras em {:.2}s de áudio ({} Hz, {} canal(is), {} bits)",
+                            this,
+                            fluxo.quadros_lidos as f64 / f64::from(fluxo.taxa.max(1)),
+                            fluxo.taxa,
+                            fluxo.canais,
+                            fluxo.bits
+                        );
+                    }
                     break;
                 }
                 let lidos = (lidos as u32).min(pedido);
