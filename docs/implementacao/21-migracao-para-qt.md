@@ -12,7 +12,8 @@ marcada aqui como feita.
 | 0 — prova de viabilidade | feita no Linux (`frontends/classical-standalone/src/qt/`, feature `ui-qt`); no `qt.yml`, Linux, Windows x64 e macOS Intel passaram, e o macOS ARM64 espera a nova execução com o Qt 6.11 |
 | 1 — desacoplar | feita: `Viewport` do pintor, tradução de teclas, `ui::partida::Partida` e `ui::entrada::EntradaDoDesktop` |
 | 2 — estrutura | feita: núcleo da interface Qt, `Biblioteca` como modelo, janela principal e janela do jogo |
-| 3 a 9 | não começadas |
+| 3 — janela do jogo | feita: textura da placa sem cópia, enquadramento, faixas de parada e de depuração, aviso de calibração, título e modo da janela |
+| 4 a 9 | não começadas |
 
 ## Onde o egui está de verdade
 
@@ -240,14 +241,40 @@ standalone. O `eframe` vem pela feature `desktop` do núcleo, e separá-lo é a 
 
 ### 3 — A janela do jogo
 
-O contexto próprio compartilhado, o passo no ritmo da janela, os dois caminhos de desenho (a
-textura do `quadro_na_placa()` embrulhada num `QSGTexture`, ou o RGB565 subido só quando a série
-muda), teclado por `Keys.onPressed`/`onReleased` com o conjunto limpo ao perder o foco, tela cheia
-por `Window.visibility`, e as sobreposições (aviso de calibração, "parou", linha do tempo) como
-itens QML.
+**O quadro vai ao scene graph sem voltar à CPU.** A `TelaDoJogo` tem como base o `ItemDoQuadro`
+(`src/qt/cpp/quadro.h`), um `QQuickItem` em C++ com `updatePaintNode` — o cxx-qt não tem binding de
+`QSGNode`. Com o rasterizador na placa, a textura do `quadro_na_placa()` entra embrulhada
+(`QSGOpenGLTexture::fromNative`), na resolução interna e com as colunas do 16:9; no resto — 2D,
+software, ou a placa com 2D por cima —, a tela RGB565 sobe como imagem, só quando mudou. Medido
+no Crash Nitro Kart com resolução interna 3×: praticamente todos os quadros do menu vão pela
+textura, e a imagem sai na orientação certa.
 
-Critério de saída: Quake e Crash Nitro Kart nos dois rasterizadores (a placa em escala 3, 16:9 e
-MSAA 4x), a Z-Wheel lançando um jogo e voltando, e uma porta com Boomerang.
+- **O embrulho declara a textura como 1×1.** O Qt usa o tamanho só para converter o recorte em
+  coordenadas de 0 a 1, e o rasterizador já entrega o recorte assim; o GL 3.3 do núcleo não
+  pergunta o tamanho real ao driver.
+- **Um `glFinish` depois de cada passo**, no contexto do rasterizador: a especificação só garante
+  a outro contexto o que o primeiro terminou. O custo não foi medido — o `eglSwapBuffers` do jogo
+  já lê o quadro de volta, o que espera a placa do mesmo jeito.
+- **O enquadramento é um só.** `ui::partida::enquadra` saiu do `App`, com os quatro testes; o
+  egui e o Qt calculam o mesmo retângulo, e a proporção "da janela" acompanha o tamanho dela nos
+  dois.
+
+O que mais a janela do egui fazia e a do Qt passou a fazer:
+
+- **A faixa de parada**: o motivo traduzido (`play.failed`) e o que fazer (`play.stop.hint`).
+- **O painel de depuração**, como faixa que encolhe o jogo. Os textos saíram para
+  `depuracao::Textos`, sem egui, que o `painel` do núcleo também passou a usar; a linha do tempo
+  é um `Canvas` com a mesma escala.
+- **O aviso de calibração do Boomerang.** A lógica — quando abre, se o controle está parado,
+  quando conclui e some, o giro do volante — saiu do `App` para `ui::calibracao`, com três testes;
+  a descrição do sensor, para `SensorDaPorta::descreve`. A imagem entra nos recursos do QML pelo
+  `qt-build-utils`, que dá apelido a um arquivo de `assets/`.
+- **O título da biblioteca**, sem a impressão digital da pasta; **o modo da janela** configurado
+  (`graphics.janela_do_jogo`, e o `graphics.janela` para a principal); **F11 e Alt+Enter**.
+- **"Pausado" traduzido**, com a chave `play.paused` nos quatro idiomas — o egui não mostrava nada.
+
+Falta o nome oficial da Z-Wheel no título, que depende do acervo (fase 4). **Não conferido:** o
+aviso de calibração com um Boomerang de verdade.
 
 ### 4 — Biblioteca
 
