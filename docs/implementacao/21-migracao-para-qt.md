@@ -17,7 +17,8 @@ marcada aqui como feita.
 | 5 — configurações | feita: as seis abas, o desenho do controle com clique pela silhueta, captura, eixos, Boomerang, Discord e atualizações |
 | 6 — janelas auxiliares | feita: saves, log da execução, aviso de abertura e aviso de versão nova |
 | 7 — conferência | feita: as chaves de texto das duas interfaces comparadas, teste de que toda chave usada existe, e o que faltava no Qt (ícone, `app_id`, tamanhos mínimos, tela cheia na biblioteca) |
-| 8 e 9 | não começadas |
+| 8 — corte do eframe | primeira etapa feita: compilado com `ui-qt`, o Qt é a interface padrão, e o egui fica em `zeebx egui`. O corte espera uma release com o Qt, que espera a fase 9 e a troca da licença |
+| 9 | não começada |
 
 ## Onde o egui está de verdade
 
@@ -458,6 +459,24 @@ versão, depois saem o `eframe`, a `ui::App` e, se trocado pelo
 independente desta. O [10](10-interface.md), o diagrama de camadas do
 [`ARCHITECTURE.md`](../../ARCHITECTURE.md) e os comentários de `video/contexto.rs` e
 `video/gpu.rs` que falam do eframe são reescritos.
+
+**A primeira etapa, feita.** Compilado com a feature `ui-qt`, `zeebx` sem argumentos abre o Qt, e
+`zeebx egui` abre a interface antiga — para quem achar uma diferença ter como comparar. O
+`zeebx qt [jogo]` continua valendo. Conferido pelo log de imports do QML
+(`QT_LOGGING_RULES="qt.qml.import=true"`): o `zeebx` carrega o QML, o `zeebx egui` não.
+
+**A feature continua desligada por padrão, de propósito.** O `ci.yml` e o `release.yml` compilam
+o standalone sem Qt e não o instalam; ligá-la por padrão os deixaria vermelhos antes de a fase 9
+ensinar o CI a instalar e empacotar o Qt. E a interface Qt não vai para uma release antes de o
+`LICENSE`, o `Cargo.toml` e o `AGENTS.md` passarem de GPL-2.0-only para GPLv3 (ver *Licença*).
+Então a ordem que sobra é:
+
+1. a fase 9: o Qt no `ci.yml` e no `release.yml`, com o empacotamento de cada sistema;
+2. a licença trocada, e a feature ligada por padrão;
+3. uma release com o Qt padrão e o `zeebx egui` ainda lá;
+4. na seguinte, o corte: saem o `eframe`, o `ui::App`, o `zeebx egui` e os caminhos `cfg` da
+   feature, e são reescritos o [10](10-interface.md), o `ARCHITECTURE.md` e os comentários do
+   `video/`.
 
 ### 9 — Build e empacotamento
 
