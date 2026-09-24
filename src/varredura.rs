@@ -2121,3 +2121,62 @@ fn exige_espaco(dirs: &[PathBuf]) {
         assert_eq!(passo, 2);
     }
 }
+
+/// **Quanto custa o relógio desta máquina**, em nanossegundos por leitura.
+///
+/// Existe porque dois instrumentos nossos discordaram, e a discórdia só se resolve medindo o
+/// instrumento. O `Instant::now` pode ser o caminho rápido do `vDSO` (dezenas de nanossegundos)
+/// ou uma chamada de sistema (mais de um microssegundo), e a diferença decide se o perfil de API
+/// mede o método ou a si mesmo: ele lê o relógio duas vezes por chamada, e um jogo com milhões de
+/// chamadas paga isso no número que publica.
+///
+/// Ignorado por padrão, como o antigo `instrucoes_por_segundo`: não é invariante do emulador, é
+/// propriedade da máquina.
+///
+/// ```text
+/// cargo test --release --lib quanto_custa_o_relogio -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "mede a máquina, não o emulador"]
+fn quanto_custa_o_relogio() {
+    /// Leituras por rodada. Alto o bastante para o laço e a soma sumirem no ruído.
+    const N: u64 = 2_000_000;
+
+    // Aquece: a primeira leitura paga o que for de uma vez só.
+    let _ = std::time::Instant::now();
+
+    let comeco = std::time::Instant::now();
+    let mut soma = 0u64;
+    for _ in 0..N {
+        soma = soma.wrapping_add(std::time::Instant::now().elapsed().as_nanos() as u64);
+    }
+    let ida_e_volta = comeco.elapsed().as_nanos() as u64 / N;
+
+    let comeco = std::time::Instant::now();
+    let mut t = std::time::Instant::now();
+    for _ in 0..N {
+        t = std::time::Instant::now();
+    }
+    let so_leitura = comeco.elapsed().as_nanos() as u64 / N;
+    let _ = (soma, t);
+
+    // O outro suspeito: o mapa por (interface, slot) que o perfil usa para acumular.
+    let mut mapa: std::collections::HashMap<(u32, u32), u64> = std::collections::HashMap::new();
+    for i in 0..64u32 {
+        mapa.insert((i, i), 0);
+    }
+    let comeco = std::time::Instant::now();
+    for i in 0..N {
+        *mapa.entry(((i % 64) as u32, (i % 64) as u32)).or_insert(0) += 1;
+    }
+    let mapa_ns = comeco.elapsed().as_nanos() as u64 / N;
+
+    eprintln!(
+        "relógio: {so_leitura} ns por leitura, {ida_e_volta} ns por par (now+elapsed); \
+         mapa por (interface, slot): {mapa_ns} ns por acúmulo"
+    );
+    eprintln!(
+        "logo, o perfil de API cobra cerca de {} ns por chamada além do método",
+        ida_e_volta + mapa_ns
+    );
+}

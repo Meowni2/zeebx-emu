@@ -83,25 +83,51 @@ impl<C: CpuBackend> Machine<C> {
         self.bad_pointers.iter().cloned().collect()
     }
 
-    /// Liga a medição de tempo real por método de API. Ver [`Machine::api_profile`].
+    /// Liga a medição de tempo por método de API. Ver [`Machine::api_profile`].
     ///
-    /// A partilha do relógio do JIT **não** depende daqui: ela é amostrada e sai em todo
-    /// relatório. Este interruptor é para o custo por método, que é caro. Ver
-    /// [`Machine::relato_do_jit`].
+    /// A medida é **amostrada** — uma chamada em cada 64 —, e por necessidade: o relógio desta
+    /// máquina é chamada de sistema, e ler o par por chamada fazia o instrumento cobrar mais que
+    /// o método medido. A contagem de chamadas continua exata em [`Machine::call_log`].
     pub fn enable_api_profile(&mut self) {
         self.profiling_api = true;
+        // **O preço do próprio instrumento, medido na máquina em que ele roda.** Ler o relógio
+        // custa dezenas de nanossegundos onde o `vDSO` responde e mais de um microssegundo onde
+        // ele não responde; sem descontar isso, um método que não faz nada aparece custando
+        // 1,4 µs — e foi essa leitura que pôs o `GetClipRect` no topo de um relatório.
+        self.clock_ns = Self::mede_o_relogio();
     }
 
-    /// Quanto tempo real cada método de API custou, do mais caro para o mais barato.
+    /// Quanto tempo real cada método de API custou, **estimado**, do mais caro para o mais barato.
+    ///
+    /// A estimativa usa a média das amostras daquele método, multiplicada pelo número de chamadas
+    /// dele: nenhuma chamada é especial, então a média vale para todas. Um método com poucas
+    /// amostras sai com margem larga — e é por isso que a contagem de amostras vai junto no
+    /// relatório, em vez de o número aparecer sozinho.
     pub fn api_profile(&self) -> Vec<(String, u64)> {
+        // O par de leituras que o perfil faz por chamada amostrada. Descontado da média antes de
+        // estimar, senão o número publicado é o preço do instrumento.
+        let instrumento = self.clock_ns.saturating_mul(2);
         let mut linhas: Vec<_> = self
             .api_time
             .iter()
-            .map(|(&(iface, slot), &ns)| {
+            .map(|(&(iface, slot), &(ns, amostras))| {
                 let nome = aee::Interface::from_index_public(iface)
                     .and_then(|i| i.method(slot).map(|m| format!("{}::{m}", i.name())))
                     .unwrap_or_else(|| format!("interface {iface} slot {slot}"));
-                (nome, ns)
+                let chamadas = self
+                    .call_log()
+                    .iter()
+                    .find(|(outro, _)| outro == &nome)
+                    .map(|(_, vezes)| u64::from(*vezes))
+                    .unwrap_or(amostras);
+                let estimado = match amostras {
+                    0 => 0,
+                    // `saturating_sub`: método mais barato que o instrumento fica em zero, e zero
+                    // é a resposta certa. Negativo não existe, e "quase zero" não se distingue do
+                    // ruído desta medida.
+                    n => (ns / n).saturating_sub(instrumento) * chamadas.max(n),
+                };
+                (nome, estimado)
             })
             .collect();
         linhas.sort_unstable_by_key(|linha| std::cmp::Reverse(linha.1));

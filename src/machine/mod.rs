@@ -703,6 +703,12 @@ impl Peek {
     }
 }
 
+/// De quantas em quantas chamadas de API o perfil de custo lê o relógio.
+///
+/// O relógio desta máquina custa 1318 ns por leitura; uma chamada em cada 64 mantém o instrumento
+/// abaixo de 1% do relógio e ainda dá milhares de amostras por método em qualquer jogo real.
+const AMOSTRA_DO_PERFIL: u64 = 64;
+
 /// `AEECLSID_SOURCEUTIL`, a fábrica de `ISource`. Ver [`Interface::SourceUtil`] para como o
 /// número foi identificado — durante muito tempo ele esteve aqui com o nome errado.
 const AEECLSID_SOURCEUTIL: u32 = 0x0100_1011;
@@ -2358,7 +2364,18 @@ pub struct Machine<C: CpuBackend> {
     /// nosso. Sem ele, um método que custa meio milissegundo por chamada se esconde atrás de
     /// uma média: o que aparece é "8 µs por chamada de API", e não "o `IIMAGE_Draw` sozinho é
     /// dois terços do despacho".
-    api_time: HashMap<(u32, u32), u64>,
+    /// Custo por método de API, **amostrado**: `(nanossegundos somados, amostras)`.
+    ///
+    /// Ver [`Machine::enable_api_profile`] para por que a medida é amostrada: o relógio desta
+    /// máquina custa mais de um microssegundo por leitura, e o perfil lia o relógio duas vezes por
+    /// chamada — o que fazia o instrumento cobrar mais que o método medido e encarecer a execução
+    /// em 42%. Com uma chamada em cada `AMOSTRA_DO_PERFIL`, o mesmo tanto se estima por 1/64 do
+    /// preço, e a contagem de chamadas continua exata em [`Machine::call_log`].
+    api_time: HashMap<(u32, u32), (u64, u64)>,
+    /// Quantas chamadas de API já passaram por aqui, para escolher as que serão cronometradas.
+    api_calls: u64,
+    /// Custo de uma leitura do relógio nesta máquina, para descontá-lo do perfil de custo.
+    clock_ns: u64,
     profiling_api: bool,
     /// Callback de `IIMAGE_Notify`, por objeto.
     image_notify: HashMap<u32, Callback>,
@@ -2976,6 +2993,8 @@ impl<C: CpuBackend> Machine<C> {
             images: HashMap::new(),
             image_bitmaps: HashMap::new(),
             api_time: HashMap::new(),
+            api_calls: 0,
+            clock_ns: 0,
             profiling_api: false,
             image_notify: HashMap::new(),
             image_info: HashMap::new(),
@@ -3388,7 +3407,15 @@ impl<C: CpuBackend> Machine<C> {
         };
         // Um ponteiro ruim vindo do guest não pode derrubar o emulador: viramos `EBADPARM`,
         // que é o que o BREW responde nesse caso, e registramos para aparecer no relatório.
-        let started = self.profiling_api.then(std::time::Instant::now);
+        // **Amostrado, e por necessidade.** O `Instant::now` desta máquina é chamada de sistema
+        // — medido em 1318 ns por leitura, com a prova em
+        // [`crate::varredura::tests::quanto_custa_o_relogio`] —, e o perfil lê o relógio duas
+        // vezes por chamada. Cronometrar todas fazia o instrumento cobrar 2,65 µs por chamada,
+        // mais que o método medido, e encarecer a execução em 42%. Uma em cada `AMOSTRA_DO_PERFIL`
+        // estima o mesmo e devolve o instrumento ao uso normal.
+        self.api_calls = self.api_calls.wrapping_add(1);
+        let amostrar = self.api_calls % AMOSTRA_DO_PERFIL == 0;
+        let started = (self.profiling_api && amostrar).then(std::time::Instant::now);
         let result = match self.dispatch_inner(iface, slot) {
             Ok(Some(value)) => value,
             Ok(None) => return Ok(None),
@@ -3399,8 +3426,9 @@ impl<C: CpuBackend> Machine<C> {
             }
         };
         if let Some(started) = started {
-            *self.api_time.entry((iface as u32, slot)).or_insert(0) +=
-                started.elapsed().as_nanos() as u64;
+            let custo = self.api_time.entry((iface as u32, slot)).or_insert((0, 0));
+            custo.0 += started.elapsed().as_nanos() as u64;
+            custo.1 += 1;
         }
         // Anexa o retorno à linha do rastreamento: sem ele não dá para ver qual chamada
         // devolveu o erro que fez o jogo desistir.
@@ -3408,6 +3436,27 @@ impl<C: CpuBackend> Machine<C> {
             line.push_str(&format!(" -> {result:#x}"));
         }
         Ok(Some(result))
+    }
+
+    /// Quantos nanossegundos custa uma leitura de `Instant::now()` nesta máquina.
+    ///
+    /// Medido, e não suposto: em Linux com `vDSO` são dezenas de nanossegundos, e sem ele passa de
+    /// um microssegundo. O perfil de API lê o relógio duas vezes por chamada amostrada, e descontar
+    /// isso é a diferença entre medir o método e medir o instrumento. A prova do valor está em
+    /// [`crate::varredura::tests::quanto_custa_o_relogio`].
+    fn mede_o_relogio() -> u64 {
+        /// Leituras da amostra: alto o bastante para o laço sumir no ruído, baixo o bastante para
+        /// não pesar na abertura de um jogo.
+        const N: u64 = 4096;
+
+        let _ = std::time::Instant::now();
+        let comeco = std::time::Instant::now();
+        let mut ultimo = comeco;
+        for _ in 0..N {
+            ultimo = std::time::Instant::now();
+        }
+        let _ = ultimo;
+        comeco.elapsed().as_nanos() as u64 / N
     }
 
     /// O despacho propriamente dito, separado para que falhas de acesso à memória do guest
