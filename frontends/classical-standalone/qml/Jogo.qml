@@ -21,6 +21,8 @@ Window {
 
     width: 960
     height: 760
+    minimumWidth: 320
+    minimumHeight: 240
     visible: false
     color: "black"
     title: "Zeebx — " + tela.estado
