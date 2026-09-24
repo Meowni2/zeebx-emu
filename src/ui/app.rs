@@ -291,6 +291,19 @@ impl App {
         // O tema escuro é o que se espera de um emulador, e deixa a imagem do jogo no centro
         // sem uma moldura clara puxando o olho.
         context.egui_ctx.set_theme(egui::Theme::Dark);
+        // **O nível do registro antes de qualquer trabalho de abertura.** O `ZEEBX_LOG` vale como
+        // ponto de partida e a configuração ganha dele quando existe, que é a mesma precedência
+        // do core Libretro — um vocabulário, uma ordem.
+        crate::registro::le_do_ambiente();
+        match crate::registro::Ajuste::de_texto(&settings.debug.nivel_de_log) {
+            Some(ajuste) => ajuste.aplica(),
+            None => crate::registro!(
+                crate::registro::Nivel::Aviso,
+                "registro",
+                "`{}` não é nível de log; seguindo no padrão",
+                settings.debug.nivel_de_log
+            ),
+        }
 
         let games = settings
             .roms_dir
@@ -2751,7 +2764,7 @@ impl App {
         // quadro do jogo em vez de tapá-lo. Precisa ser declarado antes do painel central,
         // porque no egui quem pede espaço primeiro é quem o recebe.
         if self.settings.debug.overlay {
-            let debug = self.settings.debug;
+            let debug = self.settings.debug.clone();
             let sample = session.sample();
             let (heap, objetos) = session.memory();
             let clock = session.clock_ms();
@@ -2943,6 +2956,9 @@ impl eframe::App for App {
         }
         self.acompanha_atualizacao(ctx);
         self.atualiza_presenca();
+        // O log do núcleo sai por aqui, uma vez por quadro. Com o anel vazio — que é o caso
+        // comum, com o nível padrão — isto é um cadeado e uma leitura.
+        crate::registro::despeja_no_stderr();
         if self.session.is_some() {
             self.grava_relatorio();
             self.game_window(ctx);

@@ -194,8 +194,10 @@ impl Banco {
         let mut leitor = std::io::Cursor::new(bytes);
         let fonte = Arc::new(rustysynth::SoundFont::new(&mut leitor).ok()?);
         let parse_elapsed = t_parse.elapsed();
-        eprintln!(
-            "Zeebx: SoundFont '{}' carregado em {:.1}ms (leitura: {:.1}ms, parse/amostras: {:.1}ms, presets: {})",
+        crate::registro!(
+            crate::registro::Nivel::Depuracao,
+            "midi",
+            "banco {} carregado em {:.1}ms (leitura: {:.1}ms, parse/amostras: {:.1}ms, presets: {})",
             caminho.display(),
             t0.elapsed().as_secs_f64() * 1000.0,
             read_elapsed.as_secs_f64() * 1000.0,
@@ -219,13 +221,26 @@ pub fn abre(caminho: &Path) -> Option<Arc<Banco>> {
     let guarda = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut mapa = guarda.lock().ok()?;
     if let Some(banco) = mapa.get(caminho) {
-        eprintln!(
-            "Zeebx: SoundFont '{}' reutilizado do cache (hit)",
+        crate::registro!(
+            crate::registro::Nivel::Depuracao,
+            "soundfont",
+            "banco {} reutilizado do cache",
             caminho.display()
         );
         return Some(banco.clone());
     }
+    let comeco = Instant::now();
     let banco = Arc::new(Banco::carrega(caminho)?);
+    // O tempo de carga do banco é o que explica a demora da primeira música no portátil; ele
+    // vive aqui, e não no mixer, porque é aqui que o trabalho acontece.
+    crate::registro!(
+        crate::registro::Nivel::Informacao,
+        "soundfont",
+        "banco {} de {} preset(s) aberto em {} ms",
+        caminho.display(),
+        banco.presets(),
+        comeco.elapsed().as_millis()
+    );
     mapa.insert(caminho.to_path_buf(), banco.clone());
     Some(banco)
 }
@@ -278,8 +293,10 @@ pub fn toca(banco: &Banco, bytes: &[u8], taxa: u32) -> Option<Sound> {
     // do teto e corte. Uma música que ficou baixa **continua** baixa, porque é assim que ela é.
     let pico = limita(&mut amostras);
     let elapsed = t0.elapsed();
-    eprintln!(
-        "Zeebx: render MIDI SoundFont: {} bytes MIDI -> {:.1}s áudio ({} amostras @ {}Hz, pico bruto {:.3}) sintetizados em {:.1}ms ({:.2}x tempo real)",
+    crate::registro!(
+        crate::registro::Nivel::Informacao,
+        "midi",
+        "banco: {} bytes de SMF -> {:.1}s de áudio ({} amostras @ {}Hz, pico bruto {:.3}) sintetizados em {:.1}ms ({:.2}x tempo real)",
         bytes.len(),
         comprimento,
         amostras.len(),

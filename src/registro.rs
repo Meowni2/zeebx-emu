@@ -198,11 +198,23 @@ pub fn escreve(nivel: Nivel, alvo: &str, texto: &str) {
     let Ok(mut linhas) = LINHAS.lock() else {
         return;
     };
-    if linhas.len() >= CAPACIDADE {
-        linhas.pop_front();
+    if poe_no_anel(&mut linhas, linha) {
         DESCARTES.fetch_add(1, Ordering::Relaxed);
     }
-    linhas.push_back(linha);
+}
+
+/// Põe a linha no anel, tirando a mais antiga quando ele já está cheio.
+///
+/// Devolve `true` quando **descartou** alguma coisa. É função de fora do global de propósito:
+/// a regra do teto é a que mais precisa de prova, e prová-la contra o anel do processo faz a
+/// prova depender de quem mais estiver escrevendo nele.
+fn poe_no_anel(anel: &mut VecDeque<Linha>, linha: Linha) -> bool {
+    let descartou = anel.len() >= CAPACIDADE;
+    if descartou {
+        anel.pop_front();
+    }
+    anel.push_back(linha);
+    descartou
 }
 
 /// Tira tudo o que está no anel, na ordem em que foi escrito.
@@ -249,6 +261,23 @@ pub fn le_do_ambiente() {
     }
 }
 
+/// Mostra no `stderr` o que está no anel, no formato `NÍVEL alvo: texto`.
+///
+/// É o canal dos frontends que não têm um log próprio para receber as linhas — o desktop e o
+/// headless —, e o mesmo que a varredura usa para o relatório. O Libretro **não** usa este
+/// caminho: lá o destino é o `retro_log` do frontend, que é quem decide o arquivo e a
+/// verbosidade, e é por isso que o despejo mora no core e não aqui.
+pub fn despeja_no_stderr() {
+    for linha in drena() {
+        eprintln!("{} {}: {}", linha.nivel.etiqueta(), linha.alvo, linha.texto);
+    }
+    let descartes = descartes();
+    if descartes > 0 {
+        zera_descartes();
+        eprintln!("WARN registro: {descartes} linha(s) descartada(s) pelo teto do anel");
+    }
+}
+
 /// Registra uma mensagem, se o nível passar pelo filtro.
 ///
 /// O `if` fica do lado de fora do `format!` de propósito: uma mensagem de depuração filtrada
@@ -265,6 +294,27 @@ macro_rules! registro {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serializa as provas que mexem no anel e no nível globais.
+    ///
+    /// As provas de um binário rodam em paralelo, e o registro é um só para todo o processo: sem
+    /// isto, uma prova que drena rouba as linhas da outra, e a que mede transbordo nunca enche.
+    /// Foi assim que a primeira versão desta prova passou sozinha e falhou na suíte.
+    static CADEADO: Mutex<()> = Mutex::new(());
+
+    /// O cadeado da suíte, tolerante a uma prova que entrou em pânico antes de soltá-lo.
+    fn sozinho() -> std::sync::MutexGuard<'static, ()> {
+        CADEADO.lock().unwrap_or_else(|envenenado| envenenado.into_inner())
+    }
+
+    /// A linha de prova, com um alvo que não colide com o de ninguém.
+    fn linha(alvo: &str, texto: &str) -> Linha {
+        Linha {
+            nivel: Nivel::Informacao,
+            alvo: alvo.to_string(),
+            texto: texto.to_string(),
+        }
+    }
 
     #[test]
     fn o_texto_da_opcao_vira_o_nivel_certo() {
@@ -292,6 +342,7 @@ mod tests {
 
     #[test]
     fn o_ajuste_liga_e_desliga_o_registro() {
+        let _sozinho = sozinho();
         Ajuste::Ate(Nivel::Erro).aplica();
         assert_eq!(nivel(), Nivel::Erro);
         assert!(ligado(Nivel::Erro));
@@ -331,6 +382,8 @@ mod tests {
     /// que outra prova esteja olhando: procura as suas próprias linhas.
     #[test]
     fn o_anel_guarda_na_ordem_e_o_drena_esvazia() {
+        let _sozinho = sozinho();
+        limpa();
         define_nivel(Nivel::Depuracao);
         escreve(Nivel::Informacao, "teste-do-anel", "primeira");
         escreve(Nivel::Erro, "teste-do-anel", "segunda");
@@ -352,21 +405,79 @@ mod tests {
         assert!(outra_vez.is_empty());
     }
 
-    /// O anel tem teto e conta o que descartou: transbordar em silêncio esconderia justamente
-    /// o trecho que faltou.
+    /// **A regra do teto, sem o global.** O anel tem de descartar a mais antiga e dizer que
+    /// descartou: transbordar em silêncio esconderia justamente o trecho que faltou.
+    ///
+    /// A regra é provada aqui, e não contra o anel do processo, porque o anel do processo é
+    /// compartilhado: a primeira versão desta prova enchia 320 linhas e falhava na suíte, porque
+    /// outra prova drenava no meio.
     #[test]
-    fn o_anel_transborda_e_conta_os_descartes() {
-        define_nivel(Nivel::Depuracao);
+    fn o_anel_transborda_pela_ponta_e_conta_o_descarte() {
+        let mut anel: VecDeque<Linha> = VecDeque::new();
+        let mut descartes = 0;
+
+        for i in 0..CAPACIDADE {
+            assert!(!poe_no_anel(&mut anel, linha("teto", &format!("linha {i}"))));
+        }
+        assert_eq!(anel.len(), CAPACIDADE, "cabe exatamente o teto");
+
+        // Uma a mais: sai a primeira, entra a nova.
+        assert!(poe_no_anel(&mut anel, linha("teto", "a que chega")));
+        descartes += 1;
+        assert_eq!(anel.len(), CAPACIDADE, "o teto não cresce");
+        assert_eq!(descartes, 1);
+        assert_eq!(
+            anel.front().map(|l| l.texto.as_str()),
+            Some("linha 1"),
+            "quem saiu foi a mais antiga"
+        );
+        assert_eq!(anel.back().map(|l| l.texto.as_str()), Some("a que chega"));
+
+        // Vinte a mais: vinte descartes, e o tamanho continua no teto.
+        for i in 0..20 {
+            if poe_no_anel(&mut anel, linha("teto", &format!("extra {i}"))) {
+                descartes += 1;
+            }
+        }
+        assert_eq!(descartes, 21);
+        assert_eq!(anel.len(), CAPACIDADE);
+    }
+
+    /// O contador de descartes do anel global aparece e some quando alguém o zera.
+    #[test]
+    fn o_contador_de_descartes_aparece_e_zera() {
+        let _sozinho = sozinho();
+        limpa();
         zera_descartes();
-        for i in 0..(CAPACIDADE + 20) {
+        for i in 0..(CAPACIDADE + 5) {
             escreve(Nivel::Informacao, "teste-do-teto", &format!("linha {i}"));
         }
-        assert!(descartes() >= 20, "os descartes têm de aparecer");
+        assert!(descartes() >= 5, "os descartes têm de aparecer");
+        zera_descartes();
+        assert_eq!(descartes(), 0);
+        limpa();
+    }
+
+    /// O despejo esvazia o anel, e chamá-lo com o anel vazio não faz nada.
+    #[test]
+    fn o_despejo_esvazia_o_anel() {
+        let _sozinho = sozinho();
+        define_nivel(Nivel::Depuracao);
+        escreve(Nivel::Aviso, "teste-do-despejo", "para o stderr");
+        despeja_no_stderr();
+        assert!(
+            !drena().iter().any(|l| l.alvo == "teste-do-despejo"),
+            "depois de despejar, a linha não volta"
+        );
+        // Segunda chamada sem nada pendente: não pode entrar em pânico nem inventar linha.
+        despeja_no_stderr();
     }
 
     /// A mensagem filtrada não entra no anel: é o que sustenta o argumento de custo.
     #[test]
     fn mensagem_abaixo_do_nivel_nao_entra_no_anel() {
+        let _sozinho = sozinho();
+        limpa();
         define_nivel(Nivel::Fatal);
         assert!(!ligado(Nivel::Informacao));
         escreve(Nivel::Informacao, "teste-filtrado", "não devia entrar");

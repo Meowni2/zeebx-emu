@@ -397,6 +397,18 @@ impl DynarmicCpu {
         };
         jit.marca_codigo_sujo(addr, len);
         let paginas = std::mem::take(&mut *jit.codigo_sujo.borrow_mut());
+        // **Quantas páginas de código caíram por escrita do host.** É o número que responde se
+        // leitura/escrita em página já executada é evento raro (nada a fazer) ou caminho quente
+        // (candidato a leitura direta com armadilha de escrita). Sem ele, o custo do SMC é
+        // invisível no perfil: aparece diluído no despacho, como "alguma chamada de API".
+        if !paginas.is_empty() {
+            crate::registro!(
+                crate::registro::Nivel::Depuracao,
+                "cpu",
+                "escrita em {addr:#010x}+{len} invalidou {} página(s) de código",
+                paginas.len()
+            );
+        }
         for pagina in paginas {
             jit.invalidate_cache_range(pagina * PAGE, PAGE as usize);
         }
@@ -427,6 +439,21 @@ impl CpuBackend for DynarmicCpu {
         for pagina in 0..PAGINAS as u32 {
             self.tabela[pagina as usize] = ponteiro_da_pagina(&copia, pagina);
         }
+        // Quantas páginas dos 32 bits do guest têm acesso direto e quantas ficaram na callback.
+        // É o primeiro número a olhar quando se discute custo de memória do JIT: a diferença
+        // entre as duas colunas é o que passa pelo Rust a cada leitura e escrita.
+        let diretas = self
+            .tabela
+            .iter()
+            .filter(|ponteiro| !ponteiro.is_null())
+            .count();
+        crate::registro!(
+            crate::registro::Nivel::Depuracao,
+            "cpu",
+            "tabela de páginas: {diretas} de {} com acesso direto ({} region(oes))",
+            PAGINAS,
+            copia.regions().len()
+        );
         self.memoria = Rc::new(RefCell::new(copia));
         self.semihosting.borrow_mut().clear();
         let estado = Estado {

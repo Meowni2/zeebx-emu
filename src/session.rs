@@ -406,7 +406,20 @@ impl Session {
             }
             _ => path,
         };
+        crate::registro!(
+            crate::registro::Nivel::Depuracao,
+            "session",
+            "conteúdo {} resolvido para {}",
+            conteudo.display(),
+            path.display()
+        );
         let bytes = std::fs::read(path).map_err(StartError::Unreadable)?;
+        crate::registro!(
+            crate::registro::Nivel::Depuracao,
+            "session",
+            "{} bytes lidos; analisando o módulo",
+            bytes.len()
+        );
         let image = ModImage::parse(bytes).map_err(|e| StartError::NotAModule(e.to_string()))?;
         let extensoes = extensoes_de(path);
         let module = loader::load_with(&image, &extensoes)
@@ -432,6 +445,7 @@ impl Session {
         // A lista precisa existir antes de `run` e `create_applet`: a Z-Wheel a enumera no boot.
         machine.set_installed_applets(instalados.iter().cloned());
         // Antes de qualquer desenho: ver [`Machine::usa_placa`].
+        let tem_contexto = contexto.is_some();
         machine.usa_placa(placa, contexto);
         machine.configura_z_wheel(z_wheel);
         // A tela com que o console abre a Z-Wheel. Ver [`SPLASH_DA_Z_WHEEL`].
@@ -448,7 +462,11 @@ impl Session {
                 let _ = std::fs::create_dir_all(dir);
             }
             if let Err(erro) = machine.liga_serial(caminho) {
-                eprintln!("sem serial: {erro}");
+                crate::registro!(
+                    crate::registro::Nivel::Aviso,
+                    "session",
+                    "a captura de serial não abriu: {erro}"
+                );
             }
         }
         if let Some(portas) = portas {
@@ -472,6 +490,32 @@ impl Session {
             AppletResult::Stopped(stop) => return Err(StartError::Stopped(stop)),
             AppletResult::NoModule => return Err(StartError::NoApplet),
         };
+        let title = library::title_for(path);
+        // **Uma linha de INFO por sessão, com o que responde "o que está rodando e como".** É o
+        // par que faltava no relatório do core: o título dizia o jogo e nada dizia o rasterizador.
+        crate::registro!(
+            crate::registro::Nivel::Informacao,
+            "session",
+            "abriu {} (classe {clsid:#010x}) com o {} e {} applet(s) instalado(s)",
+            // O nome do **conteúdo pedido**, e não o `title`: num `.zip` o título da sessão sai
+            // da pasta do cache, que carrega tamanho e data e não diz nada a quem lê o log.
+            conteudo
+                .file_name()
+                .map(|nome| nome.to_string_lossy().into_owned())
+                .unwrap_or_else(|| conteudo.display().to_string()),
+            match placa {
+                true => "rasterizador de placa",
+                false => "rasterizador de processador",
+            },
+            instalados.len()
+        );
+        if placa && !tem_contexto {
+            crate::registro!(
+                crate::registro::Nivel::Aviso,
+                "session",
+                "pediram a placa sem contexto de GL: o desenho fica no processador"
+            );
+        }
         let clock_base = u64::from(machine.clock_ms());
         let window = Marca {
             real: Instant::now(),
@@ -484,7 +528,7 @@ impl Session {
             partida: Some((applet, clsid)),
             #[cfg(feature = "audio")]
             audio: None,
-            title: library::title_for(path),
+            title,
             classe: clsid,
             intermediario: None,
             started: Instant::now(),

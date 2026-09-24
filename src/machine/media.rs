@@ -503,8 +503,10 @@ impl<C: CpuBackend> Machine<C> {
                         let dec = crate::audio::midi::decode(bytes);
                         if let Some(ref sound) = dec {
                             let dur_s = sound.samples.len() as f64 / sound.rate.max(1) as f64;
-                            eprintln!(
-                                "Zeebx: render MIDI Tabela de Timbres: {} bytes MIDI -> {:.1}s áudio sintetizados em {:.1}ms",
+                            crate::registro!(
+                                crate::registro::Nivel::Informacao,
+                                "midi",
+                                "tabela de timbres: {} bytes de SMF -> {:.1}s de áudio sintetizados em {:.1}ms",
                                 bytes.len(),
                                 dur_s,
                                 t_midi.elapsed().as_secs_f64() * 1000.0

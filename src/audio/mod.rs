@@ -555,7 +555,13 @@ impl Output {
                 device.build_output_stream(
                     &stream_config,
                     move |out: &mut [f32], _| mixer.fill(out, channels),
-                    |err| eprintln!("erro na saída de áudio: {err}"),
+                    |err| {
+                        crate::registro!(
+                            crate::registro::Nivel::Erro,
+                            "audio",
+                            "erro na saída de áudio: {err}"
+                        )
+                    },
                     None,
                 )
             }
