@@ -45,6 +45,11 @@ const PROFILE_LINES: usize = 20;
 const SEMIHOSTING_LINES: usize = 40;
 
 fn main() -> ExitCode {
+    // **O nível do registro entra aqui também.** A janela o lê ao abrir (`ui::app`), e os comandos
+    // de linha de comando não o liam: `ZEEBX_LOG=informacao` era ignorado em `run`, `bench` e
+    // `sessao`, e as linhas de instrumento -- todas de `Informacao` -- não apareciam. Foi assim que
+    // duas medidas minhas saíram vazias antes de eu perceber.
+    zeebx::registro::le_do_ambiente();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("info") if args.len() == 2 => report(info(&args[1])),
@@ -1218,6 +1223,20 @@ fn bench_dynarmic(
         println!("mídia:");
         for (name, count) in media {
             println!("  {count:>4}x {name}");
+        }
+    }
+    // **O registro do núcleo, que na janela vai para o log do frontend.** No harness ele é o motivo
+    // de existir: é por estas linhas que se lê o que o motor decidiu -- o som entregue e a duração
+    // decodificada, o fluxo que o jogo para de alimentar, e quem calou cada som. Sem elas, medir
+    // isso exigia abrir o RetroArch, e com ele a navegação de alguém.
+    //
+    // O nível entra por `ZEEBX_LOG` (`aviso` é o padrão): as linhas de instrumento são
+    // `informacao`, e sem a variável elas não aparecem.
+    let registro = zeebx::registro::drena();
+    if !registro.is_empty() {
+        println!("registro:");
+        for linha in registro {
+            println!("  [{}] {}: {}", linha.nivel.etiqueta(), linha.alvo, linha.texto);
         }
     }
     // As chamadas de entrada dizem se o jogo chega a consultar o controle e por qual canal: o de
