@@ -756,6 +756,35 @@ mod tests {
         assert_eq!(cpu.read_reg(Reg::R0), 0x37);
     }
 
+    /// **Uma instrução exclusiva não pode derrubar o processo.**
+    ///
+    /// O emissor x64 do Dynarmic exige um `global_monitor` **no momento da tradução** de
+    /// LDREX/STREX: `EmitExclusiveReadMemory` faz `ASSERT(conf.global_monitor != nullptr)` e depois
+    /// o desreferencia (`emit_x64_memory.cpp.inc`). O invólucro nunca preencheu esse campo, e o
+    /// crate 0.1.3 não tem setter (`a32.rs` faz `unsafe { std::mem::zeroed() }` com um `todo`), ou
+    /// seja: o campo nasce nulo. Nada rebaixa essas instruções quando o monitor falta.
+    ///
+    /// 40 dos 62 `.mod` do acervo contêm esse padrão em algum lugar. O teste monta
+    /// `ldrex r0, [r1]` seguido de `b .` e executa o bloco: sem monitor, a tradução aborta e o
+    /// processo morre antes de a asserção ser lida.
+    ///
+    /// **Medido, e por isso ele fica ignorado em vez de verde**: em 24/09/2026 este teste matou o
+    /// processo com `assertion failed: conf.global_monitor != nullptr` e `signal: 6, SIGABRT`. O
+    /// conserto não é nosso — precisa de um patch no `dynarmic` 0.1.3 (dôr o campo
+    /// `global_monitor` ao `Config` público), e o crate não tem setter. Com o patch, tirar o
+    /// `#[ignore]` e este teste passa a ser a guarda.
+    #[ignore = "prova um defeito conhecido da dependência; ver o comentário acima"]
+    #[test]
+    fn a_instrucao_exclusiva_nao_derruba_o_processo() {
+        // `ldrex r0, [r1]` (0xE1910F9F) e `b .` (0xEAFFFFFE).
+        let code = [0xe191_0f9fu32.to_le_bytes(), 0xeaff_fffeu32.to_le_bytes()].concat();
+        let mut cpu = cpu_with(&code);
+        // r1 aponta para a memória de dados, para a leitura ter um endereço mapeado.
+        cpu.write_reg(Reg::R1, 0x1000);
+        assert_eq!(cpu.run(0, 2).unwrap(), StopReason::Budget);
+        assert_eq!(cpu.read_reg(Reg::R0), 0, "a memória começa zerada");
+    }
+
     #[test]
     fn salto_para_a_faixa_de_api_vira_chamada() {
         let code = [0xe3a0_020fu32.to_le_bytes(), 0xe12f_ff10u32.to_le_bytes()].concat();
