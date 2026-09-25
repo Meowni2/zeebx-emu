@@ -282,6 +282,18 @@ O que mais a janela do egui fazia e a do Qt passou a fazer:
 Falta o nome oficial da Z-Wheel no título, que depende do acervo (fase 4). **Não conferido:** o
 aviso de calibração com um Boomerang de verdade.
 
+**O alfa do quadro, achado depois das fases.** O Double Dragon e os outros da Data East mostravam
+"bugs em branco" no Qt e não no egui. O jogo limpa o fundo com alfa zero; o quadro vai ao scene
+graph como textura opaca, desenhado sem mistura, e esse alfa ia parar na janela. Na NVIDIA, no
+Wayland, a janela tem canal alfa — 8 bits, mesmo com o `prepara_gl` pedindo zero, medido pelo
+`QSG_INFO` —, e o compositor mostrava por esses pixels o que estava atrás dela. Conferido
+capturando a janela: o fundo da tela de título saía `(0,0,0,0)`, e o mesmo quadro pela
+`zeebx sessao` saía preto. Agora a textura é lida com alfa 1 (`GL_TEXTURE_SWIZZLE_A`, em
+`quadro.cpp`), o que só muda a leitura, e não o rasterizador que desenha nela; e o `prepara_gl`
+pede a janela sem alfa, que é o que o Qt no Wayland consulta para marcá-la como opaca. Depois da
+correção, a área do jogo na captura sai toda opaca. O egui não tinha isto porque a janela do eframe
+é opaca.
+
 ### 4 — Biblioteca
 
 **As regras são uma só; o desenho é de cada janela.** Saíram do `vitrine.rs` do egui para o núcleo:
@@ -324,6 +336,18 @@ mudar de comportamento.
 Conferido na tela, pelo `grabToImage` de uma cópia da configuração: a grade e o slider, com as capas
 e os logos da Z-Wheel, os nomes oficiais e a classificação. **Não conferido:** a navegação por um
 controle de verdade.
+
+**As setas, achadas depois das fases.** Dois defeitos deixavam as setas sem mexer na lista, e o
+teclado simulado numa tela virtual mediu os dois, pelo `currentIndex` da grade e pelo `cursor` do
+slider:
+
+- **No modo slider, as setas andavam a grade escondida.** A grade e o slider declaravam
+  `focus: true`, e o Qt dá o foco a um só, o primeiro. Agora o foco é de quem está à vista, e trocar
+  o modo nas configurações o passa à vista nova.
+- **Um botão clicado ficava com o teclado.** Depois de "Procurar de novo" ou das configurações, as
+  setas iam para o botão. Os botões da barra não pegam mais o foco, e o ✕ da busca e o clique numa
+  capa devolvem as setas à lista, como o Esc da busca já fazia.
+
 
 ### 5 — Configurações
 
