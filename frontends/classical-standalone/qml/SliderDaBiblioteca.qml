@@ -57,7 +57,9 @@ Item {
         }
     }
     // Um clique no escolhido abre; num vizinho, traz ele para o meio.
+    // O clique devolve o teclado ao slider: vindo da busca, as setas continuavam no campo.
     function clica(k) {
+        forceActiveFocus()
         if (k === cursor)
             abre(linha(cursor))
         else
