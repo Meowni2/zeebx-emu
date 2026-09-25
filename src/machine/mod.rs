@@ -311,7 +311,13 @@ fn handler_for(mime: &str) -> u32 {
         "image/bmp" | "image/x-ms-bmp" => AEECLSID_WINBMP,
         "audio/mid" | "audio/midi" => AEECLSID_MEDIAMIDI,
         "audio/mpeg" | "audio/mp3" => AEECLSID_MEDIAMP3,
-        "audio/wav" | "audio/x-wav" => AEECLSID_MEDIAPCM,
+        // **O WAV é o `+ 0xa`, e não o `0x5511`.** O Bejeweled Twist confere a resposta: só cria
+        // a mídia se a classe for `+1`, `+2` ou `+0xa` (0x67bdc), e a própria tabela dele diz
+        // que o tipo 3, o dos 56 efeitos em WAV PCM do `resources.dat`, é o `0x0100550a`
+        // (0x1435c). Com `0x5511` ele pulava todos: o gerenciador de sons, que indexa por
+        // `id - 3000`, ficava só com as 10 músicas, e o primeiro efeito tocado na partida lia
+        // fora da lista — o jogo parava em 0x1c714, lendo 0xff53906e.
+        "audio/wav" | "audio/x-wav" => AEECLSID_MEDIAADPCM,
         "audio/vnd.qcelp" => AEECLSID_MEDIAADPCM,
         _ => 0,
     }
@@ -1813,7 +1819,24 @@ struct PendingBlit {
     target: u32,
     x: i32,
     y: i32,
+    src_x: i32,
+    src_y: i32,
+    width: u32,
+    height: u32,
+    rop: u32,
     frame: Option<u32>,
+}
+
+/// Uma superfície nossa, já desenhada, que precisa ser composta pelo `BltIn` do jogo.
+#[derive(Debug, Clone, Copy)]
+struct PendingSurfaceBlit {
+    source: u32,
+    target: u32,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    rop: u32,
 }
 
 /// Se o método pode mexer em mais de um pixel da superfície.
@@ -2337,6 +2360,8 @@ pub struct Machine<C: CpuBackend> {
     pending_probes: Vec<u32>,
     /// Desenhos que precisam passar pelo `BltIn` de uma superfície do jogo.
     pending_blits: Vec<PendingBlit>,
+    /// Primitivas 2D desenhadas em bitmaps temporários para o `BltIn` do jogo.
+    pending_surface_blits: Vec<PendingSurfaceBlit>,
     /// Superfícies já consultadas — a resposta não muda, e perguntar de novo custaria uma
     /// entrada no guest a cada `SetDestination`.
     probed: HashSet<u32>,
@@ -2437,6 +2462,9 @@ pub struct Machine<C: CpuBackend> {
     /// o aviso nasceu. Saem na volta do laço, não na saída da chamada: ver
     /// [`Machine::notify_media`].
     avisos_de_midia: Vec<(u32, u32, u32, Callback)>,
+    /// As imagens com `PFNIMAGEINFO` ainda não entregue. Também saem na volta do laço: ver
+    /// [`Machine::notify_image`].
+    avisos_de_imagem: Vec<u32>,
     /// Os `IMedia` que tocam PCM gerado pelo jogo, por objeto. Ver [`FluxoPcm`].
     fluxos_pcm: HashMap<u32, FluxoPcm>,
     /// O buffer no guest onde o `ISource::Read` escreve as amostras.
@@ -2947,6 +2975,7 @@ impl<C: CpuBackend> Machine<C> {
             trecho_interrompido: None,
             pending_probes: Vec::new(),
             pending_blits: Vec::new(),
+            pending_surface_blits: Vec::new(),
             probed: HashSet::new(),
             ciphers: HashMap::new(),
             hashes: HashMap::new(),
@@ -2995,6 +3024,7 @@ impl<C: CpuBackend> Machine<C> {
             sounds: HashMap::new(),
             pending_calls: Vec::new(),
             avisos_de_midia: Vec::new(),
+            avisos_de_imagem: Vec::new(),
             fluxos_pcm: HashMap::new(),
             buffer_de_fluxo: 0,
             bloco_de_aviso_de_midia: 0,
