@@ -291,6 +291,19 @@ impl App {
         // O tema escuro é o que se espera de um emulador, e deixa a imagem do jogo no centro
         // sem uma moldura clara puxando o olho.
         context.egui_ctx.set_theme(egui::Theme::Dark);
+        // **O nível do registro antes de qualquer trabalho de abertura.** O `ZEEBX_LOG` vale como
+        // ponto de partida e a configuração ganha dele quando existe, que é a mesma precedência
+        // do core Libretro — um vocabulário, uma ordem.
+        crate::registro::le_do_ambiente();
+        match crate::registro::Ajuste::de_texto(&settings.debug.nivel_de_log) {
+            Some(ajuste) => ajuste.aplica(),
+            None => crate::registro!(
+                crate::registro::Nivel::Aviso,
+                "registro",
+                "`{}` não é nível de log; seguindo no padrão",
+                settings.debug.nivel_de_log
+            ),
+        }
 
         let games = settings
             .roms_dir
@@ -690,6 +703,11 @@ impl App {
             .then(|| Self::caminho_da_serial(&library::title_for(&path)));
         // Um jogo aberto pela Z-Wheel começa com a tela que ela deixou: ver
         // [`Session::herda_tela`]. A própria Z-Wheel, reaberta, abre com a imagem dela.
+        // O quadro pendente da sessão anterior entra antes de ela ser largada: ver
+        // [`Session::materializa_quadro_gl`].
+        if let Some(anterior) = self.session.as_mut() {
+            anterior.materializa_quadro_gl();
+        }
         let tela_anterior = self
             .session
             .as_ref()
@@ -1543,6 +1561,25 @@ impl App {
     /// tem "apertado", tem curso, e por isso a origem é uma só e ganha um sentido.
     fn axes_section(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
+
+        // O direcional espelhado nos eixos — o pedido do issue #39, e o mesmo ajuste do
+        // `zeebx_dpad_to_analog_p1`/`_p2` do core Libretro. **Por porta**, porque são dois
+        // jogadores: quem joga de manche no controle 1 não decide pelo dono do controle 2.
+        let rotulo = self.catalog.get("controls.dpad_to_analog").to_string();
+        let dica = self.catalog.get("controls.dpad_to_analog.hint").to_string();
+        changed |= ui
+            .checkbox(
+                &mut self
+                    .settings
+                    .controls
+                    .player_mut(self.porta_editada)
+                    .direcional_nos_eixos,
+                rotulo,
+            )
+            .on_hover_text(dica)
+            .changed();
+        ui.add_space(6.0);
+
         ui.label(self.catalog.get("controls.axes"));
         ui.weak(self.catalog.get("controls.axes.hint"));
 
@@ -2718,16 +2755,28 @@ impl App {
         alterna_tela_cheia(ctx);
 
         let smooth = self.settings.graphics.smooth;
-        // O quadro em RGB565, do jeito que a superfície do console o guarda: é o que o pintor
-        // de GL sobe direto para a placa.
-        let quadro_largura = session.screen().width() as i32;
-        let quadro_altura = session.screen().height() as i32;
-        let quadro_bytes = session.screen().to_rgb565_bytes();
         // Com GL não há por que converter o mesmo quadro de novo para textura do egui: seriam
         // duas conversões por repaint, e só uma delas iria para a tela.
         let pela_placa = self.settings.graphics.gpu_present
             && self.gl.is_some()
             && !self.gpu_falhou.load(std::sync::atomic::Ordering::Relaxed);
+        // **A tela da CPU só é lida quando ela é que vai à janela.** Com o quadro indo pela placa,
+        // os pixels da CPU não são usados — e buscá-los custaria, no caminho de placa, a leitura
+        // do quadro de volta a cada repaint, que é justamente o que a apresentação pela placa
+        // existe para evitar. Ver [`Session::materializa_quadro_gl`]: com o readback adiado, o
+        // quadro precisa ser materializado antes de qualquer conversão para bytes.
+        let (quadro_largura, quadro_altura, quadro_bytes) = match pela_placa {
+            true => (0, 0, Vec::new()),
+            false => {
+                session.materializa_quadro_gl();
+                let tela = session.screen();
+                (
+                    tela.width() as i32,
+                    tela.height() as i32,
+                    tela.to_rgb565_bytes(),
+                )
+            }
+        };
         if !pela_placa {
             // Subir a textura só quando a tela mudou: a janela repinta mais vezes que o jogo
             // desenha, e cada subida inteira custa uma conversão e uma ida à placa.
@@ -2751,7 +2800,7 @@ impl App {
         // quadro do jogo em vez de tapá-lo. Precisa ser declarado antes do painel central,
         // porque no egui quem pede espaço primeiro é quem o recebe.
         if self.settings.debug.overlay {
-            let debug = self.settings.debug;
+            let debug = self.settings.debug.clone();
             let sample = session.sample();
             let (heap, objetos) = session.memory();
             let clock = session.clock_ms();
@@ -2943,6 +2992,9 @@ impl eframe::App for App {
         }
         self.acompanha_atualizacao(ctx);
         self.atualiza_presenca();
+        // O log do núcleo sai por aqui, uma vez por quadro. Com o anel vazio — que é o caso
+        // comum, com o nível padrão — isto é um cadeado e uma leitura.
+        crate::registro::despeja_no_stderr();
         if self.session.is_some() {
             self.grava_relatorio();
             self.game_window(ctx);

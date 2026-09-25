@@ -268,6 +268,46 @@ impl Pad {
         (valor + AXIS_CENTRO).clamp(AXIS_MIN, AXIS_MAX)
     }
 
+    /// Espelha o direcional nos eixos `X` e `Y`, para jogo que só lê o manche.
+    ///
+    /// **Não é o padrão, e a razão é medida.** No console o direcional é botão: quem consulta
+    /// estado o vê em `GetButtonInfo`, e quem só escuta o eixo não vê nada. Pôr o direcional nos
+    /// eixos foi o que `e705840` fez, e `4418fe9` desfez — o Zeeboids consulta **os dois canais**
+    /// toda volta (613 `GetNextButtonEvent` e 612 `GetPositionState` em vinte segundos) e passou a
+    /// andar duas casas por toque. Deixá-lo **só** nos eixos foi pior: soltar a direção manda o
+    /// eixo de volta ao centro, e quem lê variação lê essa volta como um passo no sentido contrário.
+    ///
+    /// Fica aqui, atrás de uma opção desligada por padrão, porque o defeito é **por jogo**: quem só
+    /// lê o manche passa a enxergar o direcional, e quem lê os dois canais segue como estava.
+    ///
+    /// Os botões **continuam apertados**: a opção acrescenta o eixo, não troca o canal. Quem lê os
+    /// dois é que anda duas casas, e é o caso que a opção existe para deixar desligada.
+    ///
+    /// Cima é valor **negativo** no `Y` interno: no console o eixo cresce para baixo, e é o valor
+    /// baixo que o jogo lê como cima — ver `cima_no_analogico_e_o_valor_baixo_no_console`.
+    pub fn espelha_o_direcional_nos_eixos(&mut self) {
+        // Os quatro sentidos, na ordem de [`DPAD`]: cima, baixo, esquerda, direita.
+        //
+        // **Soltar devolve o eixo ao centro**, e não o deixa onde estava: sem isso o manche
+        // ficaria empurrado para sempre depois do primeiro toque. É a mesma volta ao centro que o
+        // [`Pad::press`] anota como o risco da ideia — quem lê variação lê essa volta como um
+        // passo no sentido contrário.
+        //
+        // Os dois sentidos opostos apertados juntos dão centro, e não o último que chegou.
+        let vertical = match (self.is_down(DPAD[0]), self.is_down(DPAD[1])) {
+            (true, false) => -AXIS_CURSO,
+            (false, true) => AXIS_CURSO,
+            _ => 0,
+        };
+        let horizontal = match (self.is_down(DPAD[2]), self.is_down(DPAD[3])) {
+            (true, false) => -AXIS_CURSO,
+            (false, true) => AXIS_CURSO,
+            _ => 0,
+        };
+        self.set_axis(1, vertical);
+        self.set_axis(0, horizontal);
+    }
+
     /// Os botões que mudaram entre `self` e `next`, com o novo estado de cada um.
     pub fn changes(&self, next: &Pad) -> Vec<(usize, bool)> {
         (0..BUTTONS)
@@ -650,6 +690,61 @@ mod tests {
         // arcade varrem: um botão que não existe no aparelho não pode comer a vaga de um que
         // existe.
         assert!(lx >= 16, "o lx não ocupa vaga na faixa que o arcade lê");
+    }
+
+    /// A opção do issue #39: o direcional também escreve nos eixos, quando ligada.
+    #[test]
+    fn o_direcional_espelhado_poe_os_eixos_no_curso_e_nao_solta_o_botao() {
+        let mut pad = Pad::default();
+        assert_eq!(pad.axes, [0, 0, 0, 0], "o repouso é o zero interno");
+
+        // Cima: negativo no `Y`, porque no console o eixo cresce para baixo.
+        pad.press(DPAD[0], true);
+        pad.espelha_o_direcional_nos_eixos();
+        assert_eq!(pad.axes[1], -AXIS_CURSO);
+        assert_eq!(pad.eixo_do_console(1), AXIS_MIN, "cima é o valor baixo");
+        assert!(pad.is_down(DPAD[0]), "o botão continua apertado");
+
+        // Baixo, no mesmo `Pad`, para provar que um sentido desfaz o outro.
+        pad.press(DPAD[0], false);
+        pad.press(DPAD[1], true);
+        pad.espelha_o_direcional_nos_eixos();
+        assert_eq!(pad.axes[1], AXIS_CURSO);
+        assert_eq!(pad.eixo_do_console(1), AXIS_MAX);
+
+        // Direita e esquerda no `X`.
+        pad.press(DPAD[1], false);
+        pad.press(DPAD[3], true);
+        pad.espelha_o_direcional_nos_eixos();
+        assert_eq!(pad.axes[0], AXIS_CURSO);
+        pad.press(DPAD[3], false);
+        pad.press(DPAD[2], true);
+        pad.espelha_o_direcional_nos_eixos();
+        assert_eq!(pad.axes[0], -AXIS_CURSO);
+
+        // Soltar a direção **não** zera o eixo: quem zera é o quadro seguinte, quando o
+        // direcional já não está apertado — e é essa volta ao centro que o `Pad::press` anota.
+        pad.press(DPAD[2], false);
+        pad.espelha_o_direcional_nos_eixos();
+        pad.espelha_o_direcional_nos_eixos();
+        assert_eq!(pad.axes[0], 0);
+
+        // E os eixos que não são do manche esquerdo ficam intocados.
+        assert_eq!([pad.axes[2], pad.axes[3]], [0, 0]);
+    }
+
+    /// O direcional em repouso **centra** os eixos do manche esquerdo, e não toca nos do direito.
+    ///
+    /// A ordem importa em quem chama: o espelho escreve zero, então ele tem de rodar **antes** do
+    /// laço do analógico — senão o manche de verdade, parado no centro, seria apagado sem que
+    /// ninguém tivesse apertado nada.
+    #[test]
+    fn o_direcional_solto_centra_o_manche_esquerdo_e_nao_toca_no_direito() {
+        let mut pad = Pad::default();
+        pad.set_axis(2, AXIS_CURSO);
+        pad.espelha_o_direcional_nos_eixos();
+        assert_eq!([pad.axes[0], pad.axes[1]], [0, 0]);
+        assert_eq!(pad.axes[2], AXIS_CURSO, "o `Z` não é do direcional");
     }
 
     #[test]

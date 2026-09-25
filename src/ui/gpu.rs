@@ -224,6 +224,11 @@ impl Pintor {
             gl.draw_arrays(glow::TRIANGLES, 0, 3);
             // Devolver o estado que mexemos: o egui desenha o resto da interface depois de nós,
             // e um programa ou VAO deixado ligado aparece como interface sem textura.
+            //
+            // **Isto é o que quebra o cache do rasterizador quando ele desenha no mesmo contexto.**
+            // Ele liga programa, VAO e VBO uma vez e não a cada lote, e é ele quem tem de saber que
+            // outra pessoa pode mexer neles — ver `GpuState::devolve_o_contexto`: o cache é
+            // invalidado ali, a cada devolução, quando quem apresenta o quadro é o anfitrião.
             gl.bind_vertex_array(None);
             gl.use_program(None);
         }
