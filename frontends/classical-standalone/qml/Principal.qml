@@ -87,6 +87,8 @@ ApplicationWindow {
     // O modo da biblioteca vem das configurações: 0 grade, 1 slider. Relido quando elas mudam.
     readonly property bool emSlider: principal.depende([configuracoes.cfg.versao], biblioteca.modoDaBiblioteca() === 1)
     readonly property Item vista: emSlider ? slider : grade
+    // Trocado o modo nas configurações, as setas passam à vista nova.
+    onVistaChanged: vista.forceActiveFocus()
 
     Biblioteca {
         id: biblioteca
@@ -188,7 +190,10 @@ ApplicationWindow {
         anchors.margins: 8
         spacing: 6
 
-        // A barra de cima.
+        // A barra de cima. **Os botões dela não pegam o foco do teclado**, nem os da linha da
+        // contagem e o do recado: clicado, um botão do Qt Quick fica com o foco, e as setas
+        // passavam a ir para ele, e não para a grade ou para o slider. No egui um clique não
+        // prendia o teclado.
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
@@ -200,6 +205,7 @@ ApplicationWindow {
             }
 
             Button {
+                focusPolicy: Qt.NoFocus
                 text: "▶ " + tr("nav.z_wheel")
                 enabled: principal.depende([configuracoes.cfg.versao], biblioteca.temZWheel())
                 onClicked: principal.mostra(biblioteca.abreZWheel())
@@ -231,9 +237,14 @@ ApplicationWindow {
             }
 
             ToolButton {
+                focusPolicy: Qt.NoFocus
                 text: "✕"
                 visible: busca.text !== ""
-                onClicked: busca.text = ""
+                // Como o Esc da busca: a lista volta a ser das setas.
+                onClicked: {
+                    busca.text = ""
+                    principal.vista.forceActiveFocus()
+                }
                 ToolTip.visible: hovered
                 ToolTip.text: tr("nav.search.clear")
             }
@@ -243,11 +254,13 @@ ApplicationWindow {
             }
 
             Button {
+                focusPolicy: Qt.NoFocus
                 text: tr("nav.saves")
                 onClicked: saves.abre()
             }
 
             Button {
+                focusPolicy: Qt.NoFocus
                 text: tr("nav.settings")
                 onClicked: configuracoes.abre(-1)
             }
@@ -256,6 +269,7 @@ ApplicationWindow {
             // próprio banco. Testar rede com isso custa um dia por tentativa, então o botão recua
             // a data em um dia.
             Button {
+                focusPolicy: Qt.NoFocus
                 text: tr("nav.unlock_sync")
                 onClicked: recado.text = biblioteca.liberaSincronizacao()
                 ToolTip.visible: hovered
@@ -275,6 +289,7 @@ ApplicationWindow {
                 wrapMode: Text.Wrap
             }
             Button {
+                focusPolicy: Qt.NoFocus
                 text: tr("nav.unlock_sync.ok")
                 onClicked: recado.text = ""
             }
@@ -288,6 +303,7 @@ ApplicationWindow {
                 text: biblioteca.contagem
             }
             Button {
+                focusPolicy: Qt.NoFocus
                 text: tr("library.rescan")
                 onClicked: {
                     biblioteca.procuraDeNovo()
@@ -337,6 +353,10 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: !principal.emSlider && biblioteca.vazio === ""
+            // **O foco é de quem está à vista.** As duas declaravam `focus: true`, e o Qt dá o foco
+            // a um só, o primeiro: no modo slider, as setas andavam a grade escondida e o slider
+            // ficava parado — medido pelo `currentIndex` da grade subindo com o `cursor` em zero.
+            focus: !principal.emSlider
             escutando: !principal.sobreposta
             biblioteca: biblioteca
             onAbre: (linha) => principal.mostra(biblioteca.abre(linha))
@@ -348,6 +368,7 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: principal.emSlider && biblioteca.vazio === ""
+            focus: principal.emSlider
             escutando: !principal.sobreposta
             biblioteca: biblioteca
             onAbre: (linha) => principal.mostra(biblioteca.abre(linha))
