@@ -47,6 +47,11 @@ void prepara_gl()
     formato.setProfile(QSurfaceFormat::CoreProfile);
     formato.setDepthBufferSize(24);
     formato.setStencilBufferSize(8);
+    // A janela é opaca. É o que o Qt no Wayland consulta para dizer ao compositor que ela não se
+    // mistura com o que está atrás. **Não basta sozinho**: a NVIDIA não tem configuração sem alfa
+    // e entrega 8 bits mesmo assim — medido pelo `QSG_INFO`. O que garante o quadro opaco é o
+    // `le_alfa_como_um`, em `quadro.cpp`.
+    formato.setAlphaBufferSize(0);
     QSurfaceFormat::setDefaultFormat(formato);
 }
 
