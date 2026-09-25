@@ -35,6 +35,10 @@ ApplicationWindow {
     minimumWidth: 360
     minimumHeight: 200
     visible: false
+    // **O log não pega o teclado.** O KWin dava o foco a ele ao aparecer, e no Wayland o foco só
+    // volta a outra janela em resposta a uma ação do usuário: pedir de volta para o jogo não
+    // adiantava, e o teclado ficava no log. O mouse continua valendo — rolar, exportar, fechar.
+    flags: Qt.Window | Qt.WindowDoesNotAcceptFocus
     title: "Zeebx — " + tr("debug.log.title")
 
     function tr(chave) {
@@ -46,13 +50,32 @@ ApplicationWindow {
             recado = ""
             presa = true
             releLinhas()
-            // Junto com a janela do jogo, e não depois: o jogo pede o foco por último, e fica
-            // com o teclado. Mostrado depois, o log ficava com o foco — o KDE no Wayland recusa
-            // devolvê-lo ao jogo. Por cima do jogo ele fica por ser filho dele.
-            showNormal()
+            if (transientParent === null || transientParent.active)
+                mostra()
         } else {
             hide()
         }
+    }
+
+    // **Só depois de a janela do jogo existir no compositor.** O log é filho da janela do jogo, e
+    // é isso que o mantém por cima dela. Mostrado no mesmo instante que ela, o log chegava ao KWin
+    // antes de a janela do jogo existir, sem pai: o KWin o via como janela solta
+    // (`transient=false`, medido por um script dele que lista a pilha) e o deixava atrás do jogo.
+    // O jogo ficar ativo é o sinal de que a janela dele já está lá.
+    Connections {
+        target: janela.transientParent
+        function onActiveChanged() {
+            if (janela.pedida && !janela.visible && janela.transientParent.active)
+                janela.mostra()
+        }
+    }
+
+    // Por cima do jogo, e com o teclado devolvido a ele: o log é para ler, e o jogo continua sendo
+    // jogado.
+    function mostra() {
+        showNormal()
+        if (transientParent)
+            Qt.callLater(() => janela.transientParent.requestActivate())
     }
 
     // Fechar a janela dispensa o log **desta** execução, e não a preferência: gravar isso
