@@ -119,7 +119,9 @@ GridView {
 
                 anchors.fill: parent
                 hoverEnabled: true
+                // O clique devolve o teclado à grade: vindo da busca, as setas continuavam no campo.
                 onClicked: {
+                    grade.forceActiveFocus()
                     grade.currentIndex = cartao.index
                     grade.abre(cartao.index)
                 }
