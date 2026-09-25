@@ -424,9 +424,13 @@ um, no núcleo, para as duas interfaces usarem a mesma:
 - **Quem fica por cima de quem.** No QML, uma janela declarada dentro de outra ganha ela como
   `transientParent`, e o gerenciador de janelas mantém a filha sempre acima do pai. A do jogo era
   filha da principal, e clicar na principal durante o jogo não a trazia para a frente; agora não tem
-  pai, como no egui. A do log é filha da do jogo, e fica por cima dele. Ela aparece junto com o
-  jogo, e não depois: o jogo pede o foco por último e fica com o teclado — mostrado depois, o log
-  ficava com o foco, e o KDE no Wayland recusava devolvê-lo ao jogo.
+  pai, como no egui. A do log é filha da do jogo, e fica por cima dele — **mas só se for mostrada
+  depois de a janela do jogo existir no compositor.** Mostrada junto com ela, chegava ao KWin sem
+  pai e ficava atrás do jogo: um script do KWin que lista a pilha a via como janela solta
+  (`transient=false`). Agora ela espera o jogo ficar ativo. E ela não aceita o foco
+  (`Qt.WindowDoesNotAcceptFocus`): o KWin dava o foco ao log ao aparecer, e no Wayland o foco só
+  volta a outra janela em resposta a uma ação do usuário. Medido pela pilha do KWin: o log por
+  cima, filho do jogo, e o jogo como janela ativa.
 - **Os avisos** são diálogos modais por cima da biblioteca. O de abertura aparece enquanto a versão
   não foi dispensada; "Configurar controle" abre as configurações na aba de controles. O de versão
   nova vem depois dele, nunca junto, e "Baixar" abre a página no navegador.
