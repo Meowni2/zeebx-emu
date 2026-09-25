@@ -2716,7 +2716,7 @@ pub extern "C" fn retro_run() {
     // Os buffers saem do estado antes das chamadas ao frontend: nenhum cadeado do core fica preso
     // enquanto o frontend executa, e é isso que impede um aviso dele — "disco cheio, quer salvar?"
     // — de travar o emulador.
-    let (frame, audio, largura, altura, duplicado, emprestado, na_placa) = {
+    let (frame, audio, largura, altura, duplicado, emprestado, na_placa, passo_do_video) = {
         let Ok(mut guard) = core().lock() else {
             return;
         };
@@ -2978,6 +2978,10 @@ pub extern "C" fn retro_run() {
             true => None,
             false => pede_o_buffer_do_frontend(largura, altura),
         };
+        let passo_do_video = emprestado
+            .as_ref()
+            .map(|(_, passo)| *passo)
+            .unwrap_or(largura as usize * 2);
         let duplicado = if na_placa {
             false
         } else if estado.limite_fps_duplica {
@@ -3017,6 +3021,7 @@ pub extern "C" fn retro_run() {
             duplicado,
             emprestado,
             na_placa,
+            passo_do_video,
         )
     };
     let frente = callbacks();
@@ -3036,7 +3041,7 @@ pub extern "C" fn retro_run() {
         };
         // SAFETY: o buffer vive durante a chamada; no quadro repetido o frontend reusa o último.
         unsafe {
-            video(ponteiro, largura, altura, largura as usize * 2);
+            video(ponteiro, largura, altura, passo_do_video);
         }
     }
     // O retorno do lote é em quadros **aceitos**; o que sobrar espera a próxima chamada.
@@ -3590,6 +3595,8 @@ mod testes {
     static SISTEMA: OnceLock<CString> = OnceLock::new();
     /// A assinatura de cada quadro entregue, na ordem.
     static ASSINATURAS: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+    /// O último passo de linha anunciado ao callback de vídeo.
+    static PASSO_DO_VIDEO: AtomicU32 = AtomicU32::new(0);
 
     /// O ambiente mínimo que o core precisa, respondendo como um frontend de verdade.
     ///
@@ -3684,6 +3691,7 @@ mod testes {
 
     unsafe extern "C" fn video(dados: *const c_void, largura: u32, altura: u32, passo: usize) {
         QUADROS.fetch_add(1, Ordering::Relaxed);
+        PASSO_DO_VIDEO.store(passo.min(u32::MAX as usize) as u32, Ordering::Relaxed);
         // Assinatura barata do quadro: muda quando a imagem muda, que é o que o teste precisa
         // saber para dizer se a entrada chegou ao guest — um controle que não chega deixa a tela
         // parada, e um botão errado também, e as duas coisas se separam olhando o resto.
@@ -3928,6 +3936,11 @@ mod testes {
                     acesos > buffer.len() / 100,
                     "o buffer emprestado ficou apagado ({acesos} de {} byte(s)): o core não desenhou nele",
                     buffer.len()
+                );
+                assert_eq!(
+                    PASSO_DO_VIDEO.load(Ordering::Relaxed) as usize,
+                    640 * 2 + FOLGA_DO_PASSO,
+                    "o core escreveu no pitch emprestado, mas anunciou outro passo ao frontend"
                 );
             }
             let real = real_antes.elapsed();
