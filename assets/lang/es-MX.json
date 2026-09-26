@@ -174,7 +174,7 @@
   "play.paused": "En pausa",
   "play.resume": "Reanudar",
   "play.screenshot.failed": "Captura no guardada: {reason}",
-  "play.screenshot.saved": "Captura guardada — {width}×{height}",
+  "play.screenshot.saved": "Captura guardada como: {file}",
   "play.speed": "{percent}% de velocidad",
   "play.state.confirm": "Confirmar",
   "play.state.empty": "Vacío",

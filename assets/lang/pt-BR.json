@@ -174,7 +174,7 @@
   "play.paused": "Pausado",
   "play.resume": "Continuar",
   "play.screenshot.failed": "Screenshot não gravado: {reason}",
-  "play.screenshot.saved": "Screenshot salvo — {width}×{height}",
+  "play.screenshot.saved": "Screenshot salvo como: {file}",
   "play.speed": "{percent}% da velocidade",
   "play.state.confirm": "Confirmar",
   "play.state.empty": "Vazio",
