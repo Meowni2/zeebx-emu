@@ -22,7 +22,7 @@ pub struct Textos {
 impl Textos {
     pub fn novos(
         catalogo: &Catalog,
-        debug: DebugView,
+        debug: &DebugView,
         amostra: Sample,
         memoria: (u32, usize),
         relogio_ms: u32,
@@ -73,7 +73,7 @@ pub fn painel(
     relogio_ms: u32,
     historia: &[(u32, u32)],
 ) {
-    let textos = Textos::novos(catalogo, debug, amostra, memoria, relogio_ms);
+    let textos = Textos::novos(catalogo, &debug, amostra, memoria, relogio_ms);
     ui.horizontal(|ui| {
         if let Some(texto) = textos.velocidade {
             ui.monospace(texto);

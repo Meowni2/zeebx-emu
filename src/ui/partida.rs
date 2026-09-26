@@ -106,16 +106,22 @@ impl Partida {
     ///
     /// `anterior` é a partida que esta substitui: um jogo aberto pela Z-Wheel começa com a tela
     /// que ela deixou (ver [`Session::herda_tela`]); a própria Z-Wheel, reaberta, abre com a dela.
+    /// Ela vem como `&mut` porque o quadro que a placa deixou pendente precisa entrar na tela da
+    /// CPU antes de ser lido (ver [`Session::materializa_quadro_gl`]) — e isto roda com o
+    /// contexto de GL dela corrente, que é o que as duas janelas já garantem ao abrir um jogo.
     pub fn abre(
         caminho: &Path,
         abertura: Abertura<'_>,
-        anterior: Option<&Partida>,
+        anterior: Option<&mut Partida>,
     ) -> Result<Self, StartError> {
         let settings = abertura.settings;
         let tela_anterior = anterior
-            .map(Partida::sessao)
+            .map(Partida::sessao_mut)
             .filter(|sessao| sessao.classe() == Z_WHEEL)
-            .map(|sessao| sessao.screen().to_rgb565_bytes());
+            .map(|sessao| {
+                sessao.materializa_quadro_gl();
+                sessao.screen().to_rgb565_bytes()
+            });
         let portas = std::array::from_fn(|porta| {
             settings
                 .controls
@@ -144,7 +150,9 @@ impl Partida {
         sessao.set_installed_applets(abertura.instalados);
         // Ligar o som aqui é seguro **porque o jogo ainda não começou**: o `start` só prepara, e
         // o `EVT_APP_START` sai na primeira volta do laço. Antes disso o jogo já tocava dentro do
-        // `start`, e o som saía com a tela vazia.
+        // `start`, e o som saía com a tela vazia. Sem a feature `audio` — o core Libretro, que
+        // entrega o som ao frontend dele — a sessão não tem saída de som para ligar.
+        #[cfg(feature = "audio")]
         if let Some(erro) = sessao.set_audio(settings.audio.enabled, settings.audio.volume) {
             eprintln!("sem som: {erro}");
         }

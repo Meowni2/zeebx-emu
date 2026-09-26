@@ -132,7 +132,12 @@ impl Emulador {
         // quadro em vez de tapá-lo. Precisa ser declarado antes do painel central, porque no
         // egui quem pede espaço primeiro é quem o recebe.
         if let Some((amostra, memoria, relogio, historia)) = painel {
-            let debug = self.settings.debug;
+            // **Clonado, e não movido.** O `DebugView` ganhou um campo de texto (`nivel_de_log`,
+            // o nível do registro do núcleo), e por isso deixou de ser `Copy`. O `clone` é de uma
+            // struct de meia dúzia de campos por volta de desenho do painel — e o painel só existe
+            // quando ligado. Este erro só apareceu na CI do Android: o pacote nem compila fora de
+            // um alvo Android, então `cargo check` no desktop não o vê.
+            let debug = self.settings.debug.clone();
             let escuro = egui::Frame::NONE
                 .fill(egui::Color32::from_black_alpha(200))
                 .inner_margin(egui::Margin::symmetric(8, 2));

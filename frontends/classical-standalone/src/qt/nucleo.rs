@@ -545,7 +545,7 @@ impl Nucleo {
                 .filter_map(|jogo| Some((jogo.clsid?, library::id_do_modulo(&jogo.path)?)))
                 .collect(),
         };
-        let anterior = self.partida.as_ref();
+        let anterior = self.partida.as_mut();
         let com_placa = self.gl.is_some();
         let partida = no_contexto(com_placa, || Partida::abre(caminho, abertura, anterior))
             .map_err(|erro| erro.to_string())?;
@@ -566,7 +566,7 @@ impl Nucleo {
     /// O painel de depuração, quando ligado: os textos e a linha do tempo, como `(velocidade,
     /// quadros)` da amostra mais antiga para a mais nova. Ver [`zeebx::ui::depuracao`].
     pub fn depuracao(&self) -> Option<(Vec<String>, Vec<(u32, u32)>)> {
-        let debug = self.settings.debug;
+        let debug = &self.settings.debug;
         let sessao = self.partida.as_ref()?.sessao();
         if !debug.overlay {
             return None;

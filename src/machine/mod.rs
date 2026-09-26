@@ -311,7 +311,13 @@ fn handler_for(mime: &str) -> u32 {
         "image/bmp" | "image/x-ms-bmp" => AEECLSID_WINBMP,
         "audio/mid" | "audio/midi" => AEECLSID_MEDIAMIDI,
         "audio/mpeg" | "audio/mp3" => AEECLSID_MEDIAMP3,
-        "audio/wav" | "audio/x-wav" => AEECLSID_MEDIAPCM,
+        // **O WAV é o `+ 0xa`, e não o `0x5511`.** O Bejeweled Twist confere a resposta: só cria
+        // a mídia se a classe for `+1`, `+2` ou `+0xa` (0x67bdc), e a própria tabela dele diz
+        // que o tipo 3, o dos 56 efeitos em WAV PCM do `resources.dat`, é o `0x0100550a`
+        // (0x1435c). Com `0x5511` ele pulava todos: o gerenciador de sons, que indexa por
+        // `id - 3000`, ficava só com as 10 músicas, e o primeiro efeito tocado na partida lia
+        // fora da lista — o jogo parava em 0x1c714, lendo 0xff53906e.
+        "audio/wav" | "audio/x-wav" => AEECLSID_MEDIAADPCM,
         "audio/vnd.qcelp" => AEECLSID_MEDIAADPCM,
         _ => 0,
     }
@@ -551,6 +557,12 @@ struct FluxoPcm {
     inicio_us: u64,
     quadros_lidos: u64,
     tocando: bool,
+    /// Se já avisamos no log que o jogo **parou de fornecer amostras** neste fluxo.
+    ///
+    /// É a medida que o issue #43 pede: uma fala que morre cedo morre aqui, quando o `Read` do
+    /// jogo devolve zero, e a linha diz depois de quantos segundos de áudio isso aconteceu. Uma
+    /// vez por fluxo, senão o log vira a métrica.
+    avisou_do_fim: bool,
 }
 
 /// Comandos e status de `IMedia`, de `inc/AEEIMedia.h` do SDK do BREW 4.0.2.
@@ -702,6 +714,12 @@ impl Peek {
         })
     }
 }
+
+/// De quantas em quantas chamadas de API o perfil de custo lê o relógio.
+///
+/// O relógio desta máquina custa 1318 ns por leitura; uma chamada em cada 64 mantém o instrumento
+/// abaixo de 1% do relógio e ainda dá milhares de amostras por método em qualquer jogo real.
+const AMOSTRA_DO_PERFIL: u64 = 64;
 
 /// `AEECLSID_SOURCEUTIL`, a fábrica de `ISource`. Ver [`Interface::SourceUtil`] para como o
 /// número foi identificado — durante muito tempo ele esteve aqui com o nome errado.
@@ -1356,6 +1374,30 @@ fn tira_de_quadros(gif: &crate::video::gif::Gif) -> DecodedImage {
     }
 }
 
+/// O maior pedido de bytes que pode vir do guest sem virar uma alocação desproporcional do host.
+///
+/// **O tamanho é do jogo, e o alocador é nosso.** `IFILE_Read(pBuffer, 0x7fffffff)` é uma linha que
+/// cabe no guest e pediria 2 GiB aqui; o `vec![0u8; n]` correspondente não devolve erro — ele
+/// aborta o processo. O teto é 128 MiB: oito vezes a maior leitura legítima já medida (o pacote de
+/// 16 MB do Iron Sight, lido em pedaços grandes) e o dobro do heap do jogo. Nada maior que isso
+/// pode ser entregue ao guest de qualquer forma.
+pub(super) const TETO_DA_LEITURA: u32 = 128 * 1024 * 1024;
+
+/// **Um tamanho que veio do guest, conferido antes de virar alocação.**
+///
+/// O tamanho de uma leitura ou de uma escrita é argumento do jogo, e o alocador é nosso:
+/// `IFILE_Read(pBuffer, 0x7fffffff)` é uma linha que cabe no guest e pediria 2 GiB aqui, e um
+/// `vec![0u8; n]` desse tamanho não devolve erro — o processo morre. Ver
+/// [`TETO_DA_LEITURA`]: um argumento inválido tem de virar erro de API.
+pub(super) fn tamanho_do_guest(len: usize) -> Result<usize, CpuError> {
+    if len > TETO_DA_LEITURA as usize {
+        return Err(CpuError(format!(
+            "o guest pediu {len} bytes, acima do teto de {TETO_DA_LEITURA}"
+        )));
+    }
+    Ok(len)
+}
+
 /// Descomprime um bloco de deflate.
 ///
 /// A documentação do `IUnzipAStream` fala do "algoritmo deflate, o usado pelo gzip", e as duas
@@ -1364,32 +1406,30 @@ fn tira_de_quadros(gif: &crate::video::gif::Gif) -> DecodedImage {
 /// justamente no caso cru, que não tem cabeçalho nenhum.
 fn inflate(compressed: &[u8]) -> Option<Vec<u8>> {
     use std::io::Read;
-    let raw = || {
+    // **Com teto, e um de cada vez.** Sem teto, um bloco de poucos KiB que descomprime para
+    // gigabytes — a amplificação do deflate não tem limite por construção — enche a memória do
+    // host; e tentar gzip, zlib e cru **juntos** materializava três saídas antes de escolher uma.
+    // O `take` corta o decodificador ao teto mais um byte: se a saída passar disso, é bomba, não
+    // dado, e o pedido é recusado em vez de derrubar o processo.
+    let teto = u64::from(TETO_DO_INFLATE);
+    let le = |fonte: &[u8], qual: u8| -> Option<Vec<u8>> {
         let mut out = Vec::new();
-        flate2::read::DeflateDecoder::new(compressed)
-            .read_to_end(&mut out)
-            .ok()
-            .map(|_| out)
+        let mut leitor: Box<dyn Read> = match qual {
+            0 => Box::new(flate2::read::GzDecoder::new(fonte)),
+            1 => Box::new(flate2::read::ZlibDecoder::new(fonte)),
+            _ => Box::new(flate2::read::DeflateDecoder::new(fonte)),
+        };
+        let lidos = leitor.by_ref().take(teto + 1).read_to_end(&mut out).ok()?;
+        (lidos > 0 && lidos as u64 <= teto).then_some(out)
     };
-    let gzip = || {
-        let mut out = Vec::new();
-        flate2::read::GzDecoder::new(compressed)
-            .read_to_end(&mut out)
-            .ok()
-            .map(|_| out)
-    };
-    let zlib = || {
-        let mut out = Vec::new();
-        flate2::read::ZlibDecoder::new(compressed)
-            .read_to_end(&mut out)
-            .ok()
-            .map(|_| out)
-    };
-    [gzip(), zlib(), raw()]
-        .into_iter()
-        .flatten()
-        .find(|out| !out.is_empty())
+    (0..3).find_map(|qual| le(compressed, qual))
 }
+
+/// O teto de uma descompressão, em bytes.
+///
+/// Ver [`inflate`]: a saída de um bloco deflate pode ser ordens de grandeza maior que a entrada, e
+/// o teto é a memória do guest — nada maior que ela pode ser entregue ao jogo de qualquer forma.
+const TETO_DO_INFLATE: u32 = 128 * 1024 * 1024;
 
 /// Decodifica uma imagem para RGB565, qualquer que seja o formato dela.
 ///
@@ -1813,7 +1853,24 @@ struct PendingBlit {
     target: u32,
     x: i32,
     y: i32,
+    src_x: i32,
+    src_y: i32,
+    width: u32,
+    height: u32,
+    rop: u32,
     frame: Option<u32>,
+}
+
+/// Uma superfície nossa, já desenhada, que precisa ser composta pelo `BltIn` do jogo.
+#[derive(Debug, Clone, Copy)]
+struct PendingSurfaceBlit {
+    source: u32,
+    target: u32,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    rop: u32,
 }
 
 /// Se o método pode mexer em mais de um pixel da superfície.
@@ -1938,14 +1995,20 @@ fn banco_do_aparelho(
     politica: crate::audio::MidiBackend,
 ) -> Option<std::sync::Arc<crate::audio::soundfont::Banco>> {
     if politica == crate::audio::MidiBackend::Timbres {
-        eprintln!("Zeebx: backend MIDI configurado para 'Tabela de timbres'; ignorando SoundFont");
+        crate::registro!(
+            crate::registro::Nivel::Informacao,
+            "midi",
+            "backend fixado na tabela de timbres; o banco do aparelho é ignorado"
+        );
         return None;
     }
     let caminho = crate::audio::soundfont::primeiro_banco(aparelho)?;
     let banco = crate::audio::soundfont::abre(&caminho);
     if banco.is_none() && politica == crate::audio::MidiBackend::SoundFont {
-        eprintln!(
-            "Zeebx: backend MIDI exige 'SoundFont', mas o arquivo '{}' não pôde ser carregado; recuando para timbres",
+        crate::registro!(
+            crate::registro::Nivel::Aviso,
+            "midi",
+            "o backend pedido é SoundFont, mas {} não abriu; recuando para a tabela de timbres",
             caminho.display()
         );
     }
@@ -2337,6 +2400,8 @@ pub struct Machine<C: CpuBackend> {
     pending_probes: Vec<u32>,
     /// Desenhos que precisam passar pelo `BltIn` de uma superfície do jogo.
     pending_blits: Vec<PendingBlit>,
+    /// Primitivas 2D desenhadas em bitmaps temporários para o `BltIn` do jogo.
+    pending_surface_blits: Vec<PendingSurfaceBlit>,
     /// Superfícies já consultadas — a resposta não muda, e perguntar de novo custaria uma
     /// entrada no guest a cada `SetDestination`.
     probed: HashSet<u32>,
@@ -2352,7 +2417,32 @@ pub struct Machine<C: CpuBackend> {
     /// nosso. Sem ele, um método que custa meio milissegundo por chamada se esconde atrás de
     /// uma média: o que aparece é "8 µs por chamada de API", e não "o `IIMAGE_Draw` sozinho é
     /// dois terços do despacho".
-    api_time: HashMap<(u32, u32), u64>,
+    /// Custo por método de API, **amostrado**: `(nanossegundos somados, amostras)`.
+    ///
+    /// Ver [`Machine::enable_api_profile`] para por que a medida é amostrada: o relógio desta
+    /// máquina custa mais de um microssegundo por leitura, e o perfil lia o relógio duas vezes por
+    /// chamada — o que fazia o instrumento cobrar mais que o método medido e encarecer a execução
+    /// em 42%. Com uma chamada em cada `AMOSTRA_DO_PERFIL`, o mesmo tanto se estima por 1/64 do
+    /// preço, e a contagem de chamadas continua exata em [`Machine::call_log`].
+    api_time: HashMap<(u32, u32), (u64, u64)>,
+    /// Quantas chamadas de API já passaram por aqui, para escolher as que serão cronometradas.
+    api_calls: u64,
+    /// Quantas vezes um jogo leu a posição e achou algum eixo **fora do centro**.
+    ///
+    /// A contagem de `GetPositionState` não diz o que o jogo leu: há port de arcade que consulta o
+    /// eixo todo quadro (2.300 vezes em quarenta segundos) e nunca o canal de botão, e ler o eixo
+    /// centrado é o que ele faz em 100% do tempo sem apertar nada. Este contador é o que separa
+    /// "o jogo lê o eixo" de "o eixo **chegou** ao jogo", e é o que dá para medir sem olhar a tela
+    /// — o espelho do direcional depende dele.
+    eixos_deslocados: u64,
+    /// **Quais** eixos foram vistos fora do centro, um bit por eixo. Ver o contador acima.
+    ///
+    /// É o que responde "o direcional chegou no manche **esquerdo**?", que é a pergunta do issue
+    /// #39: `X` e `Y` são os do manche esquerdo, `Z` e `RZ` os do direito, e um jogo que só lê o
+    /// esquerdo tem de aparecer com os dois primeiros bits, e só eles.
+    mascara_de_eixos_deslocados: u32,
+    /// Custo de uma leitura do relógio nesta máquina, para descontá-lo do perfil de custo.
+    clock_ns: u64,
     profiling_api: bool,
     /// Callback de `IIMAGE_Notify`, por objeto.
     image_notify: HashMap<u32, Callback>,
@@ -2437,6 +2527,9 @@ pub struct Machine<C: CpuBackend> {
     /// o aviso nasceu. Saem na volta do laço, não na saída da chamada: ver
     /// [`Machine::notify_media`].
     avisos_de_midia: Vec<(u32, u32, u32, Callback)>,
+    /// As imagens com `PFNIMAGEINFO` ainda não entregue. Também saem na volta do laço: ver
+    /// [`Machine::notify_image`].
+    avisos_de_imagem: Vec<u32>,
     /// Os `IMedia` que tocam PCM gerado pelo jogo, por objeto. Ver [`FluxoPcm`].
     fluxos_pcm: HashMap<u32, FluxoPcm>,
     /// O buffer no guest onde o `ISource::Read` escreve as amostras.
@@ -2499,11 +2592,21 @@ pub struct Machine<C: CpuBackend> {
     cargas_de_midia: HashMap<u64, CargaDeMidia>,
     /// Para onde o som vai, quando há para onde.
     audio: Option<crate::audio::Mixer>,
-    /// O último quadro que o jogo apresentou, já no tamanho da tela.
+    /// O último quadro que o jogo apresentou, em palavras RGB565 e no tamanho da tela.
     ///
     /// Guardado no `eglSwapBuffers` porque é ali que o quadro está pronto: ler o buffer no fim
-    /// da execução pega o desenho pela metade, quase sempre logo depois do `Clear`.
-    gl_last_frame: Vec<u8>,
+    /// da execução pega o desenho pela metade, quase sempre logo depois do `Clear`. Palavras
+    /// evitam converter bytes RGB565 de volta para `u16` só para atualizar a tela.
+    gl_last_frame_words: Vec<u16>,
+    /// Se há um quadro do OpenGL esperando ser trazido para a tela da CPU.
+    ///
+    /// Ver [`Machine::present_gl`]: pintar a fila é rasterizar, e ler o quadro de volta é outra
+    /// coisa — essa só acontece quando o desenho 2D por cima ou uma leitura de pixels precisa
+    /// dela.
+    gl_quadro_pendente: bool,
+    /// Quantas vezes o quadro pendente foi trazido para a tela da CPU. Ver
+    /// [`Machine::materializacoes_do_quadro_gl`].
+    gl_materializacoes: u32,
     /// Estado e buffers do OpenGL ES.
     ///
     /// Despacho dinâmico porque o rasterizador é trocável: a fronteira inteira está no
@@ -2679,9 +2782,23 @@ fn na_placa(
     #[cfg(feature = "gl")]
     {
         match crate::video::gpu::GpuState::novo(largura, altura, contexto) {
-            Ok(gpu) => return Box::new(gpu),
+            Ok(gpu) => {
+                crate::registro!(
+                    crate::registro::Nivel::Informacao,
+                    "gl",
+                    "rasterizador de placa criado em {largura}x{altura}"
+                );
+                return Box::new(gpu);
+            }
+            // **Aviso, e não informação.** Cair para software não é detalhe de configuração: é
+            // o desenho ficando mais lento e diferente, e é a primeira coisa a olhar quando
+            // alguém diz que o portátil está devagar.
             Err(motivo) => {
-                eprintln!("sem rasterizador na placa ({motivo}); seguindo em software");
+                crate::registro!(
+                    crate::registro::Nivel::Aviso,
+                    "gl",
+                    "o rasterizador de placa não subiu ({motivo}); seguindo no processador"
+                );
             }
         }
     }
@@ -2947,6 +3064,7 @@ impl<C: CpuBackend> Machine<C> {
             trecho_interrompido: None,
             pending_probes: Vec::new(),
             pending_blits: Vec::new(),
+            pending_surface_blits: Vec::new(),
             probed: HashSet::new(),
             ciphers: HashMap::new(),
             hashes: HashMap::new(),
@@ -2955,6 +3073,10 @@ impl<C: CpuBackend> Machine<C> {
             images: HashMap::new(),
             image_bitmaps: HashMap::new(),
             api_time: HashMap::new(),
+            api_calls: 0,
+            eixos_deslocados: 0,
+            mascara_de_eixos_deslocados: 0,
+            clock_ns: 0,
             profiling_api: false,
             image_notify: HashMap::new(),
             image_info: HashMap::new(),
@@ -2995,6 +3117,7 @@ impl<C: CpuBackend> Machine<C> {
             sounds: HashMap::new(),
             pending_calls: Vec::new(),
             avisos_de_midia: Vec::new(),
+            avisos_de_imagem: Vec::new(),
             fluxos_pcm: HashMap::new(),
             buffer_de_fluxo: 0,
             bloco_de_aviso_de_midia: 0,
@@ -3021,7 +3144,9 @@ impl<C: CpuBackend> Machine<C> {
             media: HashMap::new(),
             cargas_de_midia: HashMap::new(),
             audio: None,
-            gl_last_frame: Vec::new(),
+            gl_last_frame_words: Vec::new(),
+            gl_quadro_pendente: false,
+            gl_materializacoes: 0,
             gl: rasterizador(SCREEN_WIDTH as usize, SCREEN_HEIGHT as usize),
             gl_vertices: ArrayPointer::default(),
             gl_colors: ArrayPointer::default(),
@@ -3367,19 +3492,27 @@ impl<C: CpuBackend> Machine<C> {
         };
         // Um ponteiro ruim vindo do guest não pode derrubar o emulador: viramos `EBADPARM`,
         // que é o que o BREW responde nesse caso, e registramos para aparecer no relatório.
-        let started = self.profiling_api.then(std::time::Instant::now);
+        // **Amostrado, e por necessidade.** O `Instant::now` desta máquina é chamada de sistema
+        // — medido em 1318 ns por leitura, com a prova em
+        // [`crate::varredura::tests::quanto_custa_o_relogio`] —, e o perfil lê o relógio duas
+        // vezes por chamada. Cronometrar todas fazia o instrumento cobrar 2,65 µs por chamada,
+        // mais que o método medido, e encarecer a execução em 42%. Uma em cada `AMOSTRA_DO_PERFIL`
+        // estima o mesmo e devolve o instrumento ao uso normal.
+        self.api_calls = self.api_calls.wrapping_add(1);
+        let amostrar = self.api_calls % AMOSTRA_DO_PERFIL == 0;
+        let started = (self.profiling_api && amostrar).then(std::time::Instant::now);
         let result = match self.dispatch_inner(iface, slot) {
             Ok(Some(value)) => value,
             Ok(None) => return Ok(None),
             Err(err) => {
-                self.bad_pointers
-                    .insert(format!("{} ({err})", aee::describe(addr)));
+                self.anota_ponto_ruim(format!("{} ({err})", aee::describe(addr)));
                 EBADPARM
             }
         };
         if let Some(started) = started {
-            *self.api_time.entry((iface as u32, slot)).or_insert(0) +=
-                started.elapsed().as_nanos() as u64;
+            let custo = self.api_time.entry((iface as u32, slot)).or_insert((0, 0));
+            custo.0 += started.elapsed().as_nanos() as u64;
+            custo.1 += 1;
         }
         // Anexa o retorno à linha do rastreamento: sem ele não dá para ver qual chamada
         // devolveu o erro que fez o jogo desistir.
@@ -3387,6 +3520,27 @@ impl<C: CpuBackend> Machine<C> {
             line.push_str(&format!(" -> {result:#x}"));
         }
         Ok(Some(result))
+    }
+
+    /// Quantos nanossegundos custa uma leitura de `Instant::now()` nesta máquina.
+    ///
+    /// Medido, e não suposto: em Linux com `vDSO` são dezenas de nanossegundos, e sem ele passa de
+    /// um microssegundo. O perfil de API lê o relógio duas vezes por chamada amostrada, e descontar
+    /// isso é a diferença entre medir o método e medir o instrumento. A prova do valor está em
+    /// [`crate::varredura::tests::quanto_custa_o_relogio`].
+    fn mede_o_relogio() -> u64 {
+        /// Leituras da amostra: alto o bastante para o laço sumir no ruído, baixo o bastante para
+        /// não pesar na abertura de um jogo.
+        const N: u64 = 4096;
+
+        let _ = std::time::Instant::now();
+        let comeco = std::time::Instant::now();
+        let mut ultimo = comeco;
+        for _ in 0..N {
+            ultimo = std::time::Instant::now();
+        }
+        let _ = ultimo;
+        comeco.elapsed().as_nanos() as u64 / N
     }
 
     /// O despacho propriamente dito, separado para que falhas de acesso à memória do guest
