@@ -1056,8 +1056,8 @@ impl<C: CpuBackend> Machine<C> {
         // que o [`Machine::quadro_na_placa`] compara, e quem apresenta pela placa nunca materializa
         // — a textura é justamente o que dispensa a leitura. Marcado só na materialização, o
         // quadro 3D nunca era dado como intacto nesse caminho: a janela caía na tela da CPU, que
-        // não recebera o quadro, e o jogo saía preto (a interface Qt, com o Double Dragon, e o
-        // mesmo vale para o egui e o Android com a apresentação pela placa). Um desenho 2D depois
+        // não recebera o quadro, e o jogo saía preto em toda janela que apresenta pela placa —
+        // medido com o Double Dragon, que desenha o título pelo OpenGL. Um desenho 2D depois
         // disto materializa antes de escrever, e a escrita desfaz a marca, como deve.
         self.escritas_do_quadro_gl = Some(self.screen().escritas());
         // **Só a placa adia.** No rasterizador de processador a leitura é uma conversão em
