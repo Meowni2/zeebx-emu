@@ -83,11 +83,11 @@ export JAVA_HOME="$HOME/Android/jdk"
 ## O CI
 
 **A tag é o único gatilho automático.** O `release.yml` dispara em `v0.0.0` e monta a release como
-rascunho. O `ci.yml`, o `libretro.yml`, o `headless.yml` e o `android.yml` são `workflow_dispatch`:
-seis runners por execução é caro demais para gastar em cada push, e quem decide é quem pede.
-As exceções são o `discord-issues.yml`, que não compila nada: avisa no Discord quando uma issue
-abre, fecha ou muda de responsável; e o `qt.yml`, que roda a cada push na `feat/migrate-qt`:
-compila a interface Qt nos três sistemas e deixa os instaladores como artefatos da execução.
+rascunho. O `ci.yml`, o `libretro.yml`, o `headless.yml`, o `android.yml` e o `qt.yml` são
+`workflow_dispatch`: o CI padrão já compila o standalone clássico e o Qt nas seis plataformas, e
+o `qt.yml` fica para montar os instaladores antes da tag. Doze jobs por execução é caro demais
+para gastar em cada push, e quem decide é quem pede. A exceção é o `discord-issues.yml`, que não
+compila nada: avisa no Discord quando uma issue abre, fecha ou muda de responsável.
 
 Se você mexeu em algo que só um deles cobre — o APK, o core num alvo ARM —, diga ao humano que
 vale disparar aquele workflow antes da tag. Você não consegue dispará-lo.
