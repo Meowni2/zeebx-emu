@@ -88,8 +88,8 @@ pub struct AvisoDeScreenshot {
     pub pasta: String,
 }
 
-/// O que a thread de gravação responde: o arquivo e o tamanho, ou o motivo da falha, e a pasta.
-type Gravacao = (Result<(PathBuf, u32, u32), String>, PathBuf);
+/// O que a thread de gravação responde: o arquivo, ou o motivo da falha, e a pasta.
+type Gravacao = (Result<PathBuf, String>, PathBuf);
 
 /// O aviso de calibração já com os textos, como a janela o desenha.
 pub struct AvisoNaTela {
@@ -640,10 +640,9 @@ impl Nucleo {
         let resposta = self.gravacoes.0.clone();
         std::thread::spawn(move || {
             let gravado = screenshot::grava(&raiz, &titulo, &carimbo, largura, altura, &rgb)
-                .map(|caminho| (caminho, largura, altura))
                 .map_err(|erro| erro.to_string());
             match &gravado {
-                Ok((caminho, ..)) => eprintln!("screenshot: {}", caminho.display()),
+                Ok(caminho) => eprintln!("screenshot: {}", caminho.display()),
                 Err(erro) => eprintln!("screenshot não gravado em {}: {erro}", pasta.display()),
             }
             let _ = resposta.send((gravado, pasta));
@@ -655,10 +654,11 @@ impl Nucleo {
         let (gravado, pasta) = self.gravacoes.1.try_iter().last()?;
         let endereco = screenshot::endereco_de(&pasta);
         Some(match gravado {
-            Ok((_, largura, altura)) => AvisoDeScreenshot {
+            // Só o nome do arquivo: a pasta é a do jogo, e o clique no aviso a abre.
+            Ok(caminho) => AvisoDeScreenshot {
                 texto: self.catalogo.format(
                     "play.screenshot.saved",
-                    &[("width", &largura.to_string()), ("height", &altura.to_string())],
+                    &[("file", &caminho.file_name().unwrap_or_default().to_string_lossy())],
                 ),
                 falhou: false,
                 pasta: endereco,
