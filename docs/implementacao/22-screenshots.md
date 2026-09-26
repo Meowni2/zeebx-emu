@@ -38,7 +38,7 @@ teria devolvido um 1920×1440 que não era o que estava na tela.
 O site diz "nunca 4x ou mais". O atalho é do emulador, e não só do site: quem pôs 6x quer ver 6x.
 Quem vai enviar ao RetroAchievements escolhe 2x ou 3x nas configurações, como faria no
 DuckStation. O limite de 6 MB do site não aperta em 3x: a tela de título do Alien Breaker Deluxe
-em 1920×1440 deu um PNG de 2,2 MB. Acima disso não foi medido. O aviso depois do print diz o tamanho que saiu. Reduzir um quadro de 6x para 3x
+em 1920×1440 deu um PNG de 2,2 MB. Acima disso não foi medido. Reduzir um quadro de 6x para 3x
 misturaria pixels, que é justamente a mudança de imagem que a régua proíbe; e renderizar um
 quadro extra só para o print levaria um quadro para valer.
 
@@ -103,7 +103,9 @@ fundo desses jogos sairia transparente no print.
 ## 4. O aviso, e a thread
 
 Depois do print, um aviso no canto da janela do jogo por dois segundos, no estilo do aviso de
-calibração: "Screenshot salvo — 1920×1440". Clicar nele abre a pasta. Uma falha (pasta sem
+calibração: "Screenshot salvo como: Quake - 2026-09-25 14-03-07.png". Só o nome do arquivo, e não
+a resolução: quem escolheu a resolução interna já sabe qual é, e a pasta se abre com um clique no
+aviso. Uma falha (pasta sem
 permissão, disco cheio) aparece em laranja com o motivo, e o caminho sai no `stderr`. Não vai à
 janela de log: ela mostra o `Session::log`, que é do jogo, e o frontend não tem onde escrever lá.
 
