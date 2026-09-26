@@ -209,9 +209,9 @@ impl Emulador {
                             let Some(pintor) = guarda.as_mut() else {
                                 return;
                             };
-                            let vp = info.viewport_in_pixels();
+                            let vp = gpu::Viewport::from(info.viewport_in_pixels());
                             match quadro_gl {
-                                Some(quadro) => pintor.desenha_textura(gl, quadro, &vp, suave),
+                                Some(quadro) => pintor.desenha_textura(gl, quadro, vp, suave),
                                 None => {
                                     if let Some((chave, bytes)) = &quadro_2d {
                                         pintor.desenha_quadro(
@@ -220,7 +220,7 @@ impl Emulador {
                                             lg,
                                             at,
                                             *chave,
-                                            &vp,
+                                            vp,
                                             suave,
                                         );
                                     }

@@ -332,18 +332,11 @@ impl Pad {
     }
 }
 
-/// As teclas que o controle manda, comparando com o quadro anterior.
-///
-/// No console o direcional chega aos aplicativos como as quatro setas do BREW, e é com elas que a
-/// Z-Wheel navega: esquerda e direita giram a roda e trocam a aba da lista, cima e baixo passam as
-/// páginas. O analógico não entra aqui: a Z-Wheel lê a posição e faz a tradução dela sozinha
-/// (`0x44914` no módulo).
-///
-/// Fica fora da UI porque **todo frontend** precisa desta tradução: a janela do desktop e o core
-/// Libretro entregam o mesmo par de quadros e esperam as mesmas teclas.
 /// Converte uma tecla do frontend para o código virtual BREW correspondente.
 ///
 /// Fica no motor porque desktop, headless e Android precisam da mesma convenção.
+///
+/// `Esc` e `P` ficam de fora de propósito: na janela do desktop são encerrar e pausar.
 pub fn avk_de(key: egui::Key) -> Option<u32> {
     use egui::Key::*;
     Some(match key {
@@ -359,6 +352,53 @@ pub fn avk_de(key: egui::Key) -> Option<u32> {
     })
 }
 
+/// As teclas BREW que valem agora: as do teclado, já em AVK, somadas às que os controles apertam.
+///
+/// Uma seta física pode estar mapeada também no controle, e continua sendo um aperto só: por isso
+/// o resultado é um conjunto, e só a diferença entre dois deles vira evento ([`transicoes`]).
+pub fn avks_ativos(
+    teclado: impl IntoIterator<Item = u32>,
+    pads: &[Pad],
+) -> std::collections::HashSet<u32> {
+    let mut ativos: std::collections::HashSet<u32> = teclado.into_iter().collect();
+    for pad in pads {
+        ativos.extend(
+            teclas_do_controle(&Pad::default(), pad)
+                .into_iter()
+                .filter_map(|(key, down)| down.then_some(key)),
+        );
+    }
+    ativos
+}
+
+/// Os eventos de tecla que levam de `anteriores` a `atuais`, soltas antes de apertadas, e
+/// `anteriores` passa a ser `atuais`.
+///
+/// Guardar o conjunto entregue, e não cada fonte, é o que faz soltar o `4` enquanto a seta
+/// continua apertada não soltar o AVK que as duas representam.
+pub fn transicoes(
+    anteriores: &mut std::collections::HashSet<u32>,
+    atuais: std::collections::HashSet<u32>,
+) -> Vec<(u32, bool)> {
+    let mut eventos: Vec<_> = anteriores
+        .difference(&atuais)
+        .map(|&key| (key, false))
+        .collect();
+    eventos.extend(atuais.difference(anteriores).map(|&key| (key, true)));
+    eventos.sort_unstable();
+    *anteriores = atuais;
+    eventos
+}
+
+/// As teclas que o controle manda, comparando com o quadro anterior.
+///
+/// No console o direcional chega aos aplicativos como as quatro setas do BREW, e é com elas que a
+/// Z-Wheel navega: esquerda e direita giram a roda e trocam a aba da lista, cima e baixo passam as
+/// páginas. O analógico não entra aqui: a Z-Wheel lê a posição e faz a tradução dela sozinha
+/// (`0x44914` no módulo).
+///
+/// Fica fora da UI porque **todo frontend** precisa desta tradução: a janela do desktop e o core
+/// Libretro entregam o mesmo par de quadros e esperam as mesmas teclas.
 pub fn teclas_do_controle(antes: &Pad, agora: &Pad) -> Vec<(u32, bool)> {
     // Os dois botões de face seguem a ajuda da própria Z-Wheel (`assets/zeebo/pt/controls.html`):
     // "Sim (Botão 1)" escolhe e "Voltar (Botão 2)" cancela. Voltar é o `AVK_CLR`, medido: na tela
@@ -495,6 +535,38 @@ fn eixo_por_nome(nome: &str) -> Option<(usize, i32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn teclado_e_controle_compartilham_um_aperto() {
+        use std::collections::HashSet;
+        // O `b1` do controle e o `Enter` do teclado mandam o mesmo `CONFIRMA`: é o par que
+        // compartilha um comando depois de o direcional ter saído da tradução.
+        let mut pad = Pad::default();
+        pad.press(Pad::button_by_name("b1").unwrap(), true);
+        let teclado = [avk_de(egui::Key::Enter).unwrap()];
+        let mut entregues = HashSet::new();
+        let ativos = avks_ativos(teclado, &[pad]);
+        assert_eq!(transicoes(&mut entregues, ativos.clone()), vec![(avk::CONFIRMA, true)]);
+        assert!(transicoes(&mut entregues, ativos).is_empty());
+        // Soltar o teclado não solta um comando ainda mantido pelo controle.
+        let ativos = avks_ativos([], &[pad]);
+        assert!(transicoes(&mut entregues, ativos).is_empty());
+        assert_eq!(transicoes(&mut entregues, HashSet::new()), vec![(avk::CONFIRMA, false)]);
+    }
+
+    /// Os dígitos saem da ordem do `egui::Key`, e do `AVK_0` em diante. As duas listas são
+    /// contíguas hoje; se uma deixar de ser, é aqui que se descobre.
+    #[test]
+    fn digitos_viram_avk() {
+        use egui::Key;
+        assert_eq!(avk_de(Key::Num0), Some(avk::ZERO));
+        assert_eq!(avk_de(Key::Num7), Some(avk::ZERO + 7));
+        assert_eq!(avk_de(Key::Num9), Some(avk::ZERO + 9));
+        assert_eq!(avk_de(Key::Backspace), Some(avk::CLR));
+        assert_eq!(avk_de(Key::Escape), None);
+        assert_eq!(avk_de(Key::P), None);
+    }
+
 
     /// O botão 1 é o sul, e o UID dele é o que o arquivo do console rotula `Button_2`.
     ///

@@ -267,6 +267,42 @@ impl Default for Player {
 }
 
 impl Player {
+    /// O mapeamento típico do controle do host `device` — ou o teclado puro, sem controle. É o
+    /// que o "restaurar" da tela de controles põe na porta.
+    pub fn padrao_do_controle(device: Option<String>) -> Self {
+        match device {
+            // O Wii Remote não passa pelo gilrs, mas é um controle como os outros: o mapeamento
+            // típico dele vem junto, e muda-se na tela como qualquer outro.
+            Some(nome) if crate::input::wiimote::Wiimotes::indice_do_nome(&nome).is_some() => {
+                Self::with_wiimote(nome)
+            }
+            Some(nome) => Self::with_gamepad(nome),
+            None => Self::default(),
+        }
+    }
+
+    /// Troca o controle do host que alimenta esta porta.
+    ///
+    /// Escolher um controle traz o mapeamento típico dele junto; ficar sem controle volta para o
+    /// teclado puro. Nos dois casos o que estava configurado à mão se perde, e é por isso que a
+    /// troca é um clique deliberado numa lista. Trocar o controle troca **o mapeamento**, não a
+    /// porta: se ela está ligada e o que o console vê nela foram decididos antes, e perder isso
+    /// aqui seria a configuração se desfazer sozinha ao escolher um aparelho na lista.
+    pub fn troca_controle(&mut self, device: Option<String>) {
+        let (ligada, aparelho) = (self.ligada, self.aparelho);
+        *self = Self::padrao_do_controle(device);
+        self.ligada = ligada;
+        // **Um controle do host numa porta de teclado vira um controle para o console.** O
+        // `aparelho` é o que o console enumera, e uma porta marcada como teclado não entra na
+        // lista de joysticks que os jogos pedem: quem escolhia o segundo controle para a porta
+        // dois continuava sem ser visto como segundo jogador. As outras escolhas (Z-Pad,
+        // Boomerang) já são controle e ficam onde estão.
+        self.aparelho = match (aparelho, &self.device) {
+            (Aparelho::Teclado, Some(_)) => Aparelho::Controle,
+            (outro, _) => outro,
+        };
+    }
+
     /// O mapeamento típico de um controle moderno, para quem liga um e quer jogar.
     pub fn with_gamepad(device: String) -> Self {
         // **A posição da mão, e não o rótulo do botão.** No aparelho o 1 fica embaixo, o 2 à
@@ -651,6 +687,34 @@ pub const CONFIGURABLE: [&str; 13] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Trocar o controle troca o mapeamento, não a porta: ela continua ligada, e uma porta de
+    /// teclado que ganha um controle passa a ser controle para o console — senão os jogos não a
+    /// enumeram como segundo jogador. Um Boomerang continua Boomerang.
+    #[test]
+    fn trocar_o_controle_preserva_a_porta() {
+        let mut teclado = Player {
+            ligada: true,
+            aparelho: Aparelho::Teclado,
+            ..Player::default()
+        };
+        teclado.troca_controle(Some("Xbox Controller".into()));
+        assert!(teclado.ligada);
+        assert_eq!(teclado.aparelho, Aparelho::Controle);
+        assert_eq!(teclado.device.as_deref(), Some("Xbox Controller"));
+
+        let mut boomerang = Player {
+            ligada: true,
+            aparelho: Aparelho::Boomerang,
+            ..Player::default()
+        };
+        boomerang.troca_controle(Some("Pro Controller".into()));
+        assert_eq!(boomerang.aparelho, Aparelho::Boomerang);
+
+        boomerang.troca_controle(None);
+        assert_eq!(boomerang.device, None, "sem controle, volta ao teclado puro");
+        assert!(boomerang.ligada);
+    }
 
     #[test]
     fn a_calibracao_leva_o_repouso_a_um_g_para_cima() {
