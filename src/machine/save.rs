@@ -25,8 +25,8 @@
 
 use super::{
     Callback, CipherState, DecodedImage, FluxoPcm, Machine, MediaState, MemStream, ModeloDeValor,
-    OpenFile, Outcome, Peek, PendingBlit, RecorteDeImagem, SoundState, ThreadState, Timer,
-    DecoderState, GuestCall, HashState, UnzipState, Widget,
+    OpenFile, Outcome, Peek, PendingBlit, PendingSurfaceBlit, RecorteDeImagem, SoundState,
+    ThreadState, Timer, DecoderState, GuestCall, HashState, UnzipState, Widget,
 };
 use crate::input::Pad;
 use crate::machine::{default_colors, ArrayPointer, AES_BLOCK, CLR_COUNT, GraphicsState};
@@ -444,7 +444,7 @@ impl<C: CpuBackend> Machine<C> {
 /// (`HashMap<u32, número>` ou `HashMap<u32, punhado de números>`), e o que muda é só o nome.
 ///
 /// **O que não entra:** as tabelas que guardam pixels ou bytes em quantidade — `bitmaps`,
-/// `images`, `gl_last_frame`. Elas são a maior parte do que sobra e precisam de um formato próprio
+/// `images`, `gl_last_frame_words`. Elas são a maior parte do que sobra e precisam de um formato próprio
 /// (comprimir, ou apontar para a memória do guest quando o conteúdo já está lá). Enquanto não
 /// entrarem, o core continua dizendo que não salva.
 impl<C: CpuBackend> Machine<C> {
@@ -1747,6 +1747,28 @@ impl<C: CpuBackend> Machine<C> {
                         blit.y as u32,
                         u32::from(blit.frame.is_some()),
                         blit.frame.unwrap_or(0),
+                        blit.src_x as u32,
+                        blit.src_y as u32,
+                        blit.width,
+                        blit.height,
+                        blit.rop,
+                    ]
+                })
+                .collect::<Vec<_>>(),
+        );
+        secoes.poe_registros(
+            "blit.superficies",
+            self.pending_surface_blits
+                .iter()
+                .map(|blit| {
+                    vec![
+                        blit.source,
+                        blit.target,
+                        blit.x as u32,
+                        blit.y as u32,
+                        blit.width,
+                        blit.height,
+                        blit.rop,
                     ]
                 })
                 .collect::<Vec<_>>(),
@@ -1950,12 +1972,15 @@ impl<C: CpuBackend> Machine<C> {
                     inicio_us: u64::from(meta[6]) | (u64::from(meta[7]) << 32),
                     quadros_lidos: u64::from(meta[8]) | (u64::from(meta[9]) << 32),
                     tocando: meta[5] != 0,
+                    // O aviso do fim é do log, não do estado do jogo: um save restaurado pode
+                    // avisar de novo, e isso é melhor que esconder o fim de um fluxo.
+                    avisou_do_fim: false,
                 },
             );
         }
 
         let mut pending_blits = Vec::new();
-        for registro in leitor.registros("blit.registros", 6)? {
+        for registro in leitor.registros("blit.registros", 11)? {
             let frame = match registro[4] {
                 0 => None,
                 1 => Some(registro[5]),
@@ -1971,7 +1996,24 @@ impl<C: CpuBackend> Machine<C> {
                 target: registro[1],
                 x: registro[2] as i32,
                 y: registro[3] as i32,
+                src_x: registro[6] as i32,
+                src_y: registro[7] as i32,
+                width: registro[8],
+                height: registro[9],
+                rop: registro[10],
                 frame,
+            });
+        }
+        let mut pending_surface_blits = Vec::new();
+        for registro in leitor.registros("blit.superficies", 7)? {
+            pending_surface_blits.push(PendingSurfaceBlit {
+                source: registro[0],
+                target: registro[1],
+                x: registro[2] as i32,
+                y: registro[3] as i32,
+                width: registro[4],
+                height: registro[5],
+                rop: registro[6],
             });
         }
 
@@ -2012,6 +2054,7 @@ impl<C: CpuBackend> Machine<C> {
         self.modelos_de_valor = modelos_de_valor;
         self.fluxos_pcm = fluxos_pcm;
         self.pending_blits = pending_blits;
+        self.pending_surface_blits = pending_surface_blits;
         self.media = media;
         Ok(())
     }
@@ -2170,6 +2213,7 @@ impl<C: CpuBackend> Machine<C> {
                 .map(|(a, b, c, cb)| vec![*a, *b, *c, cb.function, cb.context])
                 .collect::<Vec<_>>(),
         );
+        secoes.poe_u32s("resto.avisos_de_imagem", self.avisos_de_imagem.iter().copied());
         secoes.poe_blocos(
             "resto.gl_buffers",
             1,
@@ -2353,6 +2397,7 @@ impl<C: CpuBackend> Machine<C> {
             .into_iter()
             .map(|r| r as u16)
             .collect();
+        let avisos_de_imagem = leitor.u32s("resto.avisos_de_imagem")?;
         let avisos_de_midia: Vec<(u32, u32, u32, Callback)> = leitor
             .registros("resto.avisos_de_midia", 5)?
             .into_iter()
@@ -2478,6 +2523,7 @@ impl<C: CpuBackend> Machine<C> {
         self.teclas_da_rolagem = teclas_da_rolagem;
         self.recursos_lidos = recursos_lidos;
         self.avisos_de_midia = avisos_de_midia;
+        self.avisos_de_imagem = avisos_de_imagem;
         self.gl_buffers = gl_buffers;
         self.egl_color_bytes = egl_color_bytes;
         self.egl_color_readback = egl_color_readback;
@@ -3719,6 +3765,7 @@ mod tests {
                 inicio_us: 0x1_0000_0005,
                 quadros_lidos: 0x2_0000_0007,
                 tocando: true,
+                avisou_do_fim: false,
             },
         );
         antes.pending_blits.push(PendingBlit {
@@ -3726,7 +3773,21 @@ mod tests {
             target: 0xe00,
             x: -5,
             y: 6,
+            src_x: 7,
+            src_y: 8,
+            width: 9,
+            height: 10,
+            rop: 2,
             frame: Some(3),
+        });
+        antes.pending_surface_blits.push(PendingSurfaceBlit {
+            source: 0xd10,
+            target: 0xe10,
+            x: -7,
+            y: 8,
+            width: 11,
+            height: 12,
+            rop: 7,
         });
         antes.media.insert(
             0xf00,
@@ -3780,6 +3841,8 @@ mod tests {
         assert!(fluxo.tocando);
         assert_eq!(depois.pending_blits.len(), 1);
         assert_eq!(depois.pending_blits[0].frame, Some(3));
+        assert_eq!(depois.pending_surface_blits.len(), 1);
+        assert_eq!(depois.pending_surface_blits[0].width, 11);
         let midia = depois.media.get(&0xf00).expect("a mídia voltou");
         assert_eq!(midia.carga, 0x1_0000_0009);
         assert_eq!(midia.pendente, (0x10, 0x11));
@@ -3853,6 +3916,7 @@ mod tests {
                 context: 0xdd,
             },
         ));
+        antes.avisos_de_imagem.push(0x3000_0450);
         antes.gl_buffers.insert(0xee, vec![1, 2, 3, 4]);
         antes.egl_color_bytes = vec![5, 6];
         antes.egl_color_readback = vec![7, 8, 9];
@@ -3921,6 +3985,8 @@ mod tests {
         assert!(depois.recursos_lidos.contains(&0x1234));
         assert_eq!(depois.avisos_de_midia.len(), 1);
         assert_eq!(depois.avisos_de_midia[0].3.function, 0x1000_8000);
+        assert_eq!(depois.avisos_de_imagem.len(), 1);
+        assert_eq!(depois.avisos_de_imagem, vec![0x3000_0450]);
         assert_eq!(depois.gl_buffers.get(&0xee), Some(&vec![1, 2, 3, 4]));
         assert_eq!(depois.egl_color_bytes, vec![5, 6]);
         assert_eq!(depois.egl_color_readback, vec![7, 8, 9]);
