@@ -220,7 +220,7 @@ impl<C: CpuBackend> Machine<C> {
                     None => SUCCESS,
                     Some(nome) => {
                         let conteudo = match dados {
-                            0 => vec![0u8; tamanho as usize],
+                            0 => vec![0u8; tamanho_do_guest(tamanho as usize)?],
                             _ => self.read_bytes(dados, tamanho)?,
                         };
                         self.gl_buffers.insert(nome, conteudo);
