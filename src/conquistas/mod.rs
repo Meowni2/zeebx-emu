@@ -27,6 +27,10 @@ use std::sync::{Arc, Mutex};
 
 use rcheevos_sys as rc;
 
+pub mod http;
+pub mod icones;
+pub mod resumos;
+
 /// O cliente que a janela guarda e a sessão usa. Um só por processo: a conta é uma só.
 pub type Compartilhado = Rc<RefCell<Conquistas>>;
 
@@ -117,6 +121,9 @@ pub struct Pedido {
 pub trait Servidor {
     /// Começa o pedido. A resposta vai pela `entrega`, agora ou depois, desta thread ou de outra.
     fn pede(&mut self, pedido: Pedido, entrega: Entrega);
+
+    /// O user agent a mandar em cada pedido. Ver [`Conquistas::user_agent`].
+    fn define_user_agent(&mut self, _user_agent: &str) {}
 }
 
 /// O retorno que o rcheevos deu para um pedido.
@@ -244,6 +251,58 @@ pub struct Conquista {
     pub pontos: u32,
     /// O ícone desbloqueado, no servidor de mídia do RA.
     pub icone: Option<String>,
+    /// O ícone apagado, de enquanto ela não sai.
+    pub icone_bloqueado: Option<String>,
+    pub desbloqueada: bool,
+    /// Desbloqueada no hardcore, e não só no casual.
+    pub no_hardcore: bool,
+    /// O progresso das que medem algo ("12/30"); vazio nas outras.
+    pub progresso: String,
+    /// O mesmo progresso, de 0 a 100.
+    pub percentual: f32,
+    /// O emulador não lê algum endereço dela, e ela nunca vai disparar. Ver [`Mapa`].
+    pub sem_suporte: bool,
+}
+
+/// Os grupos da lista, na ordem em que o rcheevos os entrega.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grupo {
+    Bloqueadas,
+    Desbloqueadas,
+    SemSuporte,
+    NaoOficiais,
+    RecemDesbloqueadas,
+    DesafioEmAndamento,
+    QuaseLa,
+    /// Desbloqueadas aqui e ainda não confirmadas pelo servidor.
+    NaoEnviadas,
+    Outras,
+}
+
+impl Grupo {
+    fn de(tipo: u8) -> Self {
+        match tipo {
+            1 => Self::Bloqueadas,
+            2 => Self::Desbloqueadas,
+            3 => Self::SemSuporte,
+            4 => Self::NaoOficiais,
+            5 => Self::RecemDesbloqueadas,
+            6 => Self::DesafioEmAndamento,
+            7 => Self::QuaseLa,
+            8 => Self::NaoEnviadas,
+            _ => Self::Outras,
+        }
+    }
+}
+
+/// Quantas conquistas o jogo tem e quantas o jogador já tem. É o "12 de 40" do aviso de abertura.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Resumo {
+    pub total: u32,
+    pub desbloqueadas: u32,
+    pub sem_suporte: u32,
+    pub pontos: u32,
+    pub pontos_desbloqueados: u32,
 }
 
 /// A conta conectada.
@@ -344,7 +403,11 @@ impl Conquistas {
             rc::rc_client_set_hardcore_enabled(cliente, 0);
             cliente
         };
-        Self { cliente, estado }
+        let conquistas = Self { cliente, estado };
+        let user_agent = conquistas.user_agent();
+        // SAFETY: nenhuma chamada ao C em andamento; ver [`Estado`].
+        unsafe { (*conquistas.estado).servidor.define_user_agent(&user_agent) };
+        conquistas
     }
 
     /// Troca o mapa de endereços. Ver [`Mapa`].
@@ -491,6 +554,55 @@ impl Conquistas {
                 hash: texto(j.hash),
                 icone: talvez(j.badge_url),
             })
+        }
+    }
+
+    /// O resumo do jogo carregado, se houver um reconhecido.
+    pub fn resumo(&self) -> Option<Resumo> {
+        self.jogo()?;
+        let mut r = rc::rc_client_user_game_summary_t::default();
+        // SAFETY: o rcheevos escreve no struct inteiro, que tem o tamanho do C (teste de layout).
+        unsafe { rc::rc_client_get_user_game_summary(self.cliente, &mut r) };
+        Some(Resumo {
+            total: r.num_promoted_achievements,
+            desbloqueadas: r.num_unlocked_achievements,
+            sem_suporte: r.num_unsupported_achievements,
+            pontos: r.points_available,
+            pontos_desbloqueados: r.points_unlocked,
+        })
+    }
+
+    /// As conquistas oficiais do jogo carregado, nos grupos e na ordem do rcheevos.
+    pub fn lista(&mut self) -> Vec<(Grupo, Vec<Conquista>)> {
+        // SAFETY: a lista é do rcheevos e é destruída aqui mesmo, depois de copiada.
+        unsafe {
+            let lista = rc::rc_client_create_achievement_list(
+                self.cliente,
+                rc::RC_CLIENT_ACHIEVEMENT_CATEGORY_PROMOTED,
+                rc::RC_CLIENT_ACHIEVEMENT_LIST_GROUPING_LOCK_STATE,
+            );
+            let Some(l) = lista.as_ref() else {
+                return Vec::new();
+            };
+            let grupos = match l.buckets.is_null() {
+                true => &[][..],
+                false => std::slice::from_raw_parts(l.buckets, l.num_buckets as usize),
+            };
+            let copia = grupos
+                .iter()
+                .map(|g| {
+                    let itens = match g.achievements.is_null() {
+                        true => &[][..],
+                        false => {
+                            std::slice::from_raw_parts(g.achievements, g.num_achievements as usize)
+                        }
+                    };
+                    let itens = itens.iter().filter_map(|c| conquista_de(*c)).collect();
+                    (Grupo::de(g.bucket_type), itens)
+                })
+                .collect();
+            rc::rc_client_destroy_achievement_list(lista);
+            copia
         }
     }
 
@@ -718,6 +830,12 @@ unsafe fn conquista_de(c: *const rc::rc_client_achievement_t) -> Option<Conquist
             descricao: texto(c.description),
             pontos: c.points,
             icone: talvez(c.badge_url),
+            icone_bloqueado: talvez(c.badge_locked_url),
+            desbloqueada: c.state == rc::RC_CLIENT_ACHIEVEMENT_STATE_UNLOCKED,
+            no_hardcore: c.unlocked & rc::RC_CLIENT_ACHIEVEMENT_UNLOCKED_HARDCORE != 0,
+            progresso: texto(c.measured_progress.as_ptr()),
+            percentual: c.measured_percent,
+            sem_suporte: c.state == rc::RC_CLIENT_ACHIEVEMENT_STATE_DISABLED,
         })
     }
 }
