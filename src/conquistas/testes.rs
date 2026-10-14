@@ -14,11 +14,17 @@ struct Roteiro {
     /// Quando ligado, as entregas ficam guardadas aqui sem resposta, como numa rede lenta.
     segura: bool,
     retidas: Vec<(String, Entrega)>,
+    /// O user agent que o cliente passou ao servidor.
+    user_agent: String,
 }
 
 struct ServidorSimulado(Rc<RefCell<Roteiro>>);
 
 impl Servidor for ServidorSimulado {
+    fn define_user_agent(&mut self, user_agent: &str) {
+        self.0.borrow_mut().user_agent = user_agent.to_string();
+    }
+
     fn pede(&mut self, pedido: Pedido, entrega: Entrega) {
         let mut roteiro = self.0.borrow_mut();
         let r = parametro(&pedido, "r").unwrap_or_default();
@@ -539,4 +545,78 @@ fn o_progresso_vazio_zera_os_acertos() {
     );
     c.quadro(&memoria);
     assert!(matches!(&c.eventos()[..], [Evento::Desbloqueou(x)] if x.id == 5501));
+}
+
+/// O servidor recebe o user agent completo — o do Zeebx e o do rcheevos — antes do primeiro
+/// pedido: é ele que vai em cada requisição HTTP.
+#[test]
+fn o_servidor_recebe_o_user_agent_antes_de_pedir() {
+    let (c, roteiro) = cliente(&[]);
+    assert_eq!(roteiro.borrow().user_agent, c.user_agent());
+}
+
+#[test]
+fn o_resumo_conta_as_oficiais_e_as_sem_suporte() {
+    let memoria = memoria();
+    let (c, _) = com_jogo_carregado(&memoria);
+    assert_eq!(
+        c.resumo(),
+        Some(Resumo {
+            total: 2,
+            desbloqueadas: 0,
+            sem_suporte: 1,
+            pontos: 7,
+            pontos_desbloqueados: 0,
+        })
+    );
+}
+
+/// A lista separa a que o emulador não lê das que valem, com os ícones do servidor de mídia; a
+/// desbloqueada passa de grupo e fica marcada.
+#[test]
+fn a_lista_agrupa_as_conquistas_e_acompanha_o_desbloqueio() {
+    let mut memoria = memoria();
+    let (mut c, _) = com_jogo_carregado(&memoria);
+    let lista = c.lista();
+    let grupo = |lista: &[(Grupo, Vec<Conquista>)], id: u32| {
+        lista
+            .iter()
+            .find(|(_, itens)| itens.iter().any(|x| x.id == id))
+            .map(|(g, _)| *g)
+    };
+    assert_eq!(grupo(&lista, 5501), Some(Grupo::Bloqueadas), "{lista:?}");
+    assert_eq!(grupo(&lista, 5502), Some(Grupo::SemSuporte), "{lista:?}");
+    let primeira = lista
+        .iter()
+        .flat_map(|(_, i)| i)
+        .find(|x| x.id == 5501)
+        .unwrap();
+    assert!(!primeira.desbloqueada && !primeira.sem_suporte);
+    assert!(
+        primeira
+            .icone
+            .as_deref()
+            .is_some_and(|u| u.ends_with("00234.png")),
+        "{primeira:?}"
+    );
+    assert!(
+        primeira
+            .icone_bloqueado
+            .as_deref()
+            .is_some_and(|u| u.ends_with("00234_lock.png")),
+        "{primeira:?}"
+    );
+
+    c.quadro(&memoria);
+    memoria.bytes[1] = 3;
+    memoria.bytes[2] = 7;
+    c.quadro(&memoria);
+    let lista = c.lista();
+    let primeira = lista
+        .iter()
+        .flat_map(|(_, i)| i)
+        .find(|x| x.id == 5501)
+        .unwrap();
+    assert!(primeira.desbloqueada && !primeira.no_hardcore, "{lista:?}");
+    assert_eq!(c.resumo().map(|r| r.desbloqueadas), Some(1));
 }
