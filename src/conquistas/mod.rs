@@ -506,6 +506,32 @@ impl Conquistas {
         unsafe { rc::rc_client_get_hardcore_enabled(self.cliente) != 0 }
     }
 
+    /// Se as regras do hardcore valem agora: o hardcore está ligado **e** há um jogo com
+    /// conquistas, ou um a caminho.
+    ///
+    /// **A caminho conta.** Entre o pedido e a resposta do servidor o jogo ainda não tem
+    /// conquistas, mas pode vir a ter: carregar um estado nesse intervalo e só depois ver o set
+    /// chegar seria entrar no hardcore com a partida adulterada. Um jogo que o RA não conhece
+    /// solta as regras, porque não há o que proteger.
+    pub fn protege_o_jogo(&self) -> bool {
+        if !self.hardcore() {
+            return false;
+        }
+        // SAFETY: cliente válido até o `Drop`.
+        let (estado, carregado) = unsafe {
+            (
+                rc::rc_client_get_load_game_state(self.cliente),
+                rc::rc_client_is_game_loaded(self.cliente) != 0,
+            )
+        };
+        match estado {
+            rc::RC_CLIENT_LOAD_GAME_STATE_NONE
+            | rc::RC_CLIENT_LOAD_GAME_STATE_DONE
+            | rc::RC_CLIENT_LOAD_GAME_STATE_ABORTED => carregado,
+            _ => true,
+        }
+    }
+
     /// Liga ou desliga o hardcore. Ligar com um jogo aberto pede o [`Evento::Reiniciar`]: o RA
     /// não aceita entrar no hardcore no meio de uma partida.
     pub fn define_hardcore(&mut self, ligado: bool) {
