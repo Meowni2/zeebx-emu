@@ -11,6 +11,9 @@ struct Roteiro {
     pedidos: Vec<Pedido>,
     /// Quando ligado, os pedidos são descartados sem resposta.
     mudo: bool,
+    /// Quando ligado, as entregas ficam guardadas aqui sem resposta, como numa rede lenta.
+    segura: bool,
+    retidas: Vec<(String, Entrega)>,
 }
 
 struct ServidorSimulado(Rc<RefCell<Roteiro>>);
@@ -21,6 +24,10 @@ impl Servidor for ServidorSimulado {
         let r = parametro(&pedido, "r").unwrap_or_default();
         roteiro.pedidos.push(pedido);
         if roteiro.mudo {
+            return;
+        }
+        if roteiro.segura {
+            roteiro.retidas.push((r, entrega));
             return;
         }
         let corpo = roteiro
@@ -142,6 +149,26 @@ pub(crate) fn cliente_conectado_com_a_condicao(condicao: &str) -> Compartilhado 
     c.entra_com_senha("User", "Pa$$word");
     assert_eq!(c.eventos(), vec![Evento::Entrou(Ok(()))]);
     Rc::new(RefCell::new(c))
+}
+
+/// Conectado, com o jogo de teste carregado e ativado, e a conquista 5501 trocada por
+/// `condicao`. A memória fica zerada no quadro da ativação.
+fn jogo_com_a_condicao(condicao: &str, memoria: &MemoriaFalsa) -> Conquistas {
+    let conjunto = CONJUNTO.replace("0xH1001=3_0xH1002=7", condicao);
+    let (mut c, _) = cliente(&[
+        ("login2", LOGIN),
+        ("achievementsets", conjunto.as_str()),
+        ("startsession", SEM_DESBLOQUEIOS),
+        ("awardachievement", DESBLOQUEIO),
+    ]);
+    c.entra_com_senha("User", "Pa$$word");
+    c.carrega_jogo("0123456789abcdef0123456789abcdef");
+    c.quadro(memoria);
+    assert_eq!(
+        c.eventos(),
+        vec![Evento::Entrou(Ok(())), Evento::JogoCarregado(Ok(()))]
+    );
+    c
 }
 
 fn memoria() -> MemoriaFalsa {
@@ -390,4 +417,126 @@ fn o_hash_do_modulo_e_o_md5_do_arquivo_inteiro() {
         hash_do_modulo(b"abc").as_deref(),
         Some("900150983cd24fb0d6963f7d28e17f72")
     );
+}
+
+/// O RA não deixa entrar no hardcore no meio de uma partida: ligar com o jogo aberto pede que o
+/// jogo recomece do zero.
+#[test]
+fn ligar_o_hardcore_com_o_jogo_aberto_pede_para_reiniciar() {
+    let memoria = memoria();
+    let (mut c, _) = com_jogo_carregado(&memoria);
+    c.define_hardcore(true);
+    assert!(c.hardcore());
+    assert!(
+        c.eventos().contains(&Evento::Reiniciar),
+        "sem pedido de reinício"
+    );
+}
+
+/// Sair do hardcore é livre, e não reinicia nada.
+#[test]
+fn sair_do_hardcore_nao_reinicia() {
+    let memoria = memoria();
+    let (mut c, _) = com_jogo_carregado(&memoria);
+    c.define_hardcore(true);
+    c.eventos();
+    c.define_hardcore(false);
+    assert!(!c.hardcore());
+    assert!(!c.eventos().contains(&Evento::Reiniciar));
+}
+
+#[test]
+fn o_hardcore_so_protege_o_jogo_que_tem_conquistas() {
+    // Casual: nada a proteger.
+    let memoria = memoria();
+    let (mut c, _) = com_jogo_carregado(&memoria);
+    assert!(!c.protege_o_jogo());
+    // Hardcore com o jogo carregado: protege.
+    c.define_hardcore(true);
+    assert!(c.protege_o_jogo());
+
+    // Hardcore sem jogo nenhum: nada a proteger.
+    let (mut c, _) = cliente(&[("login2", LOGIN)]);
+    c.define_hardcore(true);
+    c.entra_com_senha("User", "Pa$$word");
+    assert!(!c.protege_o_jogo());
+
+    // Hardcore com um jogo que o RA não conhece: nada a proteger.
+    let (mut c, _) = cliente(&[("login2", LOGIN), ("achievementsets", DESCONHECIDO)]);
+    c.define_hardcore(true);
+    c.entra_com_senha("User", "Pa$$word");
+    c.carrega_jogo("ffffffffffffffffffffffffffffffff");
+    assert!(!c.protege_o_jogo());
+}
+
+/// Enquanto o servidor não responde, o jogo ainda pode vir a ter conquistas: carregar um estado
+/// nesse intervalo e só depois ver o set chegar seria entrar no hardcore com a partida mexida.
+#[test]
+fn o_hardcore_protege_o_jogo_que_ainda_esta_carregando() {
+    let (mut c, roteiro) = cliente(&[("login2", LOGIN), ("achievementsets", CONJUNTO)]);
+    c.define_hardcore(true);
+    c.entra_com_senha("User", "Pa$$word");
+    roteiro.borrow_mut().segura = true;
+    c.carrega_jogo("0123456789abcdef0123456789abcdef");
+    assert_eq!(
+        roteiro.borrow().retidas.len(),
+        1,
+        "o pedido ficou esperando"
+    );
+    assert!(c.protege_o_jogo());
+
+    // A resposta chega dizendo que o jogo é desconhecido: as regras se soltam.
+    let (_, entrega) = roteiro.borrow_mut().retidas.pop().unwrap();
+    entrega.responde(200, DESCONHECIDO.as_bytes().to_vec());
+    c.ocioso(None);
+    assert!(!c.protege_o_jogo());
+}
+
+/// O progresso guarda os contadores de acerto: uma conquista "três quadros" com dois já
+/// contados dispara no quadro seguinte ao progresso voltar.
+#[test]
+fn o_progresso_guarda_os_acertos_contados() {
+    let mut memoria = memoria();
+    let mut c = jogo_com_a_condicao("0xH1001=1.3.", &memoria);
+    memoria.bytes[1] = 1;
+    c.quadro(&memoria);
+    c.quadro(&memoria);
+    let progresso = c.progresso();
+    assert!(!progresso.is_empty());
+    assert_eq!(c.eventos(), vec![]);
+
+    // Recomeçar zera os acertos; o quadro com a condição falsa arma a conquista de novo.
+    c.reinicia();
+    memoria.bytes[1] = 0;
+    c.quadro(&memoria);
+    assert!(c.restaura_progresso(&progresso));
+    memoria.bytes[1] = 1;
+    c.quadro(&memoria);
+    assert!(
+        matches!(&c.eventos()[..], [Evento::Desbloqueou(x)] if x.id == 5501),
+        "o terceiro acerto devia bastar"
+    );
+}
+
+/// Um progresso vazio — o de um estado de antes das conquistas — zera os contadores.
+#[test]
+fn o_progresso_vazio_zera_os_acertos() {
+    let mut memoria = memoria();
+    let mut c = jogo_com_a_condicao("0xH1001=1.3.", &memoria);
+    memoria.bytes[1] = 1;
+    c.quadro(&memoria);
+    c.quadro(&memoria);
+    assert!(c.restaura_progresso(&[]));
+    memoria.bytes[1] = 0;
+    c.quadro(&memoria);
+    memoria.bytes[1] = 1;
+    c.quadro(&memoria);
+    c.quadro(&memoria);
+    assert_eq!(
+        c.eventos(),
+        vec![],
+        "dois acertos depois de zerar não bastam"
+    );
+    c.quadro(&memoria);
+    assert!(matches!(&c.eventos()[..], [Evento::Desbloqueou(x)] if x.id == 5501));
 }
