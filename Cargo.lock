@@ -6302,6 +6302,7 @@ dependencies = [
  "glow",
  "qt-build-utils",
  "rfd",
+ "serde_json",
  "winresource",
  "zeebx",
 ]
