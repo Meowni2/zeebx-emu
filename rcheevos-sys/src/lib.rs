@@ -42,6 +42,11 @@ pub const RC_CLIENT_LOG_LEVEL_WARN: c_int = 2;
 pub const RC_CLIENT_LOG_LEVEL_INFO: c_int = 3;
 pub const RC_CLIENT_LOG_LEVEL_VERBOSE: c_int = 4;
 
+// include/rc_client.h — estados do carregamento do jogo
+pub const RC_CLIENT_LOAD_GAME_STATE_NONE: c_int = 0;
+pub const RC_CLIENT_LOAD_GAME_STATE_DONE: c_int = 5;
+pub const RC_CLIENT_LOAD_GAME_STATE_ABORTED: c_int = 6;
+
 // include/rc_client.h — eventos
 pub const RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED: u32 = 1;
 pub const RC_CLIENT_EVENT_LEADERBOARD_STARTED: u32 = 2;
@@ -283,6 +288,7 @@ unsafe extern "C" {
         callback: rc_client_callback_t,
         callback_userdata: *mut c_void,
     ) -> *mut rc_client_async_handle_t;
+    pub fn rc_client_get_load_game_state(client: *const rc_client_t) -> c_int;
     pub fn rc_client_is_game_loaded(client: *const rc_client_t) -> c_int;
     pub fn rc_client_unload_game(client: *mut rc_client_t);
     pub fn rc_client_get_game_info(client: *const rc_client_t) -> *const rc_client_game_t;
@@ -391,6 +397,9 @@ mod tests {
         constante!(RC_CLIENT_LOG_LEVEL_WARN);
         constante!(RC_CLIENT_LOG_LEVEL_INFO);
         constante!(RC_CLIENT_LOG_LEVEL_VERBOSE);
+        constante!(RC_CLIENT_LOAD_GAME_STATE_NONE);
+        constante!(RC_CLIENT_LOAD_GAME_STATE_DONE);
+        constante!(RC_CLIENT_LOAD_GAME_STATE_ABORTED);
         constante!(RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED);
         constante!(RC_CLIENT_EVENT_LEADERBOARD_STARTED);
         constante!(RC_CLIENT_EVENT_LEADERBOARD_FAILED);
