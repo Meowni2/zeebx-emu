@@ -1451,12 +1451,41 @@ impl Session {
     }
 
     /// Grava o estado da máquina, no formato versionado de [`crate::save_state`].
+    ///
+    /// Com as conquistas ligadas, o progresso delas vai junto, na seção `conquistas`: os
+    /// contadores de acerto e os placares em andamento. Sem ele, voltar a um estado deixaria uma
+    /// conquista "três vezes seguidas" com a contagem de depois do estado. Gravar é permitido
+    /// mesmo no hardcore; carregar é que não.
     pub fn grava_estado(&self) -> Vec<u8> {
+        #[cfg(feature = "conquistas")]
+        if let Some(cliente) = &self.conquistas.cliente {
+            let progresso = cliente.borrow_mut().progresso();
+            return self
+                .machine
+                .grava_estado_com(|secoes| secoes.poe(SECAO_DAS_CONQUISTAS, progresso));
+        }
         self.machine.grava_estado()
     }
 
+    /// Se as regras do hardcore do RetroAchievements valem agora: nada de carregar estado nem de
+    /// rewind. Ver [`crate::conquistas::Conquistas::protege_o_jogo`]. Sem a feature, nunca.
+    pub fn em_hardcore(&self) -> bool {
+        #[cfg(feature = "conquistas")]
+        if let Some(cliente) = &self.conquistas.cliente {
+            return cliente.borrow().protege_o_jogo();
+        }
+        false
+    }
+
     /// Põe de volta um estado gravado por [`Session::grava_estado`].
+    ///
+    /// **Recusado no hardcore**, com [`crate::save_state::Erro::Hardcore`]. A trava mora aqui, e
+    /// não em cada tela, para que nenhuma tela nova a esqueça; quem quiser carregar mesmo assim
+    /// pergunta ao jogador e chama o [`Session::sai_do_hardcore`] antes.
     pub fn restaura_estado(&mut self, arquivo: &[u8]) -> Result<(), crate::save_state::Erro> {
+        if self.em_hardcore() {
+            return Err(crate::save_state::Erro::Hardcore);
+        }
         self.machine.restaura_estado(arquivo)?;
 
         // O save state guarda o relógio do console, não os relógios do host. Se mantivermos
@@ -1485,10 +1514,26 @@ impl Session {
         // é de um quadro que, para ela, ainda não aconteceu.
         self.pulo.decidido_em = None;
         // O relógio foi para onde o estado mandou. Contar a diferença como quadros avaliaria
-        // milhares de uma vez, ou nenhum; a contagem recomeça daqui.
+        // milhares de uma vez, ou nenhum; a contagem recomeça daqui. E o progresso volta ao do
+        // estado — um estado de antes das conquistas não tem a seção, e aí os contadores zeram,
+        // que é o que o rcheevos manda fazer.
         #[cfg(feature = "conquistas")]
         {
             self.conquistas.ultimo_quadro = None;
+            if let Some(cliente) = &self.conquistas.cliente {
+                let progresso = crate::save_state::Leitor::abre(arquivo)
+                    .ok()
+                    .and_then(|leitor| leitor.secao(SECAO_DAS_CONQUISTAS))
+                    .unwrap_or_default();
+                if !cliente.borrow_mut().restaura_progresso(progresso) {
+                    crate::registro!(
+                        crate::registro::Nivel::Aviso,
+                        "conquistas",
+                        "o progresso do estado não foi aceito; os contadores recomeçam"
+                    );
+                    cliente.borrow_mut().restaura_progresso(&[]);
+                }
+            }
         }
         Ok(())
     }
@@ -1500,7 +1545,13 @@ impl Session {
 
     /// Se dá para marcar um ponto do rewind agora: o que o [`Session::pode_salvar`] pede, e
     /// nenhum arquivo aberto para escrita. Ver [`crate::machine::Machine::tem_arquivo_para_escrita`].
+    ///
+    /// No hardcore, nunca: o rewind não vale ali, e marcar pontos que ninguém pode usar seria
+    /// gastar de 5 a 37 ms por ponto à toa (medido em 2026-10-10).
     pub fn pode_marcar_ponto(&mut self) -> Result<(), String> {
+        if self.em_hardcore() {
+            return Err("o hardcore do RetroAchievements não deixa voltar no tempo".to_string());
+        }
         self.machine.pode_salvar()?;
         match self.machine.tem_arquivo_para_escrita() {
             true => Err("há um arquivo aberto para escrita".to_string()),
@@ -1839,6 +1890,10 @@ pub const SPLASH_DA_Z_WHEEL: &str = "zeebosplash.rgb565.raw";
 /// O [`Session::log`] monta texto para a janela; o levantamento precisa das listas cruas e do
 /// desfecho como enum, para classificar e comparar com o que já se sabia do jogo. Só o teste
 /// usa isto, e por isso não faz parte da interface da sessão.
+/// A seção do save state com o progresso das conquistas. Ver [`Session::grava_estado`].
+#[cfg(feature = "conquistas")]
+const SECAO_DAS_CONQUISTAS: &str = "conquistas";
+
 /// Quantos quadros de conquistas uma volta do laço avalia no máximo.
 ///
 /// Uma volta anda poucos milissegundos de relógio virtual; o salto do ocioso é de um quadro só
@@ -1876,6 +1931,15 @@ impl Session {
         cliente.borrow_mut().carrega_jogo(&hash);
         self.conquistas.cliente = Some(cliente);
         self.conquistas.ultimo_quadro = None;
+    }
+
+    /// Sai do hardcore para o casual, no meio da partida. O RA permite isso a qualquer hora (o
+    /// contrário exige reiniciar o jogo); é o que se faz quando o jogador confirma que quer
+    /// carregar um estado.
+    pub fn sai_do_hardcore(&mut self) {
+        if let Some(cliente) = &self.conquistas.cliente {
+            cliente.borrow_mut().define_hardcore(false);
+        }
     }
 
     /// Devolve o cliente e descarrega o jogo dele: a sessão vai acabar.
@@ -2055,6 +2119,160 @@ pub(crate) mod tests {
             matches!(&eventos[..], [Evento::Desbloqueou(c)] if c.id == 5501),
             "{eventos:?}"
         );
+    }
+
+    /// Uma sessão mínima com o cliente de teste ligado e o jogo já ativado (um quadro rodado), com
+    /// a conquista 7001 sobre `condicao`.
+    #[cfg(feature = "conquistas")]
+    fn sessao_com_conquistas(
+        condicao: &str,
+        hardcore: bool,
+    ) -> (Session, crate::conquistas::Compartilhado) {
+        const QUADRO_US: u64 = 1_000_000 / 60 + 1;
+        let mut sessao = sessao_minima_para_save_state();
+        sessao.conquistas.hash = Some("0123456789abcdef0123456789abcdef".into());
+        let cliente = crate::conquistas::testes::cliente_conectado_com_a_condicao(condicao);
+        cliente.borrow_mut().define_hardcore(hardcore);
+        sessao.liga_conquistas(std::rc::Rc::clone(&cliente));
+        sessao.acompanha_as_conquistas();
+        sessao.machine_mut().adianta_o_relogio_us(QUADRO_US);
+        sessao.acompanha_as_conquistas();
+        assert_eq!(
+            cliente.borrow_mut().eventos(),
+            vec![crate::conquistas::Evento::JogoCarregado(Ok(()))]
+        );
+        (sessao, cliente)
+    }
+
+    #[cfg(feature = "conquistas")]
+    fn um_quadro(sessao: &mut Session) {
+        sessao
+            .machine_mut()
+            .adianta_o_relogio_us(1_000_000 / 60 + 1);
+        sessao.acompanha_as_conquistas();
+    }
+
+    /// No hardcore, a sessão recusa carregar estado e marcar ponto de rewind. Sair para o casual
+    /// — o que a janela faz quando o jogador confirma — solta as duas coisas.
+    #[cfg(feature = "conquistas")]
+    #[test]
+    fn o_hardcore_recusa_carregar_estado_ate_sair_para_o_casual() {
+        let (mut sessao, cliente) = sessao_com_conquistas("0xH1001=1", true);
+        assert!(sessao.em_hardcore());
+        let estado = sessao.grava_estado();
+        assert!(
+            matches!(
+                sessao.restaura_estado(&estado),
+                Err(crate::save_state::Erro::Hardcore)
+            ),
+            "carregou no hardcore"
+        );
+        assert!(sessao.pode_marcar_ponto().is_err());
+
+        sessao.sai_do_hardcore();
+        assert!(!cliente.borrow().hardcore());
+        assert!(!sessao.em_hardcore());
+        sessao.restaura_estado(&estado).expect("carrega no casual");
+        assert!(sessao.pode_marcar_ponto().is_ok());
+    }
+
+    /// O atalho do rewind no hardcore: nenhum ponto, e um aviso por aperto, não por volta.
+    #[cfg(feature = "conquistas")]
+    #[test]
+    fn o_rewind_no_hardcore_avisa_uma_vez_por_aperto() {
+        use crate::velocidade::rewind::{AjustesDoRewind, ControleDoRewind, Leitura};
+
+        let (mut sessao, _) = sessao_com_conquistas("0xH1001=1", true);
+        let ajustes = AjustesDoRewind {
+            ligado: true,
+            ..Default::default()
+        };
+        let mut controle = ControleDoRewind::default();
+        controle.acompanha(&mut sessao);
+        assert_eq!(
+            controle.le(&mut sessao, true, false, &ajustes),
+            Leitura::Hardcore
+        );
+        assert_eq!(
+            controle.le(&mut sessao, true, false, &ajustes),
+            Leitura::Nada
+        );
+        assert!(
+            !controle.voltando(),
+            "o jogo não pode ficar parado voltando"
+        );
+        assert_eq!(
+            controle.le(&mut sessao, false, false, &ajustes),
+            Leitura::Nada
+        );
+        assert_eq!(
+            controle.le(&mut sessao, true, false, &ajustes),
+            Leitura::Hardcore
+        );
+    }
+
+    /// O save state leva o progresso das conquistas: voltar a um estado com dois acertos de três
+    /// dispara no quadro seguinte.
+    #[cfg(feature = "conquistas")]
+    #[test]
+    fn o_save_state_leva_o_progresso_das_conquistas() {
+        use crate::conquistas::Evento;
+        use crate::cpu::CpuBackend;
+
+        let (mut sessao, cliente) = sessao_com_conquistas("0xH1001=1.3.", false);
+        sessao
+            .machine_mut()
+            .cpu_mut()
+            .write_mem(0x1001, &[1])
+            .unwrap();
+        um_quadro(&mut sessao);
+        um_quadro(&mut sessao);
+        let estado = sessao.grava_estado();
+        let leitor = crate::save_state::Leitor::abre(&estado).unwrap();
+        assert!(
+            leitor
+                .secao(SECAO_DAS_CONQUISTAS)
+                .is_some_and(|s| !s.is_empty())
+        );
+
+        // Recomeçar zera os acertos; a memória zerada arma a conquista de novo.
+        cliente.borrow_mut().reinicia();
+        sessao
+            .machine_mut()
+            .cpu_mut()
+            .write_mem(0x1001, &[0])
+            .unwrap();
+        um_quadro(&mut sessao);
+        assert_eq!(cliente.borrow_mut().eventos(), vec![]);
+
+        sessao.restaura_estado(&estado).expect("carregou");
+        um_quadro(&mut sessao); // só ancora: o relógio foi para onde o estado mandou
+        um_quadro(&mut sessao);
+        assert!(
+            matches!(&cliente.borrow_mut().eventos()[..], [Evento::Desbloqueou(c)] if c.id == 7001),
+            "o terceiro acerto devia bastar"
+        );
+    }
+
+    /// Os dois lados da compatibilidade: o estado com a seção carrega numa sessão sem conquistas,
+    /// e o estado sem ela carrega numa sessão com conquistas.
+    #[cfg(feature = "conquistas")]
+    #[test]
+    fn a_secao_das_conquistas_nao_atrapalha_ninguem() {
+        let (mut com, _) = sessao_com_conquistas("0xH1001=1", false);
+        let mut sem = sessao_minima_para_save_state();
+        let estado_com = com.grava_estado();
+        let estado_sem = sem.grava_estado();
+        assert!(
+            crate::save_state::Leitor::abre(&estado_sem)
+                .unwrap()
+                .secao(SECAO_DAS_CONQUISTAS)
+                .is_none()
+        );
+        sem.restaura_estado(&estado_com)
+            .expect("a sessão sem conquistas carrega");
+        com.restaura_estado(&estado_sem)
+            .expect("o estado antigo carrega");
     }
 
     /// De ponta a ponta com um jogo de verdade (`ZEEBX_TESTE_ROM`): o hash sai do `.mod`, e uma
