@@ -47,6 +47,13 @@ pub const RC_CLIENT_LOAD_GAME_STATE_NONE: c_int = 0;
 pub const RC_CLIENT_LOAD_GAME_STATE_DONE: c_int = 5;
 pub const RC_CLIENT_LOAD_GAME_STATE_ABORTED: c_int = 6;
 
+// include/rc_client.h — conquistas
+pub const RC_CLIENT_ACHIEVEMENT_STATE_UNLOCKED: u8 = 2;
+pub const RC_CLIENT_ACHIEVEMENT_STATE_DISABLED: u8 = 3;
+pub const RC_CLIENT_ACHIEVEMENT_CATEGORY_PROMOTED: c_int = 1;
+pub const RC_CLIENT_ACHIEVEMENT_LIST_GROUPING_LOCK_STATE: c_int = 0;
+pub const RC_CLIENT_ACHIEVEMENT_UNLOCKED_HARDCORE: u8 = 2;
+
 // include/rc_client.h — eventos
 pub const RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED: u32 = 1;
 pub const RC_CLIENT_EVENT_LEADERBOARD_STARTED: u32 = 2;
@@ -133,6 +140,37 @@ pub struct rc_client_achievement_t {
     pub type_: u8,
     pub badge_url: *const c_char,
     pub badge_locked_url: *const c_char,
+}
+
+/// `rc_client_user_game_summary_t` (`include/rc_client.h`). Inteiro: o rcheevos escreve nele.
+#[repr(C)]
+#[derive(Default)]
+pub struct rc_client_user_game_summary_t {
+    pub num_promoted_achievements: u32,
+    pub num_unpromoted_achievements: u32,
+    pub num_unlocked_achievements: u32,
+    pub num_unsupported_achievements: u32,
+    pub points_available: u32,
+    pub points_unlocked: u32,
+    pub beaten_time: time_t,
+    pub completed_time: time_t,
+}
+
+/// `rc_client_achievement_bucket_t` (`include/rc_client.h`).
+#[repr(C)]
+pub struct rc_client_achievement_bucket_t {
+    pub achievements: *const *const rc_client_achievement_t,
+    pub num_achievements: u32,
+    pub label: *const c_char,
+    pub subset_id: u32,
+    pub bucket_type: u8,
+}
+
+/// `rc_client_achievement_list_t` (`include/rc_client.h`).
+#[repr(C)]
+pub struct rc_client_achievement_list_t {
+    pub buckets: *const rc_client_achievement_bucket_t,
+    pub num_buckets: u32,
 }
 
 /// `rc_client_leaderboard_t` (`include/rc_client.h`).
@@ -292,6 +330,16 @@ unsafe extern "C" {
     pub fn rc_client_is_game_loaded(client: *const rc_client_t) -> c_int;
     pub fn rc_client_unload_game(client: *mut rc_client_t);
     pub fn rc_client_get_game_info(client: *const rc_client_t) -> *const rc_client_game_t;
+    pub fn rc_client_get_user_game_summary(
+        client: *const rc_client_t,
+        summary: *mut rc_client_user_game_summary_t,
+    );
+    pub fn rc_client_create_achievement_list(
+        client: *mut rc_client_t,
+        category: c_int,
+        grouping: c_int,
+    ) -> *mut rc_client_achievement_list_t;
+    pub fn rc_client_destroy_achievement_list(list: *mut rc_client_achievement_list_t);
     pub fn rc_client_get_achievement_info(
         client: *mut rc_client_t,
         id: u32,
@@ -400,6 +448,11 @@ mod tests {
         constante!(RC_CLIENT_LOAD_GAME_STATE_NONE);
         constante!(RC_CLIENT_LOAD_GAME_STATE_DONE);
         constante!(RC_CLIENT_LOAD_GAME_STATE_ABORTED);
+        constante!(RC_CLIENT_ACHIEVEMENT_STATE_UNLOCKED);
+        constante!(RC_CLIENT_ACHIEVEMENT_STATE_DISABLED);
+        constante!(RC_CLIENT_ACHIEVEMENT_CATEGORY_PROMOTED);
+        constante!(RC_CLIENT_ACHIEVEMENT_LIST_GROUPING_LOCK_STATE);
+        constante!(RC_CLIENT_ACHIEVEMENT_UNLOCKED_HARDCORE);
         constante!(RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED);
         constante!(RC_CLIENT_EVENT_LEADERBOARD_STARTED);
         constante!(RC_CLIENT_EVENT_LEADERBOARD_FAILED);
@@ -433,6 +486,14 @@ mod tests {
         confere!(posicao rc_client_achievement_t.type_ = type);
         confere!(posicao rc_client_achievement_t.badge_url);
         confere!(posicao rc_client_achievement_t.badge_locked_url);
+        confere!(tamanho rc_client_user_game_summary_t);
+        confere!(posicao rc_client_user_game_summary_t.points_unlocked);
+        confere!(posicao rc_client_user_game_summary_t.completed_time);
+        confere!(tamanho rc_client_achievement_bucket_t);
+        confere!(posicao rc_client_achievement_bucket_t.label);
+        confere!(posicao rc_client_achievement_bucket_t.bucket_type);
+        confere!(tamanho rc_client_achievement_list_t);
+        confere!(posicao rc_client_achievement_list_t.num_buckets);
         confere!(tamanho rc_client_leaderboard_t);
         confere!(posicao rc_client_leaderboard_t.id);
         confere!(posicao rc_client_leaderboard_t.category);
