@@ -145,6 +145,8 @@ Window {
     // texto diz se ele está parado. É uma área flutuante, que não tira espaço do quadro. Ver
     // `src/ui/calibracao.rs`.
     Rectangle {
+        id: avisoDeCalibracao
+
         anchors.right: tela.right
         anchors.bottom: tela.bottom
         anchors.margins: 16
@@ -262,9 +264,9 @@ Window {
         }
     }
 
-    // Os avisos das conquistas, no alto e no meio, um de cada vez: o jogo reconhecido, cada
-    // desbloqueio com o ícone, os placares. Vários juntos esperam na fila, e cada um fica quatro
-    // segundos. Ver `docs/implementacao/25-conquistas.md`.
+    // Os avisos das conquistas, no canto de baixo à esquerda, como no RALibretro, um de cada vez:
+    // o jogo reconhecido, cada desbloqueio com o ícone, os placares. Vários juntos esperam na fila,
+    // e cada um fica quatro segundos. Ver `docs/implementacao/25-conquistas.md`.
     Rectangle {
         id: avisoDeConquista
 
@@ -288,9 +290,9 @@ Window {
             someAConquista.restart()
         }
 
-        anchors.horizontalCenter: tela.horizontalCenter
-        anchors.top: tela.top
-        anchors.topMargin: 16
+        anchors.left: tela.left
+        anchors.bottom: tela.bottom
+        anchors.margins: 16
         width: Math.min(linhaDaConquista.implicitWidth + 24, tela.width - 32)
         height: linhaDaConquista.implicitHeight + 16
         visible: false
@@ -342,11 +344,12 @@ Window {
         }
     }
 
-    // Os contadores dos placares em andamento, no canto de baixo à esquerda. O RA não deixa
-    // desligá-los, só os avisos de começo e fim.
+    // Os contadores dos placares em andamento, no canto de baixo à direita, como no RALibretro: o
+    // da esquerda é dos avisos. O RA não deixa desligá-los, só os avisos de começo e fim. Com o
+    // aviso de calibração do Boomerang no mesmo canto, ficam em cima dele.
     Rectangle {
-        anchors.left: tela.left
-        anchors.bottom: tela.bottom
+        anchors.right: tela.right
+        anchors.bottom: avisoDeCalibracao.visible ? avisoDeCalibracao.top : tela.bottom
         anchors.margins: 16
         width: textoDoContador.implicitWidth + 24
         height: textoDoContador.implicitHeight + 16
