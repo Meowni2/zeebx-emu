@@ -290,6 +290,10 @@ mod com_a_feature {
         /// O token guardado já foi tentado nesta execução.
         tentou_o_token: bool,
         contadores: BTreeMap<u32, String>,
+        /// A sessão do jogo aberto já tem o cliente. Um jogo aberto antes de o login terminar —
+        /// o `zeebx-qt <jogo>` abre antes do primeiro login com o token — ganha o cliente depois:
+        /// ver [`NoNucleo::depois_do_passo`].
+        ligado: bool,
     }
 
     impl NoNucleo {
@@ -442,8 +446,8 @@ mod com_a_feature {
         }
 
         /// O que a interface faz a cada leitura: entra com o token guardado na primeira vez, e
-        /// anda com os pedidos quando não há jogo aberto (com jogo, quem anda é o passo). Devolve
-        /// se as configurações mudaram e precisam ser gravadas.
+        /// anda com os pedidos quando nenhuma sessão tem o cliente (com uma, quem anda é o passo).
+        /// Devolve se as configurações mudaram e precisam ser gravadas.
         pub fn a_cada_quadro(&mut self, settings: &mut Settings) -> bool {
             if !self.tentou_o_token {
                 self.tentou_o_token = true;
@@ -463,13 +467,13 @@ mod com_a_feature {
             let Some(cliente) = self.cliente.clone() else {
                 return false;
             };
-            if self.jogo.is_none() {
-                cliente.borrow_mut().ocioso(None);
-            }
-            // Sem jogo aberto, os eventos que chegam são do login; com jogo, o passo os lê.
-            if self.jogo.is_some() {
+            // **Sem sessão ligada, é aqui que o login anda.** Antes, com um jogo aberto este passo
+            // não fazia nada, e um jogo aberto antes de o login terminar travava os dois: o login
+            // esperava um quadro que nenhuma sessão rodava.
+            if self.ligado {
                 return false;
             }
+            cliente.borrow_mut().ocioso(None);
             let eventos = cliente.borrow_mut().eventos();
             let mut mudou = false;
             for evento in eventos {
@@ -517,16 +521,19 @@ mod com_a_feature {
                 zeebx::library::chave_do_jogo(caminho),
             ));
             // Com o login a caminho também: o rcheevos espera ele terminar antes de carregar.
+            self.ligado = false;
             if (self.conectado() || self.entrando.is_some())
                 && let Some(cliente) = &self.cliente
             {
                 sessao.liga_conquistas(Rc::clone(cliente));
+                self.ligado = true;
             }
         }
 
         pub fn desliga(&mut self, sessao: &mut Session) {
             sessao.desliga_conquistas();
             self.jogo = None;
+            self.ligado = false;
             self.contadores.clear();
         }
 
@@ -551,6 +558,20 @@ mod com_a_feature {
             let Some(cliente) = self.cliente.clone() else {
                 return volta;
             };
+            // O login terminou com o jogo já aberto: a sessão ganha o cliente agora. No hardcore,
+            // não: o jogo rodou até aqui sem as travas, e o RA exige o hardcore desde o começo
+            // da partida. O jogo recomeça, e a abertura liga o cliente.
+            if !self.ligado && self.jogo.is_some() && self.conectado() {
+                if settings.conquistas.hardcore {
+                    volta.reiniciar = true;
+                    return volta;
+                }
+                sessao.liga_conquistas(Rc::clone(&cliente));
+                self.ligado = true;
+            }
+            if !self.ligado {
+                return volta;
+            }
             if pausada {
                 sessao.conquistas_ociosas();
             }
