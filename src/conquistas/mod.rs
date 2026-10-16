@@ -29,7 +29,10 @@ use rcheevos_sys as rc;
 
 pub mod http;
 pub mod icones;
+pub mod pendentes;
 pub mod resumos;
+
+use pendentes::Pendentes;
 
 /// O cliente que a janela guarda e a sessão usa. Um só por processo: a conta é uma só.
 pub type Compartilhado = Rc<RefCell<Conquistas>>;
@@ -130,6 +133,9 @@ pub trait Servidor {
 struct Retorno {
     callback: unsafe extern "C" fn(*const rc::rc_api_server_response_t, *mut c_void),
     dados: *mut c_void,
+    /// A chave do pedido na fila em disco, se ele é um dos que não podem se perder. Ver
+    /// [`pendentes`].
+    pendente: Option<String>,
 }
 
 // SAFETY: o retorno só é **chamado** na thread do cliente, em `Conquistas::entrega_respostas`.
@@ -357,6 +363,11 @@ struct Estado {
     memoria: Option<*const (dyn Memoria + 'static)>,
     mapa: Mapa,
     eventos: Vec<Evento>,
+    pendentes: Pendentes,
+    /// O login deu certo e a fila da execução anterior ainda não foi mandada de novo.
+    reenviar: bool,
+    /// O servidor em uso, quando não é o oficial: os pedidos remontados vão para ele.
+    host: Option<CString>,
 }
 
 /// O que a [`crate::session::Session`] guarda das conquistas.
@@ -380,13 +391,43 @@ pub struct Conquistas {
 impl Conquistas {
     /// Um cliente desconectado, em modo **casual**: o hardcore só vale para emuladores aceitos
     /// pelo RA, e o Zeebx ainda não é um deles.
+    ///
+    /// A fila de desbloqueios pendentes fica em [`pendentes::caminho_padrao`]; nos testes, que não
+    /// podem tocar a configuração de quem os roda, ela fica desligada. Ver [`Conquistas::com_fila`].
+    ///
+    /// **`ZEEBX_RA_HOST`** troca o servidor, para desenvolver contra o
+    /// `ferramentas/servidor_ra_simulado.py` (ver `docs/implementacao/25-conquistas.md`).
     pub fn novo(servidor: Box<dyn Servidor>) -> Self {
+        #[cfg(not(test))]
+        let fila = Pendentes::em(pendentes::caminho_padrao());
+        #[cfg(test)]
+        let fila = Pendentes::desligada();
+        let mut conquistas = Self::com_fila(servidor, fila);
+        if let Some(host) = std::env::var("ZEEBX_RA_HOST")
+            .ok()
+            .filter(|h| !h.trim().is_empty())
+        {
+            crate::registro!(
+                crate::registro::Nivel::Aviso,
+                "conquistas",
+                "ZEEBX_RA_HOST: falando com {host}, e não com o RetroAchievements"
+            );
+            conquistas.define_host(Some(host.trim()));
+        }
+        conquistas
+    }
+
+    /// Como o [`Conquistas::novo`], com a fila de pendentes dada.
+    pub fn com_fila(servidor: Box<dyn Servidor>, pendentes: Pendentes) -> Self {
         let estado = Box::into_raw(Box::new(Estado {
             servidor,
             fila: Arc::default(),
             memoria: None,
             mapa: Mapa::provisorio(),
             eventos: Vec::new(),
+            pendentes,
+            reenviar: false,
+            host: None,
         }));
         // SAFETY: os retornos têm as assinaturas dos tipos do header. O `estado` vive até o
         // `Drop`, que destrói o cliente antes de soltá-lo.
@@ -419,13 +460,15 @@ impl Conquistas {
     /// Aponta para outro servidor, como o de testes do RA. `None` volta ao oficial.
     pub fn define_host(&mut self, host: Option<&str>) {
         let host = host.and_then(|h| CString::new(h).ok());
-        // SAFETY: o rcheevos copia a string.
+        // SAFETY: o rcheevos copia a string; nenhuma chamada ao C em andamento ao mexer no
+        // `Estado` (ver [`Estado`]).
         unsafe {
             rc::rc_client_set_host(
                 self.cliente,
                 host.as_ref().map_or(std::ptr::null(), |h| h.as_ptr()),
-            )
-        };
+            );
+            (*self.estado).host = host;
+        }
     }
 
     /// O user agent que o servidor de HTTP deve mandar: `Zeebx/<versão> (<sistema>)` e o trecho
@@ -740,6 +783,53 @@ impl Conquistas {
         unsafe { (*self.estado).memoria = None };
     }
 
+    /// Quantos desbloqueios e placares esperam o servidor, na fila em disco.
+    pub fn pendentes(&self) -> usize {
+        // SAFETY: nenhuma chamada ao C em andamento; ver [`Estado`].
+        unsafe { (*self.estado).pendentes.quantos() }
+    }
+
+    /// Manda de novo, depois do login, o que uma execução anterior deixou na fila. A resposta
+    /// não volta ao rcheevos — ele não fez esses pedidos —, só tira o pedido da fila.
+    ///
+    /// O pedido é **remontado** pelo rcheevos, com o token do login de agora, o servidor de agora
+    /// e há quantos segundos o desbloqueio aconteceu: ver [`pendentes`].
+    fn reenvia_pendentes(&mut self) {
+        // SAFETY: nenhuma chamada ao C em andamento; ver [`Estado`].
+        let estado = unsafe { &mut *self.estado };
+        if !std::mem::take(&mut estado.reenviar) {
+            return;
+        }
+        let Some((usuario, token)) = self.usuario().map(|u| (u.nome, u.token)) else {
+            return;
+        };
+        let pendentes = estado.pendentes.da_execucao_anterior(&usuario);
+        if !pendentes.is_empty() {
+            crate::registro!(
+                crate::registro::Nivel::Informacao,
+                "conquistas",
+                "mandando de novo {} pedido(s) que ficaram de uma execução anterior",
+                pendentes.len()
+            );
+        }
+        let agora = agora();
+        for (chave, pendente) in pendentes {
+            let Some(pedido) = monta(&pendente, &usuario, &token, estado.host.as_ref(), agora)
+            else {
+                continue;
+            };
+            let entrega = Entrega {
+                fila: Arc::clone(&estado.fila),
+                retorno: Some(Retorno {
+                    callback: ignora_resposta,
+                    dados: std::ptr::null_mut(),
+                    pendente: Some(chave),
+                }),
+            };
+            estado.servidor.pede(pedido, entrega);
+        }
+    }
+
     /// Passa ao rcheevos as respostas que chegaram, uma de cada vez.
     ///
     /// Uma resposta pode gerar o pedido seguinte (o login termina, o carregamento continua), e um
@@ -751,9 +841,14 @@ impl Conquistas {
             let fila = unsafe { Arc::clone(&(*self.estado).fila) };
             let chegadas = std::mem::take(&mut *fila.lock().unwrap_or_else(|e| e.into_inner()));
             if chegadas.is_empty() {
+                self.reenvia_pendentes();
                 return;
             }
             for chegada in chegadas {
+                if let Some(chave) = &chegada.retorno.pendente {
+                    // SAFETY: nenhuma chamada ao C em andamento; ver [`Estado`].
+                    unsafe { (*self.estado).pendentes.resolve(chave, chegada.status) };
+                }
                 let resposta = rc::rc_api_server_response_t {
                     body: chegada.corpo.as_ptr().cast(),
                     body_length: chegada.corpo.len(),
@@ -891,13 +986,95 @@ unsafe extern "C" fn chama_servidor(
             corpo: talvez(pedido.post_data),
             tipo: talvez(pedido.content_type),
         };
+        let pendente = estado.pendentes.anota(&pedido, agora());
         let entrega = Entrega {
             fila: Arc::clone(&estado.fila),
-            retorno: Some(Retorno { callback, dados }),
+            retorno: Some(Retorno {
+                callback,
+                dados,
+                pendente,
+            }),
         };
         estado.servidor.pede(pedido, entrega);
     }
 }
+
+/// O relógio do mundo, em segundos desde 1970: o instante de um desbloqueio na fila.
+fn agora() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// Remonta um pedido da fila pelo rcheevos: a URL, o corpo e a assinatura `v` são os dele.
+fn monta(
+    pendente: &pendentes::Pendente,
+    usuario: &str,
+    token: &str,
+    host: Option<&CString>,
+    agora: u64,
+) -> Option<Pedido> {
+    let usuario = CString::new(usuario).ok()?;
+    let token = CString::new(token).ok()?;
+    let hash = CString::new(pendente.hash.as_str()).ok()?;
+    let atras = u32::try_from(agora.saturating_sub(pendente.quando)).unwrap_or(u32::MAX);
+    let host = rc::rc_api_host_t {
+        host: host.map_or(std::ptr::null(), |h| h.as_ptr()),
+        media_host: std::ptr::null(),
+    };
+    // SAFETY: o pedido é montado e lido aqui, sem sair do lugar entre o `init` e o `destroy` (ver
+    // [`rc::rc_api_request_t`]); as strings de entrada vivem até o fim da função.
+    unsafe {
+        let mut pedido = std::mem::MaybeUninit::<rc::rc_api_request_t>::zeroed();
+        let resultado = match pendente.o_que {
+            pendentes::OQue::Desbloqueio {
+                conquista,
+                hardcore,
+            } => {
+                let parametros = rc::rc_api_award_achievement_request_t {
+                    username: usuario.as_ptr(),
+                    api_token: token.as_ptr(),
+                    achievement_id: conquista,
+                    hardcore: u32::from(hardcore),
+                    game_hash: hash.as_ptr(),
+                    seconds_since_unlock: atras,
+                };
+                rc::rc_api_init_award_achievement_request_hosted(
+                    pedido.as_mut_ptr(),
+                    &parametros,
+                    &host,
+                )
+            }
+            pendentes::OQue::Placar { placar, valor } => {
+                let parametros = rc::rc_api_submit_lboard_entry_request_t {
+                    username: usuario.as_ptr(),
+                    api_token: token.as_ptr(),
+                    leaderboard_id: placar,
+                    score: valor,
+                    game_hash: hash.as_ptr(),
+                    seconds_since_completion: atras,
+                };
+                rc::rc_api_init_submit_lboard_entry_request_hosted(
+                    pedido.as_mut_ptr(),
+                    &parametros,
+                    &host,
+                )
+            }
+        };
+        let p = pedido.as_mut_ptr();
+        let montado = (resultado == rc::RC_OK).then(|| Pedido {
+            url: texto((*p).url),
+            corpo: talvez((*p).post_data),
+            tipo: talvez((*p).content_type),
+        });
+        rc::rc_api_destroy_request(p);
+        montado
+    }
+}
+
+/// O retorno dos pedidos mandados de novo pelo [`Conquistas`], e não pelo rcheevos: a resposta só
+/// importa à fila, que o [`Conquistas::entrega_respostas`] já atualizou.
+unsafe extern "C" fn ignora_resposta(_: *const rc::rc_api_server_response_t, _: *mut c_void) {}
 
 unsafe extern "C" fn ao_entrar(
     resultado: c_int,
@@ -911,7 +1088,10 @@ unsafe extern "C" fn ao_entrar(
             rc::RC_OK => Ok(()),
             _ => Err(texto(mensagem)),
         };
-        estado_de(cliente).eventos.push(Evento::Entrou(evento));
+        let estado = estado_de(cliente);
+        // A fila da execução anterior vai ao servidor depois do login, que é quando há token.
+        estado.reenviar |= evento.is_ok();
+        estado.eventos.push(Evento::Entrou(evento));
     }
 }
 
