@@ -9,6 +9,7 @@
 
 #include "rc_client.h"
 #include "rc_api_request.h"
+#include "rc_api_runtime.h"
 #include "rc_consoles.h"
 #include "rc_error.h"
 
@@ -17,6 +18,14 @@
 
 ZEEBX_TAMANHO(rc_api_request_t)
 ZEEBX_POSICAO(rc_api_request_t, content_type)
+ZEEBX_POSICAO(rc_api_request_t, buffer)
+ZEEBX_TAMANHO(rc_buffer_t)
+ZEEBX_POSICAO(rc_buffer_t, data)
+ZEEBX_TAMANHO(rc_api_host_t)
+ZEEBX_TAMANHO(rc_api_award_achievement_request_t)
+ZEEBX_POSICAO(rc_api_award_achievement_request_t, seconds_since_unlock)
+ZEEBX_TAMANHO(rc_api_submit_lboard_entry_request_t)
+ZEEBX_POSICAO(rc_api_submit_lboard_entry_request_t, seconds_since_completion)
 
 ZEEBX_TAMANHO(rc_api_server_response_t)
 ZEEBX_POSICAO(rc_api_server_response_t, http_status_code)
