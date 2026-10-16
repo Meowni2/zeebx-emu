@@ -16,6 +16,8 @@ struct Roteiro {
     retidas: Vec<(String, Entrega)>,
     /// O user agent que o cliente passou ao servidor.
     user_agent: String,
+    /// Os valores de `r=` que respondem como se não houvesse rede.
+    sem_rede: Vec<&'static str>,
 }
 
 struct ServidorSimulado(Rc<RefCell<Roteiro>>);
@@ -34,6 +36,10 @@ impl Servidor for ServidorSimulado {
         }
         if roteiro.segura {
             roteiro.retidas.push((r, entrega));
+            return;
+        }
+        if roteiro.sem_rede.contains(&r.as_str()) {
+            entrega.falha_de_rede("sem rede");
             return;
         }
         let corpo = roteiro
@@ -619,4 +625,107 @@ fn a_lista_agrupa_as_conquistas_e_acompanha_o_desbloqueio() {
         .unwrap();
     assert!(primeira.desbloqueada && !primeira.no_hardcore, "{lista:?}");
     assert_eq!(c.resumo().map(|r| r.desbloqueadas), Some(1));
+}
+
+/// O desbloqueio feito sem rede sobrevive ao fechamento: fica na fila em disco, e a execução
+/// seguinte o manda de novo depois do login. O RA exige isso, e o rcheevos sozinho só guarda na
+/// memória.
+///
+/// A segunda execução fala com **outro** servidor, de propósito: a primeira versão da fila
+/// guardava a URL, e na janela de verdade mandou o desbloqueio para o host da execução anterior.
+#[test]
+fn o_desbloqueio_sem_rede_vai_na_execucao_seguinte() {
+    let pasta = crate::scratch::TempDir::new("zeebx-conquistas-fila-offline");
+    let caminho = pasta.join("pendentes.json");
+
+    // Primeira execução: o desbloqueio acontece, e o servidor não responde.
+    let mut memoria = memoria();
+    let roteiro = Rc::new(RefCell::new(Roteiro {
+        respostas: [
+            ("login2", LOGIN.to_string()),
+            ("achievementsets", CONJUNTO.to_string()),
+            ("startsession", SEM_DESBLOQUEIOS.to_string()),
+        ]
+        .into_iter()
+        .collect(),
+        sem_rede: vec!["awardachievement"],
+        ..Default::default()
+    }));
+    let mut c = Conquistas::com_fila(
+        Box::new(ServidorSimulado(Rc::clone(&roteiro))),
+        pendentes::Pendentes::em(caminho.clone()),
+    );
+    c.entra_com_senha("User", "Pa$$word");
+    c.carrega_jogo("0123456789abcdef0123456789abcdef");
+    c.quadro(&memoria);
+    c.quadro(&memoria);
+    memoria.bytes[1] = 3;
+    memoria.bytes[2] = 7;
+    c.quadro(&memoria);
+    assert!(
+        c.eventos()
+            .iter()
+            .any(|e| matches!(e, Evento::Desbloqueou(x) if x.id == 5501))
+    );
+    assert_eq!(c.pendentes(), 1, "o desbloqueio sem resposta ficou na fila");
+    drop(c);
+
+    // Dois minutos sem rede: o desbloqueio aconteceu 120 s antes da execução seguinte.
+    let mut fila: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&caminho).unwrap()).unwrap();
+    let quando = fila[0]["quando"].as_u64().unwrap();
+    fila[0]["quando"] = serde_json::json!(quando - 120);
+    std::fs::write(&caminho, serde_json::to_vec(&fila).unwrap()).unwrap();
+
+    // Segunda execução, com rede: o login manda o que ficou, e a fila esvazia.
+    let roteiro = Rc::new(RefCell::new(Roteiro {
+        respostas: [
+            ("login2", LOGIN.to_string()),
+            ("awardachievement", DESBLOQUEIO.to_string()),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    }));
+    let mut c = Conquistas::com_fila(
+        Box::new(ServidorSimulado(Rc::clone(&roteiro))),
+        pendentes::Pendentes::em(caminho.clone()),
+    );
+    c.define_host(Some("http://outro.servidor"));
+    assert_eq!(c.pendentes(), 1);
+    c.entra_com_senha("User", "Pa$$word");
+    c.ocioso(None);
+    let reenviado = roteiro
+        .borrow()
+        .pedidos
+        .iter()
+        .find(|p| parametro(p, "r").as_deref() == Some("awardachievement"))
+        .cloned()
+        .expect("o desbloqueio foi mandado de novo");
+    assert_eq!(parametro(&reenviado, "a").as_deref(), Some("5501"));
+    assert_eq!(parametro(&reenviado, "h").as_deref(), Some("0"));
+    assert_eq!(
+        parametro(&reenviado, "t").as_deref(),
+        Some("ApiToken"),
+        "o token do login de agora"
+    );
+    let atras: u64 = parametro(&reenviado, "o")
+        .and_then(|o| o.parse().ok())
+        .expect("há quanto tempo foi");
+    assert!(
+        (120..130).contains(&atras),
+        "o={atras}: o instante é o do desbloqueio"
+    );
+    assert!(
+        reenviado.url.starts_with("http://outro.servidor/"),
+        "o servidor de agora: {}",
+        reenviado.url
+    );
+    assert_eq!(c.pendentes(), 0, "a resposta tirou da fila");
+    drop(c);
+    assert_eq!(
+        pendentes::Pendentes::em(caminho).quantos(),
+        0,
+        "o arquivo também"
+    );
 }
