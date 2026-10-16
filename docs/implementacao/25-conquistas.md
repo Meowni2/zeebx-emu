@@ -114,8 +114,12 @@ para o loader. Assim o hash de referência mora num lugar só. No Double Dragon 
 `md5sum` do arquivo.
 
 **A extensão `.mod` não identifica o Zeebo** no `rc_hash`: ela também é a dos módulos de música, e a
-decisão é dos mantenedores. Ainda falta contar quantos jogos do acervo carregam módulo de
-extensão, antes do PR do hash.
+decisão é dos mantenedores.
+
+**Deixar as extensões de fora quase não custa.** Medido em 2026-10-14 com o `library::extensoes` na
+biblioteca inteira: **1 dos 74 jogos** traz módulo de extensão — o Action Hero 3D, com o
+`imicro3d.mod` (90.068 bytes, ClassID `0x010292c3`), que pelo nome é o motor 3D IMICRO3D, e não o
+jogo.
 
 ## O hardcore
 
@@ -155,7 +159,7 @@ rcheevos manda. Os dois sentidos têm teste.
 |---|---|
 | Configurações → Conquistas | login, conta, sair; o hardcore, que pergunta antes de reiniciar um jogo aberto; os dois avisos |
 | Ao abrir o jogo | o título, "x de y conquistas" e o modo; ou "Sem conquistas para este jogo" |
-| Durante o jogo | os avisos numa fila, quatro segundos cada: desbloqueio com ícone, placares, conexão; o contador dos placares no canto de baixo |
+| Durante o jogo | os avisos no canto de baixo à esquerda, como no RALibretro, numa fila de quatro segundos cada: desbloqueio com ícone, placares, conexão; o contador dos placares no canto de baixo à direita |
 | F6 (trocável, tecla ou botão) | a lista por cima do jogo, que fica pausado; o F6 ou o Esc fecham |
 | Detalhes da biblioteca | "Conquistas: x de y", da última vez em que o jogo foi aberto com a conta |
 
@@ -163,6 +167,15 @@ rcheevos manda. Os dois sentidos têm teste.
 RetroArch; a senha é apagada até do campo assim que vai ao servidor. Na abertura, o Zeebx entra
 sozinho com o token; um token recusado é esquecido, para não falhar do mesmo jeito em toda
 abertura.
+
+**Um jogo aberto antes de o login terminar ganha o cliente depois.** O `zeebx-qt <jogo>` abre o jogo
+antes do primeiro login com o token, e quem abre um jogo logo depois de iniciar o Zeebx também
+chega antes da resposta. A primeira versão deixava essa sessão sem conquistas e, pior, parava de
+entregar as respostas ao cliente, porque com um jogo aberto quem anda com os pedidos é o quadro da
+sessão — e a sessão não tinha cliente. Achado com o servidor simulado, na janela de verdade. Agora,
+enquanto nenhuma sessão tem o cliente, o relógio da biblioteca anda com os pedidos; quando o login
+termina, a sessão aberta o ganha. No hardcore, o jogo recomeça em vez disso: ele rodou até ali sem
+as travas, e o RA exige o hardcore desde o começo da partida.
 
 **Os ícones são baixados uma vez** (`<config>/conquistas/icones`). Ao reconhecer o jogo, o Zeebx já
 pede os de todas as conquistas, para o aviso de desbloqueio sair com o ícone.
@@ -174,6 +187,35 @@ continua entre as teclas reservadas e não chega ao jogo; nenhum mapeamento padr
 
 Os indicadores de desafio e de progresso (os ícones pequenos de "quase lá") ficaram para depois: a
 lista e os avisos cobrem o que o RA exige do *Measured*.
+
+## A fila de desbloqueios sem rede
+
+O rcheevos guarda **só na memória** o desbloqueio que não chegou ao servidor: ele tenta de novo
+enquanto o Zeebx está aberto, e fechar o emulador sem rede o perderia. O RA exige que ele fique
+guardado e seja enviado quando a rede voltar. A fila (`src/conquistas/pendentes.rs`,
+`<config>/conquistas/pendentes.json`) anota cada desbloqueio e cada envio de placar **antes** de ele
+sair, e só o tira com uma resposta definitiva — um 2xx, ou um 4xx que não seja 429. O que sobra de
+uma execução é mandado de novo na seguinte, logo depois do login, e a resposta só tira o pedido da
+fila: ela não volta ao rcheevos, que não fez esse pedido.
+
+**Guarda-se o que o pedido significa, e não o pedido.** A primeira versão guardava a URL e o corpo,
+e passou nos testes com servidor simulado. Na janela de verdade, com o servidor simulado recusando
+os desbloqueios com 503, ela falhou de dois jeitos:
+
+- **12 tentativas de 2 conquistas viraram 10 entradas.** A cada tentativa nova o rcheevos acrescenta
+  `o=<segundos desde o desbloqueio>`, que muda a assinatura `v`; o corpo nunca se repete.
+- **A execução seguinte mandou para o servidor da anterior.** A URL guardava o host.
+
+Agora a entrada é a conquista (ou o placar e o valor), o modo, o hash do jogo, a conta e o
+**instante** do desbloqueio. O pedido é remontado pelo próprio rcheevos
+(`rc_api_init_award_achievement_request_hosted`) na hora do envio, com o servidor e o token de
+então e o `o` certo: na conferência, dois desbloqueios guardados sem rede foram reenviados a outro
+servidor com `o=31` e `o=27`, e a fila esvaziou. **O token não vai para o arquivo**, e uma entrada
+de outra conta espera o login dela.
+
+Para montar o pedido, o `rc_api_request_t` passou a ser copiado inteiro nos bindings. Ele guarda as
+strings num buffer que aponta para dentro dele mesmo, e por isso não pode mudar de lugar entre o
+`init` e o `destroy`: é montado e lido na mesma função.
 
 ## O mapa de memória
 
@@ -216,6 +258,7 @@ faixa vazia maior que 64 KB exige que o core Libretro declare o mapa por
 | `rcheevos-sys`: `os_structs_batem_com_o_c`, `as_constantes_batem_com_o_c` | os bindings copiados à mão batem com o C no alvo |
 | `conquistas::testes` | login, token, jogo desconhecido, desbloqueio casual, endereço que não se lê, hardcore, progresso, lista e resumo, com o servidor simulado |
 | `conquistas::http::testes` | o login sai por HTTP de verdade para um servidor em `127.0.0.1`: POST, corpo, `Content-Type` e user agent |
+| `conquistas::pendentes::testes` e `o_desbloqueio_sem_rede_vai_na_execucao_seguinte` | a fila: só desbloqueio e placar, as tentativas com `o` e `v` diferentes são uma entrada só, sem token no arquivo, e o reenvio vai ao servidor de agora com há quanto tempo foi |
 | `session::tests::as_conquistas_contam_quadros_pelo_relogio_virtual` | sem o relógio andar, nenhum quadro |
 | `session::tests::o_hardcore_recusa_…`, `o_rewind_no_hardcore_…`, `o_save_state_leva_…` | as travas e o progresso, na sessão |
 | `session::tests::uma_conquista_dispara_num_jogo_de_verdade` | com `ZEEBX_TESTE_ROM`, uma conquista sobre a memória que o Dynarmic executa dispara |
@@ -238,6 +281,28 @@ funciona. Com o servidor do RA de verdade, todo jogo do Zeebo é desconhecido, e
 desbloqueio, os placares, a lista com itens e o hardcore na janela só se veem com um servidor
 simulado.
 
+### O servidor simulado
+
+O `ferramentas/servidor_ra_simulado.py` responde como o servidor do RA para **um** jogo, só com a
+biblioteca padrão do Python e só em `127.0.0.1`. O Zeebx fala com ele pela variável
+`ZEEBX_RA_HOST`, que troca o servidor de qualquer `Conquistas::novo` e deixa um aviso no registro:
+
+```bash
+python3 ferramentas/servidor_ra_simulado.py --jogo "…/Peggle (Brazil) (Es,Pt)/mod/278962/peggle.mod"
+ZEEBX_RA_HOST=http://127.0.0.1:8090 ./target/release/zeebx-qt
+```
+
+Qualquer usuário e senha entram. O conjunto tem duas conquistas sobre um byte que muda sozinho (o
+`0x100000a0` do Peggle, da tabela acima; outro jogo pede `--endereco`), uma com progresso medido,
+uma sobre um endereço que o Zeebx não lê — para cair em "sem suporte" — e um placar. Os ícones são
+quadrados de uma cor, dourado e cinza. `--sem-rede-para awardachievement` responde 503 aos
+desbloqueios, que é como ver a fila de pendentes funcionar.
+
+Com ele, na janela de verdade e fora de tela, o Peggle fez o caminho inteiro: login pelo token, o
+jogo pelo hash, a sessão, três desbloqueios, o rich presence, os nove ícones baixados e o resumo
+"3 de 4" gravado. Foi assim que apareceram o jogo aberto antes do login e os dois defeitos da
+primeira fila, que os testes com servidor simulado dentro do processo não pegavam.
+
 ## O que falta
 
 - Fechar o mapa de memória com os mantenedores do RA.
@@ -245,7 +310,5 @@ simulado.
 - O console cadastrado e ativo no servidor do RA.
 - Trocar o fork pelo rcheevos oficial e ligar a feature na release, com o aviso de licença.
 - O RAIntegration no Windows, para quem cria os sets.
-- A fila de desbloqueios feitos sem rede guardada em disco (o rcheevos já a guarda em memória e
-  tenta de novo enquanto o Zeebx está aberto).
 - O `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` no core Libretro.
 - Android e iOS: a lógica está no núcleo, falta a interface.
