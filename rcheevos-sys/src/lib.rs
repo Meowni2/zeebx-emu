@@ -80,13 +80,62 @@ pub struct rc_client_async_handle_t {
     _privado: [u8; 0],
 }
 
-/// `rc_api_request_t` (`include/rc_api_request.h`), **só o começo**: depois vem o `rc_buffer_t`
-/// que guarda as strings, e ele é do rcheevos.
+/// `rc_buffer_chunk_t` (`include/rc_util.h`).
+#[repr(C)]
+pub struct rc_buffer_chunk_t {
+    pub write: *mut u8,
+    pub end: *mut u8,
+    pub start: *mut u8,
+    pub next: *mut rc_buffer_chunk_t,
+}
+
+/// `rc_buffer_t` (`include/rc_util.h`).
+#[repr(C)]
+pub struct rc_buffer_t {
+    pub chunk: rc_buffer_chunk_t,
+    pub data: [u8; 256],
+}
+
+/// `rc_api_request_t` (`include/rc_api_request.h`), inteiro: o Zeebx monta pedidos com ele.
+///
+/// **Não pode mudar de lugar entre o `rc_api_init_*` e o [`rc_api_destroy_request`].** O
+/// `rc_buffer_t` aponta para o próprio `data`, e as strings moram ali: um `rc_api_request_t`
+/// movido aponta para a memória de onde ele estava.
 #[repr(C)]
 pub struct rc_api_request_t {
     pub url: *const c_char,
     pub post_data: *const c_char,
     pub content_type: *const c_char,
+    pub buffer: rc_buffer_t,
+}
+
+/// `rc_api_host_t` (`include/rc_api_request.h`). Nulo é o servidor oficial.
+#[repr(C)]
+pub struct rc_api_host_t {
+    pub host: *const c_char,
+    pub media_host: *const c_char,
+}
+
+/// `rc_api_award_achievement_request_t` (`include/rc_api_runtime.h`).
+#[repr(C)]
+pub struct rc_api_award_achievement_request_t {
+    pub username: *const c_char,
+    pub api_token: *const c_char,
+    pub achievement_id: u32,
+    pub hardcore: u32,
+    pub game_hash: *const c_char,
+    pub seconds_since_unlock: u32,
+}
+
+/// `rc_api_submit_lboard_entry_request_t` (`include/rc_api_runtime.h`).
+#[repr(C)]
+pub struct rc_api_submit_lboard_entry_request_t {
+    pub username: *const c_char,
+    pub api_token: *const c_char,
+    pub leaderboard_id: u32,
+    pub score: i32,
+    pub game_hash: *const c_char,
+    pub seconds_since_completion: u32,
 }
 
 /// `rc_api_server_response_t` (`include/rc_api_request.h`).
@@ -266,6 +315,19 @@ pub type rc_client_event_handler_t =
 unsafe extern "C" {
     // include/rc_consoles.h
     pub fn rc_console_name(console_id: u32) -> *const c_char;
+
+    // include/rc_api_request.h e include/rc_api_runtime.h
+    pub fn rc_api_destroy_request(request: *mut rc_api_request_t);
+    pub fn rc_api_init_award_achievement_request_hosted(
+        request: *mut rc_api_request_t,
+        api_params: *const rc_api_award_achievement_request_t,
+        host: *const rc_api_host_t,
+    ) -> c_int;
+    pub fn rc_api_init_submit_lboard_entry_request_hosted(
+        request: *mut rc_api_request_t,
+        api_params: *const rc_api_submit_lboard_entry_request_t,
+        host: *const rc_api_host_t,
+    ) -> c_int;
 
     // include/rc_hash.h
     pub fn rc_hash_generate_from_buffer(
@@ -471,7 +533,16 @@ mod tests {
 
     #[test]
     fn os_structs_batem_com_o_c() {
+        confere!(tamanho rc_api_request_t);
         confere!(posicao rc_api_request_t.content_type);
+        confere!(posicao rc_api_request_t.buffer);
+        confere!(tamanho rc_buffer_t);
+        confere!(posicao rc_buffer_t.data);
+        confere!(tamanho rc_api_host_t);
+        confere!(tamanho rc_api_award_achievement_request_t);
+        confere!(posicao rc_api_award_achievement_request_t.seconds_since_unlock);
+        confere!(tamanho rc_api_submit_lboard_entry_request_t);
+        confere!(posicao rc_api_submit_lboard_entry_request_t.seconds_since_completion);
         confere!(tamanho rc_api_server_response_t);
         confere!(posicao rc_api_server_response_t.http_status_code);
         confere!(posicao rc_client_user_t.num_unread_messages);
