@@ -127,6 +127,15 @@ Window {
         onActiveFocusChanged: if (!activeFocus) solta()
         // Um jogo que sai sozinho sem Z-Wheel para onde voltar fecha a janela, como no egui.
         onFechou: janela.close()
+        onConquista: (titulo, texto, icone) => avisoDeConquista.mostra(titulo, texto, icone)
+    }
+
+    AvisoDeConquista {
+        id: avisoDeConquista
+
+        anchors.left: tela.left
+        anchors.bottom: tela.bottom
+        anchors.margins: 16
     }
 
     // O símbolo do meio da tela, como num tocador de vídeo: ⏸ enquanto o jogo está pausado; ▶
