@@ -213,6 +213,11 @@ ApplicationWindow {
             TabButton { text: janela.tr("settings.tab.graphics") }
             TabButton { text: janela.tr("settings.tab.speed") }
             TabButton { text: janela.tr("settings.tab.audio") }
+            AbaGeral {
+                text: janela.tr("settings.tab.achievements")
+                visible: !janela.doJogo && Conquistas.disponivel()
+                width: visible ? undefined : 0
+            }
             AbaGeral { text: janela.tr("settings.tab.debug") }
             AbaGeral { text: janela.tr("settings.tab.about") }
         }
@@ -1266,6 +1271,8 @@ ApplicationWindow {
                 }
             }
         }
+
+        PaginaDeConquistas {}
 
         // Depuração
         ScrollView {
