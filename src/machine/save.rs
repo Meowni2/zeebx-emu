@@ -132,6 +132,12 @@ impl<C: CpuBackend> Machine<C> {
     }
 
     pub fn grava_estado(&self) -> Vec<u8> {
+        self.grava_estado_com(|_| {})
+    }
+
+    /// O [`Machine::grava_estado`] com seções de quem está acima da máquina, que o restaurar dela
+    /// ignora.
+    pub fn grava_estado_com(&self, extras: impl FnOnce(&mut Secoes)) -> Vec<u8> {
         let mut secoes = Secoes::nova();
         secoes.poe_u32s(
             "cpu.regs",
@@ -181,6 +187,7 @@ impl<C: CpuBackend> Machine<C> {
         self.heap.grava_com_prefixo("heap", &mut secoes);
         self.objects.grava(&mut secoes);
         self.superficies.grava_com_prefixo("surfaces", &mut secoes);
+        extras(&mut secoes);
         secoes.fecha()
     }
 
