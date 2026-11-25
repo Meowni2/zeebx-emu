@@ -746,3 +746,32 @@ wavetable with `rustysynth` and a General MIDI bank installed next to the core. 
 **a default bank** to distribute — GeneralUser GS works and its license allows it, but its text
 admits the unknown origin of some of the samples, so whoever publishes needs to decide that with
 their eyes open.
+
+### CMX: Ultimate Chess 3D's sound effects
+
+Ultimate Chess 3D keeps nineteen sound effects in Qualcomm's **CMX** format inside `main.sar`. It
+looks for each one on disk first, by a `.pmd` name (`chessbotexplode_01_v01.pmd`, the extension of
+the SDK's `AEECLSID_MEDIAPMD`), and then hands the copy from `main.sar` to an `IMedia` as a
+buffer. None of our decoders reads it, so the effect is silent and the report says so — in twenty
+virtual seconds, three of them:
+
+```
+sound rejected (unknown format, 8911 bytes, 63 6d 69 64 00 00 22 c7 00 63 00 02 01 77 61 76): ...
+```
+
+What the files show, read from `main.sar` on 2026-11-25:
+
+- `cmid` and a big-endian 32-bit size, then a 0x63-byte header of four-letter fields, each with a
+  big-endian 16-bit length: `vers` `0400` or `0405`, `tool` `Conv v1.6` (the converter that
+  produced them), `cnts` `WAVE`.
+- `trac` and a big-endian size, with the track's events as `delta ff <code> <byte>`, and the
+  sound in blocks of `delta ff f1` plus a big-endian 16-bit length, at most `0x0709` bytes.
+- One to nine blocks per effect, depending on its length.
+
+What did not work, on 2026-11-12: the samples are 4-bit and look like IMA ADPCM (sign in the
+fourth bit, falling magnitudes), but neither IMA nor Yamaha nor OKI ADPCM carries the predictor
+from one block to the next. The two single-block effects decode clean; the others drift and
+clip. The scripts of that attempt were not kept.
+
+What would settle it is an instrument, not another guess: the console firmware's own CMX decoder,
+or a CMX file whose source WAV is known.
