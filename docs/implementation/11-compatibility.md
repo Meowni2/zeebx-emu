@@ -1,25 +1,27 @@
 # 11 — Compatibility
 
-Surveyed by running **all 62 ROMs** for six virtual seconds each, without a window. The procedure
-is at the end of this document and can be repeated at any time.
+Surveyed by running **every package** for six virtual seconds each, without a window. The procedure
+is at the end of this document and can be repeated at any time. The latest survey (2026-11-25, the
+"Now" column) ran the 62 packages of one ROM folder: 61 Zeebo packages and Devil May Cry: Dante x
+Virgil, a BREW phone game. Kingdom Hearts V CAST, in the earlier surveys, is not in that folder.
 
 > "Runs" means **did not crash in six seconds**. It does not mean the screen is right or that the
 > game is playable. It is the floor, not the ceiling.
 
 ## Scoreboard
 
-| State | First survey | Later | Now |
-|---|---:|---:|---:|
-| runs | 33 | 50 | **56** |
-| exited on its own | — | — | 2 |
-| does not create the applet | 8 | 5 | 2 |
-| stops in the frame loop | 7 | 6 | 2 |
-| fails on `EVT_APP_START` | 10 | **0** | 0 |
-| too slow | 3 | 1 | 0 |
+| State | First survey | Later | Before | Now |
+|---|---:|---:|---:|---:|
+| runs | 33 | 50 | 56 | **59** |
+| exited on its own | — | — | 2 | 2 |
+| does not create the applet | 8 | 5 | 2 | 1 |
+| stops in the frame loop | 7 | 6 | 2 | **0** |
+| fails on `EVT_APP_START` | 10 | **0** | 0 | 0 |
+| too slow | 3 | 1 | 0 | 0 |
 
 ### The scan lies when the disk fills up
 
-The run that produced the "Now" column was done with the disk full, and **two games showed up as
+The run that produced the "Before" column was done with the disk full, and **two games showed up as
 "does not load"** with `No space left on device` as the reason — the scoreboard blamed the games,
 and the problem was the machine. Repeated one at a time after freeing space, **Zenonia** ran the
 full six seconds.
@@ -38,16 +40,16 @@ What remained from the scare, in `src/scan.rs`:
 
 | Game | State | Measured cause |
 |---|---|---|
-| Bejeweled Twist | crashed in the frame loop | invalid access to `0x0`, called from `0x32c20` |
-| ~~Zuma's Revenge~~ | **runs** | it was `0x0102fd92` (`JPEGDecoderBREW`) being refused and the decoder only trying PNG; with both fixed, it runs with 18,268 colours on screen |
-| Kingdom Hearts V CAST | does not create the applet | no `.mif` next to the module says which applet to create |
 | Zeebo Channels (Opera Mini) | does not create the applet | `CreateInstance` refused with error 1 |
-| Zeebo App, Zeebo Clube | exited on its own | they are system applications: they exit with no timer armed |
+| Zeebo App | exited on its own | a system application: it exits with no timer armed. Its report also has one missing API, `IWidget` selector `0x0` on class `0x01028e51` |
+| Zeebo Clube | exited on its own | a system application, like Zeebo App. It asks for `0x0100110a`, `AEECLSID_STATIC` in the SDK's `AEEClassIDs.h` — the only class the whole survey asks for and does not get |
 
-> The per-game tables below are from the **previous** survey and have aged on at least one point
-> already measured: **Double Dragon** now runs — `IFont` was implemented (the three classes it
-> asked for are no longer missing) and the save directory is now created on `OFM_CREATE`, which
-> was the reason for the "Memory is insufficient. Please delete some files." screen.
+Three rows of the previous table left it. **Bejeweled Twist** no longer stops in the frame loop: it
+passes the six seconds and, run for twenty with `zeebx run`, it is on its language screen (see
+[below](#bejeweled-twist-stops-and-it-is-not-for-anything-we-owe)). **Zuma's Revenge** runs since
+`0x0102fd92` (`JPEGDecoderBREW`) stopped being refused and the decoder stopped trying only PNG.
+**Kingdom Hearts V CAST** is not in the latest survey's folder; its last measurement is in
+[03-api-dispatch.md](03-api-dispatch.md).
 
 Twelve games changed state at once, and the cause was a single one: **the console's file system is
 case-insensitive, and ours was not.** The ten arcade ports ask for `font.fnz` and ship `font.FNZ`
@@ -56,104 +58,104 @@ pointer came right after. Raging Thunder 2 and Reckless Racing fell into the sam
 files. On Windows and macOS this worked by accident.
 
 It is worth recording how the defect was found, because the path was not obvious: the ten asked
-for six ClassIDs we do not have, which looked like the cause. **It was not** — they still lack
-those classes and run anyway. What gave the problem away was the game's own `DBGPRINTF`, with a
-`Failed to open font.fnz file!!!` on the last line of the log, and the report's list of "files not
-found" right below confirming it.
+for six ClassIDs we did not have, which looked like the cause. **It was not** — they still lacked
+those classes after the fix, and ran anyway (today the six are served, see
+[below](#the-six-classes-from-the-extensions-group--served)). What gave the problem away was the
+game's own `DBGPRINTF`, with a `Failed to open font.fnz file!!!` on the last line of the log, and
+the report's list of "files not found" right below confirming it.
 
 ## Per game
 
-### Runs clean (8)
+From the 2026-11-25 survey. A report's caveats are what it lists besides the state: files not
+found, APIs served on assumption, classes we do not have, missing APIs and allocations the heap
+refused. The scan no longer reports refused pointers or text without a font, which the previous
+tables counted.
 
-Passed the six seconds and the report has nothing to point out: no unknown class, no API served
-by assumption, no refused pointer, no file not found, no text we do not know how to draw.
+### Runs clean (27)
 
+Passed the six seconds and the report has nothing to point out.
+
+- Action Hero 3D - Wild Dog & IMICRO3D
+- Alice no Pais das Maravilhas
 - Alien Breaker Deluxe
 - Alpine Racer
+- Caveman Ninja
+- Dark Seal
+- Disney All Star Cards
+- Pac-Mania
+- Peggle
+- Prey Evil
+- Resident Evil 4 - Zeebo Edition
+- Ridge Racer
+- Super BurgerTime
+- Tekken 2
+- Tork and Kral - A Prehistorik Adventure
+- Toy Raid
 - Treino Cerebral
+- Turma da Monica em Vamos Brincar Vol. 1
+- Um Jogo de Ovos
+- Wizard Fire
 - Zeebo F.C. Super League
 - Zeebo Sports Peteca
 - Zeebo Sports Queimada
 - Zeebo Sports Tenis
 - Zeebo Sports Volei
+- Zeeboids
+- Zenonia
 
-### Runs with caveats (37)
+"Clean" is about the report, not the game: it says nothing about what is on the screen.
 
-Passed the six seconds, but the report pointed something out. The bucket is conservative: the
-`config.cfg` that Quake does not find is normal, because it only exists after saving.
+### Runs with caveats (32)
 
-| Game | Classes it asks for that we do not have | Other caveats |
-|---|---|---|
-| Armageddon Squadron |  | file not found, pointer refused |
-| Bad Dudes vs. DragonNinja | the six from the extensions group | file not found, pointer refused |
-| Caveman Ninja | the six from the extensions group | file not found, pointer refused |
-| Crash Bandicoot Nitro Kart 3D |  | file not found |
-| Dark Seal | the six from the extensions group | pointer refused |
-| Disney All Star Cards |  | API by assumption, pointer refused |
-| Double Dragon | `0x0102f679` `0x0102f681` `0x01030852` | pointer refused, text without a font |
-| FIFA 09 | `0x01001029` | file not found |
-| Galaxy on Fire | the six from the extensions group | file not found, pointer refused |
-| Heavy Barrel | the six from the extensions group | file not found, pointer refused |
-| Iron Sight |  | file not found, pointer refused |
-| Karnovs Revenge | the six from the extensions group | file not found, pointer refused |
-| Magical Drop 3 | the six from the extensions group | file not found, pointer refused |
-| Pac-Mania |  | API by assumption |
-| Powerboat Challenge | `0x01001039` + the six from the extensions group | file not found, pointer refused |
-| Quake | the six from the extensions group | file not found |
-| Quake 2 | the six from the extensions group | file not found |
-| Raging Thunder 2 |  | file not found, pointer refused |
-| Rally Master Pro | the six from the extensions group | file not found, pointer refused |
-| Reckless Racing |  | file not found, pointer refused |
-| Resident Evil 4 - Zeebo Edition | `0x0102f681` | text without a font |
-| Ridge Racer | the six from the extensions group |  |
-| Spin Master | the six from the extensions group | file not found, pointer refused |
-| Street Hoop | the six from the extensions group | file not found, pointer refused |
-| Super BurgerTime | the six from the extensions group | file not found, pointer refused |
-| Tekken 2 |  | API by assumption |
-| Ultimate Chess 3D | `0x01005503` | file not found, pointer refused |
-| Um Jogo de Ovos | the six from the extensions group | file not found |
-| Wizard Fire | the six from the extensions group | file not found, pointer refused |
-| Zeebo Clube | `0x0100110a` |  |
-| Zeebo Extreme Baja |  | file not found |
-| Zeebo Extreme Boia Cross |  | file not found |
-| Zeebo Extreme Corrida Aerea |  | file not found |
-| Zeebo Extreme Jetboard |  | file not found |
-| Zeebo Extreme Rolima |  | file not found |
-| Zeebo F.C. Foot Camp |  | file not found |
-| Zeebo Family Pack |  | file not found, pointer refused |
+Passed the six seconds, but the report pointed something out. **A file not found is rarely a
+defect**: most are a game trying one path and then another, or a save that does not exist yet.
+Ultimate Chess 3D looks for each sound on disk first (`chessbotexplode_01_v01.pmd`, then
+`pt_chessbotexplode_01_v01.pmd`) and then reads it from `main.sar`; Quake's `config.cfg` and the
+Zeebo Extreme games' `udata/optionsinfo.txt` only exist after the first save.
 
-### Does not run (12)
+| Game | Files not found | APIs on assumption | Other |
+|---|---:|---|---|
+| Armageddon Squadron | 93 |  |  |
+| Bad Dudes vs. DragonNinja | 1 |  |  |
+| Bejeweled Twist |  | surface without `IDIB` |  |
+| Crash Bandicoot Nitro Kart 3D | 103 |  |  |
+| Devil May Cry: Dante x Virgil |  | MIDI timbre | the heap refuses a 100 MB `CheckAvail`, the game's own probe |
+| Double Dragon |  | MIDI timbre |  |
+| FIFA 09 | 5 |  |  |
+| Galaxy on Fire | 55 |  |  |
+| Heavy Barrel | 1 |  |  |
+| Heavy Weapon | 1 |  |  |
+| Iron Sight | 5 |  |  |
+| Karnov's Revenge | 6 |  |  |
+| Magical Drop III | 1 |  |  |
+| Need For Speed - Carbon - Domine a Cidade | 2 |  |  |
+| Powerboat Challenge | 24 |  |  |
+| Quake | 7 |  |  |
+| Quake II | 9 |  |  |
+| Raging Thunder 2 | 187 |  |  |
+| Rally Master Pro | 71 |  |  |
+| Reckless Racing | 291 |  |  |
+| Spin Master | 1 |  |  |
+| Street Hoop | 1 |  |  |
+| Ultimate Chess 3D | 11 | MIDI timbre | its CMX sounds are refused after the six seconds (see [07-audio.md](07-audio.md#cmx-ultimate-chess-3ds-sound-effects)) |
+| Z-Wheel | 1 | five, from the stubs it runs on |  |
+| Zeebo Extreme Baja | 47 |  |  |
+| Zeebo Extreme Boia Cross | 49 |  |  |
+| Zeebo Extreme Corrida Aerea | 49 |  |  |
+| Zeebo Extreme Jetboard | 38 |  |  |
+| Zeebo Extreme Rolima | 13 |  |  |
+| Zeebo F.C. Foot Camp | 1 |  |  |
+| Zeebo Family Pack | 87 |  |  |
+| Zuma's Revenge |  | surface without `IDIB`, MIDI timbre |  |
 
-| Game | Where it stops |
-|---|---|
-| Action Hero 3D - Wild Dog and IMICRO3D | stops in the loop — invalid access to 0x00000000 (pc 0x00055568) |
-| Alice no Pais das Maravilhas | stops in the loop on pass 204 — invalid access to 0x00000000 (pc 0x000105ac) |
-| Bejeweled Twist | stops in the loop — invalid access to 0x00000024 (pc 0x00032b78) |
-| Need For Speed - Carbon - Domine a Cidade | never gets to create the applet — in the scan; fixed later, today it reaches the race ([below](#need-for-speed-carbon-not-slowness-but-a-deliberate-stop--fixed)) |
-| Prey Evil | stops in the loop — jumps to address zero (lr 0x000161d8) |
-| Turma da Monica em Vamos Brincar Vol. 1 | stops in the loop on pass 4 — invalid access to 0x00000000 (pc 0x0008a5a0) |
-| Z-Wheel | never gets to create the applet — asks for `AEECLSID_SQLMGR` |
-| Zeebo App | never gets to create the applet — asks for `0x01028e51` |
-| Zeebo Channels - Opera Mini | never gets to create the applet — asks for the network class `0x0100102e` |
-| Zenonia | never gets to create the applet — asks for `0x01003109`, from its text subsystem |
-| Pac-Mania | too slow — it draws, but pixel by pixel through the API |
-| Zumas Revenge | stops in the loop on pass 55 — invalid access to 0x0000000c (pc 0x00046b94) |
+"MIDI timbre" is the synthesized MIDI, whose instruments are an approximation until the console's
+bank is read ([07-audio.md](07-audio.md)). "Surface without `IDIB`" is a game surface drawn
+through `BltIn`.
 
-> **Later measurements have already knocked out five rows of this table**, and they are recorded
-> here because the whole table is out of date: **Zenonia** runs **413 loop passes** in six virtual
-> seconds — its class `0x01003109` is implemented as an `IControl` and wired to `CreateInstance`,
-> with no probe at all; **Prey Evil** runs **358 frames** since the OpenGL buffer objects exist
-> (see [06-video-3d.md](06-video-3d.md)); and **Bejeweled Twist** still stops, but for a reason
-> that is not ours — see below. And the two that depended on an extension module from their own
-> package — **Action Hero 3D**, which runs the loop with a clean report, and **Kingdom Hearts**,
-> which does 405 passes with the screen drawn — are in [03-api-dispatch.md](03-api-dispatch.md).
+### Does not run (3)
 
-> **This table is from an earlier measurement.** Today's open scan shows that Z-Wheel, Zeebo App,
-> Action Hero 3D, Alice, Prey Evil, Turma da Mônica and Zuma's Revenge **create the applet** —
-> the last four already did, and the first two are no longer stuck there. Where each one stops
-> after that is an execution measurement, and it has not been redone yet. The three that still do
-> not create the applet are detailed in
-> [The four that do not open](#the-four-that-do-not-open-one-by-one).
+The three rows of [What still does not run](#what-still-does-not-run-and-why): Opera Mini does not
+create the applet, and Zeebo App and Zeebo Clube exit on their own.
 
 ### The `nResID` that counted for nothing
 
@@ -220,25 +222,36 @@ it was the game retrying against bitmaps that measured 0×0. Six virtual seconds
 than five minutes** (blowing the `timeout`) to **2.1 seconds**, and it draws — with the wrong
 colours, which is its next step.
 
-### The six classes from the extensions group
+### The six classes from the extensions group — served
 
 ```
 0x0103d8de  0x0103d8eb  0x0103d8ef  0x0103d8f0  0x0103def1  0x010426e3
 ```
 
-Asked for by seventeen games, and **none of them needs them to run**: they all receive
-`ECLASSNOTSUPPORT` and fall back to the alternative path. Quake's log and the arcade ports' show
-where they come from — `GLES_ext.c` from the BREW SDK itself, which the games link:
+Asked for by seventeen games in the earlier surveys, and **none of them needed them to run**:
+they all received `ECLASSNOTSUPPORT` and fell back to the alternative path. Quake's log and the
+arcade ports' show where they come from — `GLES_ext.c` from the BREW SDK itself, which the games
+link:
 
 ```
 eglGetProcAddress (NBI) - got V2 EGLSurfaceManip interface
 eglGetProcAddress (NBI) - got V2 GLESImageonExt interface
 ```
 
-In other words: they are the console's OpenGL ES extensions, and the two that the games announce
-they got are precisely the ones we already implement. What these six do, and whether any of them
-changes what is drawn on screen, has not been surveyed yet — but none of them keeps any game from
-running today.
+They are the console's OpenGL ES extensions, and since `0832a559` all six are served — Prey Evil
+was the game that needed them to draw:
+
+| ID | SDK name | Interface |
+|---|---|---|
+| `0x0103d8de` | `AEEIID_GLES10EXT` | `IGLES10Ext` |
+| `0x0103d8eb` | `AEECLSID_GLES11EXT` | `IGLES11Ext` |
+| `0x0103d8ef` | `AEEIID_EGLGETCOLORBUFFER` | `IEGLGetColorBuffer` |
+| `0x0103d8f0` | `AEEIID_EGLGETPOWERLEVEL` | `IEGLGetPowerLevel` |
+| `0x0103def1` | `AEEIID_GLES11EXTPAK` | `IGLES11ExtPak` |
+| `0x010426e3` | `AEEIID_EGLOESSWAPINTERVAL` | `IEGLOESSwapInterval` |
+
+In the 2026-11-25 survey no report lists any of them among the classes we do not have. The
+vtables follow the SDK headers, checked by zeebx-core's `tools/check_sdk_slots.py`.
 
 ## The four that do not open, one by one
 
@@ -543,6 +556,14 @@ And around it:
   bytes) load and play, IMA ADPCM decoded, peak 0.71. Nothing to fix here.
 - **Vibration does not reach the controller**: the game vibrates through `ISound`, whose
   `Vibrate` only answers that it finished.
+- **Ten frames per second, by the game's design.** Each frame ends with
+  `ISHELL_SetTimer(100 ms − the time the frame took)`: on the title screen, 199 of the 202
+  `SetTimer` calls in twenty virtual seconds ask for 100 ms, and the clock shows 201 timer
+  firings. Its logic advances once per frame, so a faster pace would be a faster game, not a
+  smoother one — measured on 2026-11-12 by dividing that timer by three, which made the title
+  animation run about three times as fast. The emulator is not the limit: `zeebx bench` counts 38
+  million ARM instructions in those twenty virtual seconds of title screen, a small fraction of
+  what a 528 MHz ARM runs in that time.
 
 ## The `printf` width was an invisible defect
 
@@ -560,6 +581,11 @@ It was the same list that gave away the arcade ports' `font.fnz`, and both times
 there from the start. The lesson: **the report's list of files not found is signal, not noise.**
 
 ## Bejeweled Twist stops, and it is not for anything we owe
+
+> **It no longer stops.** In the 2026-11-25 survey it passes the six seconds, and run for twenty
+> virtual seconds with `zeebx run` it shows its language screen (English, Español, Português),
+> with no invalid access. Which change filled the three fields below was not traced. The
+> diagnosis stays because it is still how this crash would be read if it came back.
 
 Worth recording a diagnosis that did **not** end in a fix, because its value is closing the
 question: the game shows up as "stops in the loop — invalid access to `0x00000024`", and the
@@ -602,6 +628,9 @@ ZEEBX_ROM=roms ZEEBX_ROM_OUT=out ZEEBX_ROM_BASE=docs/scan \
 |---|---|
 | `ZEEBX_ROM` | a `.mod`/`.zip`, a comma-separated list, or a directory |
 | `ZEEBX_ROM_MS` | how much **virtual** time to run, in ms (default 6000, the one on this page) |
+| `ZEEBX_ROM_CAP` | **real**-time cap per game, in seconds (default 90) |
+| `ZEEBX_ROM_OUT` | directory where to write each game's full report |
+| `ZEEBX_ROM_BASE` | baseline directory: what is missing is written, what exists is checked |
 
 > **Warm the cache before comparing.** The **first** game opened from each extraction executes
 > differently from the following ones — measured: 760,921 instructions with a cold cache against
@@ -609,9 +638,15 @@ ZEEBX_ROM=roms ZEEBX_ROM_OUT=out ZEEBX_ROM_BASE=docs/scan \
 > baseline flags that difference as a regression. Run the corpus once without `ZEEBX_ROM_BASE`
 > (the warm-up pass) and only the second pass counts as a measurement. See
 > `docs/OPTIMIZING_V0.3.0.md`, section 33.
-| `ZEEBX_ROM_CAP` | **real**-time cap per game, in seconds (default 90) |
-| `ZEEBX_ROM_OUT` | directory where to write each game's full report |
-| `ZEEBX_ROM_BASE` | baseline directory: what is missing is written, what exists is checked |
+
+> **`docs/scan/` no longer works as a baseline.** Every game shows up as changed against it, for
+> three reasons measured on 2026-11-25: its reports are still in Portuguese (`estado: roda`), from
+> before the codebase moved to English; they carry the recording machine's paths
+> (`open failed: /home/<user>/.config/zeebx/...`); and the scan runs on the real saves folder, so
+> a game that rotates its saves changes between two runs — Ultimate Chess 3D's `setting.sv0`,
+> `sv1` and `sv2` came out different in two runs in a row against a baseline written one minute
+> earlier. A fresh one would inherit the last two. Recording it again is only worth it once the
+> scan writes paths relative to the profile and runs on a throwaway saves folder.
 
 No ROM is in the tree, so without `ZEEBX_ROM` both tests warn and pass — `cargo test` does not
 turn into a sixty-five-game scan without someone asking for it.
