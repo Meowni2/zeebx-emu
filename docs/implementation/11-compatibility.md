@@ -530,11 +530,13 @@ And around it:
   phone's screen instead — 240×400 here, the size of its `wqvga` art — in `GetDeviceInfo` and in
   `AEEAppStart`, and the game draws exactly that area from the corner (title, menus and a mission
   measured; 240×320 also lays out). The console's framebuffer stays 640×480, so save states and
-  2D surfaces do not change. `Session::display_screen` is that area alone, and the Qt window and
-  the `libretro` core show it, scaled with its own 3:5 aspect (the integer scale counts its
-  pixels). Every other frontend still calls `Session::screen` and gets the area **centred** on a
-  black 640×480 screen — never the game squeezed into a corner — until it learns to crop:
-  Android, iOS, the Vita apps, Switch and the headless build.
+  2D surfaces do not change. `Session::display_screen` is that area alone, and every frontend
+  with a screen of its own shows it, scaled with its own 3:5 aspect (the integer scale counts its
+  pixels): the Qt window, the `libretro` core — and with it RetroArch on Switch and Vita —,
+  Android, iOS and the headless window. The Vita app draws it 1:1 in the middle of its 960×544,
+  as it draws a Zeebo game. `Session::screen` keeps the area **centred** on a black 640×480 —
+  never the game squeezed into a corner — for whoever promised the console's size: the headless
+  build's raw dump and the frames of `zeebx session --dump`.
 - **Music or effects, never both — by the game's design.** OPTION > SOUND OPTION offers OFF, BGM
   and SE, and BGM is the default. The choice is the second byte of `database.sav` (read into the
   applet at `+0xe9c`), and the game's `playSound` (`0x313a4`) drops every non-looping sound under
