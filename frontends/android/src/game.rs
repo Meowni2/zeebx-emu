@@ -145,7 +145,10 @@ impl Emulator {
         let via_gpu = self.gl.is_some() && self.settings.graphics.gpu_rasterizer;
         let frame_gl = via_gpu.then(|| session.gpu_frame()).flatten();
 
-        let screen = session.screen();
+        // The area the game uses: all 640×480 of a Zeebo game, only the phone's of a phone game
+        // (240×400 for Devil May Cry). Its size gives the aspect and the integer scale's unit
+        // below, and the painter reallocates its texture when the size changes.
+        let screen = session.display_screen();
         let (width, height) = (screen.width() as usize, screen.height() as usize);
         // With no 3D on screen — a menu, an intro — the GPU draws the device's frame, in RGB565,
         // which is the format it is already in. The window repaints more often than the game
@@ -244,7 +247,8 @@ impl Emulator {
                     session.set_aspect_ratio(Some(aspect));
                 }
             }
-            // The wide frame has its own aspect; everything else is the console's 4:3.
+            // The wide frame has its own aspect; everything else is the frame's own: the console's
+            // 4:3, or a phone's (3:5 at 240×400).
             let aspect = frame_gl.map_or(width as f32 / height.max(1) as f32, |q| q.ratio);
             let size = place(
                 ui.available_size(),

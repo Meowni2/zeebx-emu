@@ -412,7 +412,9 @@ impl App {
         match on_gpu {
             Some(frame) => window.show_texture(frame, native_height, scale, aspect_ratio_4_3, smooth),
             None => {
-                let screen = session.screen();
+                // The area the game uses: a phone game's 240×400 alone, scaled with its own 3:5
+                // aspect and counted in its own pixels by the integer scale.
+                let screen = session.display_screen();
                 let (width, height) = (screen.width() as i32, screen.height() as i32);
                 let bytes = screen.to_rgb565_bytes();
                 window.show_frame(&bytes, width, height, scale, aspect_ratio_4_3, smooth);

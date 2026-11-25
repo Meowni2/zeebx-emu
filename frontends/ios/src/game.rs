@@ -264,11 +264,15 @@ impl App {
     }
 
     /// Converts the console's frame, when it changed since the last conversion.
+    ///
+    /// For a phone game it is only the phone's area (see `Session::display_screen`): Swift takes
+    /// the size from `zeebx_ios_frame` and the place from `fit_viewport`, so nothing on that side
+    /// needs to know about phones.
     pub(crate) fn publish(&mut self) {
         let Some(session) = self.session.as_ref() else {
             return;
         };
-        let screen = session.screen();
+        let screen = session.display_screen();
         let key = (screen.generation(), screen.writes());
         if self.frame_key == Some(key) && !self.frame.is_empty() {
             return;
@@ -413,6 +417,12 @@ mod tests {
         run(&mut app, 1500);
         assert_eq!(app.frame.len(), (app.width * app.height * 4) as usize);
         assert!(app.width > 0 && clock(&app) > 0);
+        // A Zeebo game is 640×480; a phone game only its phone's area (240×400 for Devil May Cry).
+        assert_eq!(
+            (app.width, app.height),
+            app.session.as_ref().unwrap().display_size(),
+            "the frame Swift gets is the area the game uses"
+        );
         assert!(app.state_id.is_some(), "a file that was read has an identity");
 
         // The menu stops the game clock; the turns keep coming and change nothing.

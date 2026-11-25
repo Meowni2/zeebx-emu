@@ -908,7 +908,10 @@ impl App {
                             // The copy only writes the center. Without this the list stays in the
                             // strip.
                             presentation::clear(q, presentation::BLACK);
-                            let screen = game.session.screen();
+                            // The area the game uses, 1:1 in the center: for a phone game the
+                            // same pixels the centred 640×480 would give, without copying the
+                            // black around them.
+                            let screen = game.session.display_screen();
                             presentation::copy_rgb565(
                                 q,
                                 screen.pixels(),

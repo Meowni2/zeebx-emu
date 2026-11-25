@@ -202,6 +202,9 @@ fn windowless(mut console: Console, game_path: &std::path::Path) -> ExitCode {
             true => session.large_frame(),
             false => None,
         };
+        // For the same reason a phone game goes out centred on the console's 640×480, not cropped
+        // the way the window shows it (`Session::display_screen`): the README promises 640×480 for
+        // every game, and whoever reads the pipe set that size before the first byte.
         let frame = frame.as_ref().unwrap_or_else(|| session.screen());
         if let Err(error) = output.write(frame) {
             // The other end closed the pipe. It is not the caller's failure: it is the normal end

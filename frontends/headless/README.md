@@ -98,7 +98,9 @@ In the raw formats the frame is always the console's, 640×480, from beginning t
 only possible choice: the stream has no header, and a frame that changed size midway would make
 whoever counts bytes on the other side lose step forever. That is why `internal_resolution` and
 the widescreen aspect ratio don't reach the raw dump — they apply in the window. The `.png` is the
-exception, because each file states its own size.
+exception, because each file states its own size. A phone game, such as Devil May Cry, keeps the
+rule too: its 240×400 area goes out centred on a black 640×480 frame, and only the window shows
+it cropped.
 
 ## On the three systems
 
