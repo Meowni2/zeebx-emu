@@ -416,12 +416,20 @@ impl App {
         // pixels and handed back in points.
         let scale = self.scale.max(1.0);
         let area = [self.screen[0] * scale, self.screen[1] * scale];
-        let aspect = match self.height {
-            0 => 4.0 / 3.0,
-            height => self.width as f32 / height as f32,
+        // The frame's own size: 640×480 for a Zeebo game, the phone's 240×400 for Devil May Cry.
+        // The integer scale counts the frame's pixels, so it needs its height, not the console's.
+        let (native_height, aspect) = match self.height {
+            0 => (480.0, 4.0 / 3.0),
+            height => (height as f32, self.width as f32 / height as f32),
         };
         let graphics = &self.settings.graphics;
-        let [width, height] = fit_viewport(area, graphics.scaling, graphics.keep_aspect, aspect);
+        let [width, height] = fit_viewport(
+            area,
+            graphics.scaling,
+            graphics.keep_aspect,
+            native_height,
+            aspect,
+        );
         ViewState {
             frame_serial: self.frame_serial,
             frame_width: width / scale,
@@ -1192,6 +1200,21 @@ mod tests {
         let view = app.view_state();
         assert_eq!(view.frame_height, 320.0);
         assert!((view.frame_width - 426.666_66).abs() < 0.01);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn whole_pixels_of_a_phone_frame_count_its_own_pixels() {
+        let (root, mut app) = test_app("celular");
+        app.screen = [844.0, 390.0];
+        app.scale = 3.0;
+        app.settings.graphics.scaling = zeebx::ui::settings::Scaling::Integer;
+        // Devil May Cry's 240x400. 2532x1170 pixels hold it twice — 480x800, 160x266.67 points —
+        // and not the 2.4 times a 480-tall console frame would give.
+        (app.width, app.height) = (240, 400);
+        let view = app.view_state();
+        assert!((view.frame_width - 160.0).abs() < 0.01, "{}", view.frame_width);
+        assert!((view.frame_height - 266.666_66).abs() < 0.01, "{}", view.frame_height);
         let _ = std::fs::remove_dir_all(root);
     }
 }
