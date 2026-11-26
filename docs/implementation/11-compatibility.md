@@ -271,6 +271,39 @@ interface is now **read**, not guessed: 59 methods, vtable `0x10a783e4` — see
 [15-whats-missing-from-the-nand.md](15-whats-missing-from-the-nand.md), including why it did not
 come out before.
 
+### Zeebo Clube: a web browser for a portal that no longer exists — not pursued
+
+Zeebo Clube is not a game, and not a system application in the Z-Wheel's sense either: its module
+is `rocketweb.mod`, the strings say "RocketBrowser for Zeebo", and its `config.xml` opens
+`LAUNCH_URL="http://www.zeeboinc.com/info_br/"`. The package brings no content of its own. Its
+`app.bar` holds the browser's fonts, a help page and a page whose only job is to refresh to
+`http://www.bidermann.com/infocube_br/index.html`.
+
+**What stops it**, measured on 2026-11-26 with `zeebx run --probe`:
+
+1. `ISHELL_CreateInstance(AEECLSID_STATIC)` (`0x0100110a`) is refused, and `EVT_APP_START`
+   answers `FALSE` at virtual 0 ms. That is what the scan reads as "exited on its own": it never
+   got as far as arming a timer.
+2. With `0x0100110a` probed, it releases that object at once and asks for
+   `AEECLSID_SOFTKEYCTL` (`0x01003101`, an `IMenuCtl`).
+3. With both probed, it builds its soft-key bar and goes on until `IShell::RegisterNotify`, which
+   we do not implement:
+   - on the soft-key bar: `SetColors`, `GetRect` and `AddItem("app.bar", 0xca, 0xca)`, plus slot
+     19, `EnableCommand` in the header;
+   - on the `IStatic`: `SetRect`, with the rectangle the bar's `GetRect` had just filled.
+
+   Every slot named by `DECLARE_ICONTROL` and `QINTERFACE(IMenuCtl)`/`(IStatic)` in
+   `sdk/inc/AEEMenu.h` and `AEEShell.h`.
+4. After that comes the network: the module's strings name `HTTP\RM_IWEBHTTP.c`, an `IWeb`
+   client.
+
+**What it would show.** On 2026-11-26 `http://www.zeeboinc.com/info_br/` answers only a redirect
+to HTTPS, which answers another redirect with an empty body, and the `bidermann.com` page is a 404.
+Making Zeebo Clube open means `IStatic`, `IMenuCtl` and `RegisterNotify` first, and the network
+after them, for a browser with nothing left to load. No other package in the survey asks for
+either control class. It stays as it is. What would change that is a copy of the portal's pages
+turning up, to be served through the network bridge ([16](16-network-and-the-bridge.md)).
+
 ### Zenonia: budget exhausted inside `CreateInstance`
 
 Same family as Need For Speed, and the same outcome: `b #0x84634`, a jump to itself right after
