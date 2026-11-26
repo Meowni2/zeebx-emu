@@ -1207,6 +1207,11 @@ What to do, in the order the project follows — **measure before inventing**:
 Without this, every title that draws with the system fonts ends up in the same place: Double
 Dragon, Resident Evil 4 (`0x0102f681`) and the Data East ports.
 
+> **Later, against the SDK header.** `INHERIT_IFont` in `inc/AEEIFont.h` disagrees with the
+> reference on three points, and the header won each one. The order is `DrawText`, `MeasureText`,
+> `GetInfo` (zeebx-core 0.1.4). `AEEFontInfo` is only `nAscent` and `nDescent`. And `DrawText`
+> takes `(pDst, x, y, pcText, nChars, fg, bg, prcClip, dwFlags)`. See `src/machine/font.rs`.
+
 ## Save states
 
 Save states require a pointer-free, versioned snapshot of:
