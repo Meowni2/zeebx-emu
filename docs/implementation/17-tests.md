@@ -202,6 +202,26 @@ never read. There is a test just for this, `the_summary_does_not_change_with_per
 That is why `--release` is not decoration either: in debug the emulated core runs an order of
 magnitude slower, and the real time cap would classify a good game as "too slow".
 
+**Each game runs on a throwaway profile.** `fs:/`, the saves and the metadata live in a fresh
+folder under the system's temporary directory, deleted when the game ends; only the extraction
+cache is the real one. Until 2026-11-26 the scan ran on the user's own profile, and that broke the
+baseline twice:
+
+- **It was not repeatable.** A game that rotates its saves changed between two runs. Ultimate
+  Chess 3D writes `udata/setting.sv0`, `sv1` and `sv2` in turn, and it already failed against a
+  baseline recorded one minute earlier.
+- **It was not portable.** A failed open logs the host path, and the baseline carried the
+  recording machine's `/home/<user>/.config/zeebx/...`. Those folders are now written `<profile>`
+  and `<cache>`.
+
+And the scan stopped writing into the saves of whoever runs it. One folder is still the real
+one: the Z-Wheel's copy of `tt_game_info` and its help page go to the desktop's
+`aparelho/z-wheel/`, whatever profile the session was given.
+
+Measured on 2026-11-26 with the 62 packages of `docs/scan/`: a run against a baseline written by
+the run before failed only Opera Mini, which does not open. Nothing under the user's `saves/` or
+`aparelho/` changed except that `tt_game_info`.
+
 ### The states, and what each one means
 
 | State | Where it stopped | Does the test fail? |

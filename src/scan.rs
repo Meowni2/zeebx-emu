@@ -683,6 +683,28 @@ impl Findings {
         *self == Self::default()
     }
 
+    /// The file system log with the host's folders named instead of spelled out.
+    ///
+    /// A failed open logs the host path (`open failed: /home/<user>/.config/zeebx/...`), which is
+    /// what an investigation wants and what a baseline cannot keep: the previous one carried the
+    /// recording machine's home folder, and failed on every other machine. The profile becomes
+    /// `<profile>` and the extraction cache `<cache>`, so the line still says which of the two the
+    /// game missed.
+    fn with_neutral_paths(mut self, storage: &crate::storage::StoragePaths) -> Self {
+        let roots = [
+            (storage.cache.display().to_string(), "<cache>"),
+            (storage.root.display().to_string(), "<profile>"),
+        ];
+        for line in &mut self.files_queried {
+            for (root, name) in &roots {
+                if line.contains(root.as_str()) {
+                    *line = line.replace(root.as_str(), name);
+                }
+            }
+        }
+        self
+    }
+
     /// The sections, in the order in which they are worth reading — the same as the `run` report.
     fn sections(&self) -> [(&'static str, &Vec<String>); 14] {
         [
@@ -1044,6 +1066,42 @@ fn now_ms(now: u32, base: u32) -> u64 {
 
 /// Loads the ROM, delivers `EVT_APP_START` and runs `virtual_ms` of game time.
 ///
+/// The profile each game of the scan runs on: a fresh `fs:/`, saves and metadata, deleted at the end.
+///
+/// **The scan used to run on the user's own profile**, and that made the baseline lie twice. A
+/// game that rotates its saves came out different on every run: Ultimate Chess 3D writes
+/// `udata/setting.sv0`, `sv1` and `sv2` in turn, and against a baseline recorded one minute
+/// earlier it already showed as changed. And the scan wrote into the saves of whoever ran it.
+/// Every game now starts from a console that never ran anything, as the survey means to measure.
+///
+/// The cache is the real one: the extractions are read-only in practice, the same for every run,
+/// and extracting the 62 packages again on each scan would cost close to a gigabyte of writes.
+struct ThrowawayProfile {
+    storage: crate::storage::StoragePaths,
+}
+
+impl ThrowawayProfile {
+    fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let number = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = std::env::temp_dir()
+            .join(format!("zeebx-scan-{}-{number}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        Self {
+            storage: crate::storage::StoragePaths {
+                cache: crate::loader::archive::cache_dir(),
+                ..crate::storage::StoragePaths::from_root(root)
+            },
+        }
+    }
+}
+
+impl Drop for ThrowawayProfile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.storage.root);
+    }
+}
+
 /// The loop advances **one lap per call** of [`Session::step`], with a zeroed real time budget:
 /// it is what lets us say on which lap the game stopped, as the `run` report does. The speed
 /// limiter stays off, because nobody is watching here — what we want is the virtual time reached
@@ -1051,13 +1109,17 @@ fn now_ms(now: u32, base: u32) -> u64 {
 pub fn examine(file: &Path, virtual_ms: u32, cap: Duration) -> Report {
     let begin = Instant::now();
     let installed = installed_from_env(file);
-    let mut session = match Session::start_with_installed(
+    // Declared before the session, so it is dropped after it: the folder goes only once nothing
+    // has a file open in it.
+    let profile = ThrowawayProfile::new();
+    let mut session = match Session::start_with_storage_installed(
         file,
         crate::DEFAULT_PORTS,
         None,
         false,
         None,
         Default::default(),
+        &profile.storage,
         &installed,
     ) {
         Ok(session) => session,
@@ -1346,7 +1408,7 @@ pub fn examine(file: &Path, virtual_ms: u32, cap: Duration) -> Report {
         requested_open,
         reason: session.stopped_reason(),
         performance: Some(measured),
-        findings: Findings::from(&session),
+        findings: Findings::from(&session).with_neutral_paths(&profile.storage),
         crash_state: crash_state(&session),
         top_calls: calls,
         top_costs: cost,
@@ -1366,7 +1428,19 @@ pub fn examine(file: &Path, virtual_ms: u32, cap: Duration) -> Report {
 /// `CreateInstance`.
 pub fn open(file: &Path) -> Result<Duration, String> {
     let begin = Instant::now();
-    match Session::start_with(file, crate::DEFAULT_PORTS, None, false, None, Default::default()) {
+    // `AEEMod_Load` and `EVT_APP_START` already run game code that writes: the same throwaway
+    // profile as [`examine`].
+    let profile = ThrowawayProfile::new();
+    let session = Session::start_with_storage(
+        file,
+        crate::DEFAULT_PORTS,
+        None,
+        false,
+        None,
+        Default::default(),
+        &profile.storage,
+    );
+    match session {
         Ok(_) => Ok(begin.elapsed()),
         Err(error) => Err(error.to_string()),
     }
@@ -1669,6 +1743,45 @@ fn require_space(dirs: &[PathBuf]) {
     // From here down, tests that need no ROM at all: it is the scan logic being checked, and it is
     // exactly the part that cannot be verified by looking at a game's output. Without them, a
     // classification error would pass as the game's result.
+
+    /// **The baseline names the host's folders instead of spelling them out.** The previous one
+    /// carried `/home/<user>/.config/zeebx/...`, and failed on every machine but the one that
+    /// recorded it.
+    #[test]
+    fn the_file_log_names_the_profile_and_the_cache() {
+        let profile = ThrowawayProfile::new();
+        let cache = profile.storage.cache.display().to_string();
+        let root = profile.storage.root.display().to_string();
+        let findings = Findings {
+            files_queried: vec![
+                format!("open failed: {root}/saves/mod/263019/pt_main.sar (No such file)"),
+                format!("open failed: {cache}/Game--1a2b/data.pak (No such file)"),
+                r#"OpenFile "udata/setting.sv0"  (0x1 0x4 0x0) -> 805306832"#.to_string(),
+            ],
+            ..Findings::default()
+        };
+        let neutral = findings.with_neutral_paths(&profile.storage).files_queried;
+        assert_eq!(neutral[0], "open failed: <profile>/saves/mod/263019/pt_main.sar (No such file)");
+        assert_eq!(neutral[1], "open failed: <cache>/Game--1a2b/data.pak (No such file)");
+        assert_eq!(neutral[2], r#"OpenFile "udata/setting.sv0"  (0x1 0x4 0x0) -> 805306832"#);
+    }
+
+    /// Each game gets a profile of its own, outside the user's, and it is gone afterwards.
+    #[test]
+    fn each_game_runs_on_a_profile_of_its_own_that_is_deleted_afterwards() {
+        let (first, second) = (ThrowawayProfile::new(), ThrowawayProfile::new());
+        assert_ne!(first.storage.root, second.storage.root);
+        assert!(!first.storage.root.starts_with(crate::config::config_dir()));
+        assert_eq!(first.storage.cache, crate::loader::archive::cache_dir(), "the cache is shared");
+        assert!(first.storage.saves.starts_with(&first.storage.root));
+        assert!(first.storage.device.starts_with(&first.storage.root));
+
+        let root = first.storage.root.clone();
+        std::fs::create_dir_all(root.join("saves/mod/263019")).unwrap();
+        std::fs::write(root.join("saves/mod/263019/setting.sv0"), b"x").unwrap();
+        drop(first);
+        assert!(!root.exists());
+    }
 
     #[test]
     fn a_file_that_is_not_a_module_becomes_a_report_with_a_reason() {
