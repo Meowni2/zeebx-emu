@@ -802,15 +802,7 @@ impl<C: CpuBackend> Machine<C> {
     /// The color is `CLR_USER_TEXT`'s, which is what `IDISPLAY_SetColor` sets, and the clip
     /// applies here as in any other drawing.
     pub(super) fn draw_text(&mut self, text: &str, x: i32, y: i32) -> Result<bool, CpuError> {
-        // The record is of what **was** drawn, not of what was missing: a game that shows several
-        // warning screens over the run needs the report to say which one came when.
-        if text.chars().any(|c| !c.is_whitespace()) {
-            if self.drawn_texts.len() >= MAX_DRAWN_TEXTS {
-                self.drawn_texts.pop_front();
-            }
-            self.drawn_texts
-                .push_back((self.clock_ms(), x, y, text.to_string()));
-        }
+        self.record_drawn_text(text, x, y);
         let Some(font) = self.font.as_ref() else {
             return Ok(false);
         };
@@ -824,6 +816,20 @@ impl<C: CpuBackend> Machine<C> {
             .copied()
             .unwrap_or(Rgb::BLACK);
         self.write(text, x, y, color)
+    }
+
+    /// Keeps `text` in the report's list of drawn text.
+    ///
+    /// The record is of what **was** drawn, not of what was missing: a game that shows several
+    /// warning screens over the run needs the report to say which one came when.
+    pub(super) fn record_drawn_text(&mut self, text: &str, x: i32, y: i32) {
+        if text.chars().any(|c| !c.is_whitespace()) {
+            if self.drawn_texts.len() >= MAX_DRAWN_TEXTS {
+                self.drawn_texts.pop_front();
+            }
+            self.drawn_texts
+                .push_back((self.clock_ms(), x, y, text.to_string()));
+        }
     }
 
     /// The drawn text, in order, with the virtual instant and the position.

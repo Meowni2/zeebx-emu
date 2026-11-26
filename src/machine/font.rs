@@ -18,14 +18,10 @@
 //! the font's `CreateInstance` comes back null.
 //!
 //! The metrics table comes from the reference code that already implements this interface
-//! (`zeebo-emulator/research/sources/zeemu/brew/BrewFont.cpp`). The order of the six methods does
-//! not: it is `INHERIT_IFont` in `inc/AEEIFont.h`, see [`crate::brew::aee_slots::FONT`]. The
-//! method signatures come from the SDK's own examples:
-//!
-//! ```c
-//! IFont_GetInfo(pFont, &info, sizeof(info))
-//! IFont_MeasureText(pFont, pszBuf, WSTRLEN(pszBuf), IFONT_MAXWIDTH, &nChars, &extent.width)
-//! ```
+//! (`zeebo-emulator/research/sources/zeemu/brew/BrewFont.cpp`). Nothing else does: the order of
+//! the six methods, their arguments and the `AEEFontInfo` they fill are `INHERIT_IFont` and its
+//! comments in `inc/AEEIFont.h` (see [`crate::brew::aee_slots::FONT`]). The reference had its own
+//! `AEEFontInfo` layout and guessed `DrawText`'s arguments; both disagreed with the header.
 
 use super::*;
 
@@ -136,6 +132,8 @@ pub fn class_metrics(class_id: u32) -> Metrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cpu::DefaultBackend;
+    use crate::loader::modfile::ModImage;
 
     /// **The `FONT_STANDARD` metrics are transcribed from the `.bid`, not made up.**
     ///
@@ -173,6 +171,181 @@ mod tests {
         }
     }
 
+    /// A bare machine with one font of `class_id`, and the stack ready for the arguments past r3.
+    fn machine_with_font(class_id: u32) -> (Machine<DefaultBackend>, u32) {
+        // `bx lr`, five times: a `.mod` shorter than its header does not parse.
+        let code = 0xe12f_ff1eu32.to_le_bytes().repeat(5);
+        let module = loader::load(&ModImage::parse(code).unwrap()).unwrap();
+        let mut machine = Machine::new(DefaultBackend::new().unwrap(), module, ".");
+        machine.cpu.reset(&machine.module.mem).unwrap();
+        machine.cpu.write_reg(Reg::Sp, STACK);
+        let out = loader::HEAP_BASE + 0x100;
+        assert_eq!(machine.create_font(class_id, out).unwrap(), SUCCESS);
+        let font = machine.cpu.read_u32(out).unwrap();
+        (machine, font)
+    }
+
+    const STACK: u32 = loader::STACK_BASE + 0x1000;
+    const STANDARD15: u32 = 0x0103_0852;
+
+    /// Calls an `IFont` method with `regs` in r0–r3 and `stack` past them, as the guest would.
+    fn call(machine: &mut Machine<DefaultBackend>, name: &str, regs: [u32; 4], stack: &[u32]) -> u32 {
+        let slot = (0..16)
+            .find(|&slot| Interface::Font.method(slot) == Some(name))
+            .unwrap_or_else(|| panic!("IFont has no {name}"));
+        for (index, value) in regs.iter().enumerate() {
+            machine.cpu.write_reg([Reg::R0, Reg::R1, Reg::R2, Reg::R3][index], *value);
+        }
+        for (index, value) in stack.iter().enumerate() {
+            machine.cpu.write_u32(STACK + index as u32 * 4, *value).unwrap();
+        }
+        machine
+            .dispatch(aee::encode(Interface::Font, slot))
+            .unwrap()
+            .expect("IFont serves this method")
+    }
+
+    /// Writes `text` as AECHARs at `addr`, with no terminator of its own.
+    fn write_aechars(machine: &mut Machine<DefaultBackend>, addr: u32, text: &str) {
+        let bytes: Vec<u8> = text.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        machine.cpu.write_mem(addr, &bytes).unwrap();
+    }
+
+    fn read_i16(machine: &Machine<DefaultBackend>, addr: u32) -> i16 {
+        let mut pair = [0u8; 2];
+        machine.cpu.read_mem(addr, &mut pair).unwrap();
+        i16::from_le_bytes(pair)
+    }
+
+    /// **`GetInfo` fills the SDK's `AEEFontInfo`: ascent and descent, from offset zero.**
+    ///
+    /// It wrote five fields from offset 4, and with `nSize = sizeof(AEEFontInfo)` — 4, the call
+    /// in the SDK's own example — it wrote nothing, leaving whatever was on the game's stack.
+    #[test]
+    fn get_info_fills_the_sdk_struct_and_only_up_to_its_size() {
+        let (mut machine, font) = machine_with_font(STANDARD15);
+        let info = loader::HEAP_BASE + 0x200;
+        machine.cpu.write_mem(info, &[0xaa; 8]).unwrap();
+
+        assert_eq!(call(&mut machine, "GetInfo", [font, info, 4, 0], &[]), SUCCESS);
+        assert_eq!((read_i16(&machine, info), read_i16(&machine, info + 2)), (15, 3));
+        assert_eq!(read_i16(&machine, info + 4), -0x5556, "nothing past the struct");
+
+        machine.cpu.write_mem(info, &[0xaa; 8]).unwrap();
+        assert_eq!(call(&mut machine, "GetInfo", [font, info, 2, 0], &[]), SUCCESS);
+        assert_eq!(read_i16(&machine, info), 15);
+        assert_eq!(read_i16(&machine, info + 2), -0x5556, "only what fits in nSize");
+
+        // A size this font does not know is a version it does not support.
+        machine.cpu.write_mem(info, &[0xaa; 8]).unwrap();
+        assert_eq!(call(&mut machine, "GetInfo", [font, info, 8, 0], &[]), EUNSUPPORTED);
+        assert_eq!(read_i16(&machine, info), -0x5556);
+    }
+
+    /// `MeasureText` counts exactly `nChars` — a zero in the middle is a character — and says how
+    /// many of them fit in `nMaxWidth`.
+    #[test]
+    fn measure_text_counts_n_chars_and_what_fits_in_the_width() {
+        let (mut machine, font) = machine_with_font(STANDARD15); // 8 pixels per character
+        let text = loader::HEAP_BASE + 0x200;
+        write_aechars(&mut machine, text, "AB\0CD");
+        let (fits, pixels) = (loader::HEAP_BASE + 0x300, loader::HEAP_BASE + 0x304);
+
+        let all = i32::MAX as u32; // IFONT_MAXWIDTH
+        assert_eq!(call(&mut machine, "MeasureText", [font, text, 5, all], &[fits, pixels]), SUCCESS);
+        assert_eq!(machine.cpu.read_u32(fits).unwrap(), 5);
+        assert_eq!(machine.cpu.read_u32(pixels).unwrap(), 40);
+
+        call(&mut machine, "MeasureText", [font, text, 5, 20], &[fits, pixels]);
+        assert_eq!(machine.cpu.read_u32(fits).unwrap(), 2, "two 8-pixel characters fit in 20");
+        assert_eq!(machine.cpu.read_u32(pixels).unwrap(), 16);
+    }
+
+    /// A 64×32 surface of the game's, painted `0x1234`.
+    fn surface(machine: &mut Machine<DefaultBackend>) -> u32 {
+        let bitmap = machine.new_object(Interface::Bitmap).unwrap();
+        let mut frame = Framebuffer::new(64, 32);
+        frame.fill_rect_native(Rect { x: 0, y: 0, width: 64, height: 32 }, 0x1234);
+        machine.bitmaps.insert(bitmap, frame);
+        bitmap
+    }
+
+    /// An `AEERect` as the guest stores it: four `int16`.
+    fn rect_bytes(x: i16, y: i16, width: i16, height: i16) -> Vec<u8> {
+        [x, y, width, height].iter().flat_map(|value| value.to_le_bytes()).collect()
+    }
+
+    fn pixel(machine: &Machine<DefaultBackend>, bitmap: u32, x: i32, y: i32) -> u16 {
+        machine.bitmaps[&bitmap].get_pixel(x, y)
+    }
+
+    /// **`DrawText` reads its arguments in the header's order and draws on `pDst`.**
+    ///
+    /// The cell is three 8-pixel characters by ascent plus descent (15 + 3), at `(4, 2)`, and its
+    /// background is `bg`. Spaces, so that no glyph covers what the test reads.
+    #[test]
+    fn draw_text_fills_the_cell_on_the_destination_with_the_background() {
+        let (mut machine, font) = machine_with_font(STANDARD15);
+        let destination = surface(&mut machine);
+        let (text, clip) = (loader::HEAP_BASE + 0x200, loader::HEAP_BASE + 0x300);
+        write_aechars(&mut machine, text, "   ");
+        machine.cpu.write_mem(clip, &rect_bytes(0, 0, 64, 32)).unwrap();
+
+        let stack = [text, 3, 0xffff, 0x001f, clip, 0];
+        assert_eq!(call(&mut machine, "DrawText", [font, destination, 4, 2], &stack), SUCCESS);
+        assert_eq!(pixel(&machine, destination, 4, 2), 0x001f);
+        assert_eq!(pixel(&machine, destination, 27, 19), 0x001f, "the cell's last pixel");
+        assert_eq!(pixel(&machine, destination, 28, 2), 0x1234, "past the three characters");
+        assert_eq!(pixel(&machine, destination, 4, 20), 0x1234, "below ascent plus descent");
+        assert_eq!(machine.display_target, 0, "the display's own destination is left alone");
+    }
+
+    #[test]
+    fn draw_text_is_cut_by_the_clip_and_a_negative_clip_draws_nothing() {
+        let (mut machine, font) = machine_with_font(STANDARD15);
+        let destination = surface(&mut machine);
+        let (text, clip) = (loader::HEAP_BASE + 0x200, loader::HEAP_BASE + 0x300);
+        write_aechars(&mut machine, text, "   ");
+
+        machine.cpu.write_mem(clip, &rect_bytes(0, 0, 10, 10)).unwrap();
+        call(&mut machine, "DrawText", [font, destination, 4, 2], &[text, 3, 0, 0x001f, clip, 0]);
+        assert_eq!(pixel(&machine, destination, 9, 9), 0x001f);
+        assert_eq!(pixel(&machine, destination, 10, 5), 0x1234, "right of the clip");
+        assert_eq!(pixel(&machine, destination, 5, 10), 0x1234, "below the clip");
+
+        let other = surface(&mut machine);
+        machine.cpu.write_mem(clip, &rect_bytes(0, 0, -1, 32)).unwrap();
+        let stack = [text, 3, 0, 0x001f, clip, 0];
+        assert_eq!(call(&mut machine, "DrawText", [font, other, 4, 2], &stack), SUCCESS);
+        assert_eq!(pixel(&machine, other, 4, 2), 0x1234);
+    }
+
+    #[test]
+    fn draw_text_transparent_keeps_the_background_and_records_exactly_n_chars() {
+        let (mut machine, font) = machine_with_font(STANDARD15);
+        let destination = surface(&mut machine);
+        let text = loader::HEAP_BASE + 0x200;
+        write_aechars(&mut machine, text, "Hi there");
+
+        let stack = [text, 2, 0xffff, 0x001f, 0, IFONT_DRAW_TRANSPARENT];
+        assert_eq!(call(&mut machine, "DrawText", [font, destination, 30, 4], &stack), SUCCESS);
+        // The descent band of the cell (y 19 to 21): "Hi" has no descender, so only a background
+        // fill would paint it.
+        assert_eq!(pixel(&machine, destination, 31, 21), 0x1234, "no background fill");
+        let last = machine.drawn_text().last().cloned();
+        assert_eq!(last, Some((machine.clock_ms(), 30, 4, "Hi".to_string())));
+    }
+
+    /// `NativeColor` is our surfaces' RGB565: on anything else there is no format to draw in.
+    #[test]
+    fn draw_text_on_an_unknown_bitmap_is_unsupported() {
+        let (mut machine, font) = machine_with_font(STANDARD15);
+        let text = loader::HEAP_BASE + 0x200;
+        write_aechars(&mut machine, text, "Hi");
+        let stack = [text, 2, 0, 0, 0, 0];
+        assert_eq!(call(&mut machine, "DrawText", [font, 0x1234_5678, 0, 0], &stack), EUNSUPPORTED);
+    }
+
     /// `STANDARD15B` answers like the 15, not like the 18: that was the defect that was here.
     #[test]
     fn standard15b_does_not_inherit_the_18b_numbers() {
@@ -182,6 +355,12 @@ mod tests {
         assert_ne!((fifteen_b.ascent, fifteen_b.descent), (17, 4));
     }
 }
+
+/// `sizeof(AEEFontInfo)` in `inc/AEEIFont.h`: `nAscent` and `nDescent`, two `int16`.
+const FONT_INFO_SIZE: i32 = 4;
+
+/// `IFONT_DRAW_TRANSPARENT`, from `inc/AEEIFont.h`: draw only the glyphs, not the cell background.
+const IFONT_DRAW_TRANSPARENT: u32 = 0x0000_8000;
 
 impl<C: CpuBackend> Machine<C> {
     /// Creates the object of a system font, recording which class it is.
@@ -221,92 +400,123 @@ impl<C: CpuBackend> Machine<C> {
                 }
                 SUCCESS
             }
-            // int GetInfo(IFont *, AEEFontInfo *pInfo, int nSize)
+            // int GetInfo(IFont *, AEEFontInfo *pinfo, int nSize)
             //
-            // The struct starts with four `int16` — ascent, descent, leading and the maximum
-            // character width. Only what fits in the size the caller declared is written.
+            // `AEEFontInfo` is two `int16`, `nAscent` and `nDescent`, at the start of the struct
+            // (`inc/AEEIFont.h`). Only what fits in `nSize` is written, and a larger `nSize` is a
+            // version this font does not know: `EUNSUPPORTED`, as the SDK says. It used to write
+            // five fields from offset 4, a layout from the reference code that the header does not
+            // have — with the SDK's own `sizeof(AEEFontInfo)`, which is 4, it wrote nothing at all.
             "GetInfo" => {
                 let info = self.cpu.read_reg(Reg::R1);
-                let size = self.cpu.read_reg(Reg::R2);
-                if info != 0 {
-                    let fields: [u16; 5] = [
-                        metrics.ascent,
-                        metrics.descent,
-                        metrics.leading,
-                        metrics.max_char_width,
-                        metrics.height,
-                    ];
-                    for (i, value) in fields.iter().enumerate() {
-                        let offset = 4 + i as u32 * 2;
-                        if size != 0 && offset + 2 > size {
-                            break;
+                let size = self.cpu.read_reg(Reg::R2) as i32;
+                if size > FONT_INFO_SIZE {
+                    EUNSUPPORTED
+                } else {
+                    if info != 0 {
+                        for (i, value) in [metrics.ascent, metrics.descent].iter().enumerate() {
+                            let offset = i as i32 * 2;
+                            if offset + 2 > size {
+                                break;
+                            }
+                            self.cpu.write_mem(info + offset as u32, &value.to_le_bytes())?;
                         }
-                        self.cpu.write_mem(info + offset, &value.to_le_bytes())?;
                     }
+                    SUCCESS
                 }
-                SUCCESS
             }
-            // int MeasureText(IFont *, const AECHAR *pchText, int nChars, int nMaxWidth,
-            //                 int *pnChars, int *pnWidth)
+            // int MeasureText(IFont *, const AECHAR *pcText, int nChars, int nMaxWidth,
+            //                 int *pnFits, int *pnPixels)
             //
-            // The signature comes from the SDK's own example. `nChars` may be `-1`, which means
-            // "up to the terminator".
+            // From `inc/AEEIFont.h`: `nChars` is exact — "zero-termination is not recognized" —,
+            // and `pnFits` is how many of them fit in `nMaxWidth` pixels, `IFONT_MAXWIDTH` meaning
+            // all. Every character is `max_char_width` wide here, so the text itself is not read.
             "MeasureText" => {
-                let text = self.cpu.read_reg(Reg::R1);
-                let requested = self.cpu.read_reg(Reg::R2) as i32;
-                let out_chars = self.stack_arg(0)?;
-                let out_width = self.stack_arg(1)?;
-                let mut count = 0u32;
-                if text != 0 {
-                    let mut cursor = text;
-                    let limit = match requested {
-                        n if n < 0 => MAX_STRING as u32,
-                        n => n as u32,
-                    };
-                    while count < limit && count < MAX_STRING as u32 {
-                        let mut pair = [0u8; 2];
-                        self.cpu.read_mem(cursor, &mut pair)?;
-                        if u16::from_le_bytes(pair) == 0 {
-                            break;
-                        }
-                        count += 1;
-                        cursor += 2;
-                    }
+                let requested = (self.cpu.read_reg(Reg::R2) as i32).clamp(0, MAX_STRING as i32);
+                let max_width = (self.cpu.read_reg(Reg::R3) as i32).max(0) as u32;
+                let out_fits = self.stack_arg(0)?;
+                let out_pixels = self.stack_arg(1)?;
+                let width = u32::from(metrics.max_char_width);
+                let fits = match width {
+                    0 => requested as u32,
+                    width => (requested as u32).min(max_width / width),
+                };
+                if out_fits != 0 {
+                    self.cpu.write_u32(out_fits, fits)?;
                 }
-                if out_chars != 0 {
-                    self.cpu.write_u32(out_chars, count)?;
-                }
-                if out_width != 0 {
-                    self.cpu
-                        .write_u32(out_width, count * u32::from(metrics.max_char_width))?;
+                if out_pixels != 0 {
+                    self.cpu.write_u32(out_pixels, fits * width)?;
                 }
                 SUCCESS
             }
-            // int DrawText(IFont *, const AECHAR *pchText, int nChars, int x, int y, ...)
+            // int DrawText(IFont *, IBitmap *pDst, int x, int y, const AECHAR *pcText,
+            //              int nChars, NativeColor fg, NativeColor bg, const AEERect *prcClip,
+            //              uint32 dwFlags)
             //
-            // **The argument layout has not been measured yet**, unlike the other three: the
-            // reference only prints the text and does not draw. Here we draw to the current
-            // destination, which is what `IDISPLAY` does, and the assumption goes into the report
-            // for whoever measures it.
-            "DrawText" => {
-                let text = self.cpu.read_reg(Reg::R1);
-                let requested = self.cpu.read_reg(Reg::R2) as i32;
-                let x = self.cpu.read_reg(Reg::R3) as i32;
-                let y = self.stack_arg(0)? as i32;
-                self.assumptions
-                    .insert("IFont::DrawText draws with an inferred layout, not yet measured");
-                if text != 0 {
-                    let mut units = self.read_aechar_units(text)?;
-                    if requested >= 0 {
-                        units.truncate(requested as usize);
-                    }
-                    let text = String::from_utf16_lossy(&units);
-                    self.draw_text(&text, x, y)?;
-                }
-                SUCCESS
-            }
+            // The layout is `INHERIT_IFont` in `inc/AEEIFont.h`. It used to be read as
+            // `(pcText, nChars, x, y)`, a guess, because no game calls it — in the 2026-11-25
+            // survey none does. `(x, y)` is the top-left of the first character cell; the cell is
+            // `max_char_width` per character by ascent plus descent, and its background is filled
+            // unless `IFONT_DRAW_TRANSPARENT` is set. Everything is cut by `prcClip`, and a
+            // negative width or height there draws nothing.
+            "DrawText" => self.font_draw_text(metrics)?,
             _ => return Ok(None),
         };
         Ok(Some(result))
+    }
+    /// `IFont::DrawText`, with the arguments in the SDK's order. See the comment in
+    /// [`Machine::font_call`].
+    fn font_draw_text(&mut self, metrics: Metrics) -> Result<u32, CpuError> {
+        let destination = self.cpu.read_reg(Reg::R1);
+        let x = self.cpu.read_reg(Reg::R2) as i32;
+        let y = self.cpu.read_reg(Reg::R3) as i32;
+        let text = self.stack_arg(0)?;
+        let requested = (self.stack_arg(1)? as i32).clamp(0, MAX_STRING as i32) as usize;
+        let foreground = self.stack_arg(2)? as u16;
+        let background = self.stack_arg(3)? as u16;
+        let clip = self.read_rect(self.stack_arg(4)?)?;
+        let flags = self.stack_arg(5)?;
+        // `NativeColor` is the surface's own RGB565 here, so a destination that is not one of our
+        // surfaces is one whose format we do not know.
+        if !self.bitmaps.contains_key(&destination) {
+            return Ok(EUNSUPPORTED);
+        }
+        if clip.is_some_and(|clip| clip.width < 0 || clip.height < 0) {
+            return Ok(SUCCESS);
+        }
+        // Exactly `nChars`: the SDK does not stop at a terminator.
+        let mut bytes = vec![0u8; requested * 2];
+        if text != 0 {
+            self.cpu.read_mem(text, &mut bytes)?;
+        }
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        let text = String::from_utf16_lossy(&units);
+        if flags & IFONT_DRAW_TRANSPARENT == 0 {
+            let cell = Rect {
+                x: x as i16,
+                y: y as i16,
+                width: (requested as u32 * u32::from(metrics.max_char_width)).min(i16::MAX as u32)
+                    as i16,
+                height: (metrics.ascent + metrics.descent) as i16,
+            };
+            if let Some(area) = clip_rect(clip, cell)
+                && let Some(surface) = self.bitmaps.get_mut(&destination)
+            {
+                surface.fill_rect_native(area, background);
+            }
+        }
+        self.record_drawn_text(&text, x, y);
+        // The glyphs go through the same writer as `IDISPLAY_DrawText`, pointed at `pDst` and at
+        // `prcClip` for this call only.
+        let target = std::mem::replace(&mut self.display_target, destination);
+        let previous_clip = std::mem::replace(&mut self.clip, clip);
+        let written = self.write(&text, x, y, Rgb::from_rgb565(foreground));
+        self.display_target = target;
+        self.clip = previous_clip;
+        written?;
+        Ok(SUCCESS)
     }
 }
