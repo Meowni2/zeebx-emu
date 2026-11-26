@@ -1,21 +1,21 @@
 Toy Raid (Brazil) (Es,Pt)
-estado: roda
-tela: 338 cor(es), dominante 0x047b
-classes pedidas:
+state: runs
+screen: 338 color(s), dominant 0x047b
+requested classes:
   0x01001001  (1x)
   0x01001003  (1x)
   0x01005502  (1x)
-  0x01005511  (14x)
+  0x0100550a  (14x)
   0x01041207  (1x)
   0x0106c411  (1x)
-chamadas ao sistema de arquivos:
+file system calls:
   GetFreeSpace  (0x0 0xf0003020 0xf0000008) -> 268435456
   Test "/udata/toyraid.sav"  (0x200fff80 0xf000301c 0xf0006020) -> 1
   OpenFile "/udata/toyraid.sav"  (0x200fff80 0x4 0xf0003008) -> 805307152
   Write  (0x10000048 0x7c 0xf0004014) -> 124
   Release  (0xf0004004 0x7c 0xf0004014) -> 0
   Release  (0xf0003004 0x7c 0xf0004014) -> 0
-texto desenhado na tela:
+text drawn on screen:
      5056 ms  (558, 440)  V1.6BR
      5071 ms  (558, 440)  V1.6BR
      5086 ms  (558, 440)  V1.6BR

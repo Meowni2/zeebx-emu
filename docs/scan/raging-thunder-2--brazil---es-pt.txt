@@ -1,7 +1,7 @@
 Raging Thunder 2 (Brazil) (Es,Pt)
-estado: roda
-tela: 255 cor(es), dominante 0x0000
-classes pedidas:
+state: runs
+screen: 255 color(s), dominant 0x0000
+requested classes:
   0x01001001  (1x)
   0x01001003  (1x)
   0x01001056  (1x)
@@ -10,104 +10,104 @@ classes pedidas:
   0x01014bc4  (1x)
   0x01041207  (1x)
   0x0106c411  (1x)
-chamadas ao sistema de arquivos:
+file system calls:
   Seek  (0x0 0x9b1345 0x300001d0) -> 0
   Seek  (0x2 0x0 0xe0001000) -> 10163013
-  Read  (0x100100d8 0x4 0xe0001000) -> 4
+  Read  (0x100100e8 0x4 0xe0001000) -> 4
   Seek  (0x0 0x9b1345 0x300001d0) -> 0
   Seek  (0x2 0x0 0xe0001000) -> 10163013
-  Read  (0x106cddc8 0x1000 0xe0001000) -> 4096
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.pvr"  (0x106cddc8 0x1 0x1) -> 0
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.pvr"  (0x106cddc8 0x1 0x1) -> 0
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.ctes (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.ctes"  (0x1001015c 0x1 0x1) -> 0
+  Read  (0x106cf390 0x1000 0xe0001000) -> 4096
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.pvr"  (0x106cf388 0x1 0x1) -> 0
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.pvr"  (0x106cf388 0x1 0x1) -> 0
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.ctes (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.ctes"  (0x1001016c 0x1 0x1) -> 0
   Seek  (0x0 0x9b1345 0x300001d0) -> 0
   Seek  (0x2 0x0 0xe0001000) -> 10163013
-  Read  (0x100100d8 0x4 0xe0001000) -> 4
+  Read  (0x100100e8 0x4 0xe0001000) -> 4
   Seek  (0x0 0x9b1345 0x300001d0) -> 0
   Seek  (0x2 0x0 0xe0001000) -> 10163013
-  Read  (0x106cde10 0x1000 0xe0001000) -> 4096
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.pvr"  (0x106cde10 0x1 0x1) -> 0
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.pvr"  (0x106cde10 0x1 0x1) -> 0
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.ctes (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.ctes"  (0x1001015c 0x1 0x1) -> 0
+  Read  (0x106cf3d8 0x1000 0xe0001000) -> 4096
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.pvr"  (0x106cf3d0 0x1 0x1) -> 0
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.pvr"  (0x106cf3d0 0x1 0x1) -> 0
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.ctes (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.ctes"  (0x1001016c 0x1 0x1) -> 0
   Seek  (0x0 0x9b1345 0x300001d0) -> 0
   Seek  (0x2 0x0 0xe0001000) -> 10163013
-  Read  (0x100100d8 0x4 0xe0001000) -> 4
+  Read  (0x100100e8 0x4 0xe0001000) -> 4
   Seek  (0x0 0x9b1345 0x300001d0) -> 0
   Seek  (0x2 0x0 0xe0001000) -> 10163013
-  Read  (0x106cde58 0x1000 0xe0001000) -> 4096
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.pvr"  (0x106cde58 0x1 0x1) -> 0
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.pvr"  (0x106cde58 0x1 0x1) -> 0
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.ctes (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.ctes"  (0x1001015c 0x1 0x1) -> 0
+  Read  (0x106cf420 0x1000 0xe0001000) -> 4096
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.pvr"  (0x106cf418 0x1 0x1) -> 0
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.pvr"  (0x106cf418 0x1 0x1) -> 0
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.ctes (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.ctes"  (0x1001016c 0x1 0x1) -> 0
   Seek  (0x0 0x9b1345 0x300001d0) -> 0
   Seek  (0x2 0x0 0xe0001000) -> 10163013
-  Read  (0x100100d8 0x4 0xe0001000) -> 4
+  Read  (0x100100e8 0x4 0xe0001000) -> 4
   Seek  (0x0 0x9b1345 0x300001d0) -> 0
   Seek  (0x2 0x0 0xe0001000) -> 10163013
-  Read  (0x106cdea0 0x1000 0xe0001000) -> 4096
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.pvr"  (0x106cea78 0x1 0x1) -> 0
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.pvr"  (0x106cea78 0x1 0x1) -> 0
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.ctes (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.ctes"  (0x1001015c 0x1 0x1) -> 0
+  Read  (0x106cf468 0x1000 0xe0001000) -> 4096
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.pvr"  (0x106d0050 0x1 0x1) -> 0
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.pvr"  (0x106d0050 0x1 0x1) -> 0
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.ctes (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.ctes"  (0x1001016c 0x1 0x1) -> 0
   Seek  (0x0 0x9b1345 0x300001d0) -> 0
   Seek  (0x2 0x0 0xe0001000) -> 10163013
-  Read  (0x100100d8 0x4 0xe0001000) -> 4
+  Read  (0x100100e8 0x4 0xe0001000) -> 4
   Seek  (0x0 0x9b1345 0x300001d0) -> 0
   Seek  (0x2 0x0 0xe0001000) -> 10163013
-  Read  (0x106ceac0 0x1000 0xe0001000) -> 4096
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.pvr"  (0x106ceac0 0x1 0x1) -> 0
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.pvr"  (0x106ceac0 0x1 0x1) -> 0
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.ctes (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.ctes"  (0x1001015c 0x1 0x1) -> 0
+  Read  (0x106d00a0 0x1000 0xe0001000) -> 4096
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.pvr"  (0x106d0098 0x1 0x1) -> 0
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.pvr"  (0x106d0098 0x1 0x1) -> 0
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.ctes (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.ctes"  (0x1001016c 0x1 0x1) -> 0
   Seek  (0x0 0x9b1345 0x300001d0) -> 0
   Seek  (0x2 0x0 0xe0001000) -> 10163013
-  Read  (0x100100d8 0x4 0xe0001000) -> 4
+  Read  (0x100100e8 0x4 0xe0001000) -> 4
   Seek  (0x0 0x9b1345 0x300001d0) -> 0
   Seek  (0x2 0x0 0xe0001000) -> 10163013
-  Read  (0x106ceb08 0x1000 0xe0001000) -> 4096
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.pvr"  (0x106ceb08 0x1 0x1) -> 0
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.pvr"  (0x106ceb08 0x1 0x1) -> 0
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/MK4.ctes (No such file or directory (os error 2))
-  OpenFile "data\car\tex\MK4.ctes"  (0x1001015c 0x1 0x1) -> 0
+  Read  (0x106d00e8 0x1000 0xe0001000) -> 4096
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.pvr"  (0x106d00e0 0x1 0x1) -> 0
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.pvr (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.pvr"  (0x106d00e0 0x1 0x1) -> 0
+  open failed: <profile>/saves/mod/280602/data/car/tex/MK4.ctes (No such file or directory (os error 2))
+  OpenFile "data\car\tex\MK4.ctes"  (0x1001016c 0x1 0x1) -> 0
   Seek  (0x0 0x9b1345 0x300001d0) -> 0
   Seek  (0x2 0x0 0xe0001000) -> 10163013
-  Read  (0x100100d8 0x4 0xe0001000) -> 4
+  Read  (0x100100e8 0x4 0xe0001000) -> 4
   Seek  (0x0 0x9b1345 0x300001d0) -> 0
   Seek  (0x2 0x0 0xe0001000) -> 10163013
-  Read  (0x106ceb50 0x1000 0xe0001000) -> 4096
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/Mk4_clean.pvr (No such file or directory (os error 2))
-  OpenFile "data/car/tex/Mk4_clean.pvr"  (0x105e2040 0x1 0x1) -> 0
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/Mk4_clean.pvr (No such file or directory (os error 2))
-  OpenFile "data/car/tex/Mk4_clean.pvr"  (0x105e2040 0x1 0x1) -> 0
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Raging-Thunder-2--Brazil---Es-Pt--797ae94ab8799dd5aea759c33e7b2e8dd16485bdad62c7653a96bedf7731780a/mod/280602/data/car/tex/Mk4_clean.ctes (No such file or directory (os error 2))
-  OpenFile "data/car/tex/Mk4_clean.ctes"  (0x100103a4 0x1 0x1) -> 0
+  Read  (0x106d0130 0x1000 0xe0001000) -> 4096
+  open failed: <profile>/saves/mod/280602/data/car/tex/Mk4_clean.pvr (No such file or directory (os error 2))
+  OpenFile "data/car/tex/Mk4_clean.pvr"  (0x105dfee8 0x1 0x1) -> 0
+  open failed: <profile>/saves/mod/280602/data/car/tex/Mk4_clean.pvr (No such file or directory (os error 2))
+  OpenFile "data/car/tex/Mk4_clean.pvr"  (0x105dfee8 0x1 0x1) -> 0
+  open failed: <profile>/saves/mod/280602/data/car/tex/Mk4_clean.ctes (No such file or directory (os error 2))
+  OpenFile "data/car/tex/Mk4_clean.ctes"  (0x100103b4 0x1 0x1) -> 0
   Seek  (0x0 0x91f34 0x300001d0) -> 0
   Seek  (0x2 0x0 0xe0001000) -> 597812
-  Read  (0x10010320 0x4 0xe0001000) -> 4
+  Read  (0x10010330 0x4 0xe0001000) -> 4
   Seek  (0x0 0x91f34 0x300001d0) -> 0
   Seek  (0x2 0x0 0xe0001000) -> 597812
-  Read  (0x105fcc78 0x1000 0xe0001000) -> 4096
-  Read  (0x105fcc78 0x1000 0xe0001000) -> 4096
-  Read  (0x105fcc78 0x1000 0xe0001000) -> 4096
-  Read  (0x105fcc78 0x1000 0xe0001000) -> 4096
-  Read  (0x105fcc78 0x1000 0xe0001000) -> 4096
-  Read  (0x105fcc78 0x1000 0xe0001000) -> 4096
-  Read  (0x105fcc78 0x8e7 0xe0001000) -> 2279
-arquivos não encontrados:
+  Read  (0x105fb340 0x1000 0xe0001000) -> 4096
+  Read  (0x105fb340 0x1000 0xe0001000) -> 4096
+  Read  (0x105fb340 0x1000 0xe0001000) -> 4096
+  Read  (0x105fb340 0x1000 0xe0001000) -> 4096
+  Read  (0x105fb340 0x1000 0xe0001000) -> 4096
+  Read  (0x105fb340 0x1000 0xe0001000) -> 4096
+  Read  (0x105fb340 0x8e7 0xe0001000) -> 2279
+files not found:
   data/Audio/RT2_Ingame_L.psn
   data/Audio/RT2_Ingame_R.psn
   data/Audio/RT2_Menu_L.psn

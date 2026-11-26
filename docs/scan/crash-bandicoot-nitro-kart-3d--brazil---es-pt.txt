@@ -1,7 +1,7 @@
 Crash Bandicoot Nitro Kart 3D (Brazil) (Es,Pt)
-estado: roda
-tela: 51 cor(es), dominante 0xffff
-classes pedidas:
+state: runs
+screen: 51 color(s), dominant 0xffff
+requested classes:
   0x01001001  (1x)
   0x01001003  (1x)
   0x01001056  (1x)
@@ -9,7 +9,7 @@ classes pedidas:
   0x01014bc4  (2x)
   0x01041207  (1x)
   0x0106c411  (1x)
-chamadas ao sistema de arquivos:
+file system calls:
   Seek  (0x2 0x0 0x30000450) -> 4479668
   Read  (0x200ffe48 0x4 0xe0001000) -> 4
   Seek  (0x0 0x445ab4 0xe0001000) -> 0
@@ -20,32 +20,32 @@ chamadas ao sistema de arquivos:
   Read  (0x200ffea0 0x8 0xe0001000) -> 8
   Seek  (0x0 0x445ab4 0xe0001000) -> 0
   Seek  (0x2 0x0 0x30000450) -> 4479668
-  Read  (0x1008fa9c 0x1d 0xe0001000) -> 29
-  Read  (0x1008fa9c 0xc 0xe0001000) -> 12
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x983 0xe0001000) -> 2435
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Crash-Bandicoot-Nitro-Kart-3D--Brazil---Es-Pt--0c9aef377a62f6211acb6e1dd1d79ce97c39d5fa2a3db82d36fcf25de2f2222f/mod/274214/data/gfx/menu/activision.png (No such file or directory (os error 2))
+  Read  (0x1008fbf4 0x1d 0xe0001000) -> 29
+  Read  (0x1008fbf4 0xc 0xe0001000) -> 12
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x983 0xe0001000) -> 2435
+  open failed: <profile>/saves/mod/274214/data/gfx/menu/activision.png (No such file or directory (os error 2))
   OpenFile "data\gfx\menu\activision.png"  (0xa19e8 0x1 0xe0000c00) -> 0
   Seek  (0x0 0x4f515a 0xe0001000) -> 0
   Seek  (0x2 0x0 0x30000450) -> 5198170
@@ -58,15 +58,15 @@ chamadas ao sistema de arquivos:
   Read  (0x200ffea0 0x8 0xe0001000) -> 8
   Seek  (0x0 0x4f515a 0xe0001000) -> 0
   Seek  (0x2 0x0 0x30000450) -> 5198170
-  Read  (0x1008fa9c 0x1d 0xe0001000) -> 29
-  Read  (0x1008fa9c 0xc 0xe0001000) -> 12
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0xb6 0xe0001000) -> 182
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Crash-Bandicoot-Nitro-Kart-3D--Brazil---Es-Pt--0c9aef377a62f6211acb6e1dd1d79ce97c39d5fa2a3db82d36fcf25de2f2222f/mod/274214/data/gfx/menu/publisher_med.png (No such file or directory (os error 2))
+  Read  (0x1008fbf4 0x1d 0xe0001000) -> 29
+  Read  (0x1008fbf4 0xc 0xe0001000) -> 12
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0xb6 0xe0001000) -> 182
+  open failed: <profile>/saves/mod/274214/data/gfx/menu/publisher_med.png (No such file or directory (os error 2))
   OpenFile "data\gfx\menu\publisher_med.png"  (0xa1a08 0x1 0xe0000c00) -> 0
   Seek  (0x0 0x77b5d0 0xe0001000) -> 0
   Seek  (0x2 0x0 0x30000450) -> 7845328
@@ -79,14 +79,14 @@ chamadas ao sistema de arquivos:
   Read  (0x200ffea0 0x8 0xe0001000) -> 8
   Seek  (0x0 0x77b5d0 0xe0001000) -> 0
   Seek  (0x2 0x0 0x30000450) -> 7845328
-  Read  (0x1008fa9c 0x1d 0xe0001000) -> 29
-  Read  (0x1008fa9c 0xc 0xe0001000) -> 12
-  Read  (0x1008fa9c 0x60 0xe0001000) -> 96
-  Read  (0x1008fa9c 0xc 0xe0001000) -> 12
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x470 0xe0001000) -> 1136
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Crash-Bandicoot-Nitro-Kart-3D--Brazil---Es-Pt--0c9aef377a62f6211acb6e1dd1d79ce97c39d5fa2a3db82d36fcf25de2f2222f/mod/274214/data/gfx/menu/publisher_high.png (No such file or directory (os error 2))
+  Read  (0x1008fbf4 0x1d 0xe0001000) -> 29
+  Read  (0x1008fbf4 0xc 0xe0001000) -> 12
+  Read  (0x1008fbf4 0x60 0xe0001000) -> 96
+  Read  (0x1008fbf4 0xc 0xe0001000) -> 12
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x470 0xe0001000) -> 1136
+  open failed: <profile>/saves/mod/274214/data/gfx/menu/publisher_high.png (No such file or directory (os error 2))
   OpenFile "data\gfx\menu\publisher_high.png"  (0xa1a28 0x1 0xe0000c00) -> 0
   Seek  (0x0 0x555dd 0xe0001000) -> 0
   Seek  (0x2 0x0 0x30000450) -> 349661
@@ -99,14 +99,14 @@ chamadas ao sistema de arquivos:
   Read  (0x200ffea0 0x8 0xe0001000) -> 8
   Seek  (0x0 0x555dd 0xe0001000) -> 0
   Seek  (0x2 0x0 0x30000450) -> 349661
-  Read  (0x1008fa9c 0x1d 0xe0001000) -> 29
-  Read  (0x1008fa9c 0xc 0xe0001000) -> 12
-  Read  (0x1008fa9c 0x60 0xe0001000) -> 96
-  Read  (0x1008fa9c 0xc 0xe0001000) -> 12
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0x1000 0xe0001000) -> 4096
-  Read  (0x1008fa9c 0xa68 0xe0001000) -> 2664
-arquivos não encontrados:
+  Read  (0x1008fbf4 0x1d 0xe0001000) -> 29
+  Read  (0x1008fbf4 0xc 0xe0001000) -> 12
+  Read  (0x1008fbf4 0x60 0xe0001000) -> 96
+  Read  (0x1008fbf4 0xc 0xe0001000) -> 12
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0x1000 0xe0001000) -> 4096
+  Read  (0x1008fbf4 0xa68 0xe0001000) -> 2664
+files not found:
   data/carts/chars/coco.pof
   data/carts/chars/cortex.pof
   data/carts/chars/crash.pof

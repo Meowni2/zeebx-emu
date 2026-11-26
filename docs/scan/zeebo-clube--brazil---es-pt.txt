@@ -1,14 +1,14 @@
 Zeebo Clube (Brazil) (Es,Pt)
-estado: terminou sozinho
-motivo: o jogo terminou
-tela: 1 cor(es), dominante 0x0000 (tela quase uniforme: pode ser carregamento — vale aumentar ZEEBX_ROM_MS)
-classes que o jogo pediu e não temos:
+state: finished on its own
+reason: the game ended
+screen: 1 color(s), dominant 0x0000 (nearly uniform screen: may be loading — try raising ZEEBX_ROM_MS)
+classes the game requested and we do not have:
   0x0100110a
-classes pedidas:
+requested classes:
   0x01001001  (1x)
   0x01001003  (1x)
   0x0100110a  (1x)
-chamadas ao sistema de arquivos:
+file system calls:
   Test "app.bar"  (0x2da24 0xf000301c 0xf0000008) -> 0
   Test "app.bar"  (0x2da24 0xf000301c 0xf0000008) -> 0
   Release  (0xf0003004 0xf000301c 0xf0000008) -> 0

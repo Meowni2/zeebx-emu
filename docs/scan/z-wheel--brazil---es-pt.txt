@@ -1,7 +1,7 @@
 Z-Wheel (Brazil) (Es,Pt)
-estado: roda
-tela: 256 cor(es), dominante 0xffff
-classes pedidas:
+state: runs
+screen: 256 color(s), dominant 0xffff
+requested classes:
   0x01000000  (1x)
   0x01001001  (1x)
   0x01001003  (15x)
@@ -22,14 +22,14 @@ classes pedidas:
   0x01035156  (1x)
   0x01041207  (1x)
   0x0106c411  (1x)
-chamadas ao sistema de arquivos:
+file system calls:
   Test "fs:/~0x01070798/zeeboprefs.dat"  (0x7d034 0xf000301c 0xf0000008) -> 1
   Release  (0xf0003004 0xf000301c 0xf0000008) -> 0
   OpenFile "tectoy.cfg"  (0x7f36c 0x1 0xf0003008) -> 805306640
   Release  (0xf0003004 0x1 0xf0003008) -> 0
   GetInfo  (0x200ffe04 0xf0004018 0x0) -> 0
   Release  (0xf0004004 0x3 0xf002c020) -> 0
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Z-Wheel--Brazil---Es-Pt--e41589a53f852f335994cd4304ea9a870a9c77da8003c2319c2f651f83447646/mod/274755/fontsize.map (No such file or directory (os error 2))
+  open failed: <profile>/saves/mod/274755/fontsize.map (No such file or directory (os error 2))
   OpenFile "fontsize.map"  (0x80228 0x1 0xf0003008) -> 0
   GetLastError  (0xf0003024 0x1 0xf0003008) -> 1
   Release  (0xf0003004 0x1 0xf0003008) -> 0
@@ -40,11 +40,12 @@ chamadas ao sistema de arquivos:
   EnumInit "fs:/mcp/mod"  (0x7890c 0x1 0xf0003028) -> 0
   EnumNext  (0x200fff5c 0xf000302c 0x0) -> 0
   Release  (0xf0003004 0xf000302c 0x0) -> 0
-  Test "fs:/shared/zeebotelem.log"  (0x94470 0xf000301c 0xf0000008) -> 0
-  GetInfo  (0x94470 0x200ffeb4 0xf000300c) -> 0
+  Test "fs:/shared/zeebotelem.log"  (0x94470 0xf000301c 0xf0000008) -> 1
+  OpenFile "fs:/shared/zeebotelem.log"  (0x94470 0x4 0xf0003008) -> 805307024
+  Release  (0xf0004004 0x4 0xf0003008) -> 0
   OpenFile "uiconfig.xml"  (0x7a794 0x1 0xf0003008) -> 805307856
   GetInfoEx  (0x200ffed0 0xf0004024 0xf0003008) -> 0
-  Read  (0x10007328 0x3e5 0xf000400c) -> 997
+  Read  (0x10007388 0x3e5 0xf000400c) -> 997
   Release  (0xf0004004 0x3e5 0xf000400c) -> 0
   Release  (0xf0003004 0x3e5 0xf000400c) -> 0
   OpenFile "downloadspeed.cfg"  (0x44030 0x1 0xf0003008) -> 805307920
@@ -67,19 +68,19 @@ chamadas ao sistema de arquivos:
   Test "ttgmrun.tmp"  (0x81b18 0xf000301c 0xf0000008) -> 1
   Release  (0xf0003004 0xf000301c 0xf0000008) -> 0
   OpenFile ".\sounds_loading.wav"  (0x1172c 0x1 0xf0003008) -> 805308304
-  GetInfoEx  (0x200fff18 0xf0004024 0xf0003008) -> 0
-  Read  (0x1000bea0 0x9cd94 0xf000400c) -> 642452
+  GetInfoEx  (0x200fff30 0xf0004024 0xf0003008) -> 0
+  Read  (0x1000bf38 0x9cd94 0xf000400c) -> 642452
   Release  (0xf0004004 0x9cd94 0xf000400c) -> 0
   Release  (0xf0003004 0x9cd94 0xf000400c) -> 0
-arquivos não encontrados:
+files not found:
   fontsize.map
-APIs atendidas por hipótese:
-  a abertura conhecida da Z-Wheel recebe automaticamente o atalho de pular instruções
-  a classe do download é atendida por um objeto que responde sucesso a tudo
-  o controle de sistema respondeu zero: não há aparelho para consultar
-  um widget aceitou toda interface que lhe pediram
-  uma lista foi esvaziada sem chamar o liberador que o jogo registrou
-o que o jogo chamou nas classes de sonda:
-  classe 0x01000000, objeto 0x300005d0: slot[ 2] (0x6b56c, 0x1000b8c8, 0xf0023008)
-  classe 0x01000000, objeto 0x300005d0: slot[ 5] (0xf0023014, 0xf0003010, 0x0)
-  classe 0x01000000, objeto 0x300005d0: slot[ 1] (0xf0023004, 0xf0003010, 0x0)
+APIs served by assumption:
+  a list was emptied without calling the free function the game registered
+  a widget accepted every interface it was asked for
+  the download class is served by an object that answers success to everything
+  the known Z-Wheel intro automatically gets the skip-instructions shortcut
+  the system control answered zero: there is no device to query
+what the game called on the probe classes:
+  class 0x01000000, object 0x300005d0: slot[ 2] (0x6b56c, 0x1000b8e0, 0xf0023008)
+  class 0x01000000, object 0x300005d0: slot[ 5] (0xf0023014, 0xf0003010, 0x0)
+  class 0x01000000, object 0x300005d0: slot[ 1] (0xf0023004, 0xf0003010, 0x0)

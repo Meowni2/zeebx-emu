@@ -1,7 +1,7 @@
 Double Dragon (Brazil) (Es,Pt)
-estado: roda
-tela: 254 cor(es), dominante 0x0000
-classes pedidas:
+state: runs
+screen: 254 color(s), dominant 0x0000
+requested classes:
   0x01001001  (1x)
   0x01001002  (1x)
   0x01001003  (1x)
@@ -17,7 +17,7 @@ classes pedidas:
   0x01030852  (1x)
   0x01041207  (1x)
   0x0106c411  (1x)
-chamadas ao sistema de arquivos:
+file system calls:
   Release  (0xf0004004 0x0 0xf001e00c) -> 0
   OpenFile "sound.ggz"  (0x5dae8 0x1 0xf0003008) -> 805307728
   Seek  (0x0 0x218 0xf000401c) -> 0
@@ -114,9 +114,9 @@ chamadas ao sistema de arquivos:
   Read  (0x200fff5c 0x8 0xf000400c) -> 8
   Seek  (0x0 0xec194 0xf000401c) -> 0
   Release  (0xf0004004 0x0 0xf001e00c) -> 0
-APIs atendidas por hipótese:
-  a música MIDI é sintetizada aqui, com timbre aproximado — o banco de instrumentos do console está no firmware que ainda não lemos
-texto desenhado na tela:
+APIs served by assumption:
+  MIDI music is synthesized here, with approximate timbre — the console's instrument bank is in the firmware we have not read yet
+text drawn on screen:
        33 ms  (10, 460)  CARREGANDO
        66 ms  (10, 460)  CARREGANDO.
        99 ms  (10, 460)  CARREGANDO..

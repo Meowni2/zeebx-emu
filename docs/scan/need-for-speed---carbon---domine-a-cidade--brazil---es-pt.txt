@@ -1,7 +1,7 @@
 Need For Speed - Carbon - Domine a Cidade (Brazil) (Es,Pt)
-estado: roda
-tela: 164 cor(es), dominante 0x0000
-classes pedidas:
+state: runs
+screen: 187 color(s), dominant 0x0000
+requested classes:
   0x01001001  (1x)
   0x01001003  (1x)
   0x01001017  (1x)
@@ -9,8 +9,8 @@ classes pedidas:
   0x01014bc4  (1x)
   0x01041207  (1x)
   0x0106c411  (1x)
-chamadas ao sistema de arquivos:
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Need-For-Speed---Carbon---Domine-a-Cidade--Brazil---Es-Pt--57c103acc78b0ea6f2b8d474c0c114659b03a24baf050c3ae1c37a7c133e8f44/mod/nfsresources/userconfig.ini (No such file or directory (os error 2))
+file system calls:
+  open failed: <profile>/saves/mod/nfsresources/userconfig.ini (No such file or directory (os error 2))
   OpenFile "../nfsresources/userconfig.ini"  (0x23d7a8 0x1 0xf0003008) -> 0
   OpenFile "../nfsresources/locale/english.loc"  (0x23d7a8 0x1 0xf0003008) -> 805306768
   GetInfo  (0x200ffa88 0xf0004018 0xf0003008) -> 0
@@ -26,9 +26,9 @@ chamadas ao sistema de arquivos:
   GetInfo  (0x200ffa70 0xf0004018 0xf0003008) -> 0
   Seek  (0x0 0x0 0xf000401c) -> 0
   Read  (0x1119b380 0x5aa 0xf000400c) -> 1450
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Need-For-Speed---Carbon---Domine-a-Cidade--Brazil---Es-Pt--57c103acc78b0ea6f2b8d474c0c114659b03a24baf050c3ae1c37a7c133e8f44/mod/nfsresources/LoadingAnimBkg.msh (No such file or directory (os error 2))
+  open failed: <profile>/saves/mod/nfsresources/LoadingAnimBkg.msh (No such file or directory (os error 2))
   OpenFile "../nfsresources/LoadingAnimBkg.msh"  (0x23d7a8 0x1 0xf0003008) -> 0
-  open falhou: /home/rafaelfrequiao/.config/zeebx/cache/Need-For-Speed---Carbon---Domine-a-Cidade--Brazil---Es-Pt--57c103acc78b0ea6f2b8d474c0c114659b03a24baf050c3ae1c37a7c133e8f44/mod/nfsresources/LoadingAnimBkg.msh (No such file or directory (os error 2))
+  open failed: <profile>/saves/mod/nfsresources/LoadingAnimBkg.msh (No such file or directory (os error 2))
   OpenFile "../nfsresources/LoadingAnimBkg.msh"  (0x23d7a8 0x1 0xf0003008) -> 0
   Seek  (0x0 0x34 0xf000401c) -> 0
   Read  (0x1119adf0 0x576 0xf000400c) -> 1398
@@ -79,33 +79,33 @@ chamadas ao sistema de arquivos:
   OpenFile "../nfsresources/fe_movies/easplash.big"  (0x23d7a8 0x1 0xf0003008) -> 805307216
   Release  (0xf0004004 0x1 0xf0003008) -> 0
   OpenFile "../nfsresources/fe_movies/easplash.big"  (0x23d7a8 0x1 0xf0003008) -> 805307216
-  GetInfo  (0x111adfa0 0xf0004018 0xf0003008) -> 0
+  GetInfo  (0x3400f550 0xf0004018 0xf0003008) -> 0
   Release  (0xf0004004 0x0 0x0) -> 0
   OpenFile "../nfsresources/fe_movies/easplash.big"  (0x23d7a8 0x1 0xf0003008) -> 805307216
-  GetInfo  (0x111adfe0 0xf0004018 0xf0003008) -> 0
+  GetInfo  (0x3400f590 0xf0004018 0xf0003008) -> 0
   Seek  (0x0 0x0 0xf000401c) -> 0
   Read  (0x10e7d300 0x398b9 0xf000400c) -> 235705
   Release  (0xf0004004 0x0 0x0) -> 0
   OpenFile "../nfsresources/fe_mainsystem.big"  (0x23d7a8 0x1 0xf0003008) -> 805307216
   Release  (0xf0004004 0x1 0xf0003008) -> 0
   OpenFile "../nfsresources/fe_mainsystem.big"  (0x23d7a8 0x1 0xf0003008) -> 805307216
-  GetInfo  (0x111adfa0 0xf0004018 0xf0003008) -> 0
+  GetInfo  (0x3400f550 0xf0004018 0xf0003008) -> 0
   Release  (0xf0004004 0x0 0x0) -> 0
   OpenFile "../nfsresources/fe_mainsystem.big"  (0x23d7a8 0x1 0xf0003008) -> 805307216
-  GetInfo  (0x111adfe0 0xf0004018 0xf0003008) -> 0
+  GetInfo  (0x3400f590 0xf0004018 0xf0003008) -> 0
   Seek  (0x0 0x0 0xf000401c) -> 0
   Read  (0x10eb6bd0 0x2c8 0xf000400c) -> 712
   Release  (0xf0004004 0x0 0x0) -> 0
   OpenFile "../nfsresources/fe_screens/eatrax/eaTraxChyron.big"  (0x23d7a8 0x1 0xf0003008) -> 805307216
   Release  (0xf0004004 0x1 0xf0003008) -> 0
   OpenFile "../nfsresources/fe_screens/eatrax/eaTraxChyron.big"  (0x23d7a8 0x1 0xf0003008) -> 805307216
-  GetInfo  (0x111adf88 0xf0004018 0xf0003008) -> 0
+  GetInfo  (0x3400f538 0xf0004018 0xf0003008) -> 0
   Release  (0xf0004004 0x0 0x0) -> 0
   OpenFile "../nfsresources/fe_screens/eatrax/eaTraxChyron.big"  (0x23d7a8 0x1 0xf0003008) -> 805307216
-  GetInfo  (0x111adfc8 0xf0004018 0xf0003008) -> 0
+  GetInfo  (0x3400f578 0xf0004018 0xf0003008) -> 0
   Seek  (0x0 0x0 0xf000401c) -> 0
   Read  (0x10eb96e0 0x7d47 0xf000400c) -> 32071
   Release  (0xf0004004 0x0 0x0) -> 0
-arquivos não encontrados:
+files not found:
   ../nfsresources/LoadingAnimBkg.msh
   ../nfsresources/userconfig.ini
